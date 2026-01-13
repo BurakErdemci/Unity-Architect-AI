@@ -1,0 +1,17 @@
+# Python
+backend/venv/
+backend/__pycache__/
+backend/*.pyc
+backend/.env
+
+# Node / Frontend
+frontend/node_modules/
+frontend/.next/
+frontend/dist/
+frontend/app/
+
+# macOS
+.DS_Store
+
+# Veritabanı (İsteğe bağlı, boş kalsın istersen yükleme)
+backend/*.db
