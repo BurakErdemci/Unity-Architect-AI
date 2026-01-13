@@ -1,21 +1,22 @@
-from fastapi import FastAPI
+import logging
+import uvicorn
+import re
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import uvicorn
 import ollama
-import logging
 
-# Modüler sınıflarımızı içeri alıyoruz
+# Sadece olanları import ediyoruz
 from analyzer import UnityAnalyzer, CodeProcessor
 from prompts import (
-    SYSTEM_BASE, PROMPT_GREETING, PROMPT_OUT_OF_SCOPE, 
+    SYSTEM_BASE, PROMPT_OUT_OF_SCOPE, 
     PROMPT_ANALYZER_TEMPLATE, get_language_instr
 )
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Unity Architect AI API")
+app = FastAPI(title="Unity Architect AI")
 
 app.add_middleware(
     CORSMiddleware,
@@ -29,54 +30,67 @@ class AnalysisRequest(BaseModel):
     code: str
     language: str = "tr"
 
+def clean_deepseek_response(text: str):
+    return re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
+
 @app.post("/analyze")
 async def analyze_code(request: AnalysisRequest):
-    logger.info(f"Yeni İstek Alındı. Dil: {request.language}")
+    logger.info(f"İstek: {request.language}")
 
-    # 1. ADIM: Niyet ve Kod Kontrolü (Logic analyzer.py'da)
     intent = CodeProcessor.detect_intent(request.code)
     is_code = CodeProcessor.is_actually_code(request.code)
 
-    # Eğer niyet analiz olsa bile içerik kod değilse sohbet moduna çek
     if intent == "ANALYSIS" and not is_code:
-        intent = "GREETING"
+        intent = "OUT_OF_SCOPE"
 
-    # 2. ADIM: Statik Analiz (Sadece niyet ANALYSIS ise)
+    if intent == "GREETING":
+        return {
+            "intent": "GREETING",
+            "static_results": {"smells": []},
+            "ai_suggestion": "Selam kral! Ben Unity asistanınım. Kodunu gönder, düzeltelim! 🚀",
+            "status": "success"
+        }
+
     static_results = {"smells": [], "stats": {"total_lines": 0}}
     if intent == "ANALYSIS":
-        analyzer = UnityAnalyzer(request.code)
-        static_results = analyzer.analyze()
+        try:
+            analyzer = UnityAnalyzer(request.code)
+            static_results = analyzer.analyze()
+        except Exception as e:
+            logger.error(f"Statik analiz hatası: {e}")
 
-    # 3. ADIM: Prompt Hazırlama (prompts.py'dan)
     lang_instr = get_language_instr(request.language)
     
-    if intent == "GREETING":
-        final_prompt = f"{SYSTEM_BASE}\n{lang_instr}\n{PROMPT_GREETING}\nKullanıcı: {request.code}"
-    elif intent == "OUT_OF_SCOPE":
-        final_prompt = f"{SYSTEM_BASE}\n{lang_instr}\n{PROMPT_OUT_OF_SCOPE}"
+    if intent == "OUT_OF_SCOPE":
+        final_prompt = f"{lang_instr} {PROMPT_OUT_OF_SCOPE}"
     else:
         final_prompt = f"{SYSTEM_BASE}\n{lang_instr}\n" + PROMPT_ANALYZER_TEMPLATE.format(
             code=request.code, 
             smells=static_results['smells']
         )
 
-    # 4. ADIM: AI (Ollama) Çağrısı
     try:
         response = ollama.chat(
-            model='llama3.1', 
+            model='qwen2.5-coder:7b', 
             messages=[{'role': 'user', 'content': final_prompt}],
-            options={'num_predict': 2500, 'temperature': 0.1, 'top_p': 0.4,'repeat_penalty': 1.2}
+            options={
+                'num_predict': 2500,  
+                'temperature': 0.3,   
+                'top_p': 0.9,         
+                'repeat_penalty': 1.1 
+            }
         )
+        
+        final_answer = clean_deepseek_response(response['message']['content'])
         
         return {
             "intent": intent,
             "static_results": static_results,
-            "ai_suggestion": response['message']['content'],
+            "ai_suggestion": final_answer,
             "status": "success"
         }
     except Exception as e:
-        logger.error(f"AI Hatası: {e}")
-        return {"error": str(e), "status": "error", "static_results": static_results}
+        return {"error": str(e), "status": "error"}
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

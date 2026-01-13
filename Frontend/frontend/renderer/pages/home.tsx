@@ -121,7 +121,7 @@ export default function HomePage() {
                       <div className="h-16 w-16 border-4 border-blue-900/30 border-t-blue-500 rounded-full animate-spin"></div>
                       <Cpu className="absolute inset-0 m-auto text-blue-500 animate-pulse" size={24} />
                    </div>
-                   <p className="text-blue-500 font-bold animate-pulse tracking-widest text-xs">LLAMA 3.1 IS THINKING...</p>
+                   <p className="text-blue-500 font-bold animate-pulse tracking-widest text-xs">DEEPSEEK-R1 IS REASONING...</p>
                 </motion.div>
               ) : (
                 <motion.div 

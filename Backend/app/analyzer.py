@@ -10,18 +10,22 @@ class CodeProcessor:
         score = sum(1 for indicator in indicators if indicator in text)
         return score >= 2
 
+    # analyzer.py içindeki detect_intent kısmına ekle
     @staticmethod
     def detect_intent(query: str):
-        """Kullanıcının niyetini (Selam, Kapsam Dışı, Analiz) belirler."""
         q = query.lower().strip()
         
-        # 1. Kapsam Dışı Kontrolü
-        out_of_scope_terms = ["unreal", "godot", "cryengine", "web", "react", "django", "javascript", "python", "atatürk"]
+        # 1. Kapsam Dışı Yazılım Dilleri ve Terimler
+        # Burayı genişleterek diğer dilleri de "yasaklı" yapıyoruz
+        out_of_scope_terms = [
+            "unreal", "godot", "python", "javascript", "react", "django", 
+            "html", "css", "java", "php", "rust", "atatürk", "yemek"
+        ]
         if any(term in q for term in out_of_scope_terms):
             return "OUT_OF_SCOPE"
         
         # 2. Selamlaşma ve Sohbet
-        chat_words = ["selam", "merhaba", "hi", "hello", "nasılsın", "kimsin", "eyw", "saol", "teşekkür"]
+        chat_words = ["selam", "merhaba", "hi", "hello", "nasılsın", "eyw", "saol", "teşekkür"]
         if any(word in q for word in chat_words) and len(q.split()) < 15:
             return "GREETING"
         
