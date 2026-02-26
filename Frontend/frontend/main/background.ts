@@ -1,9 +1,10 @@
 import path from 'path'
-import { app, ipcMain } from 'electron'
+import fs from 'fs'
+import { app, ipcMain, dialog } from 'electron'
 import serve from 'electron-serve'
 import { createWindow } from './helpers'
 import { spawn, ChildProcess } from 'child_process'
-import axios from 'axios' // axios'u buraya da ekleyelim (npm install axios)
+import axios from 'axios'
 
 const isProd = process.env.NODE_ENV === 'production'
 let pyBackendProcess: ChildProcess | null = null
@@ -14,26 +15,71 @@ if (isProd) {
   app.setPath('userData', `${app.getPath('userData')} (development)`)
 }
 
+// --- IPC: DOSYA İŞLEMLERİ ---
+ipcMain.handle('open-file-dialog', async () => {
+  const result = await dialog.showOpenDialog({
+    properties: ['openFile'],
+    filters: [
+      { name: 'C# Dosyaları', extensions: ['cs'] },
+      { name: 'Tüm Dosyalar', extensions: ['*'] }
+    ]
+  })
+  if (result.canceled || result.filePaths.length === 0) return null
+  const filePath = result.filePaths[0]
+  const content = fs.readFileSync(filePath, 'utf-8')
+  return { path: filePath, name: path.basename(filePath), content }
+})
+
+ipcMain.handle('open-folder-dialog', async () => {
+  const result = await dialog.showOpenDialog({
+    properties: ['openDirectory']
+  })
+  if (result.canceled || result.filePaths.length === 0) return null
+  return result.filePaths[0]
+})
+
+ipcMain.handle('read-directory', async (_event, dirPath: string) => {
+  try {
+    const entries = fs.readdirSync(dirPath, { withFileTypes: true })
+    const items = entries
+      .filter(e => !e.name.startsWith('.'))
+      .map(e => ({
+        name: e.name,
+        path: path.join(dirPath, e.name),
+        isDirectory: e.isDirectory(),
+        extension: e.isDirectory() ? '' : path.extname(e.name).toLowerCase()
+      }))
+      .sort((a, b) => {
+        if (a.isDirectory && !b.isDirectory) return -1
+        if (!a.isDirectory && b.isDirectory) return 1
+        return a.name.localeCompare(b.name)
+      })
+    return items
+  } catch { return [] }
+})
+
+ipcMain.handle('read-file', async (_event, filePath: string) => {
+  try {
+    const content = fs.readFileSync(filePath, 'utf-8')
+    return { path: filePath, name: path.basename(filePath), content }
+  } catch { return null }
+})
+
 // --- AKILLI BACKEND KONTROLÜ ---
 async function startPythonBackend() {
   try {
-    // Port 8000'e bir istek atıyoruz
     await axios.get('http://127.0.0.1:8000/');
-    
-    // Eğer buraya ulaştıysa cevap gelmiş demektir (200 OK)
     console.log('--- BACKEND ZATEN AYAKTA, BAŞLATILMADI ---');
     return;
   } catch (err: any) {
-    // Eğer portta biri varsa ama 404 dönüyorsa err.response oluşur
     if (err.response) {
       console.log('--- PORT 8000 MEŞGUL (404/500), YENİDEN BAŞLATILMADI ---');
       return;
     }
-    // Sadece bağlantı tamamen reddedildiyse (ECONNREFUSED) backend kapalıdır
     console.log('--- BACKEND ÇEVRİMDIŞI, BAŞLATILIYOR... ---');
   }
 
-  const appPath = app.getAppPath(); 
+  const appPath = app.getAppPath();
   const projectRoot = path.resolve(appPath, '..', '..');
   const pythonExec = path.join(projectRoot, 'Backend', 'venv', 'bin', 'python3');
   const pythonScript = path.join(projectRoot, 'Backend', 'app', 'main.py');
@@ -47,10 +93,8 @@ async function startPythonBackend() {
     console.error('Python başlatılamadı:', err);
   });
 }
-;(async () => {
+; (async () => {
   await app.whenReady()
-
-  // Python'u başlatmayı deniyoruz
   await startPythonBackend();
 
   const mainWindow = createWindow('main', {
@@ -70,8 +114,6 @@ async function startPythonBackend() {
 })()
 
 app.on('window-all-closed', () => {
-  // Sadece prod modunda kapatmak isteyebilirsin, 
-  // dev modunda sürekli restart attığı için Python'u kapatmıyoruz.
   if (isProd && pyBackendProcess) {
     pyBackendProcess.kill();
   }

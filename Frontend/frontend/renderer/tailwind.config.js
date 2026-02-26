@@ -7,10 +7,22 @@ module.exports = {
   ],
   theme: {
     colors: {
-      // use colors only specified
+      transparent: 'transparent',
+      current: 'currentColor',
+      black: colors.black,
       white: colors.white,
       gray: colors.gray,
+      slate: colors.slate,
       blue: colors.blue,
+      indigo: colors.indigo,
+      green: colors.green,
+      emerald: colors.emerald,
+      orange: colors.orange,
+      red: colors.red,
+      yellow: colors.yellow,
+      violet: colors.violet,
+      purple: colors.purple,
+      cyan: colors.cyan,
     },
     extend: {},
   },

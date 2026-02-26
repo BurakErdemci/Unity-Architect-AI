@@ -1,7 +1,11 @@
 {
   "compilerOptions": {
-    "target": "es5",
-    "lib": ["dom", "dom.iterable", "esnext"],
+    "target": "ES2017",
+    "lib": [
+      "dom",
+      "dom.iterable",
+      "esnext"
+    ],
     "allowJs": true,
     "skipLibCheck": true,
     "strict": false,
@@ -10,11 +14,15 @@
     "incremental": true,
     "esModuleInterop": true,
     "module": "esnext",
-    "moduleResolution": "bundler", // node10 yerine bundler yazıyoruz
+    "moduleResolution": "bundler",
     "resolveJsonModule": true,
     "isolatedModules": true,
-    "jsx": "preserve",
-    "ignoreDeprecations": "5.0" // Eski uyarıları tamamen kapatır
+    "jsx": "preserve"
   },
-  "exclude": ["node_modules", "renderer/next.config.js", "app", "dist"]
+  "exclude": [
+    "node_modules",
+    "renderer/next.config.js",
+    "app",
+    "dist"
+  ]
 }

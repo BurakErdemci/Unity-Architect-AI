@@ -3,11 +3,12 @@ import json
 import os
 from datetime import datetime
 from passlib.context import CryptContext
+from typing import List, Dict, Any, Optional, Tuple
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 class DatabaseManager:
-    def __init__(self, db_path):
+    def __init__(self, db_path: str):
         self.db_path = db_path
         self._create_tables()
 
@@ -20,61 +21,137 @@ class DatabaseManager:
             cursor.execute('''CREATE TABLE IF NOT EXISTS ai_configs (
                 user_id INTEGER PRIMARY KEY, provider_type TEXT, model_name TEXT, api_key TEXT,
                 FOREIGN KEY (user_id) REFERENCES users (id))''')
-            # Geçmiş
+            # Eski Geçmiş (geriye uyumluluk)
             cursor.execute('''CREATE TABLE IF NOT EXISTS history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, timestamp TEXT, title TEXT,
                 intent TEXT, original_code TEXT, ai_suggestion TEXT, smells TEXT,
                 FOREIGN KEY (user_id) REFERENCES users (id))''')
+            # --- YENİ: Sohbetler ---
+            cursor.execute('''CREATE TABLE IF NOT EXISTS conversations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                title TEXT DEFAULT 'Yeni Sohbet',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users (id))''')
+            # --- YENİ: Mesajlar ---
+            cursor.execute('''CREATE TABLE IF NOT EXISTS messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id INTEGER NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                smells_json TEXT DEFAULT '[]',
+                timestamp TEXT NOT NULL,
+                FOREIGN KEY (conversation_id) REFERENCES conversations (id) ON DELETE CASCADE)''')
             conn.commit()
 
-    # --- AUTH ---
-    def create_user(self, username, password):
+    # ===================== AUTH =====================
+    def create_user(self, username: str, password: str) -> bool:
         hashed = pwd_context.hash(password[:72])
         try:
             with sqlite3.connect(self.db_path) as conn:
                 conn.execute('INSERT INTO users (username, password_hash) VALUES (?, ?)', (username, hashed))
             return True
-        except: return False
+        except Exception:
+            return False
 
-    def verify_user(self, username, password):
+    def verify_user(self, username: str, password: str) -> Optional[Tuple]:
         with sqlite3.connect(self.db_path) as conn:
             user = conn.execute('SELECT id, username, password_hash FROM users WHERE username = ?', (username,)).fetchone()
-            if user and pwd_context.verify(password[:72], user[2]): return user
+            if user and pwd_context.verify(password[:72], user[2]):
+                return user
             return None
 
-    # --- AI CONFIG ---
-    def save_ai_config(self, user_id, p_type, m_name, key):
+    # ===================== AI CONFIG =====================
+    def save_ai_config(self, user_id: int, p_type: str, m_name: str, key: str) -> None:
         with sqlite3.connect(self.db_path) as conn:
             conn.execute('INSERT OR REPLACE INTO ai_configs (user_id, provider_type, model_name, api_key) VALUES (?, ?, ?, ?)',
                          (user_id, p_type, m_name, key))
             conn.commit()
 
-    def get_ai_config(self, user_id):
+    def get_ai_config(self, user_id: int) -> Tuple[str, str, str]:
         with sqlite3.connect(self.db_path) as conn:
             res = conn.execute('SELECT provider_type, model_name, api_key FROM ai_configs WHERE user_id = ?', (user_id,)).fetchone()
             return res if res else ("ollama", "qwen2.5-coder:7b", "")
 
-    # --- HISTORY ---
-    def save_analysis(self, user_id, title, intent, code, suggestion, smells):
+    # ===================== ESKİ GEÇMİŞ (Geriye Uyumluluk) =====================
+    def save_analysis(self, user_id: int, title: str, intent: str, code: str, suggestion: str, smells: list) -> None:
         with sqlite3.connect(self.db_path) as conn:
             conn.execute('INSERT INTO history (user_id, timestamp, title, intent, original_code, ai_suggestion, smells) VALUES (?, ?, ?, ?, ?, ?, ?)',
                          (user_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), title, intent, code, suggestion, json.dumps(smells)))
 
-    def get_user_history(self, user_id):
+    def get_user_history(self, user_id: int) -> List[Tuple]:
         with sqlite3.connect(self.db_path) as conn:
             return conn.execute('SELECT id, timestamp, title, intent FROM history WHERE user_id = ? ORDER BY id DESC', (user_id,)).fetchall()
-    
-    def get_analysis_detail(self, item_id):
+
+    def get_analysis_detail(self, item_id: int) -> Optional[Dict[str, Any]]:
         with sqlite3.connect(self.db_path) as conn:
             res = conn.execute('SELECT original_code, ai_suggestion, smells FROM history WHERE id = ?', (item_id,)).fetchone()
             return {"code": res[0], "suggestion": res[1], "smells": json.loads(res[2])} if res else None
-    
-    def delete_analysis(self, item_id):
+
+    def delete_analysis(self, item_id: int) -> None:
         with sqlite3.connect(self.db_path) as conn:
             conn.execute('DELETE FROM history WHERE id = ?', (item_id,))
             conn.commit()
 
-    def rename_analysis(self, item_id, new_title):
+    def rename_analysis(self, item_id: int, new_title: str) -> None:
         with sqlite3.connect(self.db_path) as conn:
             conn.execute('UPDATE history SET title = ? WHERE id = ?', (new_title, item_id))
             conn.commit()
+
+    # ===================== YENİ: SOHBETLER =====================
+    def create_conversation(self, user_id: int, title: str = "Yeni Sohbet") -> int:
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                'INSERT INTO conversations (user_id, title, created_at, updated_at) VALUES (?, ?, ?, ?)',
+                (user_id, title, now, now)
+            )
+            conn.commit()
+            return cursor.lastrowid
+
+    def get_user_conversations(self, user_id: int) -> List[Dict[str, Any]]:
+        with sqlite3.connect(self.db_path) as conn:
+            rows = conn.execute(
+                'SELECT id, title, created_at, updated_at FROM conversations WHERE user_id = ? ORDER BY updated_at DESC',
+                (user_id,)
+            ).fetchall()
+            return [{"id": r[0], "title": r[1], "created_at": r[2], "updated_at": r[3]} for r in rows]
+
+    def rename_conversation(self, conv_id: int, new_title: str) -> None:
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute('UPDATE conversations SET title = ?, updated_at = ? WHERE id = ?', (new_title, now, conv_id))
+            conn.commit()
+
+    def delete_conversation(self, conv_id: int) -> None:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute('PRAGMA foreign_keys = ON')
+            conn.execute('DELETE FROM messages WHERE conversation_id = ?', (conv_id,))
+            conn.execute('DELETE FROM conversations WHERE id = ?', (conv_id,))
+            conn.commit()
+
+    # ===================== YENİ: MESAJLAR =====================
+    def add_message(self, conversation_id: int, role: str, content: str, smells: list = None) -> int:
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        smells_json = json.dumps(smells) if smells else "[]"
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                'INSERT INTO messages (conversation_id, role, content, smells_json, timestamp) VALUES (?, ?, ?, ?, ?)',
+                (conversation_id, role, content, smells_json, now)
+            )
+            # Sohbetin updated_at'ini güncelle
+            conn.execute('UPDATE conversations SET updated_at = ? WHERE id = ?', (now, conversation_id))
+            conn.commit()
+            return cursor.lastrowid
+
+    def get_conversation_messages(self, conversation_id: int) -> List[Dict[str, Any]]:
+        with sqlite3.connect(self.db_path) as conn:
+            rows = conn.execute(
+                'SELECT id, role, content, smells_json, timestamp FROM messages WHERE conversation_id = ? ORDER BY id ASC',
+                (conversation_id,)
+            ).fetchall()
+            return [
+                {"id": r[0], "role": r[1], "content": r[2], "smells": json.loads(r[3]), "timestamp": r[4]}
+                for r in rows
+            ]
