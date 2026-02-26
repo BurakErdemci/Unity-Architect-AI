@@ -81,6 +81,7 @@ export default function HomePage() {
   const [isChatOpen, setIsChatOpen] = useState(true);
   const [sidebarTab, setSidebarTab] = useState<'chats' | 'files'>('chats');
   const [isDragging, setIsDragging] = useState(false);
+  const [dragRejectMsg, setDragRejectMsg] = useState('');
 
   // --- FILE BROWSER ---
   const [rootFolderPath, setRootFolderPath] = useState<string | null>(null);
@@ -283,10 +284,14 @@ export default function HomePage() {
     const files = e.dataTransfer.files;
     if (files.length > 0) {
       const file = files[0];
+      if (!file.name.endsWith('.cs')) {
+        setDragRejectMsg('Lütfen sadece C# (.cs) dosyası sürükleyin');
+        setTimeout(() => setDragRejectMsg(''), 2500);
+        return;
+      }
       const text = await file.text();
       setCode(text);
       setOpenedFilePath(file.name);
-      // Otomatik yeni sohbet oluştur
       if (user && !activeConvId) {
         const res = await axios.post(`${API}/conversations`, { user_id: user.id, title: file.name });
         await fetchConversations(user.id);
@@ -728,8 +733,15 @@ export default function HomePage() {
             <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
               <div className="bg-blue-600/20 border-2 border-dashed border-blue-500/50 rounded-2xl px-8 py-6 flex flex-col items-center gap-2">
                 <Upload size={32} className="text-blue-400" />
-                <span className="text-[13px] font-semibold text-blue-400">Dosyayı bırakın</span>
+                <span className="text-[13px] font-semibold text-blue-400">C# dosyasını bırakın</span>
               </div>
+            </div>
+          )}
+          {/* Rejection warning */}
+          {dragRejectMsg && (
+            <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 bg-red-950/90 border border-red-500/30 rounded-xl px-4 py-2.5 flex items-center gap-2 animate-pulse">
+              <AlertTriangle size={14} className="text-red-400" />
+              <span className="text-[12px] text-red-300 font-medium">{dragRejectMsg}</span>
             </div>
           )}
           {(activeConvId || code || openedFilePath) ? (

@@ -20,8 +20,7 @@ ipcMain.handle('open-file-dialog', async () => {
   const result = await dialog.showOpenDialog({
     properties: ['openFile'],
     filters: [
-      { name: 'C# Dosyaları', extensions: ['cs'] },
-      { name: 'Tüm Dosyalar', extensions: ['*'] }
+      { name: 'C# Dosyaları', extensions: ['cs'] }
     ]
   })
   if (result.canceled || result.filePaths.length === 0) return null
@@ -43,6 +42,7 @@ ipcMain.handle('read-directory', async (_event, dirPath: string) => {
     const entries = fs.readdirSync(dirPath, { withFileTypes: true })
     const items = entries
       .filter(e => !e.name.startsWith('.'))
+      .filter(e => e.isDirectory() || path.extname(e.name).toLowerCase() === '.cs')
       .map(e => ({
         name: e.name,
         path: path.join(dirPath, e.name),
