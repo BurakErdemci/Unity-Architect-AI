@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import Head from 'next/head';
 import axios from 'axios';
 import {
-  Activity, AlertTriangle, CheckCircle, Code2, Cpu, Sparkles,
+  Activity, AlertTriangle, Check, CheckCircle, Code2, Copy, Cpu, Sparkles,
   Languages, ChevronDown, MessageSquare, Plus, FileText, Clock,
   Trash2, Edit3, ChevronLeft, ChevronRight, LogOut, User, Lock,
   Settings, X, Send, Bot, UserCircle, PanelRightClose, PanelRightOpen,
@@ -13,6 +13,17 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/cjs/styles/prism';
+
+interface ModelInfo {
+  id: string;
+  name: string;
+  provider: string;
+}
+
+interface AvailableModels {
+  local: ModelInfo[];
+  cloud: ModelInfo[];
+}
 
 const API = 'http://127.0.0.1:8000';
 
@@ -30,33 +41,60 @@ const ipc = typeof window !== 'undefined' ? (window as any).ipc : null;
 // =====================================================================
 //                       MARKDOWN RENDERER
 // =====================================================================
-const MarkdownRenderer = ({ content }: { content: string }) => (
-  <ReactMarkdown
-    remarkPlugins={[remarkGfm]}
-    components={{
-      code({ node, inline, className, children, ...props }: any) {
-        const match = /language-(\w+)/.exec(className || '');
-        return !inline && match ? (
-          <SyntaxHighlighter
-            style={vscDarkPlus}
-            language={match[1]}
-            PreTag="div"
-            className="rounded-xl !bg-[#0a0c10] border border-slate-800 !my-4 shadow-lg"
-            {...props}
-          >
-            {String(children).replace(/\n$/, '')}
-          </SyntaxHighlighter>
-        ) : (
-          <code className="bg-blue-500/10 px-1.5 py-0.5 rounded text-blue-400 font-mono text-xs font-semibold" {...props}>
-            {children}
-          </code>
-        );
-      },
-    }}
-  >
-    {content}
-  </ReactMarkdown>
-);
+const MarkdownRenderer = ({ content }: { content: string }) => {
+  const [copiedBlock, setCopiedBlock] = useState<string | null>(null);
+
+  const handleCopy = (code: string) => {
+    navigator.clipboard.writeText(code);
+    setCopiedBlock(code);
+    setTimeout(() => setCopiedBlock(null), 2000);
+  };
+
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        code({ node, inline, className, children, ...props }: any) {
+          const match = /language-(\w+)/.exec(className || '');
+          const codeString = String(children).replace(/\n$/, '');
+          return !inline && match ? (
+            <div className="relative group my-4">
+              <div className="absolute top-2 right-2 z-10 flex items-center gap-1.5">
+                <span className="text-[10px] text-slate-500 font-mono uppercase">{match[1]}</span>
+                <button
+                  onClick={() => handleCopy(codeString)}
+                  className="p-1.5 rounded-md bg-slate-800/80 hover:bg-slate-700 border border-slate-700/50 text-slate-400 hover:text-slate-200 transition-all opacity-0 group-hover:opacity-100"
+                  title="Kopyala"
+                >
+                  {copiedBlock === codeString ? (
+                    <Check size={13} className="text-emerald-400" />
+                  ) : (
+                    <Copy size={13} />
+                  )}
+                </button>
+              </div>
+              <SyntaxHighlighter
+                style={vscDarkPlus}
+                language={match[1]}
+                PreTag="div"
+                className="rounded-xl !bg-[#0a0c10] border border-slate-800 shadow-lg !pt-10"
+                {...props}
+              >
+                {codeString}
+              </SyntaxHighlighter>
+            </div>
+          ) : (
+            <code className="bg-blue-500/10 px-1.5 py-0.5 rounded text-blue-400 font-mono text-xs font-semibold" {...props}>
+              {children}
+            </code>
+          );
+        },
+      }}
+    >
+      {content}
+    </ReactMarkdown>
+  );
+};
 
 // =====================================================================
 //                       ANA KOMPONENT
@@ -95,6 +133,8 @@ export default function HomePage() {
   const [aiConfig, setAiConfig] = useState({
     provider_type: 'ollama', api_key: '', model_name: 'qwen2.5-coder:7b'
   });
+  const [availableModels, setAvailableModels] = useState<AvailableModels>({ local: [], cloud: [] });
+  const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
 
   // --- EDITING ---
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -114,6 +154,7 @@ export default function HomePage() {
     if (user) {
       fetchConversations(user.id);
       fetchAIConfig(user.id);
+      fetchAvailableModels();
     }
   }, [user]);
 
@@ -139,6 +180,13 @@ export default function HomePage() {
     } catch (err) { console.error("Config hatası:", err); }
   };
 
+  const fetchAvailableModels = async () => {
+    try {
+      const res = await axios.get(`${API}/available-models`);
+      if (res.data) setAvailableModels(res.data);
+    } catch (err) { console.error("Modeller alınamadı:", err); }
+  };
+
   const handleAuth = async () => {
     const url = authMode === 'login' ? '/login' : '/register';
     try {
@@ -154,7 +202,12 @@ export default function HomePage() {
 
   const saveAIConfig = async () => {
     try {
-      await axios.post(`${API}/save-ai-config`, { ...aiConfig, user_id: user?.id });
+      const configToSave = { ...aiConfig, user_id: user?.id };
+      if (configToSave.provider_type === 'groq' || configToSave.provider_type === 'ollama') {
+        configToSave.api_key = ''; // Bu sağlayıcılar için key'i temizle
+      }
+      await axios.post(`${API}/save-ai-config`, configToSave);
+      setAiConfig({ ...aiConfig, api_key: configToSave.api_key }); // UI'ı da güncelle
       alert("Ayarlar kaydedildi!");
       setShowSettings(false);
     } catch (err) { alert("Kaydedilemedi."); }
@@ -495,13 +548,14 @@ export default function HomePage() {
                     onChange={e => setAiConfig({ ...aiConfig, provider_type: e.target.value })}
                     className="w-full bg-[#0e0e10] border border-slate-800 rounded-xl p-3 text-white text-sm outline-none focus:border-blue-500 transition-colors"
                   >
+                    <option value="groq">Groq (Varsayılan, Ücretsiz)</option>
                     <option value="ollama">Ollama (Yerel)</option>
-                    <option value="openai">OpenAI (Bulut)</option>
                     <option value="google">Google Gemini (Bulut)</option>
+                    <option value="openai">OpenAI (Bulut)</option>
                     <option value="deepseek">DeepSeek (Reasoning)</option>
                   </select>
                 </div>
-                {aiConfig.provider_type !== 'ollama' && (
+                {aiConfig.provider_type !== 'ollama' && aiConfig.provider_type !== 'groq' && (
                   <div>
                     <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1.5">API Key</label>
                     <input
@@ -521,7 +575,7 @@ export default function HomePage() {
                     value={aiConfig.model_name}
                     onChange={e => setAiConfig({ ...aiConfig, model_name: e.target.value })}
                     className="w-full bg-[#0e0e10] border border-slate-800 rounded-xl p-3 text-white text-sm outline-none focus:border-blue-500 transition-colors"
-                    placeholder="qwen2.5-coder:7b"
+                    placeholder="llama-3.3-70b-versatile"
                   />
                 </div>
                 <button
@@ -786,7 +840,106 @@ export default function HomePage() {
             <div className="h-6 w-6 bg-gradient-to-br from-blue-500 to-violet-500 rounded-md flex items-center justify-center">
               <Bot size={13} className="text-white" />
             </div>
-            <span className="text-[12px] font-semibold text-slate-300">AI Architect</span>
+            {/* MODEL SELECTOR DROPDOWN */}
+            <div className="relative">
+              <button
+                onClick={() => setIsModelDropdownOpen(!isModelDropdownOpen)}
+                className="flex items-center gap-1.5 hover:bg-slate-800 px-2 py-1 rounded transition-all text-left"
+              >
+                <div className="flex flex-col">
+                  <span className="text-[12px] font-semibold text-slate-300 leading-tight">
+                    {aiConfig.model_name || 'Model Seçin'}
+                  </span>
+                  <span className="text-[9px] text-slate-500 leading-tight capitalize">
+                    {aiConfig.provider_type}
+                  </span>
+                </div>
+                <ChevronDown size={14} className="text-slate-500" />
+              </button>
+
+              {/* DROPDOWN MENU */}
+              <AnimatePresence>
+                {isModelDropdownOpen && (
+                  <>
+                    <div
+                      className="fixed inset-0 z-40"
+                      onClick={() => setIsModelDropdownOpen(false)}
+                    />
+                    <motion.div
+                      initial={{ opacity: 0, y: -10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -10 }}
+                      className="absolute top-10 left-0 w-64 bg-[#18181b] border border-slate-700 shadow-2xl rounded-xl z-50 overflow-hidden"
+                    >
+                      <div className="max-h-[60vh] overflow-y-auto custom-scrollbar">
+                        {/* BULUT MODELLER */}
+                        {availableModels.cloud.length > 0 && (
+                          <div className="p-1">
+                            <div className="px-2 py-1.5 text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2 mt-1">
+                              <Sparkles size={10} /> Bulut API Modelleri
+                            </div>
+                            {availableModels.cloud.map(m => (
+                              <button
+                                key={m.id}
+                                onClick={async () => {
+                                  // Update state temporarily
+                                  const newCfg = { ...aiConfig, provider_type: m.provider, model_name: m.id };
+                                  setAiConfig(newCfg);
+                                  setIsModelDropdownOpen(false);
+                                  // Save to backend immediately
+                                  if (user) await axios.post(`${API}/save-ai-config`, { ...newCfg, user_id: user.id });
+                                }}
+                                className={`w-full text-left px-3 py-2 text-[12px] flex flex-col hover:bg-blue-600/10 rounded-lg transition-colors
+                                  ${aiConfig.model_name === m.id ? 'bg-blue-600/10 text-blue-400' : 'text-slate-300'}`}
+                              >
+                                <span className="font-medium">{m.name}</span>
+                                <span className="text-[10px] text-slate-500 capitalize">{m.provider}</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* YEREL MODELLER */}
+                        <div className="p-1 border-t border-slate-800/80">
+                          <div className="px-2 py-1.5 text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2 mt-1">
+                            <Cpu size={10} /> Yerel (Ollama) Modeller
+                          </div>
+                          {availableModels.local.length > 0 ? (
+                            availableModels.local.map(m => (
+                              <button
+                                key={m.id}
+                                onClick={async () => {
+                                  const newCfg = { ...aiConfig, provider_type: 'ollama', model_name: m.id, api_key: '' };
+                                  setAiConfig(newCfg);
+                                  setIsModelDropdownOpen(false);
+                                  if (user) await axios.post(`${API}/save-ai-config`, { ...newCfg, user_id: user.id });
+                                }}
+                                className={`w-full text-left px-3 py-2 text-[12px] flex flex-col hover:bg-emerald-600/10 rounded-lg transition-colors
+                                  ${aiConfig.model_name === m.id ? 'bg-emerald-600/10 text-emerald-400' : 'text-slate-300'}`}
+                              >
+                                <span className="font-medium">{m.name}</span>
+                                <span className="text-[10px] text-slate-500">{m.id}</span>
+                              </button>
+                            ))
+                          ) : (
+                            <div className="px-3 py-2 text-[11px] text-slate-500 italic">Ollama modeli bulunamadı.</div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* SETTINGS KISAYOLU */}
+                      <button
+                        onClick={() => { setIsModelDropdownOpen(false); setShowSettings(true); }}
+                        className="w-full text-left p-3 text-[11px] text-slate-400 bg-[#0e0e10] hover:bg-slate-800 transition-colors flex items-center justify-between group"
+                      >
+                        API Key Ekle / Ayarlar
+                        <ChevronRight size={12} className="opacity-0 group-hover:opacity-100 transition-opacity" />
+                      </button>
+                    </motion.div>
+                  </>
+                )}
+              </AnimatePresence>
+            </div>
           </div>
           <button
             onClick={() => setIsChatOpen(false)}

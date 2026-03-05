@@ -5,6 +5,10 @@ import os
 import json
 import asyncio
 from pathlib import Path
+from dotenv import load_dotenv
+
+# .env dosyasını yükle (Backend/.env)
+load_dotenv(Path(__file__).parent.parent / ".env")
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -109,6 +113,35 @@ async def save_config(req: AIConfigRequest):
 async def get_config(user_id: int):
     c = db.get_ai_config(user_id)
     return {"provider_type": c[0], "model_name": c[1], "api_key": c[2]}
+
+@app.get("/available-models")
+async def get_available_models():
+    models = {
+        "local": [],
+        "cloud": [
+            {"id": "llama-3.3-70b-versatile", "name": "Llama 3.3 70B (Groq)", "provider": "groq"},
+            {"id": "mixtral-8x7b-32768", "name": "Mixtral 8x7B (Groq)", "provider": "groq"},
+            {"id": "gemini-2.5-flash", "name": "Gemini 2.5 Flash", "provider": "google"},
+            {"id": "gemini-2.5-pro", "name": "Gemini 2.5 Pro", "provider": "google"},
+            {"id": "gpt-4o-mini", "name": "GPT-4o Mini", "provider": "openai"},
+            {"id": "gpt-4o", "name": "GPT-4o", "provider": "openai"},
+            {"id": "deepseek-chat", "name": "DeepSeek V3", "provider": "deepseek"},
+        ]
+    }
+    try:
+        import ollama
+        ollama_models = await asyncio.to_thread(ollama.list)
+        if "models" in ollama_models:
+            for m in ollama_models["models"]:
+                models["local"].append({
+                    "id": m["name"],
+                    "name": m["name"].split(":")[0].title() + " (Local)",
+                    "provider": "ollama"
+                })
+    except Exception as e:
+        logger.warning(f"Ollama list fetch failed: {e}")
+        
+    return models
 
 @app.post("/analyze")
 async def analyze_code(request: AnalysisRequest):

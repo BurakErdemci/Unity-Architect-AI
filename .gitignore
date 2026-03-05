@@ -1,8 +1,10 @@
 # Python
 backend/venv/
+Backend/venv/
 backend/__pycache__/
+Backend/app/__pycache__/
 backend/*.pyc
-backend/.env
+*.env
 
 # Node / Frontend
 frontend/node_modules/

@@ -74,16 +74,38 @@ class OpenAICompatibleProvider(AIProvider):
         except Exception as e:
             raise Exception(f"API Hatası: {str(e)}")
 
+import os
+
+# --- DEFAULT (Groq ücretsiz) ---
+DEFAULT_GROQ_KEY = os.environ.get("GROQ_API_KEY", "")
+DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile"
+
 class AIProviderManager:
     @staticmethod
     def get_provider(config: Dict[str, Any]) -> AIProvider:
-        p_type = config.get("provider_type", "ollama")
+        p_type = config.get("provider_type", "")
         m_name = config.get("model_name")
         api_key = config.get("api_key", "")
-        if p_type == "google":
+
+        # Kullanıcı bir provider seçtiyse onu kullan
+        if p_type == "google" and api_key:
             return GeminiProvider(api_key=api_key, model_name=m_name)
-        elif p_type == "openai":
-            return OpenAICompatibleProvider(api_key=api_key, base_url="https://api.openai.com/v1", model_name=m_name)
-        elif p_type == "deepseek":
-            return OpenAICompatibleProvider(api_key=api_key, base_url="https://api.deepseek.com", model_name=m_name)
+        elif p_type == "openai" and api_key:
+            return OpenAICompatibleProvider(api_key=api_key, base_url="https://api.openai.com/v1", model_name=m_name or "gpt-4o-mini")
+        elif p_type == "deepseek" and api_key:
+            return OpenAICompatibleProvider(api_key=api_key, base_url="https://api.deepseek.com", model_name=m_name or "deepseek-chat")
+        elif p_type == "groq":
+            groq_key = api_key if api_key else DEFAULT_GROQ_KEY
+            if groq_key:
+                return OpenAICompatibleProvider(api_key=groq_key, base_url="https://api.groq.com/openai/v1", model_name=m_name or DEFAULT_GROQ_MODEL)
+            # Eğer groq seçili ama ne user key ne de default key yoksa Ollama'ya düşer
+            return OllamaProvider(model_name=m_name)
+        elif p_type == "ollama":
+            return OllamaProvider(model_name=m_name)
+        
+        # Kullanıcı hiçbir şey seçmediyse → varsayılan Groq
+        if DEFAULT_GROQ_KEY:
+            return OpenAICompatibleProvider(api_key=DEFAULT_GROQ_KEY, base_url="https://api.groq.com/openai/v1", model_name=DEFAULT_GROQ_MODEL)
+        
+        # Groq key de yoksa → Ollama'ya düş
         return OllamaProvider(model_name=m_name)

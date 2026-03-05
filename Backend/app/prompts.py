@@ -93,9 +93,11 @@ Adım adım, numaralı liste:
 
 [YASAK KURALLAR]
 - ASLA [PERF_001], [PHYS_001] gibi iç kodları kullanma. Bunlar dahili kodlarımız, kullanıcı görmemeli.
+- ASLA sana verilen "STATİK ANALİZ SONUÇLARI" (L65, L8 gibi) listesini yanıtının başına aynen tekrar kopyalama/yazma! Sadece "⚡ Bulgular" başlığı altında kendi yorumlarını yaz.
 - ASLA "refaktör", "cache'le", "God Object" gibi teknik terimler açıklamadan kullanma.
 - ASLA kodu yarım bırakma veya "..." ile kısaltma.
 - ASLA düz metin duvarı yazma, her zaman başlıklar ve listeler kullan.
+- ASLA kod bloklarını dilsiz (```) bırakma! Her zaman ```csharp ile başlatmalısın.
 """
 
 # --- ANALİZ PROMPT ---
