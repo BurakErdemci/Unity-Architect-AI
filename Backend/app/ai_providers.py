@@ -21,15 +21,17 @@ class GeminiProvider(AIProvider):
         
         # --- AKILLI İSİM DÜZELTİCİ ---
         # 404 hatalarını önlemek için alternatif isimleri deniyoruz
-        raw_name = model_name.lower()
-        if "1.5-flash" in raw_name:
+        raw_name = model_name.lower() if model_name else ""
+        if "2.5-flash" in raw_name:
+            self.model_id = "gemini-2.5-flash"
+        elif "1.5-flash" in raw_name:
             self.model_id = "gemini-1.5-flash"
-        elif "2.0-flash" in raw_name:
-            self.model_id = "gemini-2.0-flash"
+        elif "2.0-flash" in raw_name or "2-flash" in raw_name:
+            self.model_id = "gemini-2.5-flash"  # 2.0-flash kotası 0, 2.5'e yönlendir
         elif "3-flash" in raw_name:
             self.model_id = "gemini-3-flash-preview"
         else:
-            self.model_id = model_name if model_name else "gemini-1.5-flash"
+            self.model_id = model_name if model_name else "gemini-2.5-flash"
 
         self.model = genai.GenerativeModel(self.model_id)
 

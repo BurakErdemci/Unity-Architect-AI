@@ -16,8 +16,8 @@ from analyzer import UnityAnalyzer, CodeProcessor
 from validator import ResponseValidator
 from ai_providers import AIProviderManager
 from prompts import (
-    SYSTEM_CORE, PROMPT_ANALYZER_TEMPLATE, PROMPT_OUT_OF_SCOPE, 
-    PROMPT_GREETING, UNITY_POLICIES, get_language_instr
+    SYSTEM_PROMPT, PROMPT_ANALYZE, PROMPT_OUT_OF_SCOPE,
+    PROMPT_GREETING, get_language_instr, get_relevant_rules
 )
 
 # --- VERİTABANI YOLU ---
@@ -272,25 +272,27 @@ async def chat(request: ChatRequest):
     history_messages = db.get_conversation_messages(request.conversation_id)
     lang_instr = get_language_instr(request.language)
 
-    # 8. Katmanlı prompt oluştur
+    # 8. Prompt oluştur
+    lang_instr = get_language_instr(request.language)
+    rules_str = get_relevant_rules(request.message)
+    smells_str = json.dumps(static_results['smells'], ensure_ascii=False) if static_results['smells'] else 'Statik analizde sorun bulunamadı.'
+
     try:
       if p_type == "ollama":
         # Yerel model için multi-turn messages dizisi
-        policies_str = json.dumps(UNITY_POLICIES, indent=2, ensure_ascii=False)
         messages_for_ai = [
-            {"role": "system", "content": f"{SYSTEM_CORE.format(policies=policies_str)}\n{lang_instr}"}
+            {"role": "system", "content": f"{SYSTEM_PROMPT}\n{lang_instr}"}
         ]
-        # Son 10 mesajı context olarak ekle (token limiti için)
+        # Son 10 mesajı context olarak ekle
         recent_messages = history_messages[-10:]
         for msg in recent_messages:
             messages_for_ai.append({"role": msg["role"], "content": msg["content"]})
         
         # Statik bulgular varsa ekle
         if static_results["smells"]:
-            smells_info = f"\n\n[STATİK BULGULAR]: {json.dumps(static_results['smells'], ensure_ascii=False)}"
+            smells_info = f"\n\n[KONTROL EDİLECEK KURALLAR]:\n{rules_str}\n\n[STATİK ANALİZ SONUÇLARI]:\n{smells_str}"
             messages_for_ai[-1]["content"] += smells_info
 
-        # Ollama multi-turn çağrı (non-blocking)
         import ollama
         def _ollama_call():
             return ollama.chat(model=m_name or "qwen2.5-coder:7b", messages=messages_for_ai)
@@ -300,23 +302,23 @@ async def chat(request: ChatRequest):
         )
         final_suggestion = clean_response(response['message']['content'])
       else:
-        # Bulut API için temiz tek istek (kota dostu)
+        # Bulut API için
         context_summary = ""
         recent = history_messages[-6:]
         if len(recent) > 1:
-            context_summary = "\n[ÖNCEKİ SOHBET BAĞLAMI]:\n"
-            for msg in recent[:-1]:
-                role_label = "Kullanıcı" if msg["role"] == "user" else "AI"
-                context_summary += f"- {role_label}: {msg['content'][:200]}...\n" if len(msg['content']) > 200 else f"- {role_label}: {msg['content']}\n"
+            context_summary = "\n".join(
+                f"{'Kullanıcı' if msg['role'] == 'user' else 'AI'}: {msg['content'][:200]}" 
+                for msg in recent[:-1]
+            )
 
-        prompt = f"""Sen Senior Unity Mimarsın. {lang_instr}
-{context_summary}
-[KULLANICI MESAJI]:
-{request.message}
-
-[STATİK BULGULAR]: {static_results['smells']}
-
-Kodu analiz et, [PERF_001], [PHYS_001], [LOGIC_001] kodlarıyla hataları açıkla ve düzeltilmiş TAM C# kodunu yaz."""
+        prompt = PROMPT_ANALYZE.format(
+            system_prompt=SYSTEM_PROMPT,
+            lang_instr=lang_instr,
+            context=context_summary or 'Yeni sohbet.',
+            user_message=request.message,
+            rules=rules_str,
+            smells=smells_str
+        )
         
         final_suggestion = await asyncio.to_thread(provider.analyze_code, prompt)
     except asyncio.TimeoutError:
