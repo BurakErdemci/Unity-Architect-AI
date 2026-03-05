@@ -32,7 +32,11 @@ const API = 'http://127.0.0.1:8000';
 // =====================================================================
 interface UserData { id: number; name: string; }
 interface Conversation { id: number; title: string; created_at: string; updated_at: string; }
-interface Message { id: number; role: string; content: string; smells: any[]; timestamp: string; }
+interface Message {
+  id: number; role: 'user' | 'assistant'; content: string;
+  smells: any[]; timestamp: string;
+  pipeline?: any; // Pipeline bilgisi (skor, adımlar vs.)
+}
 interface FileEntry { name: string; path: string; isDirectory: boolean; extension: string; }
 
 // IPC helper (Electron preload)
@@ -121,6 +125,10 @@ export default function HomePage() {
   const [isDragging, setIsDragging] = useState(false);
   const [dragRejectMsg, setDragRejectMsg] = useState('');
 
+  // --- WORKSPACE ---
+  const [workspacePath, setWorkspacePath] = useState<string | null>(null);
+  const [lastWorkspacePath, setLastWorkspacePath] = useState<string | null>(null);
+
   // --- FILE BROWSER ---
   const [rootFolderPath, setRootFolderPath] = useState<string | null>(null);
   const [fileTree, setFileTree] = useState<FileEntry[]>([]);
@@ -155,6 +163,7 @@ export default function HomePage() {
       fetchConversations(user.id);
       fetchAIConfig(user.id);
       fetchAvailableModels();
+      fetchLastWorkspace(user.id);
     }
   }, [user]);
 
@@ -185,6 +194,51 @@ export default function HomePage() {
       const res = await axios.get(`${API}/available-models`);
       if (res.data) setAvailableModels(res.data);
     } catch (err) { console.error("Modeller alınamadı:", err); }
+  };
+
+  // --- WORKSPACE FUNCTIONS ---
+  const fetchLastWorkspace = async (userId: number) => {
+    try {
+      const res = await axios.get(`${API}/last-workspace/${userId}`);
+      if (res.data?.path) setLastWorkspacePath(res.data.path);
+    } catch (err) { console.error("Last workspace hatası:", err); }
+  };
+
+  const selectWorkspace = async (path: string) => {
+    setWorkspacePath(path);
+    setRootFolderPath(path);
+    if (ipc) {
+      const entries = await ipc.invoke('read-directory', path);
+      setFileTree(entries || []);
+    }
+    setExpandedDirs(new Set());
+    setDirContents({});
+    setSidebarTab('files');
+    if (user) {
+      try { await axios.post(`${API}/save-workspace`, { user_id: user.id, path }); } catch { }
+    }
+  };
+
+  const closeWorkspace = () => {
+    setWorkspacePath(null);
+    setRootFolderPath(null);
+    setFileTree([]);
+    setExpandedDirs(new Set());
+    setDirContents({});
+    setOpenedFilePath(null);
+    setCode('');
+  };
+
+  const handleLogout = () => {
+    setUser(null);
+    setWorkspacePath(null);
+    setLastWorkspacePath(null);
+    setRootFolderPath(null);
+    setFileTree([]);
+    setConversations([]);
+    setMessages([]);
+    setActiveConvId(null);
+    setCode('');
   };
 
   const handleAuth = async () => {
@@ -259,12 +313,7 @@ export default function HomePage() {
     if (!ipc) return;
     const folderPath = await ipc.invoke('open-folder-dialog');
     if (folderPath) {
-      setRootFolderPath(folderPath);
-      const entries = await ipc.invoke('read-directory', folderPath);
-      setFileTree(entries || []);
-      setExpandedDirs(new Set());
-      setDirContents({});
-      setSidebarTab('files');
+      await selectWorkspace(folderPath);
     }
   };
 
@@ -421,7 +470,8 @@ export default function HomePage() {
         role: 'assistant',
         content: res.data.content,
         smells: res.data.static_results?.smells || [],
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        pipeline: res.data.pipeline || null
       };
       setMessages(prev => [...prev, aiMsg]);
       fetchConversations(user.id); // Başlık güncellenmiş olabilir
@@ -514,6 +564,83 @@ export default function HomePage() {
   }
 
   // =====================================================================
+  //                   WORKSPACE SEÇİM EKRANI
+  // =====================================================================
+  if (!workspacePath) {
+    const openWorkspaceDialog = async () => {
+      if (!ipc) return;
+      const folderPath = await ipc.invoke('open-folder-dialog');
+      if (folderPath) {
+        await selectWorkspace(folderPath);
+      }
+    };
+
+    return (
+      <div className="h-screen flex items-center justify-center bg-[#0e0e10] text-white">
+        <Head><title>Unity Architect AI | Workspace</title></Head>
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-[#18181b] p-10 rounded-2xl border border-slate-800/60 w-[480px] shadow-2xl"
+        >
+          <div className="flex flex-col items-center gap-4 mb-8 text-center">
+            <div className="bg-gradient-to-br from-blue-600 to-violet-600 p-4 rounded-2xl shadow-lg shadow-blue-900/30">
+              <FolderOpen size={36} />
+            </div>
+            <div>
+              <h1 className="text-xl font-extrabold tracking-tight">
+                Hoş geldin, <span className="text-blue-500">{user.name}</span>
+              </h1>
+              <p className="text-slate-500 text-[11px] font-medium mt-1">
+                Başlamak için çalışma alanını seç
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            {/* Klasör Seç Butonu */}
+            <button
+              onClick={openWorkspaceDialog}
+              className="w-full flex items-center justify-center gap-2.5 bg-blue-600 hover:bg-blue-500 text-white p-4 rounded-xl font-bold text-sm tracking-wide transition-all active:scale-[0.98]"
+            >
+              <FolderOpen size={18} />
+              Klasör Seç
+            </button>
+
+            {/* Son Açılan Workspace */}
+            {lastWorkspacePath && (
+              <button
+                onClick={() => selectWorkspace(lastWorkspacePath)}
+                className="w-full flex items-center gap-3 bg-[#0e0e10] hover:bg-slate-800/60 border border-slate-800 p-4 rounded-xl transition-all group"
+              >
+                <div className="bg-slate-800 p-2 rounded-lg group-hover:bg-blue-600/20 transition-colors">
+                  <Clock size={16} className="text-slate-400 group-hover:text-blue-400" />
+                </div>
+                <div className="text-left flex-1 min-w-0">
+                  <p className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider">Son Açılan</p>
+                  <p className="text-[12px] text-slate-300 font-medium truncate mt-0.5">
+                    {lastWorkspacePath.split('/').slice(-2).join('/')}
+                  </p>
+                </div>
+                <ChevronRight size={14} className="text-slate-600 group-hover:text-blue-400" />
+              </button>
+            )}
+
+            {/* Çıkış Yap */}
+            <button
+              onClick={handleLogout}
+              className="w-full flex items-center justify-center gap-2 text-[11px] font-medium text-slate-500 hover:text-red-400 transition-colors py-3 mt-2"
+            >
+              <LogOut size={13} />
+              Çıkış Yap
+            </button>
+          </div>
+        </motion.div>
+      </div>
+    );
+  }
+
+  // =====================================================================
   //                       ANA UYGULAMA
   // =====================================================================
   return (
@@ -596,6 +723,23 @@ export default function HomePage() {
         transition={{ duration: 0.2 }}
         className="bg-[#18181b] border-r border-slate-800/50 flex flex-col overflow-hidden z-20 shrink-0"
       >
+        {/* Workspace Header */}
+        <div className="flex items-center justify-between px-3 py-2 border-b border-slate-800/50 min-w-[260px] bg-[#18181b]">
+          <div className="flex items-center gap-2 flex-1 min-w-0">
+            <Folder size={13} className="text-blue-500 shrink-0" />
+            <span className="text-[11px] text-slate-300 font-medium truncate">
+              {workspacePath?.split('/').pop() || 'Workspace'}
+            </span>
+          </div>
+          <button
+            onClick={closeWorkspace}
+            className="p-1 hover:bg-red-900/30 rounded text-slate-600 hover:text-red-400 transition-all"
+            title="Çalışma alanını kapat"
+          >
+            <X size={13} />
+          </button>
+        </div>
+
         {/* Sidebar Tabs */}
         <div className="flex border-b border-slate-800/50 min-w-[260px]">
           <button
@@ -999,6 +1143,35 @@ export default function HomePage() {
                             </div>
                           </div>
                         )}
+                        {/* Pipeline Skor Badge */}
+                        {msg.pipeline && (
+                          <div className="mb-3 bg-[#0e0e10] rounded-lg border border-blue-500/20 p-3">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-3">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-[18px] font-bold text-white">{msg.pipeline.score}</span>
+                                  <span className="text-[11px] text-slate-500">/10</span>
+                                </div>
+                                <div className="flex items-center gap-2 text-[10px]">
+                                  {msg.pipeline.severity_counts?.critical > 0 && (
+                                    <span className="text-red-400">🔴 {msg.pipeline.severity_counts.critical}</span>
+                                  )}
+                                  {msg.pipeline.severity_counts?.warning > 0 && (
+                                    <span className="text-yellow-400">🟡 {msg.pipeline.severity_counts.warning}</span>
+                                  )}
+                                  {msg.pipeline.severity_counts?.info > 0 && (
+                                    <span className="text-blue-400">🔵 {msg.pipeline.severity_counts.info}</span>
+                                  )}
+                                </div>
+                              </div>
+                              <div className="text-[9px] text-slate-600 flex items-center gap-1">
+                                <span>⚡ {(msg.pipeline.total_duration_ms / 1000).toFixed(1)}s</span>
+                                <span>•</span>
+                                <span>3 adım</span>
+                              </div>
+                            </div>
+                          </div>
+                        )}
                         {/* AI Yanıt İçeriği */}
                         <div className="prose prose-invert max-w-none text-[13px] leading-relaxed prose-p:my-2 prose-headings:my-3 prose-ul:my-2 prose-li:my-0.5">
                           <MarkdownRenderer content={msg.content} />
@@ -1041,22 +1214,9 @@ export default function HomePage() {
         {/* Chat Input */}
         {activeConvId && (
           <div className="p-3 border-t border-slate-800/50 min-w-[420px] shrink-0">
-            {!code.trim() ? (
-              /* Dosya yüklenmemiş — uyarı göster */
-              <div className="bg-[#0e0e10] border border-slate-800/60 rounded-xl px-4 py-3 flex items-center gap-3">
-                <Upload size={16} className="text-slate-600 shrink-0" />
-                <span className="text-[12px] text-slate-500 flex-1">Önce bir C# dosyası yükleyin</span>
-                <button
-                  onClick={openFilePicker}
-                  className="text-[10px] bg-blue-600/20 text-blue-400 px-3 py-1.5 rounded-lg hover:bg-blue-600/30 font-semibold transition-colors"
-                >
-                  Dosya Seç
-                </button>
-              </div>
-            ) : (
-              /* Dosya yüklü — file chip + chat input */
-              <div className="bg-[#0e0e10] border border-slate-800 rounded-xl transition-colors focus-within:border-blue-500/30">
-                {/* File Chip */}
+            <div className="bg-[#0e0e10] border border-slate-800 rounded-xl transition-colors focus-within:border-blue-500/30">
+              {/* File Chip (sadece dosya yüklüyse göster) */}
+              {code.trim() && (
                 <div className="px-3 pt-2.5 pb-1">
                   <div className="inline-flex items-center gap-2 bg-slate-800/60 border border-slate-700/50 rounded-lg px-2.5 py-1.5 max-w-[280px] group">
                     <Code2 size={13} className="text-blue-400 shrink-0" />
@@ -1074,28 +1234,31 @@ export default function HomePage() {
                     </button>
                   </div>
                 </div>
-                {/* Chat textarea */}
-                <div className="flex items-end">
-                  <textarea
-                    ref={chatInputRef}
-                    value={chatInput}
-                    onChange={(e) => setChatInput(e.target.value)}
-                    onKeyDown={handleKeyDown}
-                    placeholder={messages.length === 0 ? 'Bu kodu analiz et...' : 'Devam mesajı yazın...'}
-                    rows={1}
-                    className="flex-1 bg-transparent px-3.5 py-2.5 text-[13px] outline-none resize-none text-slate-200 placeholder:text-slate-600 max-h-32"
-                    style={{ color: 'white' }}
-                  />
-                  <button
-                    onClick={sendMessage}
-                    disabled={loading || !chatInput.trim()}
-                    className="p-2.5 m-1 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:bg-slate-800 disabled:text-slate-600 text-white transition-all"
-                  >
-                    <Send size={14} />
-                  </button>
-                </div>
+              )}
+              {/* Chat textarea — her zaman görünür */}
+              <div className="flex items-end">
+                <textarea
+                  ref={chatInputRef}
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder={code.trim()
+                    ? (messages.length === 0 ? 'Bu kodu analiz et...' : 'Devam mesajı yazın...')
+                    : 'Unity hakkında soru sorun veya kod yapıştırın...'
+                  }
+                  rows={1}
+                  className="flex-1 bg-transparent px-3.5 py-2.5 text-[13px] outline-none resize-none text-slate-200 placeholder:text-slate-600 max-h-32"
+                  style={{ color: 'white' }}
+                />
+                <button
+                  onClick={sendMessage}
+                  disabled={loading || !chatInput.trim()}
+                  className="p-2.5 m-1 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:bg-slate-800 disabled:text-slate-600 text-white transition-all"
+                >
+                  <Send size={14} />
+                </button>
               </div>
-            )}
+            </div>
           </div>
         )
         }

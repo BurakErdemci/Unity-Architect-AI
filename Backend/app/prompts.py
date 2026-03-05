@@ -3,7 +3,7 @@ import json
 def get_language_instr(language: str):
     return "Lütfen yanıtını tamamen TÜRKÇE olarak ver." if language == "tr" else "Respond in ENGLISH."
 
-# --- DAHİLİ KURALLAR (AI'a gönderilir ama kullanıcıya gösterilmez) ---
+# --- DAHİLİ KURALLAR  ---
 UNITY_RULES = {
     "performance": [
         "Update/FixedUpdate içinde GetComponent, Find, FindObjectOfType kullanılmamalı. Awake veya Start'ta bir değişkene atanmalı.",
@@ -130,3 +130,114 @@ C# kodunu gönder veya bir dosya sürükle, birlikte inceleyelim! Kodundaki soru
 PROMPT_OUT_OF_SCOPE = """Hmm, bu konu benim uzmanlık alanımın dışında kalıyor 😅
 
 Ben sadece **Unity ve C#** konularında yardımcı olabiliyorum. Eğer bir Unity scriptin varsa gönder, birlikte inceleyelim!"""
+
+
+# ═══════════════════════════════════════════════════════════════
+# PIPELINE PROMPT'LARI — Kademeli analiz için ayrı prompt'lar
+# ═══════════════════════════════════════════════════════════════
+
+# --- STEP 2: DERİN ANALİZ (Sadece açıklama, KOD YAZMA) ---
+PROMPT_DEEP_ANALYSIS = """{system_prompt}
+
+{lang_instr}
+
+[GÖREV]
+Sana bir Unity C# kodu ve statik analiz sonuçları veriliyor.
+Görevin SADECE kodun sorunlarını AÇIKLAMAK. Düzeltilmiş kod YAZMA — o sonraki adımda yapılacak.
+
+[ÖNCEKİ SOHBET]
+{context}
+
+[KULLANICI MESAJI]
+{user_message}
+
+[STATİK ANALİZ RAPORU]
+Puan: {score}/10
+Özet: {summary}
+Severity: 🔴 {critical} kritik, 🟡 {warnings} uyarı, 🔵 {infos} bilgi
+Detaylı bulgular: {smells}
+
+[KONTROL EDİLECEK KURALLAR]
+{rules}
+
+{learned_rules}
+
+[FORMAT — AYNEN BU ŞEKİLDE YAZ, SATIRLARI BİRBİRİNE YAPIŞTIRMA]
+
+Yanıtını AYNEN şu formatta ver (her başlık öncesi boş satır bırak):
+
+## 📊 Puan: {score}/10
+
+### ⚡ Bulgular
+
+Her bulgu için bu yapıyı kullan (aralarında boş satır olmalı):
+
+#### 1. ⚠️ [Kategori]: [Kısa açıklama]
+
+[Benzetme ile açıklama — 1-2 cümle]
+
+❌ **Yanlış:**
+```csharp
+// yanlış kodu buraya yaz
+```
+
+✅ **Doğru:**
+```csharp
+// doğru kodu buraya yaz
+```
+
+---
+
+#### 2. 🔧 [Kategori]: [Kısa açıklama]
+
+... (aynı yapıda devam)
+
+---
+
+### 🎮 Unity Editor'de Yapılacaklar
+
+1. **[Adım başlığı]**
+   *Açıklama*
+
+2. **[Adım başlığı]**
+   *Açıklama*
+
+⚠️ ÖNEMLİ: Bu adımda "✅ Düzeltilmiş Kod" bölümü YAZMA! Sadece bulguları ve açıklamaları yaz.
+⚠️ ÖNEMLİ: Aynı türden bulguları (örn: 7 tane public field) TEK BİR bulgu altında grupla, her birini ayrı ayrı yazma!"""
+
+
+# --- STEP 3: KOD DÜZELTMESİ (Sadece kod, AÇIKLAMA YAPMA) ---
+PROMPT_CODE_FIX = """{lang_instr}
+
+[GÖREV]
+Sana bir Unity C# kodu ve onun analiz sonuçları veriliyor.
+Görevin SADECE düzeltilmiş, tam, çalışan C# kodunu üretmek.
+AÇIKLAMA YAPMA, YORUM YAZMA (sadece 1 satırlık kısa kod-içi yorumlar OK).
+
+[ORİJİNAL KOD]
+```csharp
+{original_code}
+```
+
+[TESPİT EDİLEN SORUNLAR]
+{analysis_summary}
+
+[KONTROL EDİLECEK KURALLAR]
+{rules}
+
+{learned_rules}
+
+[FORMAT]
+Yanıtını TAM OLARAK şu formatta ver:
+
+### ✅ Düzeltilmiş Kod
+```csharp
+// Buraya düzeltilmiş tam kodu yaz
+```
+
+KURALLAR:
+- Kodu ASLA yarım bırakma veya "..." ile kısaltma
+- ASLA başlık, açıklama, veya ek metin ekleme — sadece yukarıdaki format
+- Her düzeltmenin yanına kısa, 1 satırlık yorum ekle (// şeklinde)
+- Tüm statik analiz bulgularını düzelt
+- Object Pooling gerekiyorsa temel bir pooling sistemi kur, "// pooling kurulacak" yazıp bırakma"""

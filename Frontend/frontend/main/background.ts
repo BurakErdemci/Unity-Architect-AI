@@ -65,6 +65,19 @@ ipcMain.handle('read-file', async (_event, filePath: string) => {
   } catch { return null }
 })
 
+ipcMain.handle('write-file', async (_event, filePath: string, content: string) => {
+  try {
+    const dir = path.dirname(filePath)
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true })
+    }
+    fs.writeFileSync(filePath, content, 'utf-8')
+    return { success: true, path: filePath }
+  } catch (err: any) {
+    return { success: false, error: err.message }
+  }
+})
+
 // --- AKILLI BACKEND KONTROLÜ ---
 async function startPythonBackend() {
   try {
@@ -93,29 +106,63 @@ async function startPythonBackend() {
     console.error('Python başlatılamadı:', err);
   });
 }
-; (async () => {
-  await app.whenReady()
-  await startPythonBackend();
 
-  const mainWindow = createWindow('main', {
-    width: 1280,
-    height: 850,
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-    },
+// --- TEK INSTANCE KİLİDİ (Nextron çift restart'ı önler) ---
+const gotTheLock = app.requestSingleInstanceLock()
+
+if (!gotTheLock) {
+  // İkinci instance — sessizce çık, ilk instance zaten çalışıyor
+  console.log('--- BAŞKA BİR INSTANCE ZATEN ÇALIŞIYOR, ÇIKILIYOR ---')
+  app.quit()
+} else {
+  // İlk instance — normal başlat
+  app.on('second-instance', () => {
+    // İkinci instance başlatılmaya çalışıldığında, mevcut pencereye focus ver
+    const allWindows = require('electron').BrowserWindow.getAllWindows()
+    if (allWindows.length > 0) {
+      const win = allWindows[0]
+      if (win.isMinimized()) win.restore()
+      win.focus()
+    }
   })
 
-  if (isProd) {
-    await mainWindow.loadURL('app://./home')
-  } else {
-    const port = process.argv[2]
-    await mainWindow.loadURL(`http://localhost:${port}/home`)
-  }
-})()
+    ; (async () => {
+      await app.whenReady()
+      await startPythonBackend();
 
-app.on('window-all-closed', () => {
-  if (isProd && pyBackendProcess) {
-    pyBackendProcess.kill();
-  }
-  app.quit();
-})
+      const mainWindow = createWindow('main', {
+        width: 1280,
+        height: 850,
+        webPreferences: {
+          preload: path.join(__dirname, 'preload.js'),
+        },
+      })
+
+      if (isProd) {
+        await mainWindow.loadURL('app://./home')
+      } else {
+        const port = process.argv[2]
+        // Retry logic — sayfa hazır olmayabilir
+        const maxRetries = 5
+        for (let i = 0; i < maxRetries; i++) {
+          try {
+            await mainWindow.loadURL(`http://localhost:${port}/home`)
+            break // Başarılı, döngüden çık
+          } catch (err) {
+            console.log(`--- SAYFA YÜKLENEMEDI (deneme ${i + 1}/${maxRetries}), 1sn bekleniyor... ---`)
+            if (i === maxRetries - 1) {
+              console.error('--- SAYFA YÜKLENEMEDI, son deneme de başarısız ---')
+            }
+            await new Promise(resolve => setTimeout(resolve, 1000))
+          }
+        }
+      }
+    })()
+
+  app.on('window-all-closed', () => {
+    if (isProd && pyBackendProcess) {
+      pyBackendProcess.kill();
+    }
+    app.quit();
+  })
+}

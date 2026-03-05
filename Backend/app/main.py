@@ -19,6 +19,8 @@ from database import DatabaseManager
 from analyzer import UnityAnalyzer, CodeProcessor
 from validator import ResponseValidator
 from ai_providers import AIProviderManager
+from pipeline import AnalysisPipeline
+from report_engine import ReportEngine
 from prompts import (
     SYSTEM_PROMPT, PROMPT_ANALYZE, PROMPT_OUT_OF_SCOPE,
     PROMPT_GREETING, get_language_instr, get_relevant_rules
@@ -78,6 +80,15 @@ class ChatRequest(BaseModel):
     message: str
     language: str = "tr"
     user_id: int
+
+class WorkspaceRequest(BaseModel):
+    user_id: int
+    path: str
+
+class WriteFileRequest(BaseModel):
+    file_path: str
+    content: str
+    workspace_path: str  # Güvenlik: dosya bu workspace içinde olmalı
 
 # --- YARDIMCI FONKSİYONLAR ---
 def clean_response(text: str) -> str:
@@ -226,7 +237,40 @@ async def update_file(req: UpdateFileRequest):
         raise HTTPException(500, str(e))
 
 # =====================================================================
-#                   YENİ ENDPOINTLER (Chat Sistemi)
+#                   WORKSPACE ENDPOINTLERİ
+# =====================================================================
+
+@app.post("/save-workspace")
+async def save_workspace(req: WorkspaceRequest):
+    """Kullanıcının workspace yolunu kaydeder."""
+    db.save_workspace(req.user_id, req.path)
+    return {"status": "success"}
+
+@app.get("/last-workspace/{user_id}")
+async def get_last_workspace(user_id: int):
+    """Kullanıcının en son açtığı workspace yolunu getirir."""
+    path = db.get_last_workspace(user_id)
+    return {"path": path}
+
+@app.post("/write-file")
+async def write_file(req: WriteFileRequest):
+    """AI tarafından üretilen dosyayı workspace'e yazar."""
+    # Güvenlik: dosya workspace dışına yazılmasın
+    abs_file = os.path.abspath(req.file_path)
+    abs_workspace = os.path.abspath(req.workspace_path)
+    if not abs_file.startswith(abs_workspace):
+        raise HTTPException(403, "Dosya workspace dışına yazılamaz!")
+    
+    try:
+        os.makedirs(os.path.dirname(abs_file), exist_ok=True)
+        with open(abs_file, 'w', encoding='utf-8') as f:
+            f.write(req.content)
+        return {"status": "success", "path": abs_file}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+# =====================================================================
+#                   YENİ ENDPOINTLERİ (Chat Sistemi)
 # =====================================================================
 
 @app.post("/conversations")
@@ -260,8 +304,8 @@ async def rename_conversation(conv_id: int, req: RenameRequest):
 @app.post("/chat")
 async def chat(request: ChatRequest):
     """
-    Chat endpoint — Mesaj gönder, AI yanıtı al, ikisini de kaydet.
-    Sohbet geçmişini context olarak AI'a gönderir.
+    Chat endpoint — Kademeli Pipeline ile analiz.
+    Step 1: Statik Analiz (Python) → Step 2: AI Derin Analiz → Step 3: AI Kod Düzeltme
     """
     logger.info(f"Chat İsteği - User: {request.user_id}, Conv: {request.conversation_id}")
 
@@ -279,7 +323,8 @@ async def chat(request: ChatRequest):
             "role": "assistant",
             "content": PROMPT_GREETING,
             "intent": "GREETING",
-            "static_results": {"smells": []}
+            "static_results": {"smells": []},
+            "pipeline": None
         }
 
     # 4. Kapsam dışı kontrolü
@@ -289,80 +334,78 @@ async def chat(request: ChatRequest):
             "role": "assistant",
             "content": PROMPT_OUT_OF_SCOPE,
             "intent": "OUT_OF_SCOPE",
-            "static_results": {"smells": []}
+            "static_results": {"smells": []},
+            "pipeline": None
         }
 
     # 5. AI Sağlayıcısını hazırla
     p_type, m_name, api_key = db.get_ai_config(request.user_id)
     provider = AIProviderManager.get_provider({"provider_type": p_type, "model_name": m_name, "api_key": api_key})
 
-    # 6. Statik analiz (C# kodu varsa)
-    static_results = {"smells": [], "stats": {"total_lines": 0, "class_name": "Analiz"}}
-    if is_csharp:
-        static_results = UnityAnalyzer(request.message).analyze()
-
-    # 7. Sohbet geçmişini yükle (context için)
+    # 6. Sohbet geçmişini yükle (context için)
     history_messages = db.get_conversation_messages(request.conversation_id)
-    lang_instr = get_language_instr(request.language)
-
-    # 8. Prompt oluştur
-    lang_instr = get_language_instr(request.language)
-    rules_str = get_relevant_rules(request.message)
-    smells_str = json.dumps(static_results['smells'], ensure_ascii=False) if static_results['smells'] else 'Statik analizde sorun bulunamadı.'
-
-    try:
-      if p_type == "ollama":
-        # Yerel model için multi-turn messages dizisi
-        messages_for_ai = [
-            {"role": "system", "content": f"{SYSTEM_PROMPT}\n{lang_instr}"}
-        ]
-        # Son 10 mesajı context olarak ekle
-        recent_messages = history_messages[-10:]
-        for msg in recent_messages:
-            messages_for_ai.append({"role": msg["role"], "content": msg["content"]})
-        
-        # Statik bulgular varsa ekle
-        if static_results["smells"]:
-            smells_info = f"\n\n[KONTROL EDİLECEK KURALLAR]:\n{rules_str}\n\n[STATİK ANALİZ SONUÇLARI]:\n{smells_str}"
-            messages_for_ai[-1]["content"] += smells_info
-
-        import ollama
-        def _ollama_call():
-            return ollama.chat(model=m_name or "qwen2.5-coder:7b", messages=messages_for_ai)
-        
-        response = await asyncio.wait_for(
-            asyncio.to_thread(_ollama_call), timeout=120
+    context_summary = ""
+    recent = history_messages[-6:]
+    if len(recent) > 1:
+        context_summary = "\n".join(
+            f"{'Kullanıcı' if msg['role'] == 'user' else 'AI'}: {msg['content'][:200]}"
+            for msg in recent[:-1]
         )
-        final_suggestion = clean_response(response['message']['content'])
-      else:
-        # Bulut API için
-        context_summary = ""
-        recent = history_messages[-6:]
-        if len(recent) > 1:
-            context_summary = "\n".join(
-                f"{'Kullanıcı' if msg['role'] == 'user' else 'AI'}: {msg['content'][:200]}" 
-                for msg in recent[:-1]
+
+    # 7. C# kodu varsa → Kademeli Pipeline çalıştır
+    if is_csharp:
+        try:
+            pipeline = AnalysisPipeline(
+                code=request.message,
+                provider=provider,
+                language=request.language,
+                context=context_summary or "Yeni sohbet.",
+                learned_rules="",  # Feedback sistemi eklenince buraya gelecek
+                user_message=request.message,
+                provider_type=p_type,
             )
+
+            result = await asyncio.wait_for(pipeline.run(), timeout=180)
+
+            final_suggestion = result.combined_response
+            static_results = result.step1_static.output if result.step1_static and result.step1_static.output else {"smells": [], "stats": {}}
+            pipeline_info = result.to_dict()
+
+        except asyncio.TimeoutError:
+            final_suggestion = "⏱️ Pipeline süresi aşıldı (180 saniye). Lütfen daha kısa bir kod deneyin veya daha hafif bir model seçin."
+            static_results = {"smells": [], "stats": {}}
+            pipeline_info = None
+        except Exception as e:
+            logger.error(f"Pipeline hatası: {e}")
+            final_suggestion = f"❌ Pipeline Hatası: {str(e)}"
+            static_results = {"smells": [], "stats": {}}
+            pipeline_info = None
+    else:
+        # C# kodu değilse → Basit tek adımlı AI çağrısı (soru-cevap)
+        lang_instr = get_language_instr(request.language)
+        rules_str = get_relevant_rules(request.message)
 
         prompt = PROMPT_ANALYZE.format(
             system_prompt=SYSTEM_PROMPT,
             lang_instr=lang_instr,
-            context=context_summary or 'Yeni sohbet.',
+            context=context_summary or "Yeni sohbet.",
             user_message=request.message,
             rules=rules_str,
-            smells=smells_str
+            smells="Kod gönderilmedi, genel soru."
         )
-        
-        final_suggestion = await asyncio.to_thread(provider.analyze_code, prompt)
-    except asyncio.TimeoutError:
-        final_suggestion = "⏱️ AI yanıt süresi aşıldı (120 saniye). Lütfen daha kısa bir kod deneyin veya daha hafif bir model seçin."
-    except Exception as e:
-        final_suggestion = f"❌ AI Hatası: {str(e)}"
 
-    # 9. AI yanıtını kaydet
+        try:
+            final_suggestion = await asyncio.to_thread(provider.analyze_code, prompt)
+        except Exception as e:
+            final_suggestion = f"❌ AI Hatası: {str(e)}"
+
+        static_results = {"smells": [], "stats": {}}
+        pipeline_info = None
+
+    # 8. AI yanıtını kaydet
     db.add_message(request.conversation_id, "assistant", final_suggestion, static_results.get("smells", []))
 
-    # 10. Sohbet başlığını otomatik güncelle (ilk mesajsa)
+    # 9. Sohbet başlığını otomatik güncelle (ilk mesajsa)
     if len(history_messages) <= 1:
         auto_title = request.message[:40].strip()
         if len(request.message) > 40:
@@ -373,7 +416,8 @@ async def chat(request: ChatRequest):
         "role": "assistant",
         "content": final_suggestion,
         "intent": intent,
-        "static_results": static_results
+        "static_results": static_results,
+        "pipeline": pipeline_info
     }
 
 if __name__ == "__main__":

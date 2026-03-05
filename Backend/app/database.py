@@ -155,3 +155,45 @@ class DatabaseManager:
                 {"id": r[0], "role": r[1], "content": r[2], "smells": json.loads(r[3]), "timestamp": r[4]}
                 for r in rows
             ]
+
+    # ===================== WORKSPACE =====================
+    def _ensure_workspace_table(self):
+        """Workspace tablosunu oluştur (mevcut DB'lerle geriye uyumlu)."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute('''CREATE TABLE IF NOT EXISTS workspaces (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                path TEXT NOT NULL,
+                last_accessed TEXT NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users (id))''')
+            conn.commit()
+
+    def save_workspace(self, user_id: int, path: str) -> None:
+        """Kullanıcının workspace yolunu kaydet/güncelle."""
+        self._ensure_workspace_table()
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with sqlite3.connect(self.db_path) as conn:
+            # Aynı kullanıcı + aynı path var mı?
+            existing = conn.execute(
+                'SELECT id FROM workspaces WHERE user_id = ? AND path = ?', (user_id, path)
+            ).fetchone()
+            if existing:
+                conn.execute(
+                    'UPDATE workspaces SET last_accessed = ? WHERE id = ?', (now, existing[0])
+                )
+            else:
+                conn.execute(
+                    'INSERT INTO workspaces (user_id, path, last_accessed) VALUES (?, ?, ?)',
+                    (user_id, path, now)
+                )
+            conn.commit()
+
+    def get_last_workspace(self, user_id: int) -> Optional[str]:
+        """Kullanıcının en son açtığı workspace yolunu döndürür."""
+        self._ensure_workspace_table()
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute(
+                'SELECT path FROM workspaces WHERE user_id = ? ORDER BY last_accessed DESC, id DESC LIMIT 1',
+                (user_id,)
+            ).fetchone()
+            return row[0] if row else None
