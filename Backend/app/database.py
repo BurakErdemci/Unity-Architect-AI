@@ -19,8 +19,14 @@ class DatabaseManager:
             cursor.execute('CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, password_hash TEXT)')
             # AI Ayarları
             cursor.execute('''CREATE TABLE IF NOT EXISTS ai_configs (
-                user_id INTEGER PRIMARY KEY, provider_type TEXT, model_name TEXT, api_key TEXT,
+                user_id INTEGER PRIMARY KEY, provider_type TEXT, model_name TEXT, api_key TEXT, use_multi_agent INTEGER DEFAULT 1,
                 FOREIGN KEY (user_id) REFERENCES users (id))''')
+            
+            # Migration: Add use_multi_agent column to existing tables
+            try:
+                cursor.execute("ALTER TABLE ai_configs ADD COLUMN use_multi_agent INTEGER DEFAULT 1")
+            except sqlite3.OperationalError:
+                pass # Sütun zaten var
             # Eski Geçmiş (geriye uyumluluk)
             cursor.execute('''CREATE TABLE IF NOT EXISTS history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, timestamp TEXT, title TEXT,
@@ -63,16 +69,18 @@ class DatabaseManager:
             return None
 
     # ===================== AI CONFIG =====================
-    def save_ai_config(self, user_id: int, p_type: str, m_name: str, key: str) -> None:
+    def save_ai_config(self, user_id: int, p_type: str, m_name: str, key: str, use_multi_agent: bool = True) -> None:
         with sqlite3.connect(self.db_path) as conn:
-            conn.execute('INSERT OR REPLACE INTO ai_configs (user_id, provider_type, model_name, api_key) VALUES (?, ?, ?, ?)',
-                         (user_id, p_type, m_name, key))
+            conn.execute('INSERT OR REPLACE INTO ai_configs (user_id, provider_type, model_name, api_key, use_multi_agent) VALUES (?, ?, ?, ?, ?)',
+                         (user_id, p_type, m_name, key, 1 if use_multi_agent else 0))
             conn.commit()
 
-    def get_ai_config(self, user_id: int) -> Tuple[str, str, str]:
+    def get_ai_config(self, user_id: int) -> Tuple[str, str, str, bool]:
         with sqlite3.connect(self.db_path) as conn:
-            res = conn.execute('SELECT provider_type, model_name, api_key FROM ai_configs WHERE user_id = ?', (user_id,)).fetchone()
-            return res if res else ("ollama", "qwen2.5-coder:7b", "")
+            res = conn.execute('SELECT provider_type, model_name, api_key, use_multi_agent FROM ai_configs WHERE user_id = ?', (user_id,)).fetchone()
+            if res:
+                return (res[0], res[1], res[2], bool(res[3]))
+            return ("ollama", "qwen2.5-coder:7b", "", True)
 
     # ===================== ESKİ GEÇMİŞ (Geriye Uyumluluk) =====================
     def save_analysis(self, user_id: int, title: str, intent: str, code: str, suggestion: str, smells: list) -> None:

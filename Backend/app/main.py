@@ -19,7 +19,7 @@ from database import DatabaseManager
 from analyzer import UnityAnalyzer, CodeProcessor
 from validator import ResponseValidator
 from ai_providers import AIProviderManager
-from pipeline import AnalysisPipeline
+from pipelines import SingleAgentPipeline, MultiAgentPipeline, CodeGenerationPipeline
 from report_engine import ReportEngine
 from prompts import (
     SYSTEM_PROMPT, PROMPT_ANALYZE, PROMPT_OUT_OF_SCOPE,
@@ -62,6 +62,7 @@ class AIConfigRequest(BaseModel):
     provider_type: str
     model_name: str
     api_key: str
+    use_multi_agent: bool = True
 
 class UpdateFileRequest(BaseModel):
     file_path: str
@@ -80,6 +81,7 @@ class ChatRequest(BaseModel):
     message: str
     language: str = "tr"
     user_id: int
+    mode: str = "analysis"
 
 class WorkspaceRequest(BaseModel):
     user_id: int
@@ -117,19 +119,22 @@ async def login(req: AuthRequest):
 
 @app.post("/save-ai-config")
 async def save_config(req: AIConfigRequest):
-    db.save_ai_config(req.user_id, req.provider_type, req.model_name, req.api_key)
+    db.save_ai_config(req.user_id, req.provider_type, req.model_name, req.api_key, req.use_multi_agent)
     return {"status": "success"}
 
 @app.get("/get-ai-config/{user_id}")
 async def get_config(user_id: int):
     c = db.get_ai_config(user_id)
-    return {"provider_type": c[0], "model_name": c[1], "api_key": c[2]}
+    return {"provider_type": c[0], "model_name": c[1], "api_key": c[2], "use_multi_agent": c[3]}
 
 @app.get("/available-models")
 async def get_available_models():
     models = {
         "local": [],
         "cloud": [
+            {"id": "claude-sonnet-4-6", "name": "Claude 4.6 Sonnet", "provider": "anthropic"},
+            {"id": "claude-opus-4-6", "name": "Claude 4.6 Opus", "provider": "anthropic"},
+            {"id": "claude-haiku-4-6", "name": "Claude 4.6 Haiku", "provider": "anthropic"},
             {"id": "llama-3.3-70b-versatile", "name": "Llama 3.3 70B (Groq)", "provider": "groq"},
             {"id": "mixtral-8x7b-32768", "name": "Mixtral 8x7B (Groq)", "provider": "groq"},
             {"id": "gemini-2.5-flash", "name": "Gemini 2.5 Flash", "provider": "google"},
@@ -164,7 +169,7 @@ async def analyze_code(request: AnalysisRequest):
     if intent == "GREETING" and not is_csharp:
         return {"intent": "GREETING", "ai_suggestion": PROMPT_GREETING, "static_results": {"smells": []}}
     
-    p_type, m_name, api_key = db.get_ai_config(request.user_id)
+    p_type, m_name, api_key, use_multi_agent = db.get_ai_config(request.user_id)
     provider = AIProviderManager.get_provider({"provider_type": p_type, "model_name": m_name, "api_key": api_key})
 
     static_results = {"smells": [], "stats": {"total_lines": 0, "class_name": "Analiz"}}
@@ -317,7 +322,7 @@ async def chat(request: ChatRequest):
     is_csharp = CodeProcessor.is_actually_code(request.message)
 
     # 3. Selamlama kontrolü
-    if intent == "GREETING" and not is_csharp:
+    if request.mode != "generation" and intent == "GREETING" and not is_csharp:
         db.add_message(request.conversation_id, "assistant", PROMPT_GREETING)
         return {
             "role": "assistant",
@@ -328,7 +333,7 @@ async def chat(request: ChatRequest):
         }
 
     # 4. Kapsam dışı kontrolü
-    if intent == "OUT_OF_SCOPE" and not is_csharp:
+    if request.mode != "generation" and intent == "OUT_OF_SCOPE" and not is_csharp:
         db.add_message(request.conversation_id, "assistant", PROMPT_OUT_OF_SCOPE)
         return {
             "role": "assistant",
@@ -339,7 +344,7 @@ async def chat(request: ChatRequest):
         }
 
     # 5. AI Sağlayıcısını hazırla
-    p_type, m_name, api_key = db.get_ai_config(request.user_id)
+    p_type, m_name, api_key, use_multi_agent = db.get_ai_config(request.user_id)
     provider = AIProviderManager.get_provider({"provider_type": p_type, "model_name": m_name, "api_key": api_key})
 
     # 6. Sohbet geçmişini yükle (context için)
@@ -352,18 +357,55 @@ async def chat(request: ChatRequest):
             for msg in recent[:-1]
         )
 
-    # 7. C# kodu varsa → Kademeli Pipeline çalıştır
-    if is_csharp:
+    # 7. Kod Üretme (Generation) Modu Kontrolü
+    if request.mode == "generation":
         try:
-            pipeline = AnalysisPipeline(
-                code=request.message,
+            pipeline = CodeGenerationPipeline(
+                prompt=request.message,
                 provider=provider,
                 language=request.language,
                 context=context_summary or "Yeni sohbet.",
-                learned_rules="",  # Feedback sistemi eklenince buraya gelecek
                 user_message=request.message,
                 provider_type=p_type,
             )
+            result = await asyncio.wait_for(pipeline.run(), timeout=300)
+            
+            final_suggestion = result.combined_response
+            static_results = {"smells": [], "stats": {}}
+            pipeline_info = None # Generation modunda skor gösterilmez
+        except asyncio.TimeoutError:
+            final_suggestion = "⏱️ Pipeline süresi aşıldı (300 saniye). Lütfen daha basit bir üretim isteği deneyin."
+            static_results = {"smells": [], "stats": {}}
+            pipeline_info = None
+        except Exception as e:
+            logger.error(f"Generation Pipeline hatası: {e}")
+            final_suggestion = f"❌ Pipeline Hatası: {str(e)}"
+            static_results = {"smells": [], "stats": {}}
+            pipeline_info = None
+
+    # 8. C# kodu varsa → Kademeli Pipeline çalıştır (Analysis)
+    elif is_csharp:
+        try:
+            if p_type == "anthropic" and use_multi_agent:
+                pipeline = MultiAgentPipeline(
+                    code=request.message,
+                    provider=provider,
+                    language=request.language,
+                    context=context_summary or "Yeni sohbet.",
+                    learned_rules="",  # Feedback sistemi eklenince buraya gelecek
+                    user_message=request.message,
+                    provider_type=p_type,
+                )
+            else:
+                pipeline = SingleAgentPipeline(
+                    code=request.message,
+                    provider=provider,
+                    language=request.language,
+                    context=context_summary or "Yeni sohbet.",
+                    learned_rules="",  # Feedback sistemi eklenince buraya gelecek
+                    user_message=request.message,
+                    provider_type=p_type,
+                )
 
             result = await asyncio.wait_for(pipeline.run(), timeout=180)
 

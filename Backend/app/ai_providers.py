@@ -75,10 +75,46 @@ class OpenAICompatibleProvider(AIProvider):
             raise Exception(f"API Hatası: {str(e)}")
 
 import os
+import anthropic
 
 # --- DEFAULT (Groq ücretsiz) ---
 DEFAULT_GROQ_KEY = os.environ.get("GROQ_API_KEY", "")
 DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile"
+
+class AnthropicProvider(AIProvider):
+    def __init__(self, api_key: str, model_name: str = "claude-sonnet-4-6"):
+        self.client = anthropic.Anthropic(api_key=api_key)
+        
+        # --- MODEL ISIM DUZELTICI ---
+        raw_name = model_name.lower() if model_name else ""
+        if "sonnet-4-6" in raw_name or "sonnet" in raw_name:
+            self.model_name = "claude-sonnet-4-6"
+        elif "opus-4-6" in raw_name or "opus" in raw_name:
+            self.model_name = "claude-opus-4-6"
+        elif "haiku" in raw_name:
+            self.model_name = "claude-haiku-4-6"
+        else:
+            self.model_name = "claude-sonnet-4-6"
+
+    def analyze_code(self, prompt: str) -> str:
+        try:
+            response = self.client.messages.create(
+                model=self.model_name,
+                max_tokens=8192,
+                messages=[
+                    {"role": "user", "content": prompt}
+                ]
+            )
+            
+            # Extract text from ContentBlock
+            text = ""
+            for block in response.content:
+                if block.type == "text":
+                    text += block.text
+            
+            return self._clean_response(text)
+        except Exception as e:
+            return f"❌ Anthropic API Hatası: Sistemsel bir ret veya model hatası oluştu. Mesaj: {str(e)}"
 
 class AIProviderManager:
     @staticmethod
@@ -88,7 +124,9 @@ class AIProviderManager:
         api_key = config.get("api_key", "")
 
         # Kullanıcı bir provider seçtiyse onu kullan
-        if p_type == "google" and api_key:
+        if p_type == "anthropic" and api_key:
+            return AnthropicProvider(api_key=api_key, model_name=m_name)
+        elif p_type == "google" and api_key:
             return GeminiProvider(api_key=api_key, model_name=m_name)
         elif p_type == "openai" and api_key:
             return OpenAICompatibleProvider(api_key=api_key, base_url="https://api.openai.com/v1", model_name=m_name or "gpt-4o-mini")

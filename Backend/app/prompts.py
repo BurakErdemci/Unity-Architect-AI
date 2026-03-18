@@ -22,6 +22,10 @@ UNITY_RULES = {
         "Statik referanslar yerine event sistemi veya interface kullanılmalı.",
         "Magic number kullanılmamalı, anlamlı sabitler veya [SerializeField] değişkenler kullanılmalı.",
     ],
+    "game_feel": [
+        "KARAKTER KONTROLÜ (GAME FEEL): Oyuncu hareketlerinde rb.AddForce kullanmak karakterin buzda kayıyormuş (floaty) gibi hissetmesine neden olur. Keskin ve anında yanıt veren (snappy) kontroller için doğrudan rb.velocity atanmalı veya CharacterController kullanılmalıdır.",
+        "ZIPLAMA (JUMP): Sadece yukarı doğru kuvvet uygulamak genelde havada süzülme hissi yaratır. Düşüş anında yerçekimi (gravity scale) artırılmalı veya rb.velocity.y doğrudan kontrol edilmelidir."
+    ],
     "best_practice": [
         "Tag kontrolünde == yerine CompareTag() kullanılmalı.",
         "Coroutine başlatıldıysa, obje devre dışı olduğunda StopCoroutine ile durdurulmalı.",
@@ -47,6 +51,11 @@ def get_relevant_rules(code: str) -> str:
     # Mimari kuralları
     if code.count("void ") > 8 or len(code.split("\n")) > 100:
         rules.extend(UNITY_RULES["architecture"])
+        
+    # Game Feel kuralları (Hareket ve Oyuncu controller varsa)
+    feel_triggers = ["player", "character", "addforce", "jump", "move"]
+    if any(t in code_lower for t in feel_triggers):
+        rules.extend(UNITY_RULES["game_feel"])
     
     # Best practice her zaman
     rules.extend(UNITY_RULES["best_practice"])

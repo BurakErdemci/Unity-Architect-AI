@@ -124,6 +124,7 @@ export default function HomePage() {
   const [sidebarTab, setSidebarTab] = useState<'chats' | 'files'>('chats');
   const [isDragging, setIsDragging] = useState(false);
   const [dragRejectMsg, setDragRejectMsg] = useState('');
+  const [appMode, setAppMode] = useState<'analysis' | 'generation'>('analysis');
 
   // --- WORKSPACE ---
   const [workspacePath, setWorkspacePath] = useState<string | null>(null);
@@ -139,7 +140,7 @@ export default function HomePage() {
   // --- SETTINGS ---
   const [showSettings, setShowSettings] = useState(false);
   const [aiConfig, setAiConfig] = useState({
-    provider_type: 'ollama', api_key: '', model_name: 'qwen2.5-coder:7b'
+    provider_type: 'ollama', api_key: '', model_name: 'qwen2.5-coder:7b', use_multi_agent: true
   });
   const [availableModels, setAvailableModels] = useState<AvailableModels>({ local: [], cloud: [] });
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
@@ -461,8 +462,9 @@ export default function HomePage() {
         conversation_id: activeConvId,
         message: messageContent,
         language: lang,
-        user_id: user.id
-      }, { timeout: 130000 }); // 130 saniye timeout (Ollama yavaş olabilir)
+        user_id: user.id,
+        mode: appMode
+      }, { timeout: 310000 }); // 310 saniye timeout (Opus yavaş olabilir)
 
       // AI yanıtını ekle
       const aiMsg: Message = {
@@ -477,7 +479,7 @@ export default function HomePage() {
       fetchConversations(user.id); // Başlık güncellenmiş olabilir
     } catch (err: any) {
       const errorText = err.code === 'ECONNABORTED'
-        ? '⏱️ Yanıt zaman aşımına uğradı. Ollama çok uzun sürdü. Daha kısa bir kod deneyin.'
+        ? '⏱️ Yanıt zaman aşımına uğradı. AI Sağlayıcısı kod üretirken veya analiz ederken çok uzun sürdü. Daha basit bir işlem deneyin.'
         : '❌ Bir hata oluştu. Backend çalışıyor mu kontrol edin.';
       const errorMsg: Message = {
         id: Date.now() + 1,
@@ -677,6 +679,7 @@ export default function HomePage() {
                   >
                     <option value="groq">Groq (Varsayılan, Ücretsiz)</option>
                     <option value="ollama">Ollama (Yerel)</option>
+                    <option value="anthropic">Anthropic (Claude)</option>
                     <option value="google">Google Gemini (Bulut)</option>
                     <option value="openai">OpenAI (Bulut)</option>
                     <option value="deepseek">DeepSeek (Reasoning)</option>
@@ -702,9 +705,31 @@ export default function HomePage() {
                     value={aiConfig.model_name}
                     onChange={e => setAiConfig({ ...aiConfig, model_name: e.target.value })}
                     className="w-full bg-[#0e0e10] border border-slate-800 rounded-xl p-3 text-white text-sm outline-none focus:border-blue-500 transition-colors"
-                    placeholder="llama-3.3-70b-versatile"
+                    placeholder={
+                      aiConfig.provider_type === "anthropic" ? "claude-sonnet-4-6" :
+                      aiConfig.provider_type === "ollama" ? "qwen2.5-coder:7b" :
+                      aiConfig.provider_type === "google" ? "gemini-2.5-flash" :
+                      aiConfig.provider_type === "openai" ? "gpt-4o" : "llama-3.3-70b-versatile"
+                    }
                   />
                 </div>
+                {aiConfig.provider_type === 'anthropic' && (
+                  <div className="flex items-center justify-between p-3 rounded-xl border border-slate-800/80 bg-slate-900/30">
+                    <div>
+                      <p className="text-xs font-semibold text-slate-300">Multi-Agent Sistemi</p>
+                      <p className="text-[10px] text-slate-500 mt-0.5">Yüksek token maliyeti, uzman incelemesi</p>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input 
+                        type="checkbox" 
+                        className="sr-only peer" 
+                        checked={aiConfig.use_multi_agent}
+                        onChange={(e) => setAiConfig({ ...aiConfig, use_multi_agent: e.target.checked })}
+                      />
+                      <div className="w-9 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                    </label>
+                  </div>
+                )}
                 <button
                   onClick={saveAIConfig}
                   className="w-full bg-blue-600 hover:bg-blue-500 text-white p-3 rounded-xl font-bold text-xs tracking-wide transition-all"
@@ -890,17 +915,36 @@ export default function HomePage() {
             >
               {isSidebarOpen ? <ChevronLeft size={16} /> : <ChevronRight size={16} />}
             </button>
-            <div className="flex items-center gap-2">
-              <Code2 size={14} className="text-blue-500" />
-              <span className="text-[12px] font-semibold text-slate-400">
-                {openedFilePath ? openedFilePath.split('/').pop() : 'C# Editor'}
-              </span>
-              {openedFilePath && (
-                <button onClick={() => { setOpenedFilePath(null); setCode(''); }} className="p-0.5 hover:bg-slate-700 rounded text-slate-500">
-                  <X size={12} />
-                </button>
-              )}
+            
+            {/* MODE TOGGLE */}
+            <div className="flex bg-[#0e0e10] p-1 rounded-lg border border-slate-800/50 hidden sm:flex">
+              <button 
+                onClick={() => setAppMode('analysis')}
+                className={`flex items-center gap-1.5 px-3 py-1 rounded text-[11px] font-semibold transition-all ${appMode === 'analysis' ? 'bg-blue-600/20 text-blue-400' : 'text-slate-500 hover:text-slate-300'}`}
+              >
+                🔍 Kodu İncele
+              </button>
+              <button 
+                onClick={() => setAppMode('generation')}
+                className={`flex items-center gap-1.5 px-3 py-1 rounded text-[11px] font-semibold transition-all ${appMode === 'generation' ? 'bg-emerald-600/20 text-emerald-400' : 'text-slate-500 hover:text-slate-300'}`}
+              >
+                ✨ Sıfırdan Üret
+              </button>
             </div>
+
+            {appMode === 'analysis' && (
+              <div className="flex items-center gap-2 border-l border-slate-800/50 pl-3 ml-1">
+                <Code2 size={14} className="text-blue-500" />
+                <span className="text-[12px] font-semibold text-slate-400">
+                  {openedFilePath ? openedFilePath.split('/').pop() : 'C# Editor'}
+                </span>
+                {openedFilePath && (
+                  <button onClick={() => { setOpenedFilePath(null); setCode(''); }} className="p-0.5 hover:bg-slate-700 rounded text-slate-500">
+                    <X size={12} />
+                  </button>
+                )}
+              </div>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <div className="flex items-center gap-1.5 bg-[#0e0e10] border border-slate-800 rounded-lg px-3 py-1.5">
@@ -942,7 +986,20 @@ export default function HomePage() {
               <span className="text-[12px] text-red-300 font-medium">{dragRejectMsg}</span>
             </div>
           )}
-          {(activeConvId || code || openedFilePath) ? (
+          
+          {appMode === 'generation' ? (
+            <div className="flex-1 flex flex-col items-center justify-center text-slate-600 gap-4 bg-[#0e0e10]">
+              <div className="bg-emerald-500/10 border border-emerald-500/20 p-6 rounded-3xl">
+                <Sparkles size={48} className="text-emerald-500/50" />
+              </div>
+              <div className="text-center">
+                <h3 className="text-lg font-bold text-slate-300">Sıfırdan Kod Üretim Modu</h3>
+                <p className="text-[13px] text-slate-500 mt-2 max-w-sm">
+                  Bu modda kod yapıştırmanıza gerek yok. Sadece sağ taraftaki sohbet alanından ne istediğinizi (örn: "Basit bir Karakter Kontrolcüsü yaz") söyleyin. Mimar ajanımız oyun hissiyatını (Game Feel) gözeterek sizin için en uygun C# mimarisini kurup yazıp teslim edecektir.
+                </p>
+              </div>
+            </div>
+          ) : (activeConvId || code || openedFilePath) ? (
             <textarea
               value={code}
               onChange={(e) => setCode(e.target.value)}
@@ -1070,6 +1127,31 @@ export default function HomePage() {
                           )}
                         </div>
                       </div>
+
+                      {/* MULTI-AGENT TOGGLE (ONLY FOR ANTHROPIC) */}
+                      {aiConfig.provider_type === 'anthropic' && (
+                        <div className="px-3 py-2.5 border-t border-slate-800/80 bg-blue-900/10 flex items-center justify-between">
+                          <div>
+                            <p className="text-[11px] font-semibold text-blue-400">Multi-Agent Modu</p>
+                            <p className="text-[9px] text-slate-500 mt-0.5">Mimar + Uzman + Eleştirmen</p>
+                          </div>
+                          <label className="relative inline-flex items-center cursor-pointer">
+                            <input 
+                              type="checkbox" 
+                              className="sr-only" 
+                              checked={aiConfig.use_multi_agent}
+                              onChange={async (e) => {
+                                const newCfg = { ...aiConfig, use_multi_agent: e.target.checked };
+                                setAiConfig(newCfg);
+                                if (user) await axios.post(`${API}/save-ai-config`, { ...newCfg, user_id: user.id });
+                              }}
+                            />
+                            <div className={`w-9 h-5 rounded-full flex items-center transition-colors relative ${aiConfig.use_multi_agent ? 'bg-blue-500' : 'bg-slate-700'}`}>
+                              <div className={`absolute w-3.5 h-3.5 bg-white rounded-full transition-transform ${aiConfig.use_multi_agent ? 'translate-x-[18px]' : 'translate-x-[3px]'}`}></div>
+                            </div>
+                          </label>
+                        </div>
+                      )}
 
                       {/* SETTINGS KISAYOLU */}
                       <button
