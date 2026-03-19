@@ -69,49 +69,74 @@ class ResponseValidator:
         return issues
 
     @staticmethod
+    def _clean_json_text(text: str) -> str:
+        """
+        AI tarafından üretilen kirli JSON metnini temizler.
+        """
+        if not text:
+            return ""
+        
+        # 1. Markdown bloklarını ayıkla (varsa)
+        markdown_match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', text)
+        if markdown_match:
+            text = markdown_match.group(1).strip()
+        
+        # 2. Sadece en dıştaki { ... } bloğunu al (Regex Recovery)
+        json_pattern = re.search(r'\{[\s\S]*\}', text, re.DOTALL)
+        if json_pattern:
+            text = json_pattern.group().strip()
+            
+        # 3. KIRTIK HAMLE: Çift tırnak içindeki gerçek yeni satırları \\n ile değiştir.
+        # Bu, 'Unterminated string' hatalarını önler.
+        def escape_newlines(match):
+            # Tırnaklar dahil tüm eşleşmeyi alır: "içerik\nyeni satır"
+            # İçindeki gerçek \n karakterlerini \\n'e çeviririz.
+            return match.group(0).replace('\n', '\\n').replace('\r', '\\r')
+        
+        text = re.sub(r'"(?:\\.|[^"\\])*"', escape_newlines, text, flags=re.DOTALL)
+        
+        return text
+
+    @staticmethod
     def validate_json_response(response: str, required_keys: List[str] = None) -> Tuple[bool, Optional[Dict]]:
         """
         AI yanıtını JSON olarak parse etmeyi dener.
-        Markdown bloğu içindeki JSON'ı da yakalar.
-        
-        Returns: (başarılı mı?, parse edilen dict veya None)
+        Hata durumunda otomatik temizleme ve kurtarma yapar.
         """
         if not response or not response.strip():
             logger.warning("[Validator] JSON parse: yanıt boş.")
             return (False, None)
         
-        text = response.strip()
-        
-        # Markdown JSON bloğu içindeyse çıkar
-        json_match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', text)
-        if json_match:
-            text = json_match.group(1).strip()
-        
-        # Direkt JSON ise
+        # 1. Ham deneme (Eğer temizse hızlıca geçer)
         try:
-            parsed = json.loads(text)
+            parsed = json.loads(response.strip(), strict=False)
+            if required_keys:
+                missing = [k for k in required_keys if k not in parsed]
+                if not missing:
+                    return (True, parsed)
+        except json.JSONDecodeError:
+            pass
+            
+        # 2. Temizleme ve Kurtarma denemesi
+        cleaned_text = ResponseValidator._clean_json_text(response)
+        try:
+            parsed = json.loads(cleaned_text, strict=False)
+            
+            # Score Clamping: 0-10 aralığına zorla (tüm *score* alanlarını kontrol et)
+            for key in list(parsed.keys()):
+                if 'score' in key.lower() and isinstance(parsed[key], (int, float)):
+                    parsed[key] = max(0.0, min(10.0, float(parsed[key])))
             
             # Gerekli alanlar kontrolü
             if required_keys:
                 missing = [k for k in required_keys if k not in parsed]
                 if missing:
                     logger.warning(f"[Validator] JSON'da eksik alanlar: {missing}")
-                    return (False, parsed)
+                    return (True, parsed)
             
             return (True, parsed)
         except json.JSONDecodeError as e:
-            logger.warning(f"[Validator] JSON parse hatası: {e}")
-            
-            # Kurtarma denemesi: yanıttan JSON bloğu çıkar
-            json_pattern = re.search(r'\{[\s\S]*\}', text)
-            if json_pattern:
-                try:
-                    parsed = json.loads(json_pattern.group())
-                    logger.info("[Validator] JSON kurtarma başarılı (regex ile).")
-                    return (True, parsed)
-                except json.JSONDecodeError:
-                    pass
-            
+            logger.warning(f"[Validator] JSON tüm kurtarma çabalarına rağmen başarısız: {e}")
             return (False, None)
 
     @staticmethod

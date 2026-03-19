@@ -413,14 +413,14 @@ async def chat(request: ChatRequest):
                     provider_type=p_type,
                 )
 
-            result = await asyncio.wait_for(pipeline.run(), timeout=180)
+            result = await asyncio.wait_for(pipeline.run(), timeout=300)
 
             final_suggestion = result.combined_response
             static_results = result.step1_static.output if result.step1_static and result.step1_static.output else {"smells": [], "stats": {}}
             pipeline_info = result.to_dict()
 
         except asyncio.TimeoutError:
-            final_suggestion = "⏱️ Pipeline süresi aşıldı (180 saniye). Lütfen daha kısa bir kod deneyin veya daha hafif bir model seçin."
+            final_suggestion = "⏱️ Pipeline süresi aşıldı (300 saniye). Lütfen daha kısa bir kod deneyin veya daha hafif bir model seçin."
             static_results = {"smells": [], "stats": {}}
             pipeline_info = None
         except Exception as e:

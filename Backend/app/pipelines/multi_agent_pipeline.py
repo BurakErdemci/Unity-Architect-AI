@@ -134,8 +134,14 @@ Lütfen yukarıdaki eleştirileri dikkate alarak kodu TAMAMEN yeniden yaz.
             fixed_code_raw = await expert_task
             fixed_code = self._extract_code(fixed_code_raw)
             self._result.fixed_code = fixed_code
+            
+            # Debug: Context doğruluğunu logla
+            logger.info(f"  [Context Check] Original hash: {hash(self.code) % 10000}, Fixed hash: {hash(fixed_code) % 10000}")
 
-            # Critic puanlar
+            # ─── AGENT GATHER (Parallel Evaluation) ───
+            # Critic ve Game Feel bağımsızdır, ikisini aynı anda çalıştırarak vakit kazanıyoruz.
+            logger.info(f"  [Loop {attempt}] ⚖️ Denetim ve 🎮 Game Feel analizi paralel başlatılıyor...")
+            
             critic_task = asyncio.to_thread(
                 self.critic.evaluate,
                 original_code=self.code,
@@ -143,46 +149,67 @@ Lütfen yukarıdaki eleştirileri dikkate alarak kodu TAMAMEN yeniden yaz.
                 plan=plan,
                 lang_instr=lang_instr
             )
-            critic_result = await critic_task
             
-            score = critic_result.get("score", 0)
-            logger.info(f"  [Loop {attempt}/{MAX_RETRIES}] Critic puanı: {score}/10")
-            
-            # Skor yeterli (>= 8.0) ise döngüyü kır
-            if score >= 8.0:
-                logger.info(f"  ✅ Kod kalitesi yeterli, loop sonlandırıldı (deneme {attempt})")
-                break
-            elif attempt < MAX_RETRIES:
-                logger.info(f"  🔄 Skor düşük ({score}), tekrar deneniyor...")
-        
-        # Critic'in sonuçlarını pipeline'a yansıt
-        self._result.score = critic_result.get("score", self._result.score)
-        self._result.summary = critic_result.get("review_message", "Eleştiri yok.")
-        
-        # Loop bilgisini rapora ekle
-        loop_info = f"(🔄 {attempt} deneme)" if attempt > 1 else ""
-        self._result.analysis_text = f"**⚖️ KOD DENETİM RAPORU {loop_info}:**\n\n{self._result.summary}\n\n**Puan:** {self._result.score}/10.0"
-        
-        # Step 3 sonucunu kaydet
-        self._result.step3_code_fix = StepResult("expert_and_critic", True, int((time.time() - expert_start) * 1000), critic_result)
-
-        # ─── STEP 4: GAME FEEL ANALİZİ ───
-        if fixed_code and len(fixed_code.strip()) > 20:
-            logger.info("  [Multi-Agent] 🎮 Game Feel analizi başlatılıyor...")
             game_feel_task = asyncio.to_thread(
                 self.game_feel.evaluate,
                 code=fixed_code,
                 context=self.user_message
             )
-            self._game_feel_result = await game_feel_task
+
+            # İkisini de bekle
+            critic_result, self._game_feel_result = await asyncio.gather(critic_task, game_feel_task)
             
-            # Game Feel skorunu da iterative loop'a dahil et
-            gf_score = self._game_feel_result.get("game_feel_score", -1)
-            if gf_score >= 0:
-                game_feel_text = self.game_feel.format_for_ui(self._game_feel_result)
-                self._result.analysis_text += game_feel_text
-        else:
-            self._game_feel_result = None
+            # ─── SKOR HESAPLAMA (Loop içi için de gerekli) ───
+            tech_score = float(critic_result.get("score", 0.0))
+            gf_score = float(self._game_feel_result.get("game_feel_score", -1.0))
+            
+            if gf_score < 0:
+                loop_final_score = tech_score
+            else:
+                loop_final_score = (tech_score * 0.6) + (gf_score * 0.4)
+
+            logger.info(f"  [Loop {attempt}] Sonuçlar -> Teknik: {tech_score}, GameFeel: {gf_score} | BİRLEŞİK SKOR: {loop_final_score:.1f}/10")
+            
+            # Skor yeterli (>= 8.0) ise döngüyü kır
+            if loop_final_score >= 8.0:
+                logger.info(f"  ✅ Genel kalite yeterli ({loop_final_score:.1f}), loop sonlandırıldı (deneme {attempt})")
+                break
+            elif attempt < MAX_RETRIES:
+                logger.info(f"  🔄 Skor düşük ({loop_final_score:.1f}), tekrar deneniyor...")
+                # Feedback birleştirme
+                critic_feedback = critic_result.get("review_message", "Teknik hatalar var.")
+                gf_summary = self._game_feel_result.get("summary", "Oyun hissiyatı yetersiz.")
+                combined_feedback = f"TEKNİK ELEŞTİRİ: {critic_feedback}\n\nOYUN HİSSİYATI ELEŞTİRİSİ: {gf_summary}"
+                # logic for next iteration...
+                # Note: The retry logic uses critic_result["review_message"] on next loop start, 
+                # so we should store our combined_feedback somewhere or update critic_result.
+                critic_result["review_message"] = combined_feedback
+                critic_result["score"] = loop_final_score # retry prompt'ta görünmesi için
+        
+        # ─── FİNAL SONUÇLARI PİPELİNE'A YANSIT ───
+        self._result.score = round(loop_final_score, 1)
+        # Eğer feedback birleştirildiyse, sadece teknik orijinal eleştiriyi summary yapalım
+        # veya birleşmiş olanı gösterelim. Kullanıcıya birleşmiş olanı göstermek daha iyi.
+        self._result.summary = critic_result.get("review_message", "Eleştiri yok.")
+        
+        # UI Rapor Formatlama
+        loop_info = f"(🔄 {attempt} deneme)" if attempt > 1 else ""
+        
+        # Tek ve Net Bir Başlık
+        status_emoji = "🚀" if self._result.score >= 8 else "⚠️" if self._result.score >= 5 else "❌"
+        self._result.analysis_text = f"### {status_emoji} GENEL KALİTE PUANI: {self._result.score}/10.0 {loop_info}\n\n"
+        
+        # Teknik Detaylar
+        self._result.analysis_text += f"**🔎 Teknik Denetim:**\n{self._result.summary}\n\n"
+        
+        # Game Feel Detayları (bağımsız skor başlığı YOK, sadece kategori detayları)
+        if gf_score >= 0:
+            game_feel_text = self.game_feel.format_for_ui(self._game_feel_result)
+            if game_feel_text.strip():
+                self._result.analysis_text += f"\n**🎮 Oyun Hissiyatı Detayları:**\n{game_feel_text}\n"
+        
+        # Step 3 sonucunu kaydet
+        self._result.step3_code_fix = StepResult("expert_and_critic", True, int((time.time() - expert_start) * 1000), critic_result)
 
     def _extract_code(self, text: str) -> str:
         """Markdown içerisinden sadece C# kodunu çıkarır"""

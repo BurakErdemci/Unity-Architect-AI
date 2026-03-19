@@ -10,11 +10,11 @@ class CoderGenerationAgent:
     def __init__(self, provider: Any):
         self.provider = provider
         
-    def generate_code(self, user_prompt: str, architecture_plan: str, lang_instr: str, rules: str) -> str:
-        logger.info("  [Coder - Gen] Sıfırdan Kod üretiliyor...")
+    def generate_code(self, user_prompt: str, architecture_plan: str, lang_instr: str, rules: str, max_tokens: int = 8192) -> str:
+        logger.info(f"  [Coder - Gen] Sıfırdan Kod üretiliyor (Limit: {max_tokens})...")
         
         prompt = f"""
-        # GÖREV: MİMARİ PLANA GÖRE SIFIRDAN C# KODU ÜRETMESİ
+        # GÖREV: MİMARİ PLANA GÖRE SIFIRDAN C# KODUNU ÜRETMESİ
         
         Aşağıda kullanıcının orijinal fikri ve Baş Mimarın (Architect) bu fikir için çıkardığı "Tasarım Planı" bulunuyor.
         Görevin, sadece bu plana ve Best Practice kurallarına uyarak kodun EN İYİ (Enterprise Level) halini sıfırdan yazmaktır.

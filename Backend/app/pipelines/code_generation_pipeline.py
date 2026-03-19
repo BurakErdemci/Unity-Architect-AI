@@ -98,7 +98,8 @@ Somut düzeltme talimatları:
                 self.prompt,
                 current_plan,
                 lang_instr,
-                rules_str
+                rules_str,
+                max_tokens=8192 # Üretim için yüksek limit
             )
             
             # Game Feel değerlendirmesi (sessiz — kullanıcıya gösterilmez)

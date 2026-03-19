@@ -56,5 +56,15 @@ class TestResponseValidator(unittest.TestCase):
         self.assertTrue(success)
         self.assertEqual(result["score"], 7.5)
 
+    def test_json_recovery_with_newlines(self):
+        """Tırnak içinde unescaped newline olan JSON'ı kurtarma (Kritik Case)."""
+        # json.loads normalde burada hata verir çünkü "msg" içindeki newline escape edilmemiş.
+        text = '{"msg": "Merhaba\nDünya", "score": 5.0}'
+        success, result = ResponseValidator.validate_json_response(text)
+        self.assertTrue(success)
+        # Parse edildikten sonra içerideki \\n gerçek bir newline (\n) olur.
+        self.assertEqual(result["msg"], "Merhaba\nDünya")
+        self.assertEqual(result["score"], 5.0)
+
 if __name__ == '__main__':
     unittest.main()

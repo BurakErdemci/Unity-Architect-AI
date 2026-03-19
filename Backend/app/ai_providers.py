@@ -7,7 +7,7 @@ from typing import Dict, Any, Optional
 
 class AIProvider(ABC):
     @abstractmethod
-    def analyze_code(self, prompt: str) -> str:
+    def analyze_code(self, prompt: str, max_tokens: int = 4096) -> str:
         pass
 
     def _clean_response(self, text: str):
@@ -35,10 +35,10 @@ class GeminiProvider(AIProvider):
 
         self.model = genai.GenerativeModel(self.model_id)
 
-    def analyze_code(self, prompt: str) -> str:
+    def analyze_code(self, prompt: str, max_tokens: int = 4096) -> str:
         try:
-            # v1beta yerine v1 zorlaması gerekirse kütüphane bunu halleder
-            response = self.model.generate_content(prompt)
+            gen_config = genai.types.GenerationConfig(max_output_tokens=max_tokens)
+            response = self.model.generate_content(prompt, generation_config=gen_config)
             if response and response.text:
                 return response.text
             return "AI yanıt üretti ancak içerik boş döndü."
@@ -56,9 +56,9 @@ class GeminiProvider(AIProvider):
 class OllamaProvider(AIProvider):
     def __init__(self, model_name: str = "qwen2.5-coder:7b"):
         self.model_name = model_name if model_name else "qwen2.5-coder:7b"
-    def analyze_code(self, prompt: str) -> str:
+    def analyze_code(self, prompt: str, max_tokens: int = 4096) -> str:
         try:
-            response = ollama.chat(model=self.model_name, messages=[{'role': 'user', 'content': prompt}])
+            response = ollama.chat(model=self.model_name, messages=[{'role': 'user', 'content': prompt}], options={'num_predict': max_tokens})
             return self._clean_response(response['message']['content'])
         except Exception as e:
             raise Exception(f"Ollama Hatası: {str(e)}")
@@ -67,9 +67,9 @@ class OpenAICompatibleProvider(AIProvider):
     def __init__(self, api_key: str, base_url: str, model_name: str):
         self.client = openai.OpenAI(api_key=api_key, base_url=base_url)
         self.model_name = model_name
-    def analyze_code(self, prompt: str) -> str:
+    def analyze_code(self, prompt: str, max_tokens: int = 4096) -> str:
         try:
-            response = self.client.chat.completions.create(model=self.model_name, messages=[{"role": "user", "content": prompt}], temperature=0.3)
+            response = self.client.chat.completions.create(model=self.model_name, messages=[{"role": "user", "content": prompt}], temperature=0.3, max_tokens=max_tokens)
             return self._clean_response(response.choices[0].message.content)
         except Exception as e:
             raise Exception(f"API Hatası: {str(e)}")
@@ -96,11 +96,11 @@ class AnthropicProvider(AIProvider):
         else:
             self.model_name = "claude-sonnet-4-6"
 
-    def analyze_code(self, prompt: str) -> str:
+    def analyze_code(self, prompt: str, max_tokens: int = 4096) -> str:
         try:
             response = self.client.messages.create(
                 model=self.model_name,
-                max_tokens=8192,
+                max_tokens=max_tokens,
                 messages=[
                     {"role": "user", "content": prompt}
                 ]

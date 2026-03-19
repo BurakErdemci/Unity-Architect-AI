@@ -1,93 +1,111 @@
 import logging
-import json
 import re
 from typing import Any, Dict
 
 logger = logging.getLogger(__name__)
 
+
 class CriticAgent:
     """
-    Puanlayıcı ve Denetmen Ajan.
-    Uzmanın yazdığı yeni kodu ve eski kodu alır. Son derece acımasız ve katı kurallarla kodu puanlar.
-    Eğer kodda syntax hatası, '=' atama hatası veya fatal error varsa, kodu 5.0'dan başlatır.
+    Teknik Denetçi Ajan (Pure Reviewer).
+    SADECE puanlama ve kısa teknik bulgular üretir.
+    ASLA kod yazmaz, ASLA uzun açıklama yapmaz.
     """
+
+    # ─── MAX TOKEN LİMİTİ ───
+    MAX_RESPONSE_TOKENS = 1024  # Uzun essay'leri engeller
+
     def __init__(self, provider: Any):
         self.provider = provider
-        
+
     def evaluate(self, original_code: str, fixed_code: str, plan: str, lang_instr: str) -> Dict[str, Any]:
         logger.info("  [Critic Agent] Kod denetleniyor ve puanlanıyor...")
-        
-        prompt = f"""
-        # GÖREV: KULLANICIYA DOSTANE AÇIKLAMALAR SUNAN KOD İNCELEMESİ (USER-CENTRIC REVIEW & SCORING)
-        
-        Sen son derece bilgili ama bir o kadar da **yardımsever ve sabırlı bir Unity Eğitmenisin (Senior Mentor)**.
-        Aşağıda kullanıcının (oyun geliştiricisi) bize gönderdiği "Orijinal Kod" ve bizim sistemimizin (Uzman Ajan) onun için yazdığı "Geliştirilmiş Kod" var.
-        Görevin: Kullanıcıya hitap ederek, onun kodunu nasıl daha iyi (profesyonel, performanslı ve güvenli) hale getirdiğimizi basit, sevecen ve açıklayıcı bir dille anlatmak ve koda bir puan (0.0 - 10.0) vermektir.
-        Aşırı teknik terimlere boğmadan, "Senin kodunda X vardı, biz bunu Y yaptık ki daha iyi çalışsın" mantığını kullanarak anlat. Sanki onun kodunu beraber baştan yazıyormuşsunuz gibi hissettir.
-        
-        [DİL TALİMATI]: Lütfen analizini '{lang_instr}' diliyle yap.
-        
-        # Orijinal Kod
-        ```csharp
-        {original_code}
-        ```
-        
-        # Düzeltilmiş Kod
-        ```csharp
-        {fixed_code}
-        ```
-        
-        # PUANLAMA KURALLARI (İHLAL EDİLEMEZ)
-        1. [ÖLÜMCÜL HATALAR] Eğer Orijinal Kodda bariz bir derleme hatası varsa (örneğin if(x = y) atama hatası, syntax error) max 5.0 PUAN verebilirsin.
-        2. [PERFORMANS] Update içinde GetComponent, FindGameObject varsa her ihlal için -1.0 puan düş.
-        3. [MİMARİ] Public variable yerine [SerializeField] private kullanılmamışsa veya namespace yoksa her ihlal için -0.5 puan düş.
-        
-        # ÇÖZÜM FORMATI (Tasarım ve Okunabilirlik Kuralları)
-        Lütfen cevabını JSON formatında verirken, "review_message" alanını ÇOK TEMİZ, FERAH, YENİ BAŞLAYAN DOSTU bir Markdown metni olarak hazırla:
-        - Kullanıcıya doğrudan ve dostane hitap et ("Merhaba! Kodunu inceledik ve senin için harika hale getirdik. Bak neler yaptık:").
-        - **Kalın yazılar**, boş satırlar ve Emojiler (✅, ❌, ⚠️, 💡) kullanarak metni böl. Asla blok ve sıkıcı paragraflar yazma.
-        - ÖNEMLİ: json formatının bozulmaması için metin içindeki satır atlamalarını MUTLAKA `\\n` şeklinde escape (kaçış) karakteriyle yaz. Doğrudan enter'a basma!
-        - Maddeler halinde (Bullet points) listele. Örnek:
-          ✅ **Derleme Hatası Giderildi:** Kodundaki `if` içindeki eşittir işaretini (`==`) düzelttik, artık kodun sorunsuz çalışacak!\\n\\n💡 **Performans İpucu:** Fizik kodlarını `Update` yerine `FixedUpdate` içine taşıdık ki oyunun kasmadan pürüzsüz çalışsın.
 
-        # İSTENEN ÇIKTI (SADECE JSON)
-        Lütfen cevabını AŞAĞIDAKİ JSON FORMATINDA ver. Markdown JSON bloğu (```json ... ```) kullanabilirsin ama DIŞINA HİÇBİR TEXT YAZMA!
-        
-        {{
-            "score": 4.5, // Float, kurallara göre hesaplanmış
-            "review_message": "Buraya eleştirilerini ve neyin neden düşük/yüksek puan aldığını FERAH, MADDE MADDE VE EMOJİLİ BİR ŞEKİLDE yaz.",
-            "fatal_errors_found": true // Eğer derleme hatası yakaladıysan true, yoksa false
-        }}
-        """
-        
+        prompt = f"""# GÖREV: KESKİN VE TEKNİK KOD DENETİMİ (STRICT TECHNICAL AUDIT)
+
+Sen üst düzey bir Unity Teknik Denetçisisin. Görevin, Uzman (Expert) ajan tarafından yazılan "Düzeltilmiş Kod"u, "Orijinal Kod" ile karşılaştırarak teknik açıdan denetlemek ve puanlamaktır.
+
+[BAĞLAM HATIRLATMASI]:
+- "Orijinal Kod" = Kullanıcının gönderdiği ham kod.
+- "Düzeltilmiş Kod" = Expert ajanın düzelttiği versiyon. SENİN DENETLEYECEĞİN KOD BUDUR.
+- Görevin SADECE "Düzeltilmiş Kod"u teknik açıdan değerlendirmek ve puanlamaktır.
+
+[NEGATİF KISITLAMALAR — İHLAL EDILEMEZ]:
+1. ASLA KOD YAZMA. Kod bloğu (```csharp```) içeren hiçbir metin üretme.
+2. ASLA GİRİŞ/ÇIKIŞ CÜMLESİ YAZMA ("Merhaba", "İşte analizim" vb. YASAKTIR).
+3. ASLA CODER ROLÜNE BÜRÜNME. Kod önerisi veya refactor yapma.
+4. "review_message" İÇİNDE KOD PARÇACIĞI KULLANMA. Sadece metin ve emoji kullan.
+5. "review_message" MAX 5 MADDE İÇERSİN. Kısa ve öz ol.
+
+[DİL TALİMATI]: Analizi '{lang_instr}' diliyle yap.
+
+# Orijinal Kod
+```csharp
+{original_code}
+```
+
+# Düzeltilmiş Kod (DENETLENECEĞİN KOD)
+```csharp
+{fixed_code}
+```
+
+# PUANLAMA KRİTERLERİ
+1. [TEKNİK DOĞRULUK] Derleme/mantık hatası var mı? (Varsa max 5.0)
+2. [PERFORMANS] Update içinde GetComponent/Find temizlenmiş mi?
+3. [STANDARTLAR] SerializeField, Namespace, CompareTag kullanılmış mı?
+4. [GEREKSİZ KOD] İşlevsiz veya test kodu kalmış mı?
+
+# ÇIKTI FORMATI (STRICT JSON — TEK SATIR AÇIKLAMA)
+JSON dışında HİÇBİR metin yazma. Sadece aşağıdaki yapıyı döndür:
+
+{{
+    "score": 8.5,
+    "review_message": "❌ GetComponent Update içinde.\\n⚠️ Namespace eksik.\\n✅ FixedUpdate doğru.",
+    "fatal_errors_found": false
+}}"""
+
+        from validator import ResponseValidator
+
         try:
-            response = self.provider.analyze_code(prompt)
-            # Extract JSON from response
-            json_str = response.strip()
-            
-            # 1. Try to find markdown json block
-            match = re.search(r'```json\s*(.*?)\s*```', json_str, re.DOTALL)
-            if match:
-                json_str = match.group(1).strip()
+            response = self.provider.analyze_code(prompt, max_tokens=self.MAX_RESPONSE_TOKENS)
+
+            # ─── POST-PROCESSING: Kod bloğu varsa strip et ───
+            response = self._strip_code_blocks(response)
+
+            # Centralized Validator kullanımı
+            is_valid, result = ResponseValidator.validate_json_response(
+                response,
+                required_keys=["score", "review_message"]
+            )
+
+            if is_valid and result:
+                # Score clamping: 0-10 aralığına zorla
+                raw_score = float(result.get("score", 0.0))
+                clamped_score = max(0.0, min(10.0, raw_score))
+
+                return {
+                    "score": clamped_score,
+                    "review_message": result.get("review_message", "Eleştiri metni bulunamadı."),
+                    "fatal_errors_found": result.get("fatal_errors_found", False),
+                }
             else:
-                # 2. Try to find standard { ... } block
-                match = re.search(r'\{.*\}', json_str, re.DOTALL)
-                if match:
-                    json_str = match.group(0).strip()
-            
-            # Temizlik önlemi: Eğer LLM yine de escape etmemiş newlines koyduysa (string içinde),
-            # re.sub ile string value'ları yakalayıp düzeltmek risklidir (JSON parsing).
-            # strict=False kullanarak parser'ın control karakterlerini yutmasını sağlayabiliriz.
-            result = json.loads(json_str, strict=False)
-            return {
-                "score": float(result.get("score", 0.0)),
-                "review_message": result.get("review_message", "Eleştiri metni bulunamadı."),
-                "fatal_errors_found": result.get("fatal_errors_found", False),
-            }
+                raise ValueError("JSON parse edilemedi veya gerekli alanlar eksik.")
+
         except Exception as e:
             logger.error(f"[Critic Agent] Hata: {e}")
+            # Fallback: Ham yanıtı truncate et (UI'da bozuk JSON göstermeyi önle)
+            raw_preview = (response[:200] + "...") if 'response' in dir() and response else "Yok"
             return {
-                "score": -1.0,
-                "review_message": f"Eleştirmen Ajanı bir JSON hatasıyla karşılaştı. Hata: {str(e)}\n\n(Ham Yanıt: {response if 'response' in locals() else 'Yok'})",
-                "fatal_errors_found": False
+                "score": 5.0,  # -1 yerine nötr skor (skor tutarsızlığını önler)
+                "review_message": f"⚠️ Denetim sırasında teknik hata oluştu. Kod yeniden değerlendirilecek.",
+                "fatal_errors_found": False,
             }
+
+    @staticmethod
+    def _strip_code_blocks(text: str) -> str:
+        """LLM yanıtından code blocks'ları temizler (role violation koruması)."""
+        if not text:
+            return ""
+        # ```csharp ... ``` veya ```cs ... ``` bloklarını tamamen kaldır
+        cleaned = re.sub(r'```(?:csharp|cs)\s*[\s\S]*?```', '', text)
+        return cleaned.strip()
