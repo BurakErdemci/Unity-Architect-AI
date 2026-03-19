@@ -1,13 +1,45 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Head from 'next/head';
 import axios from 'axios';
+import { AnimatedAIChat, AnimatedChatInput, ThinkingIndicator } from "../components/ui/animated-ai-chat";
 import {
-  Activity, AlertTriangle, Check, CheckCircle, Code2, Copy, Cpu, Sparkles,
-  Languages, ChevronDown, MessageSquare, Plus, FileText, Clock,
-  Trash2, Edit3, ChevronLeft, ChevronRight, LogOut, User, Lock,
-  Settings, X, Send, Bot, UserCircle, PanelRightClose, PanelRightOpen,
-  FolderOpen, Folder, File, ChevronRight as ChevronR, Upload
-} from 'lucide-react';
+  Activity,
+  AlertTriangle,
+  Bot,
+  Check,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronRight as ChevronR,
+  Clock,
+  Code2,
+  Copy,
+  Cpu,
+  Edit3,
+  File as FileIcon,
+  FileCode,
+  Folder,
+  FolderOpen,
+  History,
+  Languages,
+  Lock as LockIcon,
+  LogOut,
+  MessageSquare,
+  Minus,
+  PanelRightClose,
+  PanelRightOpen,
+  Plus,
+  RefreshCcw,
+  Save,
+  Search,
+  Send,
+  Settings,
+  Sparkles,
+  Trash2,
+  Upload,
+  User,
+  X,
+} from "lucide-react";
 import { motion, AnimatePresence } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -405,9 +437,8 @@ export default function HomePage() {
   };
 
   const getFileIcon = (ext: string) => {
-    const codeExts = ['.cs', '.js', '.ts', '.py', '.cpp', '.h', '.java'];
-    if (codeExts.includes(ext)) return <Code2 size={13} className="text-blue-400" />;
-    return <File size={13} className="text-slate-500" />;
+    if (['cs', 'txt', 'md', 'json'].includes(ext)) return <FileCode size={13} className="text-blue-400" />;
+    return <FileIcon size={13} className="text-slate-500" />;
   };
 
   const renderTree = (entries: FileEntry[], depth = 0): React.ReactNode => {
@@ -436,14 +467,23 @@ export default function HomePage() {
     ));
   };
 
-  const sendMessage = async () => {
-    if (!chatInput.trim() || !user || !activeConvId) return;
+  const sendMessage = async (overrideMessage?: string) => {
+    const inputToUse = (overrideMessage || chatInput).trim();
+    if (!inputToUse || !user) return;
+
+    // Eğer aktif sohbet yoksa yeni bir tane oluştur ve devam et
+    let targetConvId = activeConvId;
+    if (!targetConvId) {
+      const newConvId = await createNewConversation();
+      if (!newConvId) return;
+      targetConvId = newConvId;
+    }
 
     // İlk mesajda kodu ekle, sonraki mesajlarda sadece chat gönder
     const isFirstMessage = messages.length === 0;
     const messageContent = (isFirstMessage && code.trim())
-      ? `${chatInput}\n\n\`\`\`csharp\n${code}\n\`\`\``
-      : chatInput.trim();
+      ? `${inputToUse}\n\n\`\`\`csharp\n${code}\n\`\`\``
+      : inputToUse;
 
     // Optimistic UI: kullanıcı mesajını hemen göster
     const userMsg: Message = {
@@ -459,7 +499,7 @@ export default function HomePage() {
 
     try {
       const res = await axios.post(`${API}/chat`, {
-        conversation_id: activeConvId,
+        conversation_id: targetConvId,
         message: messageContent,
         language: lang,
         user_id: user.id,
@@ -505,12 +545,12 @@ export default function HomePage() {
   // =====================================================================
   if (!user) {
     return (
-      <div className="h-screen flex items-center justify-center bg-[#0e0e10] text-white">
+      <div className="h-screen flex items-center justify-center bg-[#000000] text-white">
         <Head><title>Unity Architect AI</title></Head>
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="bg-[#18181b] p-10 rounded-2xl border border-slate-800/60 w-[420px] shadow-2xl"
+          className="bg-[#000000] p-10 rounded-2xl border border-slate-800/60 w-[420px] shadow-2xl"
         >
           <div className="flex flex-col items-center gap-4 mb-8 text-center">
             <div className="bg-gradient-to-br from-blue-600 to-violet-600 p-4 rounded-2xl shadow-lg shadow-blue-900/30">
@@ -529,19 +569,19 @@ export default function HomePage() {
             <div className="relative group">
               <User className="absolute left-3.5 top-3.5 text-slate-600 group-focus-within:text-blue-500 transition-colors" size={16} />
               <input
-                style={{ backgroundColor: '#0e0e10', color: 'white' }}
-                className="w-full bg-[#0e0e10] border border-slate-800 p-3.5 pl-11 rounded-xl outline-none focus:border-blue-500/50 text-sm transition-colors"
+                style={{ backgroundColor: '#000000', color: 'white' }}
+                className="w-full bg-[#000000] border border-slate-800 p-3.5 pl-11 rounded-xl outline-none focus:border-blue-500/50 text-sm transition-colors"
                 placeholder="Kullanıcı Adı"
                 onChange={(e) => setAuthForm({ ...authForm, username: e.target.value })}
                 onKeyDown={(e) => e.key === 'Enter' && handleAuth()}
               />
             </div>
             <div className="relative group">
-              <Lock className="absolute left-3.5 top-3.5 text-slate-600 group-focus-within:text-blue-500 transition-colors" size={16} />
+              <LockIcon className="absolute left-3.5 top-3.5 text-slate-600 group-focus-within:text-blue-500 transition-colors" size={16} />
               <input
-                style={{ backgroundColor: '#0e0e10', color: 'white' }}
+                style={{ backgroundColor: '#000000', color: 'white' }}
                 type="password"
-                className="w-full bg-[#0e0e10] border border-slate-800 p-3.5 pl-11 rounded-xl outline-none focus:border-blue-500/50 text-sm transition-colors"
+                className="w-full bg-[#000000] border border-slate-800 p-3.5 pl-11 rounded-xl outline-none focus:border-blue-500/50 text-sm transition-colors"
                 placeholder="Şifre"
                 onChange={(e) => setAuthForm({ ...authForm, password: e.target.value })}
                 onKeyDown={(e) => e.key === 'Enter' && handleAuth()}
@@ -578,12 +618,12 @@ export default function HomePage() {
     };
 
     return (
-      <div className="h-screen flex items-center justify-center bg-[#0e0e10] text-white">
+      <div className="h-screen flex items-center justify-center bg-[#000000] text-white">
         <Head><title>Unity Architect AI | Workspace</title></Head>
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="bg-[#18181b] p-10 rounded-2xl border border-slate-800/60 w-[480px] shadow-2xl"
+          className="bg-[#000000] p-10 rounded-2xl border border-slate-800/60 w-[480px] shadow-2xl"
         >
           <div className="flex flex-col items-center gap-4 mb-8 text-center">
             <div className="bg-gradient-to-br from-blue-600 to-violet-600 p-4 rounded-2xl shadow-lg shadow-blue-900/30">
@@ -613,7 +653,7 @@ export default function HomePage() {
             {lastWorkspacePath && (
               <button
                 onClick={() => selectWorkspace(lastWorkspacePath)}
-                className="w-full flex items-center gap-3 bg-[#0e0e10] hover:bg-slate-800/60 border border-slate-800 p-4 rounded-xl transition-all group"
+                className="w-full flex items-center gap-3 bg-[#000000] hover:bg-slate-800/60 border border-slate-800 p-4 rounded-xl transition-all group"
               >
                 <div className="bg-slate-800 p-2 rounded-lg group-hover:bg-blue-600/20 transition-colors">
                   <Clock size={16} className="text-slate-400 group-hover:text-blue-400" />
@@ -646,7 +686,7 @@ export default function HomePage() {
   //                       ANA UYGULAMA
   // =====================================================================
   return (
-    <div className="flex h-screen bg-[#0e0e10] text-slate-200 font-sans overflow-hidden">
+    <div className="flex h-screen bg-[#000000] text-slate-200 font-sans overflow-hidden">
       <Head><title>Unity Architect AI | {user.name}</title></Head>
 
       {/* =================== SETTINGS MODAL =================== */}
@@ -657,7 +697,7 @@ export default function HomePage() {
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
-              className="bg-[#18181b] border border-slate-800 rounded-2xl p-6 max-w-md w-full shadow-2xl"
+              className="bg-[#000000] border border-slate-800 rounded-2xl p-6 max-w-md w-full shadow-2xl"
             >
               <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center gap-2.5">
@@ -672,10 +712,10 @@ export default function HomePage() {
                 <div>
                   <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Provider</label>
                   <select
-                    style={{ backgroundColor: '#0e0e10', color: 'white' }}
+                    style={{ backgroundColor: '#000000', color: 'white' }}
                     value={aiConfig.provider_type}
                     onChange={e => setAiConfig({ ...aiConfig, provider_type: e.target.value })}
-                    className="w-full bg-[#0e0e10] border border-slate-800 rounded-xl p-3 text-white text-sm outline-none focus:border-blue-500 transition-colors"
+                    className="w-full bg-[#000000] border border-slate-800 rounded-xl p-3 text-white text-sm outline-none focus:border-blue-500 transition-colors"
                   >
                     <option value="groq">Groq (Varsayılan, Ücretsiz)</option>
                     <option value="ollama">Ollama (Yerel)</option>
@@ -689,11 +729,11 @@ export default function HomePage() {
                   <div>
                     <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1.5">API Key</label>
                     <input
-                      style={{ backgroundColor: '#0e0e10', color: 'white' }}
+                      style={{ backgroundColor: '#000000', color: 'white' }}
                       type="password"
                       value={aiConfig.api_key}
                       onChange={e => setAiConfig({ ...aiConfig, api_key: e.target.value })}
-                      className="w-full bg-[#0e0e10] border border-slate-800 rounded-xl p-3 text-white text-sm outline-none focus:border-blue-500 transition-colors"
+                      className="w-full bg-[#000000] border border-slate-800 rounded-xl p-3 text-white text-sm outline-none focus:border-blue-500 transition-colors"
                       placeholder="sk-..."
                     />
                   </div>
@@ -701,10 +741,10 @@ export default function HomePage() {
                 <div>
                   <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Model İsmi</label>
                   <input
-                    style={{ backgroundColor: '#0e0e10', color: 'white' }}
+                    style={{ backgroundColor: '#000000', color: 'white' }}
                     value={aiConfig.model_name}
                     onChange={e => setAiConfig({ ...aiConfig, model_name: e.target.value })}
-                    className="w-full bg-[#0e0e10] border border-slate-800 rounded-xl p-3 text-white text-sm outline-none focus:border-blue-500 transition-colors"
+                    className="w-full bg-[#000000] border border-slate-800 rounded-xl p-3 text-white text-sm outline-none focus:border-blue-500 transition-colors"
                     placeholder={
                       aiConfig.provider_type === "anthropic" ? "claude-sonnet-4-6" :
                       aiConfig.provider_type === "ollama" ? "qwen2.5-coder:7b" :
@@ -746,10 +786,10 @@ export default function HomePage() {
       <motion.aside
         animate={{ width: isSidebarOpen ? 260 : 0, opacity: isSidebarOpen ? 1 : 0 }}
         transition={{ duration: 0.2 }}
-        className="bg-[#18181b] border-r border-slate-800/50 flex flex-col overflow-hidden z-20 shrink-0"
+        className="bg-[#000000] border-r border-slate-800/50 flex flex-col overflow-hidden z-20 shrink-0"
       >
         {/* Workspace Header */}
-        <div className="flex items-center justify-between px-3 py-2 border-b border-slate-800/50 min-w-[260px] bg-[#18181b]">
+        <div className="flex items-center justify-between px-3 py-2 border-b border-slate-800/50 min-w-[260px] bg-[#000000]">
           <div className="flex items-center gap-2 flex-1 min-w-0">
             <Folder size={13} className="text-blue-500 shrink-0" />
             <span className="text-[11px] text-slate-300 font-medium truncate">
@@ -809,8 +849,8 @@ export default function HomePage() {
                       {editingId === conv.id ? (
                         <input
                           autoFocus
-                          style={{ backgroundColor: '#0e0e10', color: 'white' }}
-                          className="bg-[#0e0e10] text-white text-xs w-full px-2 py-1 rounded border border-blue-500 outline-none"
+                          style={{ backgroundColor: '#000000', color: 'white' }}
+                          className="bg-[#000000] text-white text-xs w-full px-2 py-1 rounded border border-blue-500 outline-none"
                           value={tempTitle}
                           onChange={e => setTempTitle(e.target.value)}
                           onBlur={() => saveRename(conv.id)}
@@ -861,7 +901,7 @@ export default function HomePage() {
                   onClick={openFilePicker}
                   className="flex-1 flex items-center justify-center gap-1.5 px-2 py-2 text-[10px] text-emerald-500 hover:bg-emerald-600/10 rounded-lg transition-all font-semibold"
                 >
-                  <File size={13} /> Dosya Aç
+                  <FileIcon size={13} /> Dosya Aç
                 </button>
               </div>
               {rootFolderPath ? (
@@ -907,7 +947,7 @@ export default function HomePage() {
       {/* =================== ORTA: KOD EDİTÖRÜ =================== */}
       <div className="flex-1 flex flex-col min-w-0 border-r border-slate-800/50">
         {/* Editor Header */}
-        <div className="h-11 border-b border-slate-800/50 flex items-center justify-between px-4 bg-[#18181b]/50 shrink-0">
+        <div className="h-11 border-b border-slate-800/50 flex items-center justify-between px-4 bg-[#000000]/50 shrink-0">
           <div className="flex items-center gap-3">
             <button
               onClick={() => setIsSidebarOpen(!isSidebarOpen)}
@@ -917,7 +957,7 @@ export default function HomePage() {
             </button>
             
             {/* MODE TOGGLE */}
-            <div className="flex bg-[#0e0e10] p-1 rounded-lg border border-slate-800/50 hidden sm:flex">
+            <div className="flex bg-[#000000] p-1 rounded-lg border border-slate-800/50 hidden sm:flex">
               <button 
                 onClick={() => setAppMode('analysis')}
                 className={`flex items-center gap-1.5 px-3 py-1 rounded text-[11px] font-semibold transition-all ${appMode === 'analysis' ? 'bg-blue-600/20 text-blue-400' : 'text-slate-500 hover:text-slate-300'}`}
@@ -947,7 +987,7 @@ export default function HomePage() {
             )}
           </div>
           <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1.5 bg-[#0e0e10] border border-slate-800 rounded-lg px-3 py-1.5">
+            <div className="flex items-center gap-1.5 bg-[#000000] border border-slate-800 rounded-lg px-3 py-1.5">
               <Languages size={12} className="text-blue-500" />
               <select
                 value={lang}
@@ -955,8 +995,8 @@ export default function HomePage() {
                 className="bg-transparent text-slate-300 text-[11px] font-medium outline-none cursor-pointer border-none appearance-none"
                 style={{ backgroundColor: 'transparent', color: '#cbd5e1' }}
               >
-                <option value="tr" className="bg-[#0e0e10]">TR</option>
-                <option value="en" className="bg-[#0e0e10]">EN</option>
+                <option value="tr" className="bg-[#000000]">TR</option>
+                <option value="en" className="bg-[#000000]">EN</option>
               </select>
             </div>
             <Activity size={14} className="text-emerald-500 animate-pulse" />
@@ -988,7 +1028,7 @@ export default function HomePage() {
           )}
           
           {appMode === 'generation' ? (
-            <div className="flex-1 flex flex-col items-center justify-center text-slate-600 gap-4 bg-[#0e0e10]">
+            <div className="flex-1 flex flex-col items-center justify-center text-slate-600 gap-4 bg-[#000000]">
               <div className="bg-emerald-500/10 border border-emerald-500/20 p-6 rounded-3xl">
                 <Sparkles size={48} className="text-emerald-500/50" />
               </div>
@@ -1004,27 +1044,17 @@ export default function HomePage() {
               value={code}
               onChange={(e) => setCode(e.target.value)}
               placeholder={'// Unity C# kodunuzu buraya yapıştırın...\n// veya dosya sürükleyip bırakın\n// Kod yapıştırıp sağdaki chat\'ten analiz isteyin.'}
-              className="flex-1 bg-[#0e0e10] p-5 font-mono text-[13px] leading-relaxed outline-none resize-none text-slate-300 placeholder:text-slate-700"
+              className="flex-1 bg-[#000000] p-5 font-mono text-[13px] leading-relaxed outline-none resize-none text-slate-300 placeholder:text-slate-700"
               spellCheck={false}
             />
           ) : (
-            <div className="flex-1 flex flex-col items-center justify-center text-slate-600 gap-4">
-              <div className="bg-slate-800/20 p-6 rounded-2xl">
-                <Code2 size={48} className="opacity-20" />
-              </div>
-              <div className="text-center">
-                <p className="text-[13px] font-medium text-slate-500">Unity Architect AI</p>
-                <p className="text-[11px] text-slate-600 mt-1">
-                  Yeni bir sohbet oluşturun veya mevcut bir sohbeti seçin
-                </p>
-              </div>
-              <button
-                onClick={() => createNewConversation()}
-                className="mt-2 bg-blue-600 hover:bg-blue-500 text-white px-5 py-2.5 rounded-xl text-[11px] font-semibold transition-all flex items-center gap-2"
-              >
-                <Plus size={14} /> Yeni Sohbet
-              </button>
-            </div>
+            <AnimatedAIChat 
+              isLoading={loading}
+              onSendMessage={(val) => {
+                sendMessage(val);
+                setIsChatOpen(true);
+              }}
+            />
           )}
         </div>{/* end drag-drop wrapper */}
       </div>
@@ -1033,7 +1063,7 @@ export default function HomePage() {
       <motion.div
         animate={{ width: isChatOpen ? 420 : 0, opacity: isChatOpen ? 1 : 0 }}
         transition={{ duration: 0.2 }}
-        className="bg-[#18181b] flex flex-col overflow-hidden shrink-0"
+        className="bg-[#000000] flex flex-col overflow-hidden shrink-0"
       >
         {/* Chat Header */}
         <div className="h-11 border-b border-slate-800/50 flex items-center justify-between px-4 min-w-[420px] shrink-0">
@@ -1070,7 +1100,7 @@ export default function HomePage() {
                       initial={{ opacity: 0, y: -10 }}
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0, y: -10 }}
-                      className="absolute top-10 left-0 w-64 bg-[#18181b] border border-slate-700 shadow-2xl rounded-xl z-50 overflow-hidden"
+                      className="absolute top-10 left-0 w-64 bg-[#000000] border border-slate-700 shadow-2xl rounded-xl z-50 overflow-hidden"
                     >
                       <div className="max-h-[60vh] overflow-y-auto custom-scrollbar">
                         {/* BULUT MODELLER */}
@@ -1156,7 +1186,7 @@ export default function HomePage() {
                       {/* SETTINGS KISAYOLU */}
                       <button
                         onClick={() => { setIsModelDropdownOpen(false); setShowSettings(true); }}
-                        className="w-full text-left p-3 text-[11px] text-slate-400 bg-[#0e0e10] hover:bg-slate-800 transition-colors flex items-center justify-between group"
+                        className="w-full text-left p-3 text-[11px] text-slate-400 bg-[#000000] hover:bg-slate-800 transition-colors flex items-center justify-between group"
                       >
                         API Key Ekle / Ayarlar
                         <ChevronRight size={12} className="opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -1208,7 +1238,7 @@ export default function HomePage() {
                       <div className="flex-1 min-w-0">
                         {/* Statik Bulgular */}
                         {msg.smells && msg.smells.length > 0 && (
-                          <div className="mb-3 bg-[#0e0e10] rounded-lg border border-orange-500/20 p-3">
+                          <div className="mb-3 bg-[#000000] rounded-lg border border-orange-500/20 p-3">
                             <div className="flex items-center gap-1.5 mb-2">
                               <AlertTriangle size={12} className="text-orange-400" />
                               <span className="text-[10px] font-semibold text-orange-400 uppercase tracking-wider">Static Analysis</span>
@@ -1227,7 +1257,7 @@ export default function HomePage() {
                         )}
                         {/* Pipeline Skor Badge */}
                         {msg.pipeline && (
-                          <div className="mb-3 bg-[#0e0e10] rounded-lg border border-blue-500/20 p-3">
+                          <div className="mb-3 bg-[#000000] rounded-lg border border-blue-500/20 p-3">
                             <div className="flex items-center justify-between">
                               <div className="flex items-center gap-3">
                                 <div className="flex items-center gap-1.5">
@@ -1279,7 +1309,7 @@ export default function HomePage() {
                   <div className="h-6 w-6 bg-gradient-to-br from-blue-500 to-violet-500 rounded-md flex items-center justify-center shrink-0">
                     <Bot size={13} className="text-white" />
                   </div>
-                  <div className="bg-[#0e0e10] rounded-lg px-4 py-3 border border-slate-800">
+                  <div className="bg-[#000000] rounded-lg px-4 py-3 border border-slate-800">
                     <div className="flex items-center gap-1.5">
                       <div className="typing-dot h-2 w-2 bg-blue-500 rounded-full" />
                       <div className="typing-dot h-2 w-2 bg-blue-500 rounded-full" />
@@ -1293,57 +1323,38 @@ export default function HomePage() {
           )}
         </div>
 
-        {/* Chat Input */}
-        {activeConvId && (
-          <div className="p-3 border-t border-slate-800/50 min-w-[420px] shrink-0">
-            <div className="bg-[#0e0e10] border border-slate-800 rounded-xl transition-colors focus-within:border-blue-500/30">
-              {/* File Chip (sadece dosya yüklüyse göster) */}
-              {code.trim() && (
-                <div className="px-3 pt-2.5 pb-1">
-                  <div className="inline-flex items-center gap-2 bg-slate-800/60 border border-slate-700/50 rounded-lg px-2.5 py-1.5 max-w-[280px] group">
+        {/* Chat Input - Animated Version */}
+        <div className="p-4 border-t border-slate-800/50 bg-[#000000]/80 backdrop-blur-md">
+           {/* File Chip (sadece dosya yüklüyse göster) */}
+           {code.trim() && (
+              <div className="mb-3">
+                 <div className="inline-flex items-center gap-2 bg-blue-500/10 border border-blue-500/20 rounded-lg px-2.5 py-1.5 max-w-full group">
                     <Code2 size={13} className="text-blue-400 shrink-0" />
                     <span className="text-[11px] text-slate-300 font-medium truncate">
-                      {openedFilePath ? openedFilePath.split('/').pop() : 'kod.cs'}
-                    </span>
-                    <span className="text-[9px] text-slate-600 font-mono">
-                      {code.split('\n').length} satır
+                       {openedFilePath ? openedFilePath.split('/').pop() : 'kod.cs'}
                     </span>
                     <button
-                      onClick={() => { setCode(''); setOpenedFilePath(null); }}
-                      className="p-0.5 hover:bg-slate-600 rounded text-slate-500 hover:text-slate-300 opacity-0 group-hover:opacity-100 transition-all"
+                       onClick={() => { setCode(''); setOpenedFilePath(null); }}
+                       className="p-1 hover:bg-slate-800 rounded text-slate-500 hover:text-slate-300 transition-all"
                     >
-                      <X size={10} />
+                       <X size={10} />
                     </button>
-                  </div>
-                </div>
-              )}
-              {/* Chat textarea — her zaman görünür */}
-              <div className="flex items-end">
-                <textarea
-                  ref={chatInputRef}
-                  value={chatInput}
-                  onChange={(e) => setChatInput(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  placeholder={code.trim()
-                    ? (messages.length === 0 ? 'Bu kodu analiz et...' : 'Devam mesajı yazın...')
-                    : 'Unity hakkında soru sorun veya kod yapıştırın...'
-                  }
-                  rows={1}
-                  className="flex-1 bg-transparent px-3.5 py-2.5 text-[13px] outline-none resize-none text-slate-200 placeholder:text-slate-600 max-h-32"
-                  style={{ color: 'white' }}
-                />
-                <button
-                  onClick={sendMessage}
-                  disabled={loading || !chatInput.trim()}
-                  className="p-2.5 m-1 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:bg-slate-800 disabled:text-slate-600 text-white transition-all"
-                >
-                  <Send size={14} />
-                </button>
+                 </div>
               </div>
-            </div>
-          </div>
-        )
-        }
+           )}
+           <AnimatedChatInput
+              value={chatInput}
+              setValue={setChatInput}
+              onSendMessage={(msg) => sendMessage(msg)}
+              isLoading={loading}
+              placeholder={code.trim() ? "Bu kodu analiz et..." : "Unity hakkında bir şey sor..."}
+              className="border-slate-800/50"
+           />
+        </div>
+
+        <AnimatePresence>
+           {loading && <ThinkingIndicator />}
+        </AnimatePresence>
       </motion.div >
 
       {/* Chat panel toggle (when closed) */}
@@ -1351,7 +1362,7 @@ export default function HomePage() {
         !isChatOpen && (
           <button
             onClick={() => setIsChatOpen(true)}
-            className="absolute right-3 top-3 p-2 bg-[#18181b] border border-slate-800 rounded-lg text-slate-400 hover:text-blue-500 hover:border-blue-500/30 transition-all z-30"
+            className="absolute right-3 top-3 p-2 bg-[#000000] border border-slate-800 rounded-lg text-slate-400 hover:text-blue-500 hover:border-blue-500/30 transition-all z-30"
           >
             <PanelRightOpen size={16} />
           </button>

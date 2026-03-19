@@ -17,7 +17,11 @@
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
     "isolatedModules": true,
-    "jsx": "preserve"
+    "jsx": "preserve",
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["renderer/*"]
+    }
   },
   "exclude": [
     "node_modules",

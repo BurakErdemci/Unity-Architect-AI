@@ -10,7 +10,7 @@ from report_engine import ReportEngine
 from prompts import get_language_instr, get_relevant_rules
 
 from .base import BasePipeline, StepResult
-from .agents import OrchestratorAgent, UnityExpertAgent, CriticAgent
+from .agents import OrchestratorAgent, UnityExpertAgent, CriticAgent, GameFeelAgent
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +27,7 @@ class MultiAgentPipeline(BasePipeline):
         self.orchestrator = OrchestratorAgent(self.provider)
         self.expert = UnityExpertAgent(self.provider)
         self.critic = CriticAgent(self.provider)
+        self.game_feel = GameFeelAgent(self.provider)
 
     async def run(self):
         pipeline_start = time.time()
@@ -87,44 +88,101 @@ class MultiAgentPipeline(BasePipeline):
         )
         plan = await plan_task
         
-        # Adım 2 süresini kaydet (Frontend'e planı göndermiyoruz, sadece log ve data olarak tutuyoruz)
+        # Adım 2 süresini kaydet
         self._result.step2_analysis = StepResult("orchestrator_plan", True, int((time.time() - start) * 1000), plan)
 
-        # 2. Expert kodu yazar
-        expert_start = time.time()
-        expert_task = asyncio.to_thread(
-            self.expert.fix_code,
-            code=self.code,
-            plan=plan,
-            lang_instr=lang_instr,
-            rules=rules_str,
-            learned_rules=learned_rules_str
-        )
-        fixed_code_raw = await expert_task
+        # ─── ITERATIVE FIX LOOP (Max 2 döngü) ───
+        MAX_RETRIES = 2
+        fixed_code = ""
+        critic_result = {}
         
-        # Kodu temizle
-        fixed_code = self._extract_code(fixed_code_raw)
-        self._result.fixed_code = fixed_code
+        for attempt in range(1, MAX_RETRIES + 1):
+            expert_start = time.time()
+            
+            if attempt == 1:
+                # İlk deneme: Normal Expert çalışması
+                logger.info(f"  [Loop {attempt}/{MAX_RETRIES}] Expert kodu yazıyor...")
+                expert_task = asyncio.to_thread(
+                    self.expert.fix_code,
+                    code=self.code,
+                    plan=plan,
+                    lang_instr=lang_instr,
+                    rules=rules_str,
+                    learned_rules=learned_rules_str
+                )
+            else:
+                # 2. deneme: Critic feedback'i ile birlikte tekrar yaz
+                logger.info(f"  [Loop {attempt}/{MAX_RETRIES}] Critic beğenmedi (skor: {critic_result.get('score', '?')}), Expert tekrar yazıyor...")
+                critic_feedback = critic_result.get("review_message", "Kod kalitesi yetersiz.")
+                retry_prompt_extra = f"""
+[ÖNCEKİ DENEME ELEŞTİRİSİ — BU HATALARI DÜZELT]
+Critic puanı: {critic_result.get('score', '?')}/10
+Eleştiri: {critic_feedback}
 
-        # 3. Critic puanlar
-        critic_task = asyncio.to_thread(
-            self.critic.evaluate,
-            original_code=self.code,
-            fixed_code=fixed_code,
-            plan=plan,
-            lang_instr=lang_instr
-        )
-        critic_result = await critic_task
+Lütfen yukarıdaki eleştirileri dikkate alarak kodu TAMAMEN yeniden yaz. 
+Önceki hataları tekrarlama!"""
+                
+                expert_task = asyncio.to_thread(
+                    self.expert.fix_code,
+                    code=self.code,
+                    plan=plan + retry_prompt_extra,
+                    lang_instr=lang_instr,
+                    rules=rules_str,
+                    learned_rules=learned_rules_str
+                )
+            
+            fixed_code_raw = await expert_task
+            fixed_code = self._extract_code(fixed_code_raw)
+            self._result.fixed_code = fixed_code
+
+            # Critic puanlar
+            critic_task = asyncio.to_thread(
+                self.critic.evaluate,
+                original_code=self.code,
+                fixed_code=fixed_code,
+                plan=plan,
+                lang_instr=lang_instr
+            )
+            critic_result = await critic_task
+            
+            score = critic_result.get("score", 0)
+            logger.info(f"  [Loop {attempt}/{MAX_RETRIES}] Critic puanı: {score}/10")
+            
+            # Skor yeterli (>= 8.0) ise döngüyü kır
+            if score >= 8.0:
+                logger.info(f"  ✅ Kod kalitesi yeterli, loop sonlandırıldı (deneme {attempt})")
+                break
+            elif attempt < MAX_RETRIES:
+                logger.info(f"  🔄 Skor düşük ({score}), tekrar deneniyor...")
         
         # Critic'in sonuçlarını pipeline'a yansıt
         self._result.score = critic_result.get("score", self._result.score)
         self._result.summary = critic_result.get("review_message", "Eleştiri yok.")
         
-        # Critic mesajını ana analiz metni olarak ekle (Orchestrator planı gizli kalır)
-        self._result.analysis_text = f"**⚖️ KOD DENETİM RAPORU:**\n\n{self._result.summary}\n\n**Puan:** {self._result.score}/10.0"
+        # Loop bilgisini rapora ekle
+        loop_info = f"(🔄 {attempt} deneme)" if attempt > 1 else ""
+        self._result.analysis_text = f"**⚖️ KOD DENETİM RAPORU {loop_info}:**\n\n{self._result.summary}\n\n**Puan:** {self._result.score}/10.0"
         
         # Step 3 sonucunu kaydet
         self._result.step3_code_fix = StepResult("expert_and_critic", True, int((time.time() - expert_start) * 1000), critic_result)
+
+        # ─── STEP 4: GAME FEEL ANALİZİ ───
+        if fixed_code and len(fixed_code.strip()) > 20:
+            logger.info("  [Multi-Agent] 🎮 Game Feel analizi başlatılıyor...")
+            game_feel_task = asyncio.to_thread(
+                self.game_feel.evaluate,
+                code=fixed_code,
+                context=self.user_message
+            )
+            self._game_feel_result = await game_feel_task
+            
+            # Game Feel skorunu da iterative loop'a dahil et
+            gf_score = self._game_feel_result.get("game_feel_score", -1)
+            if gf_score >= 0:
+                game_feel_text = self.game_feel.format_for_ui(self._game_feel_result)
+                self._result.analysis_text += game_feel_text
+        else:
+            self._game_feel_result = None
 
     def _extract_code(self, text: str) -> str:
         """Markdown içerisinden sadece C# kodunu çıkarır"""

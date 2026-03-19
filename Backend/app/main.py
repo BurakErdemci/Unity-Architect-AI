@@ -20,6 +20,7 @@ from analyzer import UnityAnalyzer, CodeProcessor
 from validator import ResponseValidator
 from ai_providers import AIProviderManager
 from pipelines import SingleAgentPipeline, MultiAgentPipeline, CodeGenerationPipeline
+from pipelines.agents.intent_classifier import IntentClassifierAgent
 from report_engine import ReportEngine
 from prompts import (
     SYSTEM_PROMPT, PROMPT_ANALYZE, PROMPT_OUT_OF_SCOPE,
@@ -163,15 +164,18 @@ async def get_available_models():
 async def analyze_code(request: AnalysisRequest):
     logger.info(f"Analiz İsteği - User ID: {request.user_id}")
     
-    intent = CodeProcessor.detect_intent(request.code)
     is_csharp = CodeProcessor.is_actually_code(request.code)
+    
+    # Intent tespiti: Provider'ı al ve LLM-based classifier kullan
+    p_type, m_name, api_key, use_multi_agent = db.get_ai_config(request.user_id)
+    provider = AIProviderManager.get_provider({"provider_type": p_type, "model_name": m_name, "api_key": api_key})
+    
+    classifier = IntentClassifierAgent(provider)
+    intent = await classifier.classify_async(request.code)
     
     if intent == "GREETING" and not is_csharp:
         return {"intent": "GREETING", "ai_suggestion": PROMPT_GREETING, "static_results": {"smells": []}}
     
-    p_type, m_name, api_key, use_multi_agent = db.get_ai_config(request.user_id)
-    provider = AIProviderManager.get_provider({"provider_type": p_type, "model_name": m_name, "api_key": api_key})
-
     static_results = {"smells": [], "stats": {"total_lines": 0, "class_name": "Analiz"}}
     if is_csharp:
         static_results = UnityAnalyzer(request.code).analyze()
@@ -317,11 +321,17 @@ async def chat(request: ChatRequest):
     # 1. Kullanıcı mesajını kaydet
     db.add_message(request.conversation_id, "user", request.message)
 
-    # 2. Intent ve kod tespiti
-    intent = CodeProcessor.detect_intent(request.message)
-    is_csharp = CodeProcessor.is_actually_code(request.message)
+    # 2. AI Sağlayıcısını hazırla (intent için de lazım)
+    p_type, m_name, api_key, use_multi_agent = db.get_ai_config(request.user_id)
+    provider = AIProviderManager.get_provider({"provider_type": p_type, "model_name": m_name, "api_key": api_key})
 
-    # 3. Selamlama kontrolü
+    # 3. Intent ve kod tespiti (LLM-powered)
+    classifier = IntentClassifierAgent(provider)
+    intent = await classifier.classify_async(request.message)
+    is_csharp = CodeProcessor.is_actually_code(request.message)
+    logger.info(f"  Intent: {intent}, Is C#: {is_csharp}")
+
+    # 4. Selamlama kontrolü (GREETING sadece selamlama + kod yoksa)
     if request.mode != "generation" and intent == "GREETING" and not is_csharp:
         db.add_message(request.conversation_id, "assistant", PROMPT_GREETING)
         return {
@@ -332,7 +342,7 @@ async def chat(request: ChatRequest):
             "pipeline": None
         }
 
-    # 4. Kapsam dışı kontrolü
+    # 5. Kapsam dışı kontrolü
     if request.mode != "generation" and intent == "OUT_OF_SCOPE" and not is_csharp:
         db.add_message(request.conversation_id, "assistant", PROMPT_OUT_OF_SCOPE)
         return {
@@ -342,10 +352,6 @@ async def chat(request: ChatRequest):
             "static_results": {"smells": []},
             "pipeline": None
         }
-
-    # 5. AI Sağlayıcısını hazırla
-    p_type, m_name, api_key, use_multi_agent = db.get_ai_config(request.user_id)
-    provider = AIProviderManager.get_provider({"provider_type": p_type, "model_name": m_name, "api_key": api_key})
 
     # 6. Sohbet geçmişini yükle (context için)
     history_messages = db.get_conversation_messages(request.conversation_id)
