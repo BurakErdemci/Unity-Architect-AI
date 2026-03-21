@@ -140,7 +140,9 @@ export function AnimatedChatInput({
     onSendMessage,
     isLoading,
     placeholder = "Ask zap a question...",
-    className
+    className,
+    includeEditorCode = false,
+    onToggleIncludeCode
 }: { 
     value: string;
     setValue: (val: string) => void;
@@ -148,6 +150,8 @@ export function AnimatedChatInput({
     isLoading: boolean;
     placeholder?: string;
     className?: string;
+    includeEditorCode?: boolean;
+    onToggleIncludeCode?: () => void;
 }) {
     const [attachments, setAttachments] = useState<string[]>([]);
     const [activeSuggestion, setActiveSuggestion] = useState<number>(-1);
@@ -295,10 +299,16 @@ export function AnimatedChatInput({
 
             <div className="p-2 border-t border-white/[0.05] flex items-center justify-between gap-4">
                 <div className="flex items-center gap-2">
-                    <button type="button" onClick={() => setAttachments(prev => [...prev, `att-${Date.now()}.cs`])} className="p-2 text-white/40 hover:text-white/90 rounded-lg transition-colors">
+                    <button 
+                        type="button" 
+                        onClick={() => onToggleIncludeCode && onToggleIncludeCode()} 
+                        className={cn("p-2 rounded-lg transition-colors flex items-center gap-1.5 border", includeEditorCode ? "bg-blue-600/20 text-blue-400 border-blue-500/30" : "text-white/40 hover:text-white/90 border-transparent hover:bg-white/5")}
+                        title="Kod Editöründeki İçeriği Sohbete Ekle"
+                    >
                         <Paperclip className="w-3.5 h-3.5" />
+                        {includeEditorCode && <span className="text-[10px] font-semibold tracking-wider">KOD EKLENİYOR</span>}
                     </button>
-                    <button type="button" onClick={() => setShowCommandPalette(prev => !prev)} className={cn("p-2 text-white/40 hover:text-white/90 rounded-lg transition-colors", showCommandPalette && "bg-white/10 text-white/90")}>
+                    <button type="button" onClick={() => setShowCommandPalette(prev => !prev)} className={cn("p-2 text-white/40 hover:text-white/90 rounded-lg transition-colors border border-transparent", showCommandPalette && "bg-white/10 text-white/90 border-white/10")}>
                         <Command className="w-3.5 h-3.5" />
                     </button>
                 </div>

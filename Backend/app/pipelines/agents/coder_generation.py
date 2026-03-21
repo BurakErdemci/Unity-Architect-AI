@@ -39,7 +39,7 @@ class CoderGenerationAgent:
         """
         
         try:
-            generated_response = self.provider.analyze_code(prompt)
+            generated_response = self.provider.analyze_code(prompt, max_tokens=max_tokens)
             return generated_response
         except Exception as e:
             logger.error(f"[Coder - Gen] Hata: {e}")

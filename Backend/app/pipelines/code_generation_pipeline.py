@@ -99,7 +99,7 @@ Somut düzeltme talimatları:
                 current_plan,
                 lang_instr,
                 rules_str,
-                max_tokens=8192 # Üretim için yüksek limit
+                max_tokens=8192 # Anthropic non-streaming için güvenli maksimum limit
             )
             
             # Game Feel değerlendirmesi (sessiz — kullanıcıya gösterilmez)

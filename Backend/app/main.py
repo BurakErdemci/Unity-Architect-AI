@@ -1,5 +1,10 @@
 import logging
 import uvicorn
+
+# --- LOGGING SETUP (En başta olmalı!) ---
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 import re
 import os
 import json
@@ -22,6 +27,7 @@ from ai_providers import AIProviderManager
 from pipelines import SingleAgentPipeline, MultiAgentPipeline, CodeGenerationPipeline
 from pipelines.agents.intent_classifier import IntentClassifierAgent
 from report_engine import ReportEngine
+from knowledge import KBEngine
 from prompts import (
     SYSTEM_PROMPT, PROMPT_ANALYZE, PROMPT_OUT_OF_SCOPE,
     PROMPT_GREETING, get_language_instr, get_relevant_rules
@@ -39,6 +45,7 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Unity Architect AI")
 db = DatabaseManager(db_path=db_path)
+kb = KBEngine()  # Yerel Unity bilgi bankası (0ms, 0 token)
 
 app.add_middleware(
     CORSMiddleware,
@@ -83,6 +90,7 @@ class ChatRequest(BaseModel):
     language: str = "tr"
     user_id: int
     mode: str = "analysis"
+    use_kb: bool = True  # Yerel Bilgi Bankası aktif/pasif
 
 class WorkspaceRequest(BaseModel):
     user_id: int
@@ -146,13 +154,18 @@ async def get_available_models():
         ]
     }
     try:
-        import ollama
-        ollama_models = await asyncio.to_thread(ollama.list)
-        if "models" in ollama_models:
-            for m in ollama_models["models"]:
+        import urllib.request, json as _json
+        def _fetch_ollama():
+            req = urllib.request.Request("http://127.0.0.1:11434/api/tags")
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                return _json.loads(resp.read())
+        ollama_data = await asyncio.to_thread(_fetch_ollama)
+        for m in ollama_data.get("models", []):
+            model_name = m.get("name", "")
+            if model_name:
                 models["local"].append({
-                    "id": m["name"],
-                    "name": m["name"].split(":")[0].title() + " (Local)",
+                    "id": model_name,
+                    "name": model_name.split(":")[0].title() + " (Local)",
                     "provider": "ollama"
                 })
     except Exception as e:
@@ -189,7 +202,7 @@ async def analyze_code(request: AnalysisRequest):
         prompt += PROMPT_ANALYZER_TEMPLATE.format(code=request.code, smells=static_results['smells'])
         
         for attempt in range(2):
-            response = await asyncio.to_thread(provider.analyze_code, prompt)
+            response = await asyncio.to_thread(provider.analyze_code, prompt, max_tokens=8192)
             clean_res = clean_response(response)
             is_valid, _ = ResponseValidator.validate(clean_res)
             if is_valid:
@@ -321,6 +334,75 @@ async def chat(request: ChatRequest):
     # 1. Kullanıcı mesajını kaydet
     db.add_message(request.conversation_id, "user", request.message)
 
+    # ─── KB MODU (provider_type='kb') — LLM'siz, tamamen yerel ───────────
+    if request.use_kb:
+        is_csharp = CodeProcessor.is_actually_code(request.message)
+
+        # Statik intent tespiti (LLM'siz)
+        classifier = IntentClassifierAgent(None)
+        intent = classifier._static_prefilter(request.message) or ("GENERATION" if request.mode == "generation" else "CHAT")
+        logger.info(f"  [KB MODE] Intent: {intent}, Is C#: {is_csharp}")
+
+        # Selamlama
+        if intent == "GREETING" and not is_csharp:
+            db.add_message(request.conversation_id, "assistant", PROMPT_GREETING)
+            return {"role": "assistant", "content": PROMPT_GREETING, "intent": "GREETING",
+                    "static_results": {"smells": []}, "pipeline": None, "source": "kb"}
+
+        # Kapsam dışı
+        if intent == "OUT_OF_SCOPE" and not is_csharp:
+            db.add_message(request.conversation_id, "assistant", PROMPT_OUT_OF_SCOPE)
+            return {"role": "assistant", "content": PROMPT_OUT_OF_SCOPE, "intent": "OUT_OF_SCOPE",
+                    "static_results": {"smells": []}, "pipeline": None, "source": "kb"}
+
+        # C# Kod Analizi (LLM'siz statik analiz)
+        if is_csharp:
+            logger.info(f"  [KB MODE] C# kodu tespit edildi → Statik Analiz başlıyor")
+            static_results = UnityAnalyzer(request.message).analyze()
+            analysis_response = kb.format_analysis(static_results)
+            db.add_message(request.conversation_id, "assistant", analysis_response, static_results.get("smells", []))
+
+            # Başlık güncelle (ilk mesajsa)
+            history_messages = db.get_conversation_messages(request.conversation_id)
+            if len(history_messages) <= 2:
+                class_name = static_results.get("stats", {}).get("class_name", "Analiz")
+                db.rename_conversation(request.conversation_id, f"Analiz: {class_name}")
+
+            return {"role": "assistant", "content": analysis_response, "intent": "ANALYSIS",
+                    "static_results": static_results, "pipeline": None, "source": "kb_analysis"}
+
+        # KB Lookup (soru/istek — kod değilse)
+        kb_intent = "generation" if request.mode == "generation" else "chat"
+        kb_result = kb.lookup(request.message, intent=kb_intent)
+
+        if kb_result:
+            logger.info(f"  [KB HIT] '{kb_result.title}' (skor={kb_result.score})")
+            final_suggestion = kb.format_response(kb_result, intent=kb_intent)
+            db.add_message(request.conversation_id, "assistant", final_suggestion)
+            return {"role": "assistant", "content": final_suggestion, "intent": intent,
+                    "static_results": {"smells": [], "stats": {}}, "pipeline": None, "source": "kb"}
+
+        # KB Miss — kullanıcıya bilgi ver
+        kb_miss_msg = (
+            "🔍 Bu konu bilgi bankamda yer almıyor.\n\n"
+            "Daha gelişmiş yanıtlar için **Model Seç** menüsünden bir AI modeli seçip "
+            "API key girebilirsin. Böylece karmaşık konularda da yardımcı olabilirim!\n\n"
+            "> **İpucu:** Groq ücretsiz bir seçenek olarak kullanılabilir."
+        )
+        db.add_message(request.conversation_id, "assistant", kb_miss_msg)
+
+        # Başlık güncelle (ilk mesajsa)
+        history_messages = db.get_conversation_messages(request.conversation_id)
+        if len(history_messages) <= 2:
+            auto_title = request.message[:40].strip()
+            if len(request.message) > 40:
+                auto_title += "..."
+            db.rename_conversation(request.conversation_id, auto_title)
+
+        return {"role": "assistant", "content": kb_miss_msg, "intent": intent,
+                "static_results": {"smells": [], "stats": {}}, "pipeline": None, "source": "kb_miss"}
+
+    # ─── AI MODU (Groq, Claude, Gemini, OpenAI, Ollama...) ───────────────
     # 2. AI Sağlayıcısını hazırla (intent için de lazım)
     p_type, m_name, api_key, use_multi_agent = db.get_ai_config(request.user_id)
     provider = AIProviderManager.get_provider({"provider_type": p_type, "model_name": m_name, "api_key": api_key})

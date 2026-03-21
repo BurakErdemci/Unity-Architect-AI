@@ -52,7 +52,7 @@
   .chat-message-enter {
     animation: chatSlideIn 0.3s ease-out forwards;
   }
-  
+
   @keyframes chatSlideIn {
     from {
       opacity: 0;
@@ -85,6 +85,30 @@
     40% {
       transform: scale(1);
       opacity: 1;
+    }
+  }
+}
+
+@theme inline {
+  @keyframes fadeSlideIn {
+  to {
+    opacity: 1;
+    filter: blur(0px);
+    transform: translateY(0px);
+    }
+  }
+  @keyframes slideRightIn {
+  to {
+    opacity: 1;
+    filter: blur(0px);
+    transform: translateX(0px);
+    }
+  }
+  @keyframes testimonialIn {
+  to {
+    opacity: 1;
+    filter: blur(0px);
+    transform: translateY(0px) scale(1);
     }
   }
 }

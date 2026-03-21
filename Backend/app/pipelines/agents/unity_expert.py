@@ -11,8 +11,8 @@ class UnityExpertAgent:
     def __init__(self, provider: Any):
         self.provider = provider
         
-    def fix_code(self, code: str, plan: str, lang_instr: str, rules: str, learned_rules: str) -> str:
-        logger.info("  [Unity Expert] Kod düzeltiliyor...")
+    def fix_code(self, code: str, plan: str, lang_instr: str, rules: str, learned_rules: str, max_tokens: int = 8192) -> str:
+        logger.info(f"  [Unity Expert] Kod düzeltiliyor (Limit: {max_tokens})...")
         
         prompt = f"""
         # GÖREV: MİMARİ PLANA GÖRE C# KODUNU DÜZELT

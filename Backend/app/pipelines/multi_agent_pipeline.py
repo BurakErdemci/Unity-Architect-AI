@@ -108,7 +108,8 @@ class MultiAgentPipeline(BasePipeline):
                     plan=plan,
                     lang_instr=lang_instr,
                     rules=rules_str,
-                    learned_rules=learned_rules_str
+                    learned_rules=learned_rules_str,
+                    max_tokens=8192
                 )
             else:
                 # 2. deneme: Critic feedback'i ile birlikte tekrar yaz

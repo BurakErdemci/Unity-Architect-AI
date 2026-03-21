@@ -17,6 +17,7 @@ class PipelineResult:
     step1_static: Optional[StepResult] = None
     step2_analysis: Optional[StepResult] = None
     step3_code_fix: Optional[StepResult] = None
+    step4_critique: Optional[StepResult] = None
 
     # Birleşik rapor
     score: float = 10.0
@@ -30,6 +31,10 @@ class PipelineResult:
     analysis_text: str = ""   # Açıklama
     fixed_code: str = ""      # Düzeltilmiş kod
     combined_response: str = ""  # Frontend'e gösterilecek birleşik metin
+
+    # Self-Critique verileri (Single Agent Enhanced)
+    game_feel_data: Optional[Dict] = None  # Game Feel kategorileri
+    retry_count: int = 0  # Kaç deneme yapıldı
 
     def to_dict(self) -> Dict[str, Any]:
         """Frontend'e gönderilecek pipeline bilgisini döndürür."""
@@ -56,7 +61,14 @@ class PipelineResult:
                     "duration_ms": self.step3_code_fix.duration_ms if self.step3_code_fix else 0,
                     "success": self.step3_code_fix.success if self.step3_code_fix else False,
                 },
+                "step4": {
+                    "name": "Self-Critique",
+                    "duration_ms": self.step4_critique.duration_ms if self.step4_critique else 0,
+                    "success": self.step4_critique.success if self.step4_critique else False,
+                },
             },
+            "game_feel_data": self.game_feel_data,
+            "retry_count": self.retry_count,
         }
 
 class BasePipeline:

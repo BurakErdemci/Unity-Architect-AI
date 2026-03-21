@@ -74,11 +74,9 @@ class OpenAICompatibleProvider(AIProvider):
         except Exception as e:
             raise Exception(f"API Hatası: {str(e)}")
 
-import os
 import anthropic
 
-# --- DEFAULT (Groq ücretsiz) ---
-DEFAULT_GROQ_KEY = os.environ.get("GROQ_API_KEY", "")
+# --- DEFAULT GROQ MODEL ---
 DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile"
 
 class AnthropicProvider(AIProvider):
@@ -132,18 +130,10 @@ class AIProviderManager:
             return OpenAICompatibleProvider(api_key=api_key, base_url="https://api.openai.com/v1", model_name=m_name or "gpt-4o-mini")
         elif p_type == "deepseek" and api_key:
             return OpenAICompatibleProvider(api_key=api_key, base_url="https://api.deepseek.com", model_name=m_name or "deepseek-chat")
-        elif p_type == "groq":
-            groq_key = api_key if api_key else DEFAULT_GROQ_KEY
-            if groq_key:
-                return OpenAICompatibleProvider(api_key=groq_key, base_url="https://api.groq.com/openai/v1", model_name=m_name or DEFAULT_GROQ_MODEL)
-            # Eğer groq seçili ama ne user key ne de default key yoksa Ollama'ya düşer
-            return OllamaProvider(model_name=m_name)
+        elif p_type == "groq" and api_key:
+            return OpenAICompatibleProvider(api_key=api_key, base_url="https://api.groq.com/openai/v1", model_name=m_name or DEFAULT_GROQ_MODEL)
         elif p_type == "ollama":
             return OllamaProvider(model_name=m_name)
         
-        # Kullanıcı hiçbir şey seçmediyse → varsayılan Groq
-        if DEFAULT_GROQ_KEY:
-            return OpenAICompatibleProvider(api_key=DEFAULT_GROQ_KEY, base_url="https://api.groq.com/openai/v1", model_name=DEFAULT_GROQ_MODEL)
-        
-        # Groq key de yoksa → Ollama'ya düş
+        # Kullanıcı hiçbir şey seçmediyse veya API key yoksa → Ollama'ya düş
         return OllamaProvider(model_name=m_name)

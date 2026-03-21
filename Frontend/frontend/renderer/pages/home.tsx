@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Head from 'next/head';
 import axios from 'axios';
+import Editor from '@monaco-editor/react';
+import { SignInPage, Testimonial } from "../components/ui/sign-in";
 import { AnimatedAIChat, AnimatedChatInput, ThinkingIndicator } from "../components/ui/animated-ai-chat";
 import {
   Activity,
@@ -15,6 +17,7 @@ import {
   Code2,
   Copy,
   Cpu,
+  Database,
   Edit3,
   File as FileIcon,
   FileCode,
@@ -113,7 +116,7 @@ const MarkdownRenderer = ({ content }: { content: string }) => {
                 style={vscDarkPlus}
                 language={match[1]}
                 PreTag="div"
-                className="rounded-xl !bg-[#0a0c10] border border-slate-800 shadow-lg !pt-10"
+                className="rounded-xl !bg-[#0a0c10] border border-slate-800 shadow-lg !pt-10 max-h-[500px] overflow-y-auto custom-scrollbar"
                 {...props}
               >
                 {codeString}
@@ -157,6 +160,8 @@ export default function HomePage() {
   const [isDragging, setIsDragging] = useState(false);
   const [dragRejectMsg, setDragRejectMsg] = useState('');
   const [appMode, setAppMode] = useState<'analysis' | 'generation'>('analysis');
+  const [isEditorFocused, setIsEditorFocused] = useState(false);
+  const [includeEditorCode, setIncludeEditorCode] = useState(false);
 
   // --- WORKSPACE ---
   const [workspacePath, setWorkspacePath] = useState<string | null>(null);
@@ -172,7 +177,7 @@ export default function HomePage() {
   // --- SETTINGS ---
   const [showSettings, setShowSettings] = useState(false);
   const [aiConfig, setAiConfig] = useState({
-    provider_type: 'ollama', api_key: '', model_name: 'qwen2.5-coder:7b', use_multi_agent: true
+    provider_type: 'kb', api_key: '', model_name: 'unity-kb-v1', use_multi_agent: true
   });
   const [availableModels, setAvailableModels] = useState<AvailableModels>({ local: [], cloud: [] });
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
@@ -189,6 +194,18 @@ export default function HomePage() {
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, loading]);
+
+  // --- Session Persistence ---
+  useEffect(() => {
+    const savedUser = localStorage.getItem('unityArchitectUser');
+    if (savedUser) {
+      try {
+        setUser(JSON.parse(savedUser));
+      } catch (e) {
+        localStorage.removeItem('unityArchitectUser');
+      }
+    }
+  }, []);
 
   // --- Fetch on login ---
   useEffect(() => {
@@ -264,6 +281,7 @@ export default function HomePage() {
 
   const handleLogout = () => {
     setUser(null);
+    localStorage.removeItem('unityArchitectUser');
     setWorkspacePath(null);
     setLastWorkspacePath(null);
     setRootFolderPath(null);
@@ -479,11 +497,14 @@ export default function HomePage() {
       targetConvId = newConvId;
     }
 
-    // İlk mesajda kodu ekle, sonraki mesajlarda sadece chat gönder
-    const isFirstMessage = messages.length === 0;
-    const messageContent = (isFirstMessage && code.trim())
+    // Kodu manuel olarak attach etme mantığı
+    const shouldIncludeCode = includeEditorCode && code.trim();
+    const messageContent = shouldIncludeCode
       ? `${inputToUse}\n\n\`\`\`csharp\n${code}\n\`\`\``
       : inputToUse;
+
+    // Kodu gönderdikten sonra toggle'ı kapat, böylece sonraki sohbete otomatik yapışmasın
+    if (includeEditorCode) setIncludeEditorCode(false);
 
     // Optimistic UI: kullanıcı mesajını hemen göster
     const userMsg: Message = {
@@ -503,7 +524,8 @@ export default function HomePage() {
         message: messageContent,
         language: lang,
         user_id: user.id,
-        mode: appMode
+        mode: appMode,
+        use_kb: aiConfig.provider_type === 'kb'
       }, { timeout: 310000 }); // 310 saniye timeout (Opus yavaş olabilir)
 
       // AI yanıtını ekle
@@ -541,66 +563,78 @@ export default function HomePage() {
   };
 
   // =====================================================================
-  //                        GİRİŞ EKRANI
+  //                        GİRİŞ EKRANI (NEW MODERN UI)
   // =====================================================================
   if (!user) {
+    const sampleTestimonials: Testimonial[] = [
+      {
+        avatarSrc: "https://randomuser.me/api/portraits/men/32.jpg",
+        name: "M. Gökşin",
+        handle: "Senior Unity Developer",
+        text: "Unity Architect AI has completely transformed my workflow. The code audits are precise, and the local AI integration is a game-changer for latency!"
+      },
+      {
+        avatarSrc: "https://randomuser.me/api/portraits/women/44.jpg",
+        name: "Ayşe Yılmaz",
+        handle: "Indie Game Dev",
+        text: "Finally, an AI that understands Game Feel! It doesn't just write code; it writes code that feels good to play. Absolutely essential tool."
+      },
+      {
+        avatarSrc: "https://randomuser.me/api/portraits/men/68.jpg",
+        name: "Burak E.",
+        handle: "Lead Architect",
+        text: "The Multi-Agent architecture is brilliant. Having separate agents for planning, coding, and critiquing results in enterprise-level C# scripts every time."
+      },
+    ];
+
+    const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      const formData = new FormData(event.currentTarget);
+      const username = formData.get('username') as string; 
+      const password = formData.get('password') as string;
+      const rememberMe = formData.get('rememberMe') === 'on';
+      
+      if (!username || !password) {
+        alert("Lütfen tüm alanları doldurun.");
+        return;
+      }
+
+      setAuthForm({ username, password });
+      
+      const url = authMode === 'login' ? '/login' : '/register';
+      try {
+        const res = await axios.post(`${API}${url}`, { username, password });
+        if (authMode === 'login') {
+          const userData = { id: res.data.user_id, name: res.data.username };
+          setUser(userData);
+          if (rememberMe) {
+            localStorage.setItem('unityArchitectUser', JSON.stringify(userData));
+          }
+        } else {
+          alert("Kayıt başarılı! Giriş yapabilirsiniz.");
+          setAuthMode('login');
+        }
+      } catch (err: any) { alert(err.response?.data?.detail || "Auth hatası."); }
+    };
+
     return (
-      <div className="h-screen flex items-center justify-center bg-[#000000] text-white">
-        <Head><title>Unity Architect AI</title></Head>
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="bg-[#000000] p-10 rounded-2xl border border-slate-800/60 w-[420px] shadow-2xl"
-        >
-          <div className="flex flex-col items-center gap-4 mb-8 text-center">
-            <div className="bg-gradient-to-br from-blue-600 to-violet-600 p-4 rounded-2xl shadow-lg shadow-blue-900/30">
-              <Code2 size={36} />
+      <div className="bg-[#000000] text-foreground">
+        <Head><title>Unity Architect AI | {authMode === 'login' ? 'Giriş' : 'Kayıt'}</title></Head>
+        <SignInPage
+          authMode={authMode}
+          title={
+            <div className="mb-2">
+              <span className="font-light text-slate-300 tracking-tighter">Hoş Geldiniz </span><br/>
+              <span className="font-extrabold text-white tracking-tight">Unity Architect <span className="text-blue-500">AI</span></span>
             </div>
-            <div>
-              <h1 className="text-2xl font-extrabold tracking-tight">
-                Unity Architect <span className="text-blue-500">AI</span>
-              </h1>
-              <p className="text-slate-500 text-[10px] font-semibold tracking-[0.3em] uppercase mt-1">
-                Professional Code Auditor
-              </p>
-            </div>
-          </div>
-          <div className="space-y-3">
-            <div className="relative group">
-              <User className="absolute left-3.5 top-3.5 text-slate-600 group-focus-within:text-blue-500 transition-colors" size={16} />
-              <input
-                style={{ backgroundColor: '#000000', color: 'white' }}
-                className="w-full bg-[#000000] border border-slate-800 p-3.5 pl-11 rounded-xl outline-none focus:border-blue-500/50 text-sm transition-colors"
-                placeholder="Kullanıcı Adı"
-                onChange={(e) => setAuthForm({ ...authForm, username: e.target.value })}
-                onKeyDown={(e) => e.key === 'Enter' && handleAuth()}
-              />
-            </div>
-            <div className="relative group">
-              <LockIcon className="absolute left-3.5 top-3.5 text-slate-600 group-focus-within:text-blue-500 transition-colors" size={16} />
-              <input
-                style={{ backgroundColor: '#000000', color: 'white' }}
-                type="password"
-                className="w-full bg-[#000000] border border-slate-800 p-3.5 pl-11 rounded-xl outline-none focus:border-blue-500/50 text-sm transition-colors"
-                placeholder="Şifre"
-                onChange={(e) => setAuthForm({ ...authForm, password: e.target.value })}
-                onKeyDown={(e) => e.key === 'Enter' && handleAuth()}
-              />
-            </div>
-            <button
-              onClick={handleAuth}
-              className="w-full bg-blue-600 hover:bg-blue-500 text-white p-3.5 rounded-xl font-bold text-xs tracking-wide transition-all active:scale-[0.98] uppercase mt-1"
-            >
-              {authMode === 'login' ? 'Oturum Aç' : 'Kayıt Ol'}
-            </button>
-            <button
-              onClick={() => setAuthMode(authMode === 'login' ? 'register' : 'login')}
-              className="w-full text-[11px] font-medium text-slate-500 hover:text-blue-400 transition-colors py-1"
-            >
-              {authMode === 'login' ? "Hesabın yok mu? Kaydol" : "Zaten üye misin? Giriş yap"}
-            </button>
-          </div>
-        </motion.div>
+          }
+          description={authMode === 'login' ? "Hesabınıza giriş yapın ve Unity projelerinizi geliştirmeye devam edin." : "Yeni bir hesap oluşturun ve kod kalitenizi hemen artırın."}
+          heroImageSrc="https://images.unsplash.com/photo-1616499370260-485e3e5810e7?q=80&w=2160&auto=format&fit=crop" // Unity/Code vibe image
+          testimonials={sampleTestimonials}
+          onSignIn={handleSubmit}
+          onToggleMode={() => setAuthMode(authMode === 'login' ? 'register' : 'login')}
+          onResetPassword={() => setAuthMode('login')}
+        />
       </div>
     );
   }
@@ -717,15 +751,16 @@ export default function HomePage() {
                     onChange={e => setAiConfig({ ...aiConfig, provider_type: e.target.value })}
                     className="w-full bg-[#000000] border border-slate-800 rounded-xl p-3 text-white text-sm outline-none focus:border-blue-500 transition-colors"
                   >
-                    <option value="groq">Groq (Varsayılan, Ücretsiz)</option>
+                    <option value="groq">Groq (Bulut)</option>
                     <option value="ollama">Ollama (Yerel)</option>
+                    <option value="kb">Unity Architect KB (Hızlı & Yerel)</option>
                     <option value="anthropic">Anthropic (Claude)</option>
                     <option value="google">Google Gemini (Bulut)</option>
                     <option value="openai">OpenAI (Bulut)</option>
                     <option value="deepseek">DeepSeek (Reasoning)</option>
                   </select>
                 </div>
-                {aiConfig.provider_type !== 'ollama' && aiConfig.provider_type !== 'groq' && (
+                {aiConfig.provider_type !== 'ollama' && aiConfig.provider_type !== 'kb' && (
                   <div>
                     <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1.5">API Key</label>
                     <input
@@ -738,8 +773,9 @@ export default function HomePage() {
                     />
                   </div>
                 )}
-                <div>
-                  <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Model İsmi</label>
+                {aiConfig.provider_type !== 'kb' && (
+                  <div>
+                    <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Model İsmi</label>
                   <input
                     style={{ backgroundColor: '#000000', color: 'white' }}
                     value={aiConfig.model_name}
@@ -753,6 +789,7 @@ export default function HomePage() {
                     }
                   />
                 </div>
+                )}
                 {aiConfig.provider_type === 'anthropic' && (
                   <div className="flex items-center justify-between p-3 rounded-xl border border-slate-800/80 bg-slate-900/30">
                     <div>
@@ -770,12 +807,21 @@ export default function HomePage() {
                     </label>
                   </div>
                 )}
-                <button
-                  onClick={saveAIConfig}
-                  className="w-full bg-blue-600 hover:bg-blue-500 text-white p-3 rounded-xl font-bold text-xs tracking-wide transition-all"
-                >
-                  KAYDET
-                </button>
+                <div className="flex gap-3 pt-2 mt-2 border-t border-slate-800/50">
+                  <button
+                    onClick={saveAIConfig}
+                    className="flex-1 bg-blue-600 hover:bg-blue-500 text-white p-3 rounded-xl font-bold text-xs tracking-wide transition-all"
+                  >
+                    KAYDET
+                  </button>
+                  <button
+                    onClick={() => { setShowSettings(false); handleLogout(); }}
+                    className="bg-red-500/10 hover:bg-red-500/20 text-red-500 border border-red-500/20 px-4 py-3 rounded-xl font-bold text-xs tracking-wide transition-all flex items-center justify-center gap-2"
+                    title="Hesaptan çıkış yap"
+                  >
+                    <LogOut size={14} /> ÇIKIŞ YAP
+                  </button>
+                </div>
               </div>
             </motion.div>
           </div>
@@ -1039,22 +1085,141 @@ export default function HomePage() {
                 </p>
               </div>
             </div>
-          ) : (activeConvId || code || openedFilePath) ? (
-            <textarea
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
-              placeholder={'// Unity C# kodunuzu buraya yapıştırın...\n// veya dosya sürükleyip bırakın\n// Kod yapıştırıp sağdaki chat\'ten analiz isteyin.'}
-              className="flex-1 bg-[#000000] p-5 font-mono text-[13px] leading-relaxed outline-none resize-none text-slate-300 placeholder:text-slate-700"
-              spellCheck={false}
-            />
           ) : (
-            <AnimatedAIChat 
-              isLoading={loading}
-              onSendMessage={(val) => {
-                sendMessage(val);
-                setIsChatOpen(true);
-              }}
-            />
+            <div className="flex-1 relative flex flex-col bg-[#000000]">
+              {/* Empty State Overlay */}
+              {!code && !openedFilePath && !isEditorFocused && (
+                <div 
+                  onClick={() => setIsEditorFocused(true)}
+                  className="absolute inset-0 flex flex-col items-center justify-center cursor-text z-20 hover:bg-slate-900/10 transition-colors"
+                >
+                  <div className="w-20 h-20 mb-6 rounded-3xl bg-slate-900/30 border border-slate-800/50 flex items-center justify-center shadow-2xl relative overflow-hidden group">
+                    <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 to-violet-500/5 animate-pulse" />
+                    <Code2 size={32} className="text-slate-600" />
+                  </div>
+                  <h3 className="text-lg font-semibold text-slate-300 tracking-tight">C# Editörü</h3>
+                  <div className="mt-3 text-center space-y-1.5 pointer-events-none">
+                    <p className="text-[13px] text-slate-500 font-medium tracking-wide">
+                      Analiz için Unity kodunuzu buraya yapıştırın
+                    </p>
+                    <p className="text-[12px] text-slate-600">
+                      veya bir .cs dosyasını bu alana sürükleyip bırakın
+                    </p>
+                  </div>
+                  <div className="mt-10 flex gap-6 text-[10px] font-mono text-slate-700 font-semibold uppercase tracking-widest pointer-events-none">
+                    <span className="flex items-center gap-1.5"><Activity size={14}/> Statik Analiz</span>
+                    <span className="flex items-center gap-1.5"><Cpu size={14}/> Mimari Değerlendirme</span>
+                    <span className="flex items-center gap-1.5"><Sparkles size={14}/> Best Practices</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Monaco Editor wrapper */}
+              <div 
+                className={`flex-1 relative z-10 transition-opacity duration-200 ${(code || openedFilePath || isEditorFocused) ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+              >
+                <Editor
+                  height="100%"
+                  defaultLanguage="csharp"
+                  theme="vs-dark"
+                  value={code}
+                  onChange={(val) => setCode(val || '')}
+                  onMount={(editor, monaco) => {
+                    // 1. Tema Özelleştirmesi (Siyah arkaplana tam uyuşum)
+                    monaco.editor.defineTheme('unityArchitectDark', {
+                      base: 'vs-dark',
+                      inherit: true,
+                      rules: [
+                        { token: 'class', foreground: '4EC9B0' },
+                        { token: 'method', foreground: 'DCDCAA' },
+                        { token: 'property', foreground: '9CDCFE' }
+                      ],
+                      colors: {
+                        'editor.background': '#000000',
+                        'editorLineNumber.foreground': '#334155',
+                      }
+                    });
+                    monaco.editor.setTheme('unityArchitectDark');
+
+                    // 2. Muazzam C# Semantic Tokenizer (VS Code Dark+ Taklidi)
+                    // C# Monarch tokenları Unity class'larını ve IEnumerator'u renklendiremediği için 
+                    // bu custom kod Semantic Tokenlar ekleyerek Sınıfları Cyan, Metotları Sarı yapıyor.
+                    monaco.languages.registerDocumentSemanticTokensProvider('csharp', {
+                      getLegend: function () {
+                        return { tokenTypes: ['class', 'method', 'property'], tokenModifiers: [] };
+                      },
+                      provideDocumentSemanticTokens: function (model, lastResultId, token) {
+                        const lines = model.getLinesContent();
+                        const data: number[] = [];
+                        let prevLine = 0; let prevChar = 0;
+
+                        for (let i = 0; i < lines.length; i++) {
+                          const line = lines[i];
+                          const tokensInLine: { index: number, length: number, type: number }[] = [];
+                          
+                          // Metotlar (Örn: GetComponent, SendMessage) -> Yellow
+                          const methodRegex = /\b([a-zA-Z_]\w*)\s*\(/g;
+                          let match;
+                          while ((match = methodRegex.exec(line)) !== null) {
+                            const word = match[1];
+                            if (!['if', 'while', 'for', 'switch', 'catch', 'typeof', 'sizeof'].includes(word)) {
+                              tokensInLine.push({ index: match.index, length: word.length, type: 1 });
+                            }
+                          }
+                          
+                          // Sınıflar (Örn: ZombieEnemy, Rigidbody, IEnumerator) -> Cyan
+                          const classRegex = /\b([A-Z][a-zA-Z0-9_]*)\b/g;
+                          while ((match = classRegex.exec(line)) !== null) {
+                            const word = match[1];
+                            if (!tokensInLine.some(t => t.index === match.index)) {
+                               tokensInLine.push({ index: match.index, length: word.length, type: 0 });
+                            }
+                          }
+
+                          // Property/Değişkenler (Örn: speed, player, rb) -> Light Blue
+                          const propRegex = /\b([a-z_][a-zA-Z0-9_]*)\b/g;
+                          const keywords = ['public','private','protected','class','void','float','int','bool','var','new','return','if','else','while','for','foreach','in','using','namespace','yield', 'true', 'false', 'null', 'string'];
+                          while ((match = propRegex.exec(line)) !== null) {
+                            const word = match[1];
+                            if (!keywords.includes(word) && !tokensInLine.some(t => t.index === match.index)) {
+                               tokensInLine.push({ index: match.index, length: word.length, type: 2 });
+                            }
+                          }
+
+                          tokensInLine.sort((a, b) => a.index - b.index);
+                          
+                          for (const t of tokensInLine) {
+                            const deltaLine = i - prevLine;
+                            const deltaStart = deltaLine === 0 ? t.index - prevChar : t.index;
+                            data.push(deltaLine, deltaStart, t.length, t.type, 0);
+                            prevLine = i; prevChar = t.index;
+                          }
+                        }
+                        return { data: new Uint32Array(data) };
+                      },
+                      releaseDocumentSemanticTokens: function (resultId) {}
+                    });
+                    
+                    editor.onDidFocusEditorWidget(() => setIsEditorFocused(true));
+                    editor.onDidBlurEditorWidget(() => setIsEditorFocused(false));
+                  }}
+                  options={{
+                    minimap: { enabled: false },
+                    fontSize: 14,
+                    fontFamily: "'JetBrains Mono', 'Fira Code', 'Consolas', monospace",
+                    scrollBeyondLastLine: false,
+                    smoothScrolling: true,
+                    contextmenu: false,
+                    padding: { top: 24, bottom: 24 },
+                    lineHeight: 1.6,
+                    cursorBlinking: "smooth",
+                    cursorSmoothCaretAnimation: "on",
+                    formatOnPaste: true,
+                    "semanticHighlighting.enabled": true
+                  }}
+                />
+              </div>
+            </div>
           )}
         </div>{/* end drag-drop wrapper */}
       </div>
@@ -1103,6 +1268,28 @@ export default function HomePage() {
                       className="absolute top-10 left-0 w-64 bg-[#000000] border border-slate-700 shadow-2xl rounded-xl z-50 overflow-hidden"
                     >
                       <div className="max-h-[60vh] overflow-y-auto custom-scrollbar">
+                        {/* YEREL BİLGİ BANKASI (KB) — Varsayılan Sistem */}
+                        <div className="p-1">
+                          <div className="px-2 py-1.5 text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2 mt-1">
+                            <Database size={10} /> Yerleşik Sistem
+                          </div>
+                          <button
+                            onClick={async () => {
+                              const newCfg = { ...aiConfig, provider_type: 'kb', model_name: 'unity-kb-v1', api_key: '' };
+                              setAiConfig(newCfg);
+                              setIsModelDropdownOpen(false);
+                              if (user) await axios.post(`${API}/save-ai-config`, { ...newCfg, user_id: user.id });
+                            }}
+                            className={`w-full text-left px-3 py-2 text-[12px] flex flex-col hover:bg-emerald-600/10 rounded-lg transition-colors
+                              ${aiConfig.provider_type === 'kb' ? 'bg-emerald-600/10 text-emerald-400' : 'text-slate-300'}`}
+                          >
+                            <span className="font-medium flex items-center gap-1.5">Unity Bilgi Bankası
+                              <span className="text-[9px] bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded-full">Ücretsiz</span>
+                            </span>
+                            <span className="text-[10px] text-slate-500">Temel Unity konuları • 0ms • API key gerektirmez</span>
+                          </button>
+                        </div>
+
                         {/* BULUT MODELLER */}
                         {availableModels.cloud.length > 0 && (
                           <div className="p-1">
@@ -1349,6 +1536,8 @@ export default function HomePage() {
               isLoading={loading}
               placeholder={code.trim() ? "Bu kodu analiz et..." : "Unity hakkında bir şey sor..."}
               className="border-slate-800/50"
+              includeEditorCode={includeEditorCode}
+              onToggleIncludeCode={() => setIncludeEditorCode(!includeEditorCode)}
            />
         </div>
 

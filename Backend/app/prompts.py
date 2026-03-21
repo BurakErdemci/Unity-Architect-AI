@@ -212,7 +212,8 @@ Her bulgu için bu yapıyı kullan (aralarında boş satır olmalı):
    *Açıklama*
 
 ⚠️ ÖNEMLİ: Bu adımda "✅ Düzeltilmiş Kod" bölümü YAZMA! Sadece bulguları ve açıklamaları yaz.
-⚠️ ÖNEMLİ: Aynı türden bulguları (örn: 7 tane public field) TEK BİR bulgu altında grupla, her birini ayrı ayrı yazma!"""
+⚠️ ÖNEMLİ: Aynı türden bulguları (örn: 7 tane public field) TEK BİR bulgu altında grupla, her birini ayrı ayrı yazma!
+⚠️ ÖNEMLİ: Her bulguyu detaylı açıkla — benzetmeler kullan, neden sorun olduğunu anlat, yeni başlayan birinin anlayacağı şekilde yaz."""
 
 
 # --- STEP 3: KOD DÜZELTMESİ (Sadece kod, AÇIKLAMA YAPMA) ---
@@ -250,3 +251,69 @@ KURALLAR:
 - Her düzeltmenin yanına kısa, 1 satırlık yorum ekle (// şeklinde)
 - Tüm statik analiz bulgularını düzelt
 - Object Pooling gerekiyorsa temel bir pooling sistemi kur, "// pooling kurulacak" yazıp bırakma"""
+
+
+# ═══════════════════════════════════════════════════════════════
+# STEP 4: SELF-CRITIQUE — Tek çağrıda Teknik + Game Feel değerlendirmesi
+# (Multi-Agent'taki Critic + GameFeel ajanlarının birleşik versiyonu)
+# ═══════════════════════════════════════════════════════════════
+
+PROMPT_SELF_CRITIQUE = """{lang_instr}
+
+# GÖREV: KOD KALİTESİ + OYUN HİSSİYATI DEĞERLENDİRMESİ
+
+Sen 15+ yıl deneyimli bir Unity Teknik Denetçisi ve Gameplay Programmer'sın.
+Görevin, "Düzeltilmiş Kod"u hem TEKNİK hem OYUN HİSSİYATI açısından değerlendirmek.
+
+[NEGATİF KISITLAMALAR — İHLAL EDİLEMEZ]:
+1. ASLA KOD YAZMA. Kod bloğu (```csharp```) üretme.
+2. ASLA GİRİŞ/ÇIKIŞ CÜMLESİ YAZMA ("Merhaba", "İşte analizim" vb. YASAKTIR).
+3. JSON dışında HİÇBİR metin yazma.
+4. "review_message" MAX 5 MADDE İÇERSİN.
+
+# Orijinal Kod
+```csharp
+{original_code}
+```
+
+# Düzeltilmiş Kod (DEĞERLENDİRECEĞİN KOD)
+```csharp
+{fixed_code}
+```
+
+# Statik Analiz Konteksti
+Bulunan sorun sayısı: {total_smells}
+Statik skor: {static_score}/10
+
+# TEKNİK PUANLAMA KRİTERLERİ (tech_score: 0-10)
+1. [DERLEME] Derleme/mantık hatası var mı? (Varsa max 5.0)
+2. [PERFORMANS] Update içinde GetComponent/Find temizlenmiş mi?
+3. [STANDARTLAR] SerializeField, Namespace, CompareTag kullanılmış mı?
+4. [GEREKSİZ KOD] İşlevsiz veya test kodu kalmış mı?
+
+# OYUN HİSSİYATI KRİTERLERİ (game_feel_score: 0-10)
+- 🕹️ HAREKET: Snappy mi floaty mi? rb.velocity vs rb.AddForce? (Ağırlık: 30%)
+- ⚔️ COMBAT: Input → Aksiyon gecikmesi? Feedback var mı? (Ağırlık: 25%)
+- 🎯 FİZİK: FixedUpdate doğru mu? Fall multiplier var mı? (Ağırlık: 20%)
+- 📷 KAMERA: Smooth follow? LateUpdate içinde mi? (Ağırlık: 15%)
+- ✨ JUICE: Screen shake, squash & stretch var mı? (Ağırlık: 10%)
+
+NOT: Eğer kodda hareket/combat/kamera yoksa, o kategoriye 0 verme — o kategoriyi JSON'dan ÇIKAR.
+Sadece kodda GERÇEKTEN bulunan kategorileri değerlendir.
+
+# ÇIKTI FORMATI (STRICT JSON)
+JSON dışında HİÇBİR metin yazma. Sadece aşağıdaki yapıyı döndür:
+
+{{
+    "tech_score": 7.5,
+    "review_message": "❌ GetComponent Update içinde.\\n⚠️ Namespace eksik.\\n✅ FixedUpdate doğru.",
+    "fatal_errors_found": false,
+    "game_feel_score": 6.0,
+    "movement": {{"score": 7, "verdict": "snappy", "detail": "Kısa açıklama"}},
+    "combat": {{"score": 5, "verdict": "responsive", "detail": "Kısa açıklama"}},
+    "physics": {{"score": 6, "verdict": "consistent", "detail": "Kısa açıklama"}},
+    "camera": {{"score": 5, "verdict": "smooth", "detail": "Kısa açıklama"}},
+    "juice": {{"score": 3, "verdict": "basic", "detail": "Kısa açıklama"}},
+    "suggestions": ["Öneri 1", "Öneri 2"],
+    "summary": "Tek cümle genel değerlendirme"
+}}"""

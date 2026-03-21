@@ -1,0 +1,225 @@
+{
+  "version": "1.0",
+  "description": "Unity Architect AI — Yerel Bilgi Bankası. Temel Unity C# konuları için sıfır-latency, sıfır-token yanıtlar.",
+  "entries": [
+    {
+      "id": "movement_basic",
+      "title": "Temel Hareket Sistemi (Rigidbody)",
+      "description": "WASD/joystick ile Rigidbody tabanlı karakter hareketi — FixedUpdate, velocity, normalize",
+      "triggers": ["hareket", "movement", "move", "yuru", "kos", "walk", "run", "input"],
+      "keywords": ["wasd", "player", "karakter", "rigidbody", "character", "controller", "yon", "ilerle", "saga", "sola", "ileri", "geri"],
+      "turkish_keywords": ["hareket sistemi", "hareket kodu", "oyuncu hareketi", "karakter kontrol", "yon tuslari"],
+      "intent_types": ["chat", "generation"],
+      "min_total_matches": 1,
+      "tips": [
+        "transform.Translate KULLANMA — Rigidbody varken fiziği atlar, duvardan geçersin",
+        "Hareketi her zaman FixedUpdate içinde yap, Update değil",
+        "Input.GetAxisRaw kullan — GetAxis'in smoothing'i hareket hissini bozar",
+        ".normalized ile çapraz hareketin sqrt(2) hız artışını engelle"
+      ],
+      "unity_version": "2021.3+",
+      "explanation": "Unity'de fizik tabanlı hareket için **Rigidbody.velocity** kullanmak en doğru yaklaşımdır. `transform.Translate` veya `transform.position +=` gibi yöntemler fizik motorunu bypass eder — bu da duvardan geçme, collision çalışmama gibi sorunlara yol açar.\n\nHareket mantığı **FixedUpdate** içinde olmalı çünkü fizik motoru sabit aralıklarla (varsayılan 0.02s) çalışır. `Update` içinde fizik yaparsan frame rate'e bağımlı, tutarsız hareket elde edersin.\n\n`Input.GetAxisRaw` kullanıyoruz çünkü `GetAxis`'in built-in smoothing'i karakter kontrolünde \"kaygan\" his yaratır. Raw input + kendi hız parametren = tam kontrol.",
+      "code": "using UnityEngine;\n\n/// <summary>\n/// Rigidbody tabanlı temel hareket sistemi.\n/// WASD + joystick destekler. Fizik dostu, FixedUpdate ile çalışır.\n/// </summary>\n[RequireComponent(typeof(Rigidbody))]\npublic class PlayerMovement : MonoBehaviour\n{\n    [Header(\"Hareket Ayarları\")]\n    [SerializeField] private float moveSpeed = 7f;\n\n    private Rigidbody _rb;\n    private Vector3 _moveInput;\n\n    private void Awake()\n    {\n        _rb = GetComponent<Rigidbody>();\n        _rb.freezeRotation = true; // Fizik kaynaklı dönmeyi engelle\n    }\n\n    private void Update()\n    {\n        // Input her zaman Update'te okunur\n        float h = Input.GetAxisRaw(\"Horizontal\");\n        float v = Input.GetAxisRaw(\"Vertical\");\n        _moveInput = new Vector3(h, 0f, v).normalized;\n    }\n\n    private void FixedUpdate()\n    {\n        // Fizik işlemi her zaman FixedUpdate'te yapılır\n        Vector3 velocity = _moveInput * moveSpeed;\n        velocity.y = _rb.linearVelocity.y; // Yerçekimini koru\n        _rb.linearVelocity = velocity;\n    }\n}"
+    },
+
+    {
+      "id": "object_pooling",
+      "title": "Object Pooling Sistemi",
+      "description": "Instantiate/Destroy yerine nesne havuzu — GC baskısını sıfıra indirir",
+      "triggers": ["pool", "pooling", "destroy", "instantiate", "spawn"],
+      "keywords": ["havuz", "recycle", "prefab", "nesne", "mermi", "dusman", "bullet", "enemy", "optimize", "gc", "garbage"],
+      "turkish_keywords": ["nesne havuzu", "object pool", "yeniden kullan", "yok et", "uret"],
+      "intent_types": ["chat", "generation"],
+      "min_total_matches": 1,
+      "tips": [
+        "Her Instantiate çağrısı heap allocation yapar → GC spike → frame hitch",
+        "Pool boyutunu sahne başlangıcında belirle, runtime'da büyütme riskli",
+        "Unity 2021+ için UnityEngine.Pool.ObjectPool<T> built-in gelir, ama custom pool öğrenmek temel",
+        "Deaktif edilen nesnelerin Coroutine'leri durur — OnEnable'da resetle"
+      ],
+      "unity_version": "2021.3+",
+      "explanation": "Her `Instantiate()` çağrısı bellekte yeni bir nesne oluşturur (heap allocation). Her `Destroy()` ise o belleği Garbage Collector'a bırakır. GC çalıştığında oyunda **frame hitch** (takılma) yaşarsın — özellikle mobilde.\n\n**Object Pooling** bu sorunu tamamen ortadan kaldırır: nesneleri başta üretir, kullanılmayanları deaktif eder (`SetActive(false)`), tekrar lazım olduğunda aktif eder. Sıfır allocation, sıfır GC.\n\nÖrnek senaryo: Bir silahtan saniyede 10 mermi atılıyor. Pooling olmadan = saniyede 10 Instantiate + 10 Destroy = 20 GC event. Pooling ile = 0.",
+      "code": "using System.Collections.Generic;\nusing UnityEngine;\n\n/// <summary>\n/// Generic Object Pool. Prefab bazlı, başlangıçta doldurulur.\n/// Kullanım: ObjectPool.Instance.Get(prefab) / ObjectPool.Instance.Return(obj)\n/// </summary>\npublic class ObjectPool : MonoBehaviour\n{\n    public static ObjectPool Instance { get; private set; }\n\n    private readonly Dictionary<int, Queue<GameObject>> _pools = new();\n\n    private void Awake()\n    {\n        if (Instance != null && Instance != this)\n        {\n            Destroy(gameObject);\n            return;\n        }\n        Instance = this;\n    }\n\n    /// <summary>\n    /// Havuzu başlangıçta doldurur. Sahne açılışında çağır.\n    /// </summary>\n    public void Warmup(GameObject prefab, int count)\n    {\n        int key = prefab.GetInstanceID();\n        if (!_pools.ContainsKey(key))\n            _pools[key] = new Queue<GameObject>();\n\n        for (int i = 0; i < count; i++)\n        {\n            GameObject obj = Instantiate(prefab, transform);\n            obj.SetActive(false);\n            _pools[key].Enqueue(obj);\n        }\n    }\n\n    /// <summary>\n    /// Havuzdan nesne al. Havuz boşsa yeni üretir (fallback).\n    /// </summary>\n    public GameObject Get(GameObject prefab, Vector3 pos, Quaternion rot)\n    {\n        int key = prefab.GetInstanceID();\n\n        if (_pools.TryGetValue(key, out var queue) && queue.Count > 0)\n        {\n            GameObject obj = queue.Dequeue();\n            obj.transform.SetPositionAndRotation(pos, rot);\n            obj.SetActive(true);\n            return obj;\n        }\n\n        // Havuz boş — fallback olarak yeni üret\n        return Instantiate(prefab, pos, rot);\n    }\n\n    /// <summary>\n    /// Nesneyi havuza geri gönder (Destroy yerine).\n    /// </summary>\n    public void Return(GameObject prefab, GameObject obj)\n    {\n        obj.SetActive(false);\n        int key = prefab.GetInstanceID();\n\n        if (!_pools.ContainsKey(key))\n            _pools[key] = new Queue<GameObject>();\n\n        _pools[key].Enqueue(obj);\n    }\n}"
+    },
+
+    {
+      "id": "singleton",
+      "title": "Singleton Pattern (MonoBehaviour)",
+      "description": "Sahne bağımsız, DontDestroyOnLoad ile kalıcı Singleton pattern",
+      "triggers": ["singleton", "instance", "static", "manager"],
+      "keywords": ["tekil", "global", "dontdestroyonload", "gamemanager", "audiomanager", "kalici", "erisim"],
+      "turkish_keywords": ["tekil kalip", "manager sistemi", "tek ornek", "global erisim"],
+      "intent_types": ["chat", "generation"],
+      "min_total_matches": 1,
+      "tips": [
+        "Awake'te çift kontrol yap — sahne geçişlerinde duplikasyon olur",
+        "DontDestroyOnLoad sadece root GameObject'lerde çalışır",
+        "Lazy initialization (get'te üretme) Unity'de riskli — Awake sırasını kontrol edemezsin",
+        "Generic Singleton<T> yazarsan her manager için ayrı kod yazmana gerek kalmaz"
+      ],
+      "unity_version": "2021.3+",
+      "explanation": "**Singleton**, bir sınıftan tüm oyun boyunca sadece **tek bir instance** olmasını garanti eder. `GameManager`, `AudioManager`, `SaveManager` gibi merkezi sistemler için idealdir.\n\nUnity'de Singleton yazarken dikkat etmen gereken iki kritik nokta:\n1. **Sahne geçişinde duplikasyon:** Aynı prefab iki sahnede varsa, ikinci bir instance oluşur. `Awake`'te kontrol et ve fazlasını yok et.\n2. **DontDestroyOnLoad:** Singleton'ın sahne değişimlerinde yok olmaması için gerekli. Ama sadece root-level `GameObject`'lerde çalışır — child'a koyma.\n\nAşağıdaki Generic Singleton, `GameManager : Singleton<GameManager>` şeklinde kalıtımla kullanılır. Her yeni manager için tekrar Singleton kodu yazmana gerek kalmaz.",
+      "code": "using UnityEngine;\n\n/// <summary>\n/// Generic Singleton base class.\n/// Kullanım: public class GameManager : Singleton<GameManager> { }\n/// Sahne geçişlerinde hayatta kalır (DontDestroyOnLoad).\n/// </summary>\npublic abstract class Singleton<T> : MonoBehaviour where T : MonoBehaviour\n{\n    public static T Instance { get; private set; }\n\n    protected virtual void Awake()\n    {\n        if (Instance != null && Instance != this)\n        {\n            Destroy(gameObject);\n            return;\n        }\n\n        Instance = this as T;\n        DontDestroyOnLoad(gameObject);\n    }\n}\n\n// ─── Örnek Kullanım ─────────────────────────────────────────\n\n/// <summary>\n/// Oyun genelinde tek instance. Sahne geçişlerinde yaşar.\n/// Erişim: GameManager.Instance.CurrentScore\n/// </summary>\npublic class GameManager : Singleton<GameManager>\n{\n    public int CurrentScore { get; private set; }\n    public bool IsGamePaused { get; private set; }\n\n    protected override void Awake()\n    {\n        base.Awake(); // Singleton kontrolü\n    }\n\n    public void AddScore(int amount)\n    {\n        CurrentScore += amount;\n    }\n\n    public void TogglePause()\n    {\n        IsGamePaused = !IsGamePaused;\n        Time.timeScale = IsGamePaused ? 0f : 1f;\n    }\n}"
+    },
+
+    {
+      "id": "state_machine",
+      "title": "State Machine (Durum Makinesi)",
+      "description": "Enum tabanlı basit State Machine — AI, oyuncu, menü durumları için",
+      "triggers": ["state", "durum", "fsm", "statemachine", "transition"],
+      "keywords": ["enum", "switch", "gecis", "idle", "patrol", "attack", "chase", "ai", "enemy", "behaviour", "davranis"],
+      "turkish_keywords": ["durum makinesi", "durum gecisi", "dusman davranisi", "yapay zeka"],
+      "intent_types": ["chat", "generation"],
+      "min_total_matches": 1,
+      "tips": [
+        "Her state'in Enter/Execute/Exit döngüsü olmalı — state'e girişte ve çıkışta temizlik yap",
+        "String karşılaştırma ile state yönetme — enum kullan, typo riski sıfır olur",
+        "Karmaşık AI için Behaviour Tree düşün, ama başlangıç için enum FSM yeterli",
+        "Transition koşullarını state içine göm, dışarıdan if-else zinciri kurma"
+      ],
+      "unity_version": "2021.3+",
+      "explanation": "**State Machine**, bir nesnenin (düşman, oyuncu, menü) belirli bir anda sadece **tek bir durumda** olmasını ve durumlar arası **kurallı geçişler** yapmasını sağlar.\n\nNeden lazım? Diyelim bir düşman AI'ın var: Idle → Patrol → Chase → Attack. `if-else` zincirleriyle yaparsan 200 satırda spagetti kod olur. State Machine ile her durum kendi sınıfında yaşar, birbirinden habersizdir.\n\nAşağıdaki örnekte:\n- `IState` interface'i her durumun uyması gereken kontratı tanımlar\n- `StateMachine` sınıfı geçişleri yönetir\n- Her durum (`IdleState`, `PatrolState`) kendi içinde bağımsız çalışır",
+      "code": "using UnityEngine;\nusing System.Collections.Generic;\n\n/// <summary>\n/// State interface — her durum bunu implement eder.\n/// </summary>\npublic interface IState\n{\n    void Enter();\n    void Execute(); // Her frame çağrılır\n    void Exit();\n}\n\n/// <summary>\n/// Genel amaçlı State Machine. Herhangi bir GameObject'e eklenebilir.\n/// </summary>\npublic class StateMachine : MonoBehaviour\n{\n    private IState _currentState;\n    private readonly Dictionary<System.Type, IState> _states = new();\n\n    /// <summary>\n    /// State Machine'e yeni bir durum kaydeder.\n    /// </summary>\n    public void AddState(IState state)\n    {\n        _states[state.GetType()] = state;\n    }\n\n    /// <summary>\n    /// Belirtilen duruma geçiş yapar.\n    /// </summary>\n    public void ChangeState<T>() where T : IState\n    {\n        _currentState?.Exit();\n\n        if (_states.TryGetValue(typeof(T), out var newState))\n        {\n            _currentState = newState;\n            _currentState.Enter();\n        }\n    }\n\n    private void Update()\n    {\n        _currentState?.Execute();\n    }\n}\n\n// ─── Örnek: Düşman AI Durumları ─────────────────────────────\n\npublic class IdleState : IState\n{\n    private readonly Transform _enemy;\n    private readonly Transform _player;\n    private readonly StateMachine _sm;\n    private readonly float _detectRange;\n\n    public IdleState(Transform enemy, Transform player, StateMachine sm, float detectRange)\n    {\n        _enemy = enemy;\n        _player = player;\n        _sm = sm;\n        _detectRange = detectRange;\n    }\n\n    public void Enter() => Debug.Log(\"Idle: Bekliyorum...\");\n\n    public void Execute()\n    {\n        float dist = Vector3.Distance(_enemy.position, _player.position);\n        if (dist < _detectRange)\n            _sm.ChangeState<ChaseState>();\n    }\n\n    public void Exit() { }\n}\n\npublic class ChaseState : IState\n{\n    private readonly Transform _enemy;\n    private readonly Transform _player;\n    private readonly StateMachine _sm;\n    private readonly float _speed;\n    private readonly float _attackRange;\n    private readonly float _loseRange;\n\n    public ChaseState(Transform enemy, Transform player, StateMachine sm, float speed, float attackRange, float loseRange)\n    {\n        _enemy = enemy;\n        _player = player;\n        _sm = sm;\n        _speed = speed;\n        _attackRange = attackRange;\n        _loseRange = loseRange;\n    }\n\n    public void Enter() => Debug.Log(\"Chase: Kovalıyorum!\");\n\n    public void Execute()\n    {\n        float dist = Vector3.Distance(_enemy.position, _player.position);\n\n        if (dist > _loseRange)\n        {\n            _sm.ChangeState<IdleState>();\n            return;\n        }\n\n        if (dist < _attackRange)\n        {\n            _sm.ChangeState<AttackState>();\n            return;\n        }\n\n        Vector3 dir = (_player.position - _enemy.position).normalized;\n        _enemy.position += dir * _speed * Time.deltaTime;\n    }\n\n    public void Exit() { }\n}\n\npublic class AttackState : IState\n{\n    private readonly StateMachine _sm;\n\n    public AttackState(StateMachine sm)\n    {\n        _sm = sm;\n    }\n\n    public void Enter() => Debug.Log(\"Attack: Saldırıyorum!\");\n    public void Execute() { /* Saldırı animasyonu, hasar, cooldown */ }\n    public void Exit() { }\n}"
+    },
+
+    {
+      "id": "events_delegates",
+      "title": "Events & Delegates (Observer Pattern)",
+      "description": "C# event/Action ile decoupled iletişim — SystemBus, sağlık, ölüm, skor",
+      "triggers": ["event", "delegate", "action", "observer", "listener"],
+      "keywords": ["olay", "dinle", "bildirim", "subscribe", "unsubscribe", "invoke", "callback", "decouple", "saglik", "olum"],
+      "turkish_keywords": ["olay sistemi", "dinleyici", "bildirim gonder", "bagimlilik"],
+      "intent_types": ["chat", "generation"],
+      "min_total_matches": 1,
+      "tips": [
+        "OnDisable/OnDestroy'da mutlaka unsubscribe ol — yoksa null reference alırsın",
+        "event keyword'ü Action'ı dışarıdan Invoke edilemez yapar — güvenlik için kullan",
+        "static event kullanma (tekil durumlar hariç) — test ve izolasyon zorlaşır",
+        "Parametre geçmek için Action<int>, Action<float, string> generics kullan"
+      ],
+      "unity_version": "2021.3+",
+      "explanation": "**Events & Delegates**, nesneler arasında **gevşek bağlı** (decoupled) iletişim kurar. Bir nesne \"Ben öldüm!\" diye bağırır, dinleyen herkes bunu duyar — ama bağıran kimin dinlediğini bilmek zorunda değildir.\n\nNeden önemli? Diyelim oyuncu öldüğünde:\n- UI skor tablosunu güncelle\n- Ses efekti çal\n- Kamerayı salla\n- Düşmanları durdur\n\nEvents olmadan: `PlayerHealth` sınıfı tüm bu sistemlere referans tutmak zorunda (tight coupling = spagetti). Events ile: `OnPlayerDied` event'i fırlatırsın, dinleyen sistemler kendi işini yapar.\n\nC#'ta `System.Action` en temiz yöntemdir — delegate tanımlamak gerekmez.",
+      "code": "using System;\nusing UnityEngine;\n\n/// <summary>\n/// Oyuncu sağlık sistemi — event tabanlı.\n/// Diğer sistemler (UI, ses, kamera) bu event'leri dinler.\n/// </summary>\npublic class PlayerHealth : MonoBehaviour\n{\n    [SerializeField] private int maxHealth = 100;\n\n    private int _currentHealth;\n\n    // ─── Events (dışarıdan sadece subscribe olunabilir, Invoke edilemez) ───\n    public event Action<int, int> OnHealthChanged; // (current, max)\n    public event Action OnPlayerDied;\n\n    private void Awake()\n    {\n        _currentHealth = maxHealth;\n    }\n\n    public void TakeDamage(int amount)\n    {\n        _currentHealth = Mathf.Max(0, _currentHealth - amount);\n        OnHealthChanged?.Invoke(_currentHealth, maxHealth);\n\n        if (_currentHealth <= 0)\n            OnPlayerDied?.Invoke();\n    }\n\n    public void Heal(int amount)\n    {\n        _currentHealth = Mathf.Min(maxHealth, _currentHealth + amount);\n        OnHealthChanged?.Invoke(_currentHealth, maxHealth);\n    }\n}\n\n// ─── Dinleyici Örneği: UI ────────────────────────────────────\n\npublic class HealthUI : MonoBehaviour\n{\n    [SerializeField] private PlayerHealth playerHealth;\n    [SerializeField] private UnityEngine.UI.Slider healthBar;\n\n    private void OnEnable()\n    {\n        // Subscribe\n        playerHealth.OnHealthChanged += UpdateBar;\n        playerHealth.OnPlayerDied += ShowGameOver;\n    }\n\n    private void OnDisable()\n    {\n        // MUTLAKA Unsubscribe — yoksa null reference\n        playerHealth.OnHealthChanged -= UpdateBar;\n        playerHealth.OnPlayerDied -= ShowGameOver;\n    }\n\n    private void UpdateBar(int current, int max)\n    {\n        healthBar.value = (float)current / max;\n    }\n\n    private void ShowGameOver()\n    {\n        Debug.Log(\"GAME OVER\");\n    }\n}"
+    },
+
+    {
+      "id": "coroutine_basic",
+      "title": "Coroutine Sistemi",
+      "description": "Zamanlama, bekleme, sıralı eylemler — yield return, WaitForSeconds",
+      "triggers": ["coroutine", "yield", "ienumerator", "waitforseconds", "bekle"],
+      "keywords": ["zamanlama", "gecikme", "delay", "wait", "timer", "sure", "saniye", "tekrar", "repeat", "dongu", "startcoroutine"],
+      "turkish_keywords": ["bekleme", "zamanlayici", "gecikme", "zamanla"],
+      "intent_types": ["chat", "generation"],
+      "min_total_matches": 1,
+      "tips": [
+        "Coroutine sadece aktif GameObject'te çalışır — SetActive(false) durdurur",
+        "StopCoroutine için referansı sakla: Coroutine ref = StartCoroutine(...)",
+        "WaitForSeconds objesini cache'le — her yield'da new yapma (GC)",
+        "Sonsuz döngü (while true) kullanıyorsan mutlaka yield koy — yoksa Unity donar"
+      ],
+      "unity_version": "2021.3+",
+      "explanation": "**Coroutine**, bir fonksiyonun çalışmasını **duraklatıp sonraki frame'de devam ettirmeni** sağlar. `async/await` gibi düşün ama Unity'nin kendi sistemi.\n\nNe zaman kullanılır?\n- 3 saniye bekle, sonra patlat\n- Her 0.5 saniyede bir mermi at\n- Fade in/out animasyonu (her frame alpha değiştir)\n- Sıralı event'ler: kapı aç → 2s bekle → düşman spawn et\n\n`yield return null` → bir sonraki frame'e geç\n`yield return new WaitForSeconds(n)` → n saniye bekle\n`yield return new WaitForFixedUpdate()` → fizik frame'i bekle\n`yield return new WaitUntil(() => condition)` → koşul sağlanana kadar bekle",
+      "code": "using System.Collections;\nusing UnityEngine;\n\n/// <summary>\n/// Coroutine kullanım örnekleri — zamanlama, tekrar, sıralı eylemler.\n/// </summary>\npublic class CoroutineExamples : MonoBehaviour\n{\n    [Header(\"Ayarlar\")]\n    [SerializeField] private float fireRate = 0.5f;\n    [SerializeField] private float fadeDuration = 1f;\n\n    // WaitForSeconds cache — her yield'da new yapmayı önler (GC tasarrufu)\n    private WaitForSeconds _fireWait;\n\n    private Coroutine _fireCoroutine;\n\n    private void Awake()\n    {\n        _fireWait = new WaitForSeconds(fireRate);\n    }\n\n    // ─── 1. Basit Gecikme ────────────────────────────────────\n    public void SpawnAfterDelay(float delay)\n    {\n        StartCoroutine(SpawnRoutine(delay));\n    }\n\n    private IEnumerator SpawnRoutine(float delay)\n    {\n        yield return new WaitForSeconds(delay);\n        Debug.Log(\"Düşman spawn edildi!\");\n    }\n\n    // ─── 2. Tekrarlayan Ateş (Başlat / Durdur) ──────────────\n    public void StartFiring()\n    {\n        // Önceki coroutine varsa durdur (çift çalışma engeli)\n        if (_fireCoroutine != null)\n            StopCoroutine(_fireCoroutine);\n\n        _fireCoroutine = StartCoroutine(FireRoutine());\n    }\n\n    public void StopFiring()\n    {\n        if (_fireCoroutine != null)\n        {\n            StopCoroutine(_fireCoroutine);\n            _fireCoroutine = null;\n        }\n    }\n\n    private IEnumerator FireRoutine()\n    {\n        while (true) // Sonsuz döngü — StopCoroutine ile durur\n        {\n            Debug.Log(\"Ateş!\");\n            yield return _fireWait; // Cache'lenmiş bekleme\n        }\n    }\n\n    // ─── 3. Fade Out (Her Frame Alpha Değiştir) ──────────────\n    public void FadeOut(CanvasGroup canvasGroup)\n    {\n        StartCoroutine(FadeRoutine(canvasGroup, 1f, 0f));\n    }\n\n    private IEnumerator FadeRoutine(CanvasGroup cg, float from, float to)\n    {\n        float elapsed = 0f;\n        while (elapsed < fadeDuration)\n        {\n            elapsed += Time.deltaTime;\n            cg.alpha = Mathf.Lerp(from, to, elapsed / fadeDuration);\n            yield return null; // Bir sonraki frame'e geç\n        }\n        cg.alpha = to;\n    }\n}"
+    },
+
+    {
+      "id": "scriptable_object",
+      "title": "ScriptableObject (Veri Yönetimi)",
+      "description": "Inspector'dan düzenlenebilir veri container'ları — item, silah, seviye ayarları",
+      "triggers": ["scriptableobject", "scriptable", "so", "asset", "data"],
+      "keywords": ["veri", "item", "silah", "weapon", "config", "ayar", "createassetmenu", "inspector", "preset"],
+      "turkish_keywords": ["veri yonetimi", "veri tabani", "item sistemi", "silah verisi", "ayar dosyasi"],
+      "intent_types": ["chat", "generation"],
+      "min_total_matches": 1,
+      "tips": [
+        "ScriptableObject runtime'da değiştirilirse, editörde o değişiklik kalıcı olur — dikkat",
+        "MonoBehaviour'dan farkı: sahnede yaşamaz, proje dosyası olarak durur (Asset)",
+        "Aynı SO'yu birden fazla düşmana atayabilirsin — veri paylaşımı sağlar",
+        "Runtime'da değişmemesi gereken veriler için ideal (silah stats, seviye config)"
+      ],
+      "unity_version": "2021.3+",
+      "explanation": "**ScriptableObject**, Unity'de sahne bağımsız veri container'ıdır. Proje penceresinde `.asset` dosyası olarak yaşar ve birden fazla GameObject tarafından paylaşılabilir.\n\nNeden MonoBehaviour'a değil SO'ya yazmalısın?\n- **Bellek tasarrufu:** 100 düşmanın hepsinde aynı `damage=50, health=100` varsa, her biri kendi kopyasını tutar. SO ile tek veri, 100 referans.\n- **Designer-friendly:** Inspector'dan düzenlenebilir, kod değiştirmeden balans ayarı yapılır.\n- **Temiz mimari:** Veri ve davranış ayrılır (Separation of Concerns).\n\nKullanım alanları: Silah istatistikleri, item tanımları, seviye ayarları, diyalog verileri, ses ayarları...",
+      "code": "using UnityEngine;\n\n/// <summary>\n/// Silah veri tanımı — Inspector'dan düzenlenebilir asset.\n/// Assets > Create > Game Data > Weapon Data ile oluşturulur.\n/// </summary>\n[CreateAssetMenu(fileName = \"NewWeapon\", menuName = \"Game Data/Weapon Data\")]\npublic class WeaponData : ScriptableObject\n{\n    [Header(\"Genel\")]\n    public string weaponName;\n    public Sprite icon;\n\n    [Header(\"İstatistikler\")]\n    public int damage = 10;\n    public float fireRate = 0.5f;\n    public float range = 50f;\n    public int maxAmmo = 30;\n\n    [Header(\"Fizik\")]\n    public float recoilForce = 2f;\n    public float bulletSpeed = 100f;\n\n    [Header(\"Ses\")]\n    public AudioClip fireSound;\n    public AudioClip reloadSound;\n}\n\n// ─── Kullanım: Silah Controller ─────────────────────────────\n\n/// <summary>\n/// Herhangi bir silah verisini kullanabilen controller.\n/// Farklı silahlar için sadece SO değiştirilir, kod aynı kalır.\n/// </summary>\npublic class WeaponController : MonoBehaviour\n{\n    [SerializeField] private WeaponData weaponData;\n\n    private int _currentAmmo;\n    private float _nextFireTime;\n\n    private void Awake()\n    {\n        _currentAmmo = weaponData.maxAmmo;\n    }\n\n    public void Fire()\n    {\n        if (Time.time < _nextFireTime || _currentAmmo <= 0)\n            return;\n\n        _currentAmmo--;\n        _nextFireTime = Time.time + weaponData.fireRate;\n\n        Debug.Log($\"{weaponData.weaponName} ateşlendi! Hasar: {weaponData.damage}\");\n    }\n\n    public void Reload()\n    {\n        _currentAmmo = weaponData.maxAmmo;\n    }\n}"
+    },
+
+    {
+      "id": "camera_follow",
+      "title": "Kamera Takip Sistemi (Smooth Follow)",
+      "description": "LateUpdate + Lerp ile smooth kamera takibi — offset, damping, deadzone",
+      "triggers": ["camera", "kamera", "follow", "takip", "cinemachine"],
+      "keywords": ["smooth", "lerp", "lateupdate", "offset", "damping", "zoom", "goruntu", "bakis"],
+      "turkish_keywords": ["kamera takibi", "kamera sistemi", "takip et", "smooth kamera", "kamera kodu"],
+      "intent_types": ["chat", "generation"],
+      "min_total_matches": 1,
+      "tips": [
+        "Kamera hareketi HER ZAMAN LateUpdate'te olmalı — Update'te yaparsan titreme olur",
+        "Vector3.Lerp ile smooth geçiş sağla — doğrudan position atama sert his verir",
+        "smoothSpeed değerini 5-10 arası tut, çok düşük = oyuncu kaybedilir",
+        "Cinemachine var ama temel takip için custom script yeterli ve daha hafif"
+      ],
+      "unity_version": "2021.3+",
+      "explanation": "Kamera takip sistemi, oyuncunun pozisyonunu belirli bir **offset** (mesafe) ve **smoothing** (yumuşatma) ile takip eder.\n\nKritik kural: Kamera kodu **LateUpdate** içinde yazılmalı. Neden?\n- `Update`: Oyuncu hareket eder\n- `LateUpdate`: Kamera oyuncunun **son** pozisyonunu takip eder\n- Eğer ikisi de `Update`'teyse, kamera bazen oyuncudan önce çalışır → titreme (jitter)\n\n`Vector3.Lerp` smooth geçiş sağlar. `smoothSpeed` değeri arttıkça kamera daha hızlı takip eder, azaldıkça daha cinematic his verir.",
+      "code": "using UnityEngine;\n\n/// <summary>\n/// Smooth kamera takip sistemi.\n/// LateUpdate + Lerp ile titremesiz, yumuşak takip.\n/// 3D ve 2D projeler için offset ayarlanabilir.\n/// </summary>\npublic class CameraFollow : MonoBehaviour\n{\n    [Header(\"Hedef\")]\n    [SerializeField] private Transform target;\n\n    [Header(\"Takip Ayarları\")]\n    [SerializeField] private Vector3 offset = new Vector3(0f, 10f, -7f);\n    [SerializeField] private float smoothSpeed = 8f;\n\n    [Header(\"Sınırlar (Opsiyonel)\")]\n    [SerializeField] private bool useBounds;\n    [SerializeField] private Vector2 minBounds;\n    [SerializeField] private Vector2 maxBounds;\n\n    private void LateUpdate()\n    {\n        if (target == null) return;\n\n        Vector3 desiredPos = target.position + offset;\n\n        // Sınır kontrolü (opsiyonel)\n        if (useBounds)\n        {\n            desiredPos.x = Mathf.Clamp(desiredPos.x, minBounds.x, maxBounds.x);\n            desiredPos.z = Mathf.Clamp(desiredPos.z, minBounds.y, maxBounds.y);\n        }\n\n        // Smooth geçiş\n        Vector3 smoothedPos = Vector3.Lerp(\n            transform.position,\n            desiredPos,\n            smoothSpeed * Time.deltaTime\n        );\n\n        transform.position = smoothedPos;\n    }\n\n    /// <summary>\n    /// Runtime'da hedefi değiştir (sahne geçişi, araç binme vb.)\n    /// </summary>\n    public void SetTarget(Transform newTarget)\n    {\n        target = newTarget;\n    }\n\n    /// <summary>\n    /// Kamerayı anında hedefe ışınla (sahne başlangıcı için).\n    /// </summary>\n    public void SnapToTarget()\n    {\n        if (target != null)\n            transform.position = target.position + offset;\n    }\n}"
+    },
+
+    {
+      "id": "raycast_basic",
+      "title": "Raycast Sistemi",
+      "description": "Physics.Raycast ile ışın atma — tıklama, silah, zemin algılama, layer mask",
+      "triggers": ["raycast", "ray", "linecast", "physics.raycast"],
+      "keywords": ["tikla", "click", "hit", "layer", "mask", "mesafe", "distance", "detect", "algilama", "goz", "gorush", "silah", "atis"],
+      "turkish_keywords": ["isin atma", "tiklanabilir", "zemin algilama", "lazer", "layermask"],
+      "intent_types": ["chat", "generation"],
+      "min_total_matches": 1,
+      "tips": [
+        "Her zaman LayerMask kullan — gereksiz collision kontrolü performansı öldürür",
+        "Raycast mesafesini sınırla (Mathf.Infinity kullanma), gerçekçi bir range ver",
+        "Debug.DrawRay ile ışını sahnede görselleştir — debug için şart",
+        "SphereCast / BoxCast daha geniş alan taramak için kullanılır (mermi yerine yumruk gibi)"
+      ],
+      "unity_version": "2021.3+",
+      "explanation": "**Raycast**, bir noktadan bir yöne doğru görünmez bir ışın atar ve bu ışının çarptığı ilk collider'ı döner. FPS silah atışı, tıklama algılama, zemin kontrolü, görüş hattı (line of sight) gibi pek çok yerde kullanılır.\n\n`Physics.Raycast` 3D, `Physics2D.Raycast` 2D için kullanılır.\n\n**LayerMask** kritik: Raycast varsayılanda tüm collider'ları tarar. `LayerMask` ile sadece ilgili layer'ı tarayarak performansı büyük ölçüde artırırsın. Örneğin silah raycast'i sadece \"Enemy\" ve \"Environment\" layer'larını taramalı.",
+      "code": "using UnityEngine;\n\n/// <summary>\n/// Raycast kullanım örnekleri — silah, tıklama, zemin algılama.\n/// </summary>\npublic class RaycastExamples : MonoBehaviour\n{\n    [Header(\"Silah Ayarları\")]\n    [SerializeField] private float weaponRange = 50f;\n    [SerializeField] private int weaponDamage = 25;\n    [SerializeField] private LayerMask hitLayers; // Inspector'dan seç\n\n    [Header(\"Zemin Kontrolü\")]\n    [SerializeField] private float groundCheckDist = 1.1f;\n    [SerializeField] private LayerMask groundLayer;\n\n    private Camera _mainCam;\n\n    private void Awake()\n    {\n        _mainCam = Camera.main; // Cache — her frame Camera.main çağırma\n    }\n\n    // ─── 1. FPS Silah Atışı ──────────────────────────────────\n    public void Shoot()\n    {\n        Ray ray = new Ray(transform.position, transform.forward);\n\n        if (Physics.Raycast(ray, out RaycastHit hit, weaponRange, hitLayers))\n        {\n            Debug.Log($\"İsabet: {hit.collider.name} (mesafe: {hit.distance:F1}m)\");\n\n            // Hasar ver\n            if (hit.collider.TryGetComponent<IDamageable>(out var target))\n                target.TakeDamage(weaponDamage);\n\n            // İsabet noktasında efekt\n            Debug.DrawLine(ray.origin, hit.point, Color.red, 0.5f);\n        }\n        else\n        {\n            // Bir şeye isabet etmedi\n            Debug.DrawRay(ray.origin, ray.direction * weaponRange, Color.yellow, 0.5f);\n        }\n    }\n\n    // ─── 2. Mouse Tıklama ile Nesne Seçme ────────────────────\n    private void Update()\n    {\n        if (Input.GetMouseButtonDown(0))\n        {\n            Ray ray = _mainCam.ScreenPointToRay(Input.mousePosition);\n\n            if (Physics.Raycast(ray, out RaycastHit hit, 100f))\n            {\n                Debug.Log($\"Tıklanan: {hit.collider.name}\");\n            }\n        }\n    }\n\n    // ─── 3. Yerde mi Kontrolü (IsGrounded) ───────────────────\n    public bool IsGrounded()\n    {\n        return Physics.Raycast(\n            transform.position,\n            Vector3.down,\n            groundCheckDist,\n            groundLayer\n        );\n    }\n}\n\n// ─── Hasar interface'i (Raycast ile birlikte kullanılır) ─────\npublic interface IDamageable\n{\n    void TakeDamage(int amount);\n}"
+    },
+
+    {
+      "id": "jump_mechanics",
+      "title": "Zıplama Mekaniği (Jump System)",
+      "description": "Rigidbody tabanlı zıplama — ground check, coyote time, jump buffering",
+      "triggers": ["jump", "zipla", "ziplama", "sicra", "sicrama", "pulo"],
+      "keywords": ["rigidbody", "force", "addforce", "ground", "yerde", "hava", "coyote", "buffer", "gravity", "yercekimi"],
+      "turkish_keywords": ["ziplama sistemi", "ziplama kodu", "karakter ziplama", "yerde mi"],
+      "intent_types": ["chat", "generation"],
+      "min_total_matches": 1,
+      "tips": [
+        "ForceMode.Impulse kullan — tek seferlik kuvvet uygular",
+        "Coyote Time: Oyuncu platformdan düştükten sonra kısa süre hâlâ zıplayabilsin (0.1-0.2s)",
+        "Jump Buffer: Oyuncu yere değmeden az önce zıplama tuşuna basarsa, yere değdiğinde zıplasın",
+        "Düşüş hızını artır (fall multiplier) — Mario tarzı his verir"
+      ],
+      "unity_version": "2021.3+",
+      "explanation": "İyi bir zıplama mekaniği sadece `AddForce` değildir. Profesyonel platformer'larda 3 temel mekanik kullanılır:\n\n1. **Ground Check:** Oyuncu yerde mi kontrolü — raycast ile yapılır, collision ile değil\n2. **Coyote Time:** Oyuncu platformun kenarından düştükten sonra kısa bir süre (0.1-0.2s) hâlâ zıplayabilir. Bu olmadan oyuncular \"basıyorum ama zıplamıyor\" hisseder.\n3. **Jump Buffer:** Oyuncu henüz havadayken zıplama tuşuna basarsa, yere değdiği anda otomatik zıplar. Input kaybını önler.\n\nBu üç mekanik birlikte **\"game feel\"** kalitesini drastik artırır.",
+      "code": "using UnityEngine;\n\n/// <summary>\n/// Profesyonel zıplama sistemi.\n/// Ground Check + Coyote Time + Jump Buffer + Fall Multiplier.\n/// </summary>\n[RequireComponent(typeof(Rigidbody))]\npublic class JumpSystem : MonoBehaviour\n{\n    [Header(\"Zıplama\")]\n    [SerializeField] private float jumpForce = 12f;\n    [SerializeField] private LayerMask groundLayer;\n    [SerializeField] private Transform groundCheck;\n    [SerializeField] private float groundCheckRadius = 0.2f;\n\n    [Header(\"Game Feel\")]\n    [SerializeField] private float coyoteTime = 0.15f;\n    [SerializeField] private float jumpBufferTime = 0.15f;\n    [SerializeField] private float fallMultiplier = 2.5f;\n    [SerializeField] private float lowJumpMultiplier = 2f;\n\n    private Rigidbody _rb;\n    private float _coyoteTimer;\n    private float _jumpBufferTimer;\n    private bool _isGrounded;\n\n    private void Awake()\n    {\n        _rb = GetComponent<Rigidbody>();\n    }\n\n    private void Update()\n    {\n        // ── Ground Check (OverlapSphere) ─────────────────────\n        _isGrounded = Physics.CheckSphere(\n            groundCheck.position,\n            groundCheckRadius,\n            groundLayer\n        );\n\n        // ── Coyote Time ──────────────────────────────────────\n        if (_isGrounded)\n            _coyoteTimer = coyoteTime;\n        else\n            _coyoteTimer -= Time.deltaTime;\n\n        // ── Jump Buffer ──────────────────────────────────────\n        if (Input.GetButtonDown(\"Jump\"))\n            _jumpBufferTimer = jumpBufferTime;\n        else\n            _jumpBufferTimer -= Time.deltaTime;\n\n        // ── Zıplama Koşulu ───────────────────────────────────\n        if (_jumpBufferTimer > 0f && _coyoteTimer > 0f)\n        {\n            _rb.linearVelocity = new Vector3(\n                _rb.linearVelocity.x,\n                jumpForce,\n                _rb.linearVelocity.z\n            );\n            _coyoteTimer = 0f;\n            _jumpBufferTimer = 0f;\n        }\n    }\n\n    private void FixedUpdate()\n    {\n        // ── Geliştirilmiş Yerçekimi (Game Feel) ──────────────\n        if (_rb.linearVelocity.y < 0f)\n        {\n            // Düşerken daha hızlı çek (ağır his)\n            _rb.linearVelocity += Vector3.up * Physics.gravity.y * (fallMultiplier - 1f) * Time.fixedDeltaTime;\n        }\n        else if (_rb.linearVelocity.y > 0f && !Input.GetButton(\"Jump\"))\n        {\n            // Tuşu erken bırakırsa kısa zıplama\n            _rb.linearVelocity += Vector3.up * Physics.gravity.y * (lowJumpMultiplier - 1f) * Time.fixedDeltaTime;\n        }\n    }\n\n    // Debug: Ground check alanını sahnede göster\n    private void OnDrawGizmosSelected()\n    {\n        if (groundCheck == null) return;\n        Gizmos.color = Color.green;\n        Gizmos.DrawWireSphere(groundCheck.position, groundCheckRadius);\n    }\n}"
+    },
+
+    {
+      "id": "health_system",
+      "title": "Sağlık ve Hasar Sistemi",
+      "description": "IDamageable interface + sağlık yönetimi — hasar, iyileşme, ölüm, UI bağlantısı",
+      "triggers": ["health", "saglik", "damage", "hasar", "can", "hp"],
+      "keywords": ["olum", "death", "die", "hit", "vur", "iyiles", "heal", "kalkan", "shield", "armor", "bar"],
+      "turkish_keywords": ["saglik sistemi", "hasar sistemi", "can sistemi", "saglik bari", "hasar al"],
+      "intent_types": ["chat", "generation"],
+      "min_total_matches": 1,
+      "tips": [
+        "IDamageable interface kullan — farklı nesneler (oyuncu, düşman, obje) aynı hasar sistemini kullanır",
+        "Hasar ve iyileşmeyi event ile bildir — UI, ses, efekt dinlesin",
+        "Invincibility frame ekle — art arda hasar yemeyi engeller",
+        "Sağlık değerlerini ScriptableObject'te tut — kod değiştirmeden balans ayarla"
+      ],
+      "unity_version": "2021.3+",
+      "explanation": "Sağlık sistemi neredeyse her oyunda lazımdır. İyi bir sağlık sistemi şu prensiplere uyar:\n\n1. **Interface tabanlı:** `IDamageable` interface'i sayesinde oyuncu, düşman, destructible obje — hepsi aynı `TakeDamage()` metodunu kullanır. Silah kodu sadece `IDamageable` bilir, kimin olduğunu bilmek zorunda değildir.\n\n2. **Event tabanlı:** Sağlık değiştiğinde event fırlatır. UI, ses efektleri, kamera sarsıntısı gibi sistemler bu event'i dinler. Tight coupling yok.\n\n3. **Invincibility frame:** Oyuncu hasar aldıktan sonra kısa süre (0.5-1s) tekrar hasar almaz. Bu olmadan art arda collision'larda anında ölüm olur.",
+      "code": "using System;\nusing UnityEngine;\n\n/// <summary>\n/// Hasar alabilen her nesne bu interface'i implement eder.\n/// Silah, tuzak, patlama — hepsi sadece IDamageable bilir.\n/// </summary>\npublic interface IDamageable\n{\n    void TakeDamage(int amount);\n}\n\n/// <summary>\n/// Genel amaçlı sağlık sistemi.\n/// Oyuncu, düşman, destructible obje — hepsine eklenebilir.\n/// </summary>\npublic class HealthSystem : MonoBehaviour, IDamageable\n{\n    [Header(\"Sağlık\")]\n    [SerializeField] private int maxHealth = 100;\n\n    [Header(\"Invincibility\")]\n    [SerializeField] private float invincibilityDuration = 0.5f;\n\n    private int _currentHealth;\n    private bool _isInvincible;\n    private float _invincibilityTimer;\n    private bool _isDead;\n\n    // Events\n    public event Action<int, int> OnHealthChanged; // (current, max)\n    public event Action OnDied;\n    public event Action OnDamageTaken;\n\n    public int CurrentHealth => _currentHealth;\n    public int MaxHealth => maxHealth;\n    public bool IsDead => _isDead;\n\n    private void Awake()\n    {\n        _currentHealth = maxHealth;\n    }\n\n    private void Update()\n    {\n        // Invincibility timer\n        if (_isInvincible)\n        {\n            _invincibilityTimer -= Time.deltaTime;\n            if (_invincibilityTimer <= 0f)\n                _isInvincible = false;\n        }\n    }\n\n    public void TakeDamage(int amount)\n    {\n        if (_isDead || _isInvincible) return;\n\n        _currentHealth = Mathf.Max(0, _currentHealth - amount);\n        OnHealthChanged?.Invoke(_currentHealth, maxHealth);\n        OnDamageTaken?.Invoke();\n\n        // Invincibility başlat\n        _isInvincible = true;\n        _invincibilityTimer = invincibilityDuration;\n\n        if (_currentHealth <= 0)\n            Die();\n    }\n\n    public void Heal(int amount)\n    {\n        if (_isDead) return;\n\n        _currentHealth = Mathf.Min(maxHealth, _currentHealth + amount);\n        OnHealthChanged?.Invoke(_currentHealth, maxHealth);\n    }\n\n    private void Die()\n    {\n        _isDead = true;\n        OnDied?.Invoke();\n    }\n}"
+    }
+  ]
+}

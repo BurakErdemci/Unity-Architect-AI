@@ -115,6 +115,30 @@ CEVAP (tek kelime):"""
         if has_out_of_scope and not has_unity_context and len(words) < 20:
             return "OUT_OF_SCOPE"
         
+        # Kod içeren mesajlarda intent tespiti (LLM'siz)
+        # "analiz et", "incele", "kontrol et" gibi fiiller + Unity kodu = ANALYSIS
+        code_indicators = ["{", "}", "void ", "class ", "using "]
+        has_code = sum(1 for ind in code_indicators if ind in message) >= 2
+
+        if has_code:
+            analysis_words = [
+                "analiz", "incele", "kontrol", "bak", "hata bul", "optimize",
+                "review", "check", "değerlendir", "nasıl", "ne dersin",
+                "düzelt", "iyileştir", "sorun", "yanlış", "hatalı",
+            ]
+            generation_words = [
+                "yaz", "oluştur", "kur", "yap", "geliştir", "ekle",
+                "implement", "create", "generate", "build",
+            ]
+            q_lower = q
+
+            if any(w in q_lower for w in analysis_words):
+                return "ANALYSIS"
+            if any(w in q_lower for w in generation_words):
+                return "GENERATION"
+            # Kod var ama yönlendirme yok → varsayılan olarak analiz
+            return "ANALYSIS"
+
         # Karışık veya belirsiz → LLM'e bırak
         return None
     
