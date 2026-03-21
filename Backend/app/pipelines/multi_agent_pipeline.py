@@ -177,6 +177,11 @@ Lütfen yukarıdaki eleştirileri dikkate alarak kodu TAMAMEN yeniden yaz.
                 break
             elif attempt < MAX_RETRIES:
                 logger.info(f"  🔄 Skor düşük ({loop_final_score:.1f}), tekrar deneniyor...")
+                
+                if self.progress_callback:
+                    self.progress_callback("step4", "pending")
+                    self.progress_callback("step3", "in-progress")
+                    
                 # Feedback birleştirme
                 critic_feedback = critic_result.get("review_message", "Teknik hatalar var.")
                 gf_summary = self._game_feel_result.get("summary", "Oyun hissiyatı yetersiz.")
@@ -196,12 +201,8 @@ Lütfen yukarıdaki eleştirileri dikkate alarak kodu TAMAMEN yeniden yaz.
         # UI Rapor Formatlama
         loop_info = f"(🔄 {attempt} deneme)" if attempt > 1 else ""
         
-        # Tek ve Net Bir Başlık
-        status_emoji = "🚀" if self._result.score >= 8 else "⚠️" if self._result.score >= 5 else "❌"
-        self._result.analysis_text = f"### {status_emoji} GENEL KALİTE PUANI: {self._result.score}/10.0 {loop_info}\n\n"
-        
-        # Teknik Detaylar
-        self._result.analysis_text += f"**🔎 Teknik Denetim:**\n{self._result.summary}\n\n"
+        # Tek ve Net Bir Başlık (UI'da gösterilecek)
+        self._result.analysis_text = ""
         
         # Game Feel Detayları (bağımsız skor başlığı YOK, sadece kategori detayları)
         if gf_score >= 0:

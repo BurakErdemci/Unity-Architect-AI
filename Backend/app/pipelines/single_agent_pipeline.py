@@ -97,6 +97,10 @@ class SingleAgentPipeline(BasePipeline):
             # Retry: feedback oluştur
             logger.info(f"  🔄 Skor düşük ({final_score:.1f}), tekrar deneniyor...")
             critique_feedback = self._build_retry_feedback(critique_result)
+            
+            if self.progress_callback:
+                self.progress_callback("step4", "pending")
+                self.progress_callback("step3", "in-progress")
 
         # ─── Sonuçları birleştir ───
         self._result.retry_count = attempt - 1
@@ -115,6 +119,7 @@ class SingleAgentPipeline(BasePipeline):
     # STEP 1: Statik Analiz
     # ═══════════════════════════════════════════════════════════
     def _step1_static_analysis(self) -> StepResult:
+        if self.progress_callback: self.progress_callback("step1", "in-progress")
         start = time.time()
         try:
             analyzer = UnityAnalyzer(self.code)
@@ -134,16 +139,19 @@ class SingleAgentPipeline(BasePipeline):
 
             duration = int((time.time() - start) * 1000)
             logger.info(f"  Step 1 ✅ Statik Analiz — {len(self._smells)} bulgu, {duration}ms")
+            if self.progress_callback: self.progress_callback("step1", "completed", duration)
             return StepResult(step_name="static_analysis", success=True, duration_ms=duration, output=raw_result)
         except Exception as e:
             duration = int((time.time() - start) * 1000)
             logger.error(f"  Step 1 ❌ Hata: {e}")
+            if self.progress_callback: self.progress_callback("step1", "failed", duration)
             return StepResult(step_name="static_analysis", success=False, duration_ms=duration, error=str(e))
 
     # ═══════════════════════════════════════════════════════════
     # STEP 2: AI Derin Analiz
     # ═══════════════════════════════════════════════════════════
     async def _step2_deep_analysis(self) -> StepResult:
+        if self.progress_callback: self.progress_callback("step2", "in-progress")
         start = time.time()
         try:
             lang_instr = get_language_instr(self.language)
@@ -171,18 +179,21 @@ class SingleAgentPipeline(BasePipeline):
 
             duration = int((time.time() - start) * 1000)
             logger.info(f"  Step 2 ✅ Derin Analiz — {duration}ms")
+            if self.progress_callback: self.progress_callback("step2", "completed", duration)
             return StepResult(step_name="deep_analysis", success=True, duration_ms=duration, output=self._analysis_text)
         except Exception as e:
             duration = int((time.time() - start) * 1000)
             logger.error(f"  Step 2 ❌ Hata: {e}")
             self._analysis_text = f"❌ AI Analiz Hatası: {str(e)}"
             self._result.analysis_text = self._analysis_text
+            if self.progress_callback: self.progress_callback("step2", "failed", duration)
             return StepResult(step_name="deep_analysis", success=False, duration_ms=duration, error=str(e))
 
     # ═══════════════════════════════════════════════════════════
     # STEP 3: AI Kod Düzeltme
     # ═══════════════════════════════════════════════════════════
     async def _step3_code_fix(self, extra_feedback: str = "") -> StepResult:
+        if self.progress_callback: self.progress_callback("step3", "in-progress")
         start = time.time()
         try:
             lang_instr = get_language_instr(self.language)
@@ -206,17 +217,20 @@ class SingleAgentPipeline(BasePipeline):
 
             duration = int((time.time() - start) * 1000)
             logger.info(f"  Step 3 ✅ Kod Düzeltme — {duration}ms")
+            if self.progress_callback: self.progress_callback("step3", "completed", duration)
             return StepResult(step_name="code_fix", success=True, duration_ms=duration, output=self._result.fixed_code)
         except Exception as e:
             duration = int((time.time() - start) * 1000)
             logger.error(f"  Step 3 ❌ Hata: {e}")
             self._result.fixed_code = ""
+            if self.progress_callback: self.progress_callback("step3", "failed", duration)
             return StepResult(step_name="code_fix", success=False, duration_ms=duration, error=str(e))
 
     # ═══════════════════════════════════════════════════════════
     # STEP 4: Self-Critique (TEKNİK + GAME FEEL tek çağrıda)
     # ═══════════════════════════════════════════════════════════
     async def _step4_self_critique(self, static_score: float):
+        if self.progress_callback: self.progress_callback("step4", "in-progress")
         start = time.time()
         try:
             lang_instr = get_language_instr(self.language)
@@ -239,14 +253,17 @@ class SingleAgentPipeline(BasePipeline):
                     f"  Step 4 ✅ Self-Critique — tech: {critique_result.get('tech_score', '?')}, "
                     f"feel: {critique_result.get('game_feel_score', '?')}, {duration}ms"
                 )
+                if self.progress_callback: self.progress_callback("step4", "completed", duration)
                 return StepResult(step_name="self_critique", success=True, duration_ms=duration, output=critique_result), critique_result
             else:
                 logger.warning(f"  Step 4 ⚠️ JSON parse edilemedi, {duration}ms")
+                if self.progress_callback: self.progress_callback("step4", "failed", duration)
                 return StepResult(step_name="self_critique", success=False, duration_ms=duration, error="JSON parse hatası"), None
 
         except Exception as e:
             duration = int((time.time() - start) * 1000)
             logger.error(f"  Step 4 ❌ Hata: {e}")
+            if self.progress_callback: self.progress_callback("step4", "failed", duration)
             return StepResult(step_name="self_critique", success=False, duration_ms=duration, error=str(e)), None
 
     # ═══════════════════════════════════════════════════════════
@@ -301,15 +318,24 @@ class SingleAgentPipeline(BasePipeline):
     # ═══════════════════════════════════════════════════════════
     # YARDIMCI METODLAR
     # ═══════════════════════════════════════════════════════════
+    # Provider başına max_tokens limitleri
+    _TOKEN_LIMITS = {
+        "groq": 32000,
+        "openai": 16384,
+        "openrouter": 16384,
+        "deepseek": 16384,
+        "anthropic": 16384,
+        "google": 65536,
+    }
+
     async def _call_ai(self, prompt: str, max_tokens: int = None) -> str:
-        """Provider türüne göre AI çağrısı yapar. max_tokens=None → model kendi limitine kadar yazar."""
-        # None → provider'ın hard limitine kadar serbest bırak
-        # Gemini 2.5 Flash: 65K, Groq Llama: 32K, OpenAI: 16K — hepsi 65K altı
-        effective_tokens = max_tokens or 65536
+        """Provider türüne göre AI çağrısı yapar. max_tokens=None → provider limitine kadar."""
         if self.provider_type == "ollama":
             return await self._call_ollama(prompt, max_tokens or -1)
-        else:
-            return await asyncio.to_thread(self.provider.analyze_code, prompt, effective_tokens)
+
+        limit = self._TOKEN_LIMITS.get(self.provider_type, 16384)
+        effective_tokens = min(max_tokens, limit) if max_tokens else limit
+        return await asyncio.to_thread(self.provider.analyze_code, prompt, effective_tokens)
 
     async def _call_ollama(self, prompt: str, max_tokens: int = -1) -> str:
         import ollama
@@ -433,11 +459,7 @@ class SingleAgentPipeline(BasePipeline):
             if critique_section:
                 parts.append(critique_section)
 
-        # Skor kartı
-        score_card = f"\n### {status_emoji} BİRLEŞİK KALİTE PUANI: {self._result.score}/10{retry_info}\n"
-        if self._result.summary and self._result.game_feel_data:
-            score_card += f"\n**🔎 Teknik Denetim:**\n{self._result.summary}\n"
-        parts.append(score_card)
+        # Skor kartını komple kaldırdık, artık UI render ediyor.
 
         # Düzeltilmiş kod (AI zaten header ekleyebilir, tekrar ekleme)
         if self._result.fixed_code:

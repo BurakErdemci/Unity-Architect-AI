@@ -73,23 +73,19 @@ class PipelineResult:
 
 class BasePipeline:
     """Tüm pipeline sınıfları için temel arayüz"""
-    def __init__(
-        self,
-        code: str,
-        provider: Any,
-        language: str = "tr",
-        context: str = "",
-        learned_rules: str = "",
-        user_message: str = "",
-        provider_type: str = "groq",
-    ):
+    def __init__(self, prompt: str = "", code: str = "", provider: Any = None,
+                 language: str = "tr", context: str = "", learned_rules: str = "",
+                 user_message: str = "", provider_type: str = "", progress_callback=None):
+        self.prompt = prompt
         self.code = code
         self.provider = provider
         self.language = language
         self.context = context
         self.learned_rules = learned_rules
-        self.user_message = user_message or code
+        self.user_message = user_message
         self.provider_type = provider_type
+        self.progress_callback = progress_callback
+        
         self._result = PipelineResult()
 
     async def run(self) -> PipelineResult:

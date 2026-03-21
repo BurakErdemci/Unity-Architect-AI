@@ -29,9 +29,10 @@ class CodeGenerationPipeline(BasePipeline):
         language: str = "tr",
         context: str = "",
         user_message: str = "",
-        provider_type: str = "unknown"
+        provider_type: str = "unknown",
+        progress_callback=None
     ):
-        super().__init__("", provider, language, context, "", user_message, provider_type)
+        super().__init__("", "", provider, language, context, "", user_message, provider_type, progress_callback)
         self.prompt = prompt
         
         # Ajanları başlat
@@ -46,6 +47,8 @@ class CodeGenerationPipeline(BasePipeline):
         lang_instr = get_language_instr(self.language)
         
         # --- ADIM 1: ARCHITECT PLANLAMASI ---
+        if self.progress_callback: self.progress_callback("step1", "in-progress")
+        start1 = asyncio.get_event_loop().time()
         logger.info("  Step 1: Architect Planı oluşturuluyor...")
         plan = await asyncio.to_thread(
             self.architect.plan_architecture,
@@ -53,6 +56,8 @@ class CodeGenerationPipeline(BasePipeline):
             lang_instr,
             rules_str
         )
+        dur1 = int((asyncio.get_event_loop().time() - start1) * 1000)
+        if self.progress_callback: self.progress_callback("step1", "completed", dur1)
         self._result.step2_analysis = StepResult("Mimari Plan", True, 0, plan)
         
         # --- ADIM 2: CODER + GAME FEEL SILENT LOOP ---
@@ -62,6 +67,8 @@ class CodeGenerationPipeline(BasePipeline):
         gf_result = {}
         
         for attempt in range(1, MAX_ATTEMPTS + 1):
+            if self.progress_callback: self.progress_callback("step2", "in-progress")
+            start2 = asyncio.get_event_loop().time()
             if attempt == 1:
                 logger.info("  Step 2: Coder Kodu üretiyor...")
                 current_plan = plan
@@ -101,22 +108,32 @@ Somut düzeltme talimatları:
                 rules_str,
                 max_tokens=8192 # Anthropic non-streaming için güvenli maksimum limit
             )
+            dur2 = int((asyncio.get_event_loop().time() - start2) * 1000)
+            if self.progress_callback: self.progress_callback("step2", "completed", dur2)
             
             # Game Feel değerlendirmesi (sessiz — kullanıcıya gösterilmez)
             code_block = self._extract_csharp(final_response)
             if code_block and len(code_block.strip()) > 20 and attempt < MAX_ATTEMPTS:
+                if self.progress_callback: self.progress_callback("step3", "in-progress")
+                start3 = asyncio.get_event_loop().time()
                 logger.info(f"  [Game Feel Check] Deneme {attempt}: Sessiz değerlendirme...")
                 gf_result = await asyncio.to_thread(
                     self.game_feel.evaluate,
                     code=code_block,
                     context=self.prompt
                 )
+                dur3 = int((asyncio.get_event_loop().time() - start3) * 1000)
                 gf_score = gf_result.get("game_feel_score", 10.0)
                 logger.info(f"  [Game Feel Check] Skor: {gf_score:.1f}/10 (Eşik: {self.GAME_FEEL_THRESHOLD})")
                 
                 if gf_score >= self.GAME_FEEL_THRESHOLD:
+                    if self.progress_callback: self.progress_callback("step3", "completed", dur3)
                     logger.info(f"  ✅ Game Feel yeterli, loop sonlandırıldı (deneme {attempt})")
                     break
+                else:
+                    if self.progress_callback: 
+                        self.progress_callback("step3", "pending")
+                        self.progress_callback("step2", "in-progress")
                 # else: döngü devam eder, Coder tekrar yazar
             else:
                 break

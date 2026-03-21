@@ -49,6 +49,14 @@ class DatabaseManager:
                 smells_json TEXT DEFAULT '[]',
                 timestamp TEXT NOT NULL,
                 FOREIGN KEY (conversation_id) REFERENCES conversations (id) ON DELETE CASCADE)''')
+            # API Key Kasası — provider başına kalıcı key saklama
+            cursor.execute('''CREATE TABLE IF NOT EXISTS api_keys (
+                user_id INTEGER NOT NULL,
+                provider_type TEXT NOT NULL,
+                api_key TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (user_id, provider_type),
+                FOREIGN KEY (user_id) REFERENCES users (id))''')
             conn.commit()
 
     # ===================== AUTH =====================
@@ -81,6 +89,44 @@ class DatabaseManager:
             if res:
                 return (res[0], res[1], res[2], bool(res[3]))
             return ("ollama", "qwen2.5-coder:7b", "", True)
+
+    # ===================== API KEY KASASI =====================
+    def save_api_key(self, user_id: int, provider_type: str, api_key: str) -> None:
+        """Provider için API key'i kaydet/güncelle."""
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                'INSERT OR REPLACE INTO api_keys (user_id, provider_type, api_key, updated_at) VALUES (?, ?, ?, ?)',
+                (user_id, provider_type, api_key, now)
+            )
+            conn.commit()
+
+    def get_api_key(self, user_id: int, provider_type: str) -> Optional[str]:
+        """Provider için kaydedilmiş API key'i getir."""
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute(
+                'SELECT api_key FROM api_keys WHERE user_id = ? AND provider_type = ?',
+                (user_id, provider_type)
+            ).fetchone()
+            return row[0] if row else None
+
+    def get_all_api_keys(self, user_id: int) -> Dict[str, str]:
+        """Kullanıcının tüm provider key'lerini döndür. {provider_type: masked_key}"""
+        with sqlite3.connect(self.db_path) as conn:
+            rows = conn.execute(
+                'SELECT provider_type, api_key FROM api_keys WHERE user_id = ?',
+                (user_id,)
+            ).fetchall()
+            return {r[0]: r[1] for r in rows}
+
+    def delete_api_key(self, user_id: int, provider_type: str) -> None:
+        """Provider için kaydedilmiş API key'i sil."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                'DELETE FROM api_keys WHERE user_id = ? AND provider_type = ?',
+                (user_id, provider_type)
+            )
+            conn.commit()
 
     # ===================== ESKİ GEÇMİŞ (Geriye Uyumluluk) =====================
     def save_analysis(self, user_id: int, title: str, intent: str, code: str, suggestion: str, smells: list) -> None:

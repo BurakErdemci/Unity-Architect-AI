@@ -81,8 +81,6 @@ SYSTEM_PROMPT = """Sen yeni başlayan Unity geliştiricilerine yardım eden bir 
 [FORMAT KURALLARIN — MUTLAKA UYULMALI]
 Yanıtını şu markdown formatında ver:
 
-## 📊 Puan: X/10
-
 ### ⚡ Bulgular
 Her bulgu için:
 - Emoji ile başlık (⚠️ Performans, 🔧 Düzeltme, 💡 Öneri gibi)
@@ -174,8 +172,6 @@ Detaylı bulgular: {smells}
 [FORMAT — AYNEN BU ŞEKİLDE YAZ, SATIRLARI BİRBİRİNE YAPIŞTIRMA]
 
 Yanıtını AYNEN şu formatta ver (her başlık öncesi boş satır bırak):
-
-## 📊 Puan: {score}/10
 
 ### ⚡ Bulgular
 

@@ -24,7 +24,7 @@ from database import DatabaseManager
 from analyzer import UnityAnalyzer, CodeProcessor
 from validator import ResponseValidator
 from ai_providers import AIProviderManager
-from pipelines import SingleAgentPipeline, MultiAgentPipeline, CodeGenerationPipeline
+from pipelines import SingleAgentPipeline, MultiAgentPipeline, CodeGenerationPipeline, SingleAgentCodeGenerationPipeline
 from pipelines.agents.intent_classifier import IntentClassifierAgent
 from report_engine import ReportEngine
 from knowledge import KBEngine
@@ -128,13 +128,56 @@ async def login(req: AuthRequest):
 
 @app.post("/save-ai-config")
 async def save_config(req: AIConfigRequest):
-    db.save_ai_config(req.user_id, req.provider_type, req.model_name, req.api_key, req.use_multi_agent)
+    # API key geldiyse kasaya kaydet (provider bazlı)
+    if req.api_key and req.provider_type not in ("ollama", "kb"):
+        db.save_api_key(req.user_id, req.provider_type, req.api_key)
+
+    # Config'e key kaydetme — kasadan çekilecek
+    db.save_ai_config(req.user_id, req.provider_type, req.model_name, "", req.use_multi_agent)
     return {"status": "success"}
 
 @app.get("/get-ai-config/{user_id}")
 async def get_config(user_id: int):
     c = db.get_ai_config(user_id)
-    return {"provider_type": c[0], "model_name": c[1], "api_key": c[2], "use_multi_agent": c[3]}
+    p_type, m_name, _old_key, use_multi_agent = c
+    # Key'i her zaman kasadan çek (provider bazlı)
+    api_key = ""
+    if p_type not in ("ollama", "kb"):
+        api_key = db.get_api_key(user_id, p_type) or ""
+    return {"provider_type": p_type, "model_name": m_name, "api_key": api_key, "use_multi_agent": use_multi_agent}
+
+# ─── API KEY KASASI ENDPOİNTLERİ ───
+@app.get("/api-keys/{user_id}")
+async def get_api_keys(user_id: int):
+    """Kullanıcının tüm provider key'lerini döndür (maskelenmiş)."""
+    keys = db.get_all_api_keys(user_id)
+    # Key'leri maskele: sadece son 4 karakter görünsün
+    masked = {}
+    for provider, key in keys.items():
+        if len(key) > 8:
+            masked[provider] = f"{'•' * (len(key) - 4)}{key[-4:]}"
+        else:
+            masked[provider] = "••••••••"
+    return {"keys": masked, "providers_with_keys": list(keys.keys())}
+
+@app.post("/api-keys/save")
+async def save_api_key(req: dict):
+    """Belirli bir provider için API key kaydet."""
+    user_id = req.get("user_id")
+    provider_type = req.get("provider_type")
+    api_key = req.get("api_key", "")
+    if not user_id or not provider_type:
+        raise HTTPException(400, "user_id ve provider_type gerekli.")
+    if not api_key:
+        raise HTTPException(400, "API key boş olamaz.")
+    db.save_api_key(user_id, provider_type, api_key)
+    return {"status": "success", "message": f"{provider_type} API key kaydedildi."}
+
+@app.delete("/api-keys/{user_id}/{provider_type}")
+async def delete_api_key(user_id: int, provider_type: str):
+    """Belirli bir provider için API key sil."""
+    db.delete_api_key(user_id, provider_type)
+    return {"status": "success"}
 
 @app.get("/available-models")
 async def get_available_models():
@@ -148,9 +191,14 @@ async def get_available_models():
             {"id": "mixtral-8x7b-32768", "name": "Mixtral 8x7B (Groq)", "provider": "groq"},
             {"id": "gemini-2.5-flash", "name": "Gemini 2.5 Flash", "provider": "google"},
             {"id": "gemini-2.5-pro", "name": "Gemini 2.5 Pro", "provider": "google"},
-            {"id": "gpt-4o-mini", "name": "GPT-4o Mini", "provider": "openai"},
-            {"id": "gpt-4o", "name": "GPT-4o", "provider": "openai"},
+            {"id": "gpt-5.4-mini", "name": "GPT-5.4 Mini", "provider": "openai"},
+            {"id": "gpt-5.4", "name": "GPT-5.4", "provider": "openai"},
+            {"id": "gpt-5.4-nano", "name": "GPT-5.4 Nano", "provider": "openai"},
             {"id": "deepseek-chat", "name": "DeepSeek V3", "provider": "deepseek"},
+            {"id": "openai/gpt-5.4-mini", "name": "GPT-5.4 Mini (OpenRouter)", "provider": "openrouter"},
+            {"id": "openai/gpt-5.4", "name": "GPT-5.4 (OpenRouter)", "provider": "openrouter"},
+            {"id": "openai/gpt-5.4-nano", "name": "GPT-5.4 Nano (OpenRouter)", "provider": "openrouter"},
+            {"id": "moonshotai/kimi-k2.5", "name": "Kimi K2.5 (Moonshot)", "provider": "openrouter"},
         ]
     }
     try:
@@ -180,8 +228,12 @@ async def analyze_code(request: AnalysisRequest):
     is_csharp = CodeProcessor.is_actually_code(request.code)
     
     # Intent tespiti: Provider'ı al ve LLM-based classifier kullan
-    p_type, m_name, api_key, use_multi_agent = db.get_ai_config(request.user_id)
-    provider = AIProviderManager.get_provider({"provider_type": p_type, "model_name": m_name, "api_key": api_key})
+    p_type, m_name, _, use_multi_agent = db.get_ai_config(request.user_id)
+    api_key = (db.get_api_key(request.user_id, p_type) or "") if p_type not in ("ollama", "kb") else ""
+    try:
+        provider = AIProviderManager.get_provider({"provider_type": p_type, "model_name": m_name, "api_key": api_key})
+    except ValueError as e:
+        return {"intent": "ERROR", "ai_suggestion": str(e), "static_results": {"smells": []}}
     
     classifier = IntentClassifierAgent(provider)
     intent = await classifier.classify_async(request.code)
@@ -295,6 +347,12 @@ async def write_file(req: WriteFileRequest):
 #                   YENİ ENDPOINTLERİ (Chat Sistemi)
 # =====================================================================
 
+PROGRESS_STORE = {}
+
+@app.get("/chat-progress/{conv_id}")
+async def get_chat_progress(conv_id: int):
+    return PROGRESS_STORE.get(conv_id, [])
+
 @app.post("/conversations")
 async def create_conversation(req: NewConversationRequest):
     """Yeni bir sohbet oluşturur."""
@@ -404,8 +462,23 @@ async def chat(request: ChatRequest):
 
     # ─── AI MODU (Groq, Claude, Gemini, OpenAI, Ollama...) ───────────────
     # 2. AI Sağlayıcısını hazırla (intent için de lazım)
-    p_type, m_name, api_key, use_multi_agent = db.get_ai_config(request.user_id)
-    provider = AIProviderManager.get_provider({"provider_type": p_type, "model_name": m_name, "api_key": api_key})
+    p_type, m_name, _, use_multi_agent = db.get_ai_config(request.user_id)
+
+    # Key'i her zaman kasadan çek (provider bazlı)
+    api_key = (db.get_api_key(request.user_id, p_type) or "") if p_type not in ("ollama", "kb") else ""
+
+    try:
+        provider = AIProviderManager.get_provider({"provider_type": p_type, "model_name": m_name, "api_key": api_key})
+    except ValueError as e:
+        error_msg = str(e)
+        db.add_message(request.conversation_id, "assistant", error_msg)
+        return {
+            "role": "assistant",
+            "content": error_msg,
+            "intent": "ERROR",
+            "static_results": {"smells": []},
+            "pipeline": None
+        }
 
     # 3. Intent ve kod tespiti (LLM-powered)
     classifier = IntentClassifierAgent(provider)
@@ -448,14 +521,48 @@ async def chat(request: ChatRequest):
     # 7. Kod Üretme (Generation) Modu Kontrolü
     if request.mode == "generation":
         try:
-            pipeline = CodeGenerationPipeline(
-                prompt=request.message,
-                provider=provider,
-                language=request.language,
-                context=context_summary or "Yeni sohbet.",
-                user_message=request.message,
-                provider_type=p_type,
-            )
+            if use_multi_agent:
+                # Multi-Agent: Architect + Coder + GameFeel (5 çağrı)
+                PROGRESS_STORE[request.conversation_id] = [
+                    {"id": "step1", "title": "Mimari Planlama", "status": "pending", "description": "", "subtasks": [], "dependencies": [], "level": 0, "priority": "high"},
+                    {"id": "step2", "title": "Kod Üretimi", "status": "pending", "description": "", "subtasks": [], "dependencies": [], "level": 0, "priority": "high"},
+                    {"id": "step3", "title": "Oyun Hissiyatı Testi", "status": "pending", "description": "", "subtasks": [], "dependencies": [], "level": 0, "priority": "high"}
+                ]
+            else:
+                # Single-Agent: Tek çağrı
+                PROGRESS_STORE[request.conversation_id] = [
+                    {"id": "step1", "title": "Kod Üretimi", "status": "pending", "description": "", "subtasks": [], "dependencies": [], "level": 0, "priority": "high"}
+                ]
+
+            def update_progress(step_id: str, status: str, duration_ms: int = None):
+                tasks = PROGRESS_STORE.get(request.conversation_id, [])
+                for t in tasks:
+                    if t["id"] == step_id:
+                        t["status"] = status
+                        if duration_ms is not None:
+                            t["description"] = f"{duration_ms}ms"
+
+            if use_multi_agent:
+                pipeline = CodeGenerationPipeline(
+                    prompt=request.message,
+                    provider=provider,
+                    language=request.language,
+                    context=context_summary or "Yeni sohbet.",
+                    user_message=request.message,
+                    provider_type=p_type,
+                    progress_callback=update_progress,
+                )
+            else:
+                pipeline = SingleAgentCodeGenerationPipeline(
+                    prompt=request.message,
+                    provider=provider,
+                    language=request.language,
+                    context=context_summary or "Yeni sohbet.",
+                    user_message=request.message,
+                    provider_type=p_type,
+                    progress_callback=update_progress,
+                )
+
             result = await asyncio.wait_for(pipeline.run(), timeout=300)
             
             final_suggestion = result.combined_response
@@ -474,6 +581,21 @@ async def chat(request: ChatRequest):
     # 8. C# kodu varsa → Kademeli Pipeline çalıştır (Analysis)
     elif is_csharp:
         try:
+            PROGRESS_STORE[request.conversation_id] = [
+                {"id": "step1", "title": "Statik Analiz", "status": "pending", "description": "", "subtasks": [], "dependencies": [], "level": 0, "priority": "high"},
+                {"id": "step2", "title": "Derin AI Analizi", "status": "pending", "description": "", "subtasks": [], "dependencies": [], "level": 0, "priority": "high"},
+                {"id": "step3", "title": "Kod Düzeltme", "status": "pending", "description": "", "subtasks": [], "dependencies": [], "level": 0, "priority": "high"},
+                {"id": "step4", "title": "Self-Critique", "status": "pending", "description": "", "subtasks": [], "dependencies": [], "level": 0, "priority": "high"}
+            ]
+
+            def update_progress(step_id: str, status: str, duration_ms: int = None):
+                tasks = PROGRESS_STORE.get(request.conversation_id, [])
+                for t in tasks:
+                    if t["id"] == step_id:
+                        t["status"] = status
+                        if duration_ms is not None:
+                            t["description"] = f"{duration_ms}ms"
+
             if p_type == "anthropic" and use_multi_agent:
                 pipeline = MultiAgentPipeline(
                     code=request.message,
@@ -483,6 +605,7 @@ async def chat(request: ChatRequest):
                     learned_rules="",  # Feedback sistemi eklenince buraya gelecek
                     user_message=request.message,
                     provider_type=p_type,
+                    progress_callback=update_progress,
                 )
             else:
                 pipeline = SingleAgentPipeline(
@@ -493,6 +616,7 @@ async def chat(request: ChatRequest):
                     learned_rules="",  # Feedback sistemi eklenince buraya gelecek
                     user_message=request.message,
                     provider_type=p_type,
+                    progress_callback=update_progress,
                 )
 
             result = await asyncio.wait_for(pipeline.run(), timeout=300)

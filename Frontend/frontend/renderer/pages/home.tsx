@@ -48,6 +48,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/cjs/styles/prism';
+import AgentPlan, { Task } from '../components/ui/agent-plan';
 
 interface ModelInfo {
   id: string;
@@ -154,6 +155,7 @@ export default function HomePage() {
   const [chatInput, setChatInput] = useState('');
   const [lang, setLang] = useState('tr');
   const [loading, setLoading] = useState(false);
+  const [currentPlan, setCurrentPlan] = useState<Task[]>([]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isChatOpen, setIsChatOpen] = useState(true);
   const [sidebarTab, setSidebarTab] = useState<'chats' | 'files'>('chats');
@@ -181,6 +183,7 @@ export default function HomePage() {
   });
   const [availableModels, setAvailableModels] = useState<AvailableModels>({ local: [], cloud: [] });
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
+  const [providersWithKeys, setProvidersWithKeys] = useState<string[]>([]);
 
   // --- EDITING ---
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -214,6 +217,7 @@ export default function HomePage() {
       fetchAIConfig(user.id);
       fetchAvailableModels();
       fetchLastWorkspace(user.id);
+      fetchProvidersWithKeys(user.id);
     }
   }, [user]);
 
@@ -235,8 +239,18 @@ export default function HomePage() {
   const fetchAIConfig = async (userId: number) => {
     try {
       const res = await axios.get(`${API}/get-ai-config/${userId}`);
-      if (res.data) setAiConfig(res.data);
+      if (res.data) {
+        // Key'i UI'da gösterme — kasada güvenli duruyor
+        setAiConfig({ ...res.data, api_key: '' });
+      }
     } catch (err) { console.error("Config hatası:", err); }
+  };
+
+  const fetchProvidersWithKeys = async (userId: number) => {
+    try {
+      const res = await axios.get(`${API}/api-keys/${userId}`);
+      if (res.data?.providers_with_keys) setProvidersWithKeys(res.data.providers_with_keys);
+    } catch (err) { console.error("API keys hatası:", err); }
   };
 
   const fetchAvailableModels = async () => {
@@ -308,11 +322,30 @@ export default function HomePage() {
   const saveAIConfig = async () => {
     try {
       const configToSave = { ...aiConfig, user_id: user?.id };
-      if (configToSave.provider_type === 'groq' || configToSave.provider_type === 'ollama') {
-        configToSave.api_key = ''; // Bu sağlayıcılar için key'i temizle
+      const isCloud = !['ollama', 'kb'].includes(configToSave.provider_type);
+
+      if (!isCloud) {
+        configToSave.api_key = '';
       }
+
+      // Yeni key girilmişse kasaya kaydet
+      if (configToSave.api_key && isCloud) {
+        await axios.post(`${API}/api-keys/save`, {
+          user_id: user?.id,
+          provider_type: configToSave.provider_type,
+          api_key: configToSave.api_key
+        });
+      }
+
+      // Cloud provider ama ne yeni key var ne kasada key var → uyar
+      if (isCloud && !configToSave.api_key && !providersWithKeys.includes(configToSave.provider_type)) {
+        alert(`⚠️ ${configToSave.provider_type} için API key girilmedi. Bu provider'ı kullanabilmek için bir API key girmelisiniz.`);
+        return;
+      }
+
       await axios.post(`${API}/save-ai-config`, configToSave);
-      setAiConfig({ ...aiConfig, api_key: configToSave.api_key }); // UI'ı da güncelle
+      setAiConfig({ ...aiConfig, api_key: '' }); // UI'da key gösterme
+      if (user) await fetchProvidersWithKeys(user.id);
       alert("Ayarlar kaydedildi!");
       setShowSettings(false);
     } catch (err) { alert("Kaydedilemedi."); }
@@ -517,6 +550,17 @@ export default function HomePage() {
     setMessages(prev => [...prev, userMsg]);
     setChatInput('');
     setLoading(true);
+    setCurrentPlan([]);
+
+    // Polling interval
+    const progressInterval = setInterval(async () => {
+      try {
+        const res = await axios.get(`${API}/chat-progress/${targetConvId}`);
+        if (res.data && res.data.length > 0) {
+          setCurrentPlan(res.data);
+        }
+      } catch (e) {}
+    }, 1000);
 
     try {
       const res = await axios.post(`${API}/chat`, {
@@ -527,6 +571,9 @@ export default function HomePage() {
         mode: appMode,
         use_kb: aiConfig.provider_type === 'kb'
       }, { timeout: 310000 }); // 310 saniye timeout (Opus yavaş olabilir)
+
+      clearInterval(progressInterval);
+      setCurrentPlan([]);
 
       // AI yanıtını ekle
       const aiMsg: Message = {
@@ -540,6 +587,9 @@ export default function HomePage() {
       setMessages(prev => [...prev, aiMsg]);
       fetchConversations(user.id); // Başlık güncellenmiş olabilir
     } catch (err: any) {
+      clearInterval(progressInterval);
+      setCurrentPlan([]);
+      
       const errorText = err.code === 'ECONNABORTED'
         ? '⏱️ Yanıt zaman aşımına uğradı. AI Sağlayıcısı kod üretirken veya analiz ederken çok uzun sürdü. Daha basit bir işlem deneyin.'
         : '❌ Bir hata oluştu. Backend çalışıyor mu kontrol edin.';
@@ -748,7 +798,7 @@ export default function HomePage() {
                   <select
                     style={{ backgroundColor: '#000000', color: 'white' }}
                     value={aiConfig.provider_type}
-                    onChange={e => setAiConfig({ ...aiConfig, provider_type: e.target.value })}
+                    onChange={e => setAiConfig({ ...aiConfig, provider_type: e.target.value, api_key: '' })}
                     className="w-full bg-[#000000] border border-slate-800 rounded-xl p-3 text-white text-sm outline-none focus:border-blue-500 transition-colors"
                   >
                     <option value="groq">Groq (Bulut)</option>
@@ -758,18 +808,24 @@ export default function HomePage() {
                     <option value="google">Google Gemini (Bulut)</option>
                     <option value="openai">OpenAI (Bulut)</option>
                     <option value="deepseek">DeepSeek (Reasoning)</option>
+                    <option value="openrouter">OpenRouter (Kimi, vb.)</option>
                   </select>
                 </div>
                 {aiConfig.provider_type !== 'ollama' && aiConfig.provider_type !== 'kb' && (
                   <div>
-                    <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1.5">API Key</label>
+                    <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
+                      API Key
+                      {providersWithKeys.includes(aiConfig.provider_type) && !aiConfig.api_key && (
+                        <span className="ml-2 text-emerald-400 normal-case tracking-normal">✓ Kayıtlı key mevcut</span>
+                      )}
+                    </label>
                     <input
                       style={{ backgroundColor: '#000000', color: 'white' }}
                       type="password"
                       value={aiConfig.api_key}
                       onChange={e => setAiConfig({ ...aiConfig, api_key: e.target.value })}
                       className="w-full bg-[#000000] border border-slate-800 rounded-xl p-3 text-white text-sm outline-none focus:border-blue-500 transition-colors"
-                      placeholder="sk-..."
+                      placeholder={providersWithKeys.includes(aiConfig.provider_type) ? "Kayıtlı key kullanılacak (değiştirmek için yeni key girin)" : "API key girin..."}
                     />
                   </div>
                 )}
@@ -785,7 +841,8 @@ export default function HomePage() {
                       aiConfig.provider_type === "anthropic" ? "claude-sonnet-4-6" :
                       aiConfig.provider_type === "ollama" ? "qwen2.5-coder:7b" :
                       aiConfig.provider_type === "google" ? "gemini-2.5-flash" :
-                      aiConfig.provider_type === "openai" ? "gpt-4o" : "llama-3.3-70b-versatile"
+                      aiConfig.provider_type === "openai" ? "gpt-5.4-mini" :
+                      aiConfig.provider_type === "openrouter" ? "openai/gpt-5.4-mini" : "llama-3.3-70b-versatile"
                     }
                   />
                 </div>
@@ -1296,24 +1353,40 @@ export default function HomePage() {
                             <div className="px-2 py-1.5 text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2 mt-1">
                               <Sparkles size={10} /> Bulut API Modelleri
                             </div>
-                            {availableModels.cloud.map(m => (
+                            {availableModels.cloud.map(m => {
+                              const hasKey = providersWithKeys.includes(m.provider);
+                              return (
                               <button
                                 key={m.id}
                                 onClick={async () => {
-                                  // Update state temporarily
+                                  if (!hasKey) {
+                                    // Key yoksa settings'e yönlendir
+                                    setAiConfig({ ...aiConfig, provider_type: m.provider, model_name: m.id });
+                                    setIsModelDropdownOpen(false);
+                                    setShowSettings(true);
+                                    alert(`⚠️ ${m.provider.charAt(0).toUpperCase() + m.provider.slice(1)} için API key girilmedi.\nLütfen Ayarlar'dan API key'inizi girin.`);
+                                    return;
+                                  }
                                   const newCfg = { ...aiConfig, provider_type: m.provider, model_name: m.id };
                                   setAiConfig(newCfg);
                                   setIsModelDropdownOpen(false);
-                                  // Save to backend immediately
                                   if (user) await axios.post(`${API}/save-ai-config`, { ...newCfg, user_id: user.id });
                                 }}
-                                className={`w-full text-left px-3 py-2 text-[12px] flex flex-col hover:bg-blue-600/10 rounded-lg transition-colors
+                                className={`w-full text-left px-3 py-2 text-[12px] flex items-center justify-between hover:bg-blue-600/10 rounded-lg transition-colors
                                   ${aiConfig.model_name === m.id ? 'bg-blue-600/10 text-blue-400' : 'text-slate-300'}`}
                               >
-                                <span className="font-medium">{m.name}</span>
-                                <span className="text-[10px] text-slate-500 capitalize">{m.provider}</span>
+                                <div className="flex flex-col">
+                                  <span className="font-medium">{m.name}</span>
+                                  <span className="text-[10px] text-slate-500 capitalize">{m.provider}</span>
+                                </div>
+                                {hasKey ? (
+                                  <span className="text-[9px] bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded-full">Key ✓</span>
+                                ) : (
+                                  <span className="text-[9px] bg-amber-500/20 text-amber-400 px-1.5 py-0.5 rounded-full">Key Yok</span>
+                                )}
                               </button>
-                            ))}
+                              );
+                            })}
                           </div>
                         )}
 
@@ -1444,29 +1517,35 @@ export default function HomePage() {
                         )}
                         {/* Pipeline Skor Badge */}
                         {msg.pipeline && (
-                          <div className="mb-3 bg-[#000000] rounded-lg border border-blue-500/20 p-3">
-                            <div className="flex items-center justify-between">
-                              <div className="flex items-center gap-3">
-                                <div className="flex items-center gap-1.5">
-                                  <span className="text-[18px] font-bold text-white">{msg.pipeline.score}</span>
-                                  <span className="text-[11px] text-slate-500">/10</span>
+                          <div className="mb-3 space-y-3">
+                            <div className="bg-[#000000] rounded-lg border border-blue-500/20 p-3">
+                              <div className="flex items-center justify-between mb-2">
+                                <div className="flex items-center gap-2">
+                                  <div className="w-6 h-6 rounded bg-blue-500/20 flex items-center justify-center">
+                                    <Sparkles size={12} className="text-blue-400" />
+                                  </div>
+                                  <span className="text-xs font-bold text-slate-200">AI Kalite Skoru</span>
                                 </div>
-                                <div className="flex items-center gap-2 text-[10px]">
-                                  {msg.pipeline.severity_counts?.critical > 0 && (
-                                    <span className="text-red-400">🔴 {msg.pipeline.severity_counts.critical}</span>
-                                  )}
-                                  {msg.pipeline.severity_counts?.warning > 0 && (
-                                    <span className="text-yellow-400">🟡 {msg.pipeline.severity_counts.warning}</span>
-                                  )}
-                                  {msg.pipeline.severity_counts?.info > 0 && (
-                                    <span className="text-blue-400">🔵 {msg.pipeline.severity_counts.info}</span>
-                                  )}
+                                <div className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-500/20 text-blue-400">
+                                  {msg.pipeline.score.toFixed(1)}/10
                                 </div>
                               </div>
-                              <div className="text-[9px] text-slate-600 flex items-center gap-1">
+                              <div className="flex items-center gap-2 text-[10px] mb-2">
+                                {msg.pipeline.severity_counts?.critical > 0 && (
+                                  <span className="text-red-400">🔴 {msg.pipeline.severity_counts.critical}</span>
+                                )}
+                                {msg.pipeline.severity_counts?.warning > 0 && (
+                                  <span className="text-yellow-400">🟡 {msg.pipeline.severity_counts.warning}</span>
+                                )}
+                                {msg.pipeline.severity_counts?.info > 0 && (
+                                  <span className="text-blue-400">🔵 {msg.pipeline.severity_counts.info}</span>
+                                )}
+                              </div>
+                              <div className="text-[10px] text-slate-400 leading-relaxed max-h-24 overflow-y-auto custom-scrollbar pr-2">
+                                {msg.pipeline.summary}
+                              </div>
+                              <div className="text-[9px] text-slate-600 flex items-center gap-1 mt-2 border-t border-slate-800 pt-2">
                                 <span>⚡ {(msg.pipeline.total_duration_ms / 1000).toFixed(1)}s</span>
-                                <span>•</span>
-                                <span>3 adım</span>
                               </div>
                             </div>
                           </div>
@@ -1492,15 +1571,22 @@ export default function HomePage() {
 
               {/* Typing Indicator */}
               {loading && (
-                <div className="flex gap-2.5 chat-message-enter">
+                <div className="flex gap-2.5 chat-message-enter mb-6">
                   <div className="h-6 w-6 bg-gradient-to-br from-blue-500 to-violet-500 rounded-md flex items-center justify-center shrink-0">
                     <Bot size={13} className="text-white" />
                   </div>
-                  <div className="bg-[#000000] rounded-lg px-4 py-3 border border-slate-800">
-                    <div className="flex items-center gap-1.5">
-                      <div className="typing-dot h-2 w-2 bg-blue-500 rounded-full" />
-                      <div className="typing-dot h-2 w-2 bg-blue-500 rounded-full" />
-                      <div className="typing-dot h-2 w-2 bg-blue-500 rounded-full" />
+                  <div className="flex-1 min-w-0">
+                    {currentPlan.length > 0 && (
+                      <div className="mb-4">
+                        <AgentPlan tasks={currentPlan} />
+                      </div>
+                    )}
+                    <div className="bg-[#000000] rounded-lg px-4 py-3 border border-slate-800 inline-block">
+                      <div className="flex items-center gap-1.5">
+                        <div className="typing-dot h-2 w-2 bg-blue-500 rounded-full" />
+                        <div className="typing-dot h-2 w-2 bg-blue-500 rounded-full" />
+                        <div className="typing-dot h-2 w-2 bg-blue-500 rounded-full" />
+                      </div>
                     </div>
                   </div>
                 </div>

@@ -96,6 +96,10 @@ class AnthropicProvider(AIProvider):
 
     def analyze_code(self, prompt: str, max_tokens: int = 4096) -> str:
         try:
+            # Anthropic API: max_tokens > 16384 → streaming zorunlu
+            if max_tokens > 16384:
+                return self._stream_response(prompt, max_tokens)
+
             response = self.client.messages.create(
                 model=self.model_name,
                 max_tokens=max_tokens,
@@ -103,16 +107,31 @@ class AnthropicProvider(AIProvider):
                     {"role": "user", "content": prompt}
                 ]
             )
-            
+
             # Extract text from ContentBlock
             text = ""
             for block in response.content:
                 if block.type == "text":
                     text += block.text
-            
+
             return self._clean_response(text)
         except Exception as e:
             return f"❌ Anthropic API Hatası: Sistemsel bir ret veya model hatası oluştu. Mesaj: {str(e)}"
+
+    def _stream_response(self, prompt: str, max_tokens: int) -> str:
+        """Büyük istekler için streaming kullanır (Anthropic 10dk kuralı)."""
+        try:
+            text = ""
+            with self.client.messages.stream(
+                model=self.model_name,
+                max_tokens=max_tokens,
+                messages=[{"role": "user", "content": prompt}]
+            ) as stream:
+                for chunk in stream.text_stream:
+                    text += chunk
+            return self._clean_response(text)
+        except Exception as e:
+            return f"❌ Anthropic API Hatası: {str(e)}"
 
 class AIProviderManager:
     @staticmethod
@@ -127,13 +146,23 @@ class AIProviderManager:
         elif p_type == "google" and api_key:
             return GeminiProvider(api_key=api_key, model_name=m_name)
         elif p_type == "openai" and api_key:
-            return OpenAICompatibleProvider(api_key=api_key, base_url="https://api.openai.com/v1", model_name=m_name or "gpt-4o-mini")
+            return OpenAICompatibleProvider(api_key=api_key, base_url="https://api.openai.com/v1", model_name=m_name or "gpt-5.4-mini")
         elif p_type == "deepseek" and api_key:
             return OpenAICompatibleProvider(api_key=api_key, base_url="https://api.deepseek.com", model_name=m_name or "deepseek-chat")
         elif p_type == "groq" and api_key:
             return OpenAICompatibleProvider(api_key=api_key, base_url="https://api.groq.com/openai/v1", model_name=m_name or DEFAULT_GROQ_MODEL)
+        elif p_type == "openrouter" and api_key:
+            return OpenAICompatibleProvider(api_key=api_key, base_url="https://openrouter.ai/api/v1", model_name=m_name or "openai/gpt-4.1")
         elif p_type == "ollama":
             return OllamaProvider(model_name=m_name)
         
-        # Kullanıcı hiçbir şey seçmediyse veya API key yoksa → Ollama'ya düş
+        # API key gerektiren provider seçilmiş ama key yoksa → hata fırlat
+        cloud_providers = ("anthropic", "google", "openai", "deepseek", "groq", "openrouter")
+        if p_type in cloud_providers and not api_key:
+            raise ValueError(
+                f"⚠️ {p_type.capitalize()} için API key girilmedi. "
+                f"Lütfen Ayarlar'dan API key'inizi girin."
+            )
+
+        # Hiçbir provider seçilmediyse → Ollama varsayılan
         return OllamaProvider(model_name=m_name)
