@@ -78,6 +78,37 @@ ipcMain.handle('write-file', async (_event, filePath: string, content: string) =
   }
 })
 
+// --- BACKEND YOLLARINI BUL ---
+function getBackendPaths(): { pythonExec: string; pythonScript: string; backendDir: string; sitePackages: string } {
+  if (isProd) {
+    const resourcesPath = process.resourcesPath
+    const backendDir = path.join(resourcesPath, 'Backend')
+    const pythonScript = path.join(backendDir, 'app', 'main.py')
+
+    // venv'deki site-packages'ı bul (python3.x klasörü dinamik)
+    const venvLib = path.join(backendDir, 'venv', 'lib')
+    let sitePackages = ''
+    try {
+      const pyDirs = fs.readdirSync(venvLib).filter(d => d.startsWith('python'))
+      if (pyDirs.length > 0) {
+        sitePackages = path.join(venvLib, pyDirs[0], 'site-packages')
+      }
+    } catch {}
+
+    // Sistem python3 kullan (venv symlink'leri build'de kırılır)
+    const pythonExec = 'python3'
+
+    return { pythonExec, pythonScript, backendDir, sitePackages }
+  } else {
+    const appPath = app.getAppPath()
+    const projectRoot = path.resolve(appPath, '..', '..')
+    const backendDir = path.join(projectRoot, 'Backend')
+    const pythonExec = path.join(backendDir, 'venv', 'bin', 'python3')
+    const pythonScript = path.join(backendDir, 'app', 'main.py')
+    return { pythonExec, pythonScript, backendDir, sitePackages: '' }
+  }
+}
+
 // --- AKILLI BACKEND KONTROLÜ ---
 async function startPythonBackend() {
   try {
@@ -92,18 +123,53 @@ async function startPythonBackend() {
     console.log('--- BACKEND ÇEVRİMDIŞI, BAŞLATILIYOR... ---');
   }
 
-  const appPath = app.getAppPath();
-  const projectRoot = path.resolve(appPath, '..', '..');
-  const pythonExec = path.join(projectRoot, 'Backend', 'venv', 'bin', 'python3');
-  const pythonScript = path.join(projectRoot, 'Backend', 'app', 'main.py');
+  const { pythonExec, pythonScript, backendDir, sitePackages } = getBackendPaths()
+
+  // Script dosyasının varlığını kontrol et
+  if (!fs.existsSync(pythonScript)) {
+    console.error(`--- BACKEND SCRIPT BULUNAMADI: ${pythonScript} ---`)
+    return
+  }
+
+  // Python'ın erişilebilir olup olmadığını kontrol et (venv veya sistem)
+  if (pythonExec !== 'python3' && !fs.existsSync(pythonExec)) {
+    console.error(`--- PYTHON BULUNAMADI: ${pythonExec} ---`)
+    return
+  }
+
+  console.log(`--- BACKEND BAŞLATILIYOR: ${pythonExec} ${pythonScript} ---`)
+  console.log(`--- BACKEND CWD: ${backendDir} ---`)
+  if (sitePackages) {
+    console.log(`--- PYTHONPATH: ${sitePackages} ---`)
+  }
+
+  // PYTHONPATH ile venv paketlerini sistem python3'e tanıt
+  const spawnEnv = {
+    ...process.env,
+    PYTHONUNBUFFERED: '1',
+    ...(sitePackages ? { PYTHONPATH: sitePackages + (process.env.PYTHONPATH ? `:${process.env.PYTHONPATH}` : '') } : {}),
+  }
 
   pyBackendProcess = spawn(pythonExec, [pythonScript], {
-    shell: true,
-    stdio: 'inherit'
+    stdio: ['ignore', 'pipe', 'pipe'],
+    cwd: backendDir,
+    env: spawnEnv,
   });
+
+  // Backend loglarını Electron console'a yönlendir
+  pyBackendProcess.stdout?.on('data', (data) => {
+    console.log(`[Backend] ${data.toString().trim()}`)
+  })
+  pyBackendProcess.stderr?.on('data', (data) => {
+    console.error(`[Backend] ${data.toString().trim()}`)
+  })
 
   pyBackendProcess.on('error', (err) => {
     console.error('Python başlatılamadı:', err);
+  });
+
+  pyBackendProcess.on('exit', (code) => {
+    console.log(`--- BACKEND KAPANDI (exit code: ${code}) ---`);
   });
 }
 
@@ -111,13 +177,10 @@ async function startPythonBackend() {
 const gotTheLock = app.requestSingleInstanceLock()
 
 if (!gotTheLock) {
-  // İkinci instance — sessizce çık, ilk instance zaten çalışıyor
   console.log('--- BAŞKA BİR INSTANCE ZATEN ÇALIŞIYOR, ÇIKILIYOR ---')
   app.quit()
 } else {
-  // İlk instance — normal başlat
   app.on('second-instance', () => {
-    // İkinci instance başlatılmaya çalışıldığında, mevcut pencereye focus ver
     const allWindows = require('electron').BrowserWindow.getAllWindows()
     if (allWindows.length > 0) {
       const win = allWindows[0]
@@ -142,12 +205,11 @@ if (!gotTheLock) {
         await mainWindow.loadURL('app://./home')
       } else {
         const port = process.argv[2]
-        // Retry logic — sayfa hazır olmayabilir
         const maxRetries = 5
         for (let i = 0; i < maxRetries; i++) {
           try {
             await mainWindow.loadURL(`http://localhost:${port}/home`)
-            break // Başarılı, döngüden çık
+            break
           } catch (err) {
             console.log(`--- SAYFA YÜKLENEMEDI (deneme ${i + 1}/${maxRetries}), 1sn bekleniyor... ---`)
             if (i === maxRetries - 1) {
@@ -160,7 +222,7 @@ if (!gotTheLock) {
     })()
 
   app.on('window-all-closed', () => {
-    if (isProd && pyBackendProcess) {
+    if (pyBackendProcess) {
       pyBackendProcess.kill();
     }
     app.quit();

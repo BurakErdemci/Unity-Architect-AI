@@ -16,8 +16,10 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent / ".env")
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from typing import Optional, List
+import httpx
 
 # Modüllerimiz
 from database import DatabaseManager
@@ -34,10 +36,14 @@ from prompts import (
 )
 
 # --- VERİTABANI YOLU ---
-home_dir = str(Path.home())
-db_folder = os.path.join(home_dir, ".unity_architect_ai")
-os.makedirs(db_folder, exist_ok=True)
-db_path = os.path.join(db_folder, "unity_master_v3.db")
+db_path = os.environ.get("DB_PATH")
+if not db_path:
+    home_dir = str(Path.home())
+    db_folder = os.path.join(home_dir, ".unity_architect_ai")
+    os.makedirs(db_folder, exist_ok=True)
+    db_path = os.path.join(db_folder, "unity_master_v3.db")
+else:
+    os.makedirs(os.path.dirname(db_path), exist_ok=True)
 
 # --- AYARLAR ---
 logging.basicConfig(level=logging.INFO)
@@ -126,6 +132,159 @@ async def login(req: AuthRequest):
         return {"user_id": user[0], "username": user[1]}
     raise HTTPException(401, "Hatalı giriş.")
 
+# ===================== OAUTH =====================
+
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
+GITHUB_CLIENT_ID = os.environ.get("GITHUB_CLIENT_ID", "")
+GITHUB_CLIENT_SECRET = os.environ.get("GITHUB_CLIENT_SECRET", "")
+OAUTH_REDIRECT_BASE = "http://127.0.0.1:8000"
+
+# OAuth başlat → frontend bu URL'e popup açar
+@app.get("/auth/google/url")
+async def google_auth_url():
+    if not GOOGLE_CLIENT_ID:
+        raise HTTPException(500, "Google OAuth yapılandırılmamış. .env dosyasına GOOGLE_CLIENT_ID ekleyin.")
+    redirect_uri = f"{OAUTH_REDIRECT_BASE}/auth/google/callback"
+    url = (
+        "https://accounts.google.com/o/oauth2/v2/auth?"
+        f"client_id={GOOGLE_CLIENT_ID}"
+        f"&redirect_uri={redirect_uri}"
+        "&response_type=code"
+        "&scope=openid%20email%20profile"
+        "&access_type=offline"
+        "&prompt=consent"
+    )
+    return {"url": url}
+
+@app.get("/auth/github/url")
+async def github_auth_url():
+    if not GITHUB_CLIENT_ID:
+        raise HTTPException(500, "GitHub OAuth yapılandırılmamış. .env dosyasına GITHUB_CLIENT_ID ekleyin.")
+    redirect_uri = f"{OAUTH_REDIRECT_BASE}/auth/github/callback"
+    url = (
+        "https://github.com/login/oauth/authorize?"
+        f"client_id={GITHUB_CLIENT_ID}"
+        f"&redirect_uri={redirect_uri}"
+        "&scope=user:email"
+    )
+    return {"url": url}
+
+# Google callback → kullanıcı oluştur/bul → popup'a sonuç gönder
+@app.get("/auth/google/callback", response_class=HTMLResponse)
+async def google_callback(code: str = ""):
+    if not code:
+        return _oauth_error_page("Google'dan yetkilendirme kodu alınamadı.")
+    try:
+        redirect_uri = f"{OAUTH_REDIRECT_BASE}/auth/google/callback"
+        async with httpx.AsyncClient() as client:
+            # Code → Token
+            token_resp = await client.post("https://oauth2.googleapis.com/token", data={
+                "code": code,
+                "client_id": GOOGLE_CLIENT_ID,
+                "client_secret": GOOGLE_CLIENT_SECRET,
+                "redirect_uri": redirect_uri,
+                "grant_type": "authorization_code",
+            })
+            token_data = token_resp.json()
+            access_token = token_data.get("access_token")
+            if not access_token:
+                return _oauth_error_page(f"Token alınamadı: {token_data.get('error_description', 'Bilinmeyen hata')}")
+
+            # Token → Kullanıcı bilgisi
+            user_resp = await client.get("https://www.googleapis.com/oauth2/v2/userinfo",
+                                         headers={"Authorization": f"Bearer {access_token}"})
+            user_info = user_resp.json()
+
+        oauth_id = user_info.get("id", "")
+        email = user_info.get("email", "")
+        name = user_info.get("name", email.split("@")[0])
+        avatar = user_info.get("picture", "")
+
+        user_id, username = db.find_or_create_oauth_user("google", oauth_id, name, email, avatar)
+        return _oauth_success_page(user_id, username, email, avatar)
+
+    except Exception as e:
+        logger.error(f"Google OAuth hatası: {e}")
+        return _oauth_error_page(str(e))
+
+# GitHub callback
+@app.get("/auth/github/callback", response_class=HTMLResponse)
+async def github_callback(code: str = ""):
+    if not code:
+        return _oauth_error_page("GitHub'dan yetkilendirme kodu alınamadı.")
+    try:
+        async with httpx.AsyncClient() as client:
+            # Code → Token
+            token_resp = await client.post("https://github.com/login/oauth/access_token", data={
+                "code": code,
+                "client_id": GITHUB_CLIENT_ID,
+                "client_secret": GITHUB_CLIENT_SECRET,
+            }, headers={"Accept": "application/json"})
+            token_data = token_resp.json()
+            access_token = token_data.get("access_token")
+            if not access_token:
+                return _oauth_error_page(f"Token alınamadı: {token_data.get('error_description', 'Bilinmeyen hata')}")
+
+            # Token → Kullanıcı bilgisi
+            user_resp = await client.get("https://api.github.com/user",
+                                         headers={"Authorization": f"Bearer {access_token}"})
+            user_info = user_resp.json()
+
+            # Email (ayrı endpoint — private olabilir)
+            email = user_info.get("email", "")
+            if not email:
+                emails_resp = await client.get("https://api.github.com/user/emails",
+                                               headers={"Authorization": f"Bearer {access_token}"})
+                emails = emails_resp.json()
+                if isinstance(emails, list):
+                    primary = next((e for e in emails if e.get("primary")), None)
+                    email = primary["email"] if primary else (emails[0]["email"] if emails else "")
+
+        oauth_id = str(user_info.get("id", ""))
+        name = user_info.get("login", "github_user")
+        avatar = user_info.get("avatar_url", "")
+
+        user_id, username = db.find_or_create_oauth_user("github", oauth_id, name, email, avatar)
+        return _oauth_success_page(user_id, username, email, avatar)
+
+    except Exception as e:
+        logger.error(f"GitHub OAuth hatası: {e}")
+        return _oauth_error_page(str(e))
+
+def _oauth_success_page(user_id: int, username: str, email: str, avatar: str) -> str:
+    """OAuth başarılı — Electron popup'a postMessage gönderen HTML sayfası."""
+    return f"""<!DOCTYPE html><html><head><title>Giriş Başarılı</title></head>
+<body style="background:#000;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;font-family:system-ui;">
+<div style="text-align:center;">
+<h2>Giriş başarılı!</h2>
+<p>Bu pencere kapanacak...</p>
+</div>
+<script>
+  const data = {{ user_id: {user_id}, username: "{username}", email: "{email}", avatar: "{avatar}" }};
+  if (window.opener) {{
+    window.opener.postMessage({{ type: "oauth-success", ...data }}, "*");
+    setTimeout(() => window.close(), 1000);
+  }} else {{
+    document.querySelector('p').textContent = 'Pencereyi kapatabilirsiniz.';
+  }}
+</script></body></html>"""
+
+def _oauth_error_page(error: str) -> str:
+    """OAuth hata sayfası."""
+    safe_error = error.replace('"', '\\"').replace("'", "\\'")
+    return f"""<!DOCTYPE html><html><head><title>Giriş Hatası</title></head>
+<body style="background:#000;color:#ff4444;display:flex;align-items:center;justify-content:center;height:100vh;font-family:system-ui;">
+<div style="text-align:center;">
+<h2>Giriş başarısız</h2>
+<p>{safe_error}</p>
+</div>
+<script>
+  if (window.opener) {{
+    window.opener.postMessage({{ type: "oauth-error", error: "{safe_error}" }}, "*");
+  }}
+</script></body></html>"""
+
 @app.post("/save-ai-config")
 async def save_config(req: AIConfigRequest):
     # API key geldiyse kasaya kaydet (provider bazlı)
@@ -188,7 +347,6 @@ async def get_available_models():
             {"id": "claude-opus-4-6", "name": "Claude 4.6 Opus", "provider": "anthropic"},
             {"id": "claude-haiku-4-6", "name": "Claude 4.6 Haiku", "provider": "anthropic"},
             {"id": "llama-3.3-70b-versatile", "name": "Llama 3.3 70B (Groq)", "provider": "groq"},
-            {"id": "mixtral-8x7b-32768", "name": "Mixtral 8x7B (Groq)", "provider": "groq"},
             {"id": "gemini-2.5-flash", "name": "Gemini 2.5 Flash", "provider": "google"},
             {"id": "gemini-2.5-pro", "name": "Gemini 2.5 Pro", "provider": "google"},
             {"id": "gpt-5.4-mini", "name": "GPT-5.4 Mini", "provider": "openai"},
@@ -521,7 +679,11 @@ async def chat(request: ChatRequest):
     # 7. Kod Üretme (Generation) Modu Kontrolü
     if request.mode == "generation":
         try:
-            if use_multi_agent:
+            # Multi-Agent SADECE Anthropic + multi_agent açıksa kullanılır
+            # Diğer tüm provider'lar → SingleAgent (tek çağrı, hızlı, stabil)
+            use_multi_pipeline = use_multi_agent and p_type == "anthropic"
+
+            if use_multi_pipeline:
                 # Multi-Agent: Architect + Coder + GameFeel (5 çağrı)
                 PROGRESS_STORE[request.conversation_id] = [
                     {"id": "step1", "title": "Mimari Planlama", "status": "pending", "description": "", "subtasks": [], "dependencies": [], "level": 0, "priority": "high"},
@@ -542,7 +704,7 @@ async def chat(request: ChatRequest):
                         if duration_ms is not None:
                             t["description"] = f"{duration_ms}ms"
 
-            if use_multi_agent:
+            if use_multi_pipeline:
                 pipeline = CodeGenerationPipeline(
                     prompt=request.message,
                     provider=provider,

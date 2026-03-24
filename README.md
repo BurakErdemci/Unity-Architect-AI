@@ -89,13 +89,27 @@ Final Skor = (Teknik Denetim × 0.60) + (Oyun Hissiyatı × 0.40)
 
 ### 🤖 Çoklu AI Sağlayıcı Desteği
 
-| Sağlayıcı | Tür | Kullanım |
-|-----------|-----|----------|
-| **Anthropic Claude** | ☁️ Bulut | Multi-Agent Pipeline (Tier 2) |
-| **Groq** | ☁️ Bulut | Hızlı tek-ajan analiz (Tier 1) |
-| **Google Gemini** | ☁️ Bulut | Alternatif bulut sağlayıcı |
-| **Ollama** | 🖥️ Yerel | Yerel model desteği |
-| **OpenAI / DeepSeek** | ☁️ Bulut | OpenAI uyumlu API'ler |
+| Sağlayıcı | Tür | Kullanım | Modeller |
+|-----------|-----|----------|----------|
+| **Anthropic Claude** | ☁️ Bulut | Multi-Agent Pipeline (Tier 2) | Claude 3.5 Sonnet, Claude 3 Opus |
+| **OpenAI** | ☁️ Bulut | Direkt OpenAI API | GPT-5.4, GPT-5.4-mini, GPT-5.4-nano |
+| **OpenRouter** | ☁️ Bulut | 200+ model erişimi | Kimi 2.5, GPT-5.4, Claude, Gemini vb. |
+| **Groq** | ☁️ Bulut | Hızlı tek-ajan analiz (Tier 1) | Llama, Mixtral |
+| **Google Gemini** | ☁️ Bulut | Alternatif bulut sağlayıcı | Gemini Pro, Gemini Ultra |
+| **DeepSeek** | ☁️ Bulut | OpenAI uyumlu API | DeepSeek Coder |
+| **Ollama** | 🖥️ Yerel | Yerel model desteği | Herhangi bir yerel model |
+
+> **Not:** Claude dışındaki tüm sağlayıcılar otomatik olarak **SingleAgent Code Generation** pipeline'ını kullanır. Multi-Agent pipeline sadece Anthropic Claude ile çalışır.
+
+### 🔐 OAuth ile Giriş
+
+Google ve GitHub hesaplarıyla hızlı giriş desteği:
+
+| Sağlayıcı | Durum |
+|-----------|-------|
+| **Google** | ✅ OAuth 2.0 |
+| **GitHub** | ✅ OAuth 2.0 |
+| **Kullanıcı Adı/Şifre** | ✅ Klasik kayıt/giriş |
 
 ### 🔎 Statik Analiz — Otomatik Tespit Edilen Sorunlar
 
@@ -218,7 +232,7 @@ Hızlı ve basit; tek bir LLM çağrısıyla analiz-düzeltme yapar.
 - **Reflexive Loop:** Skor 8.0 altındaysa Expert kodu otomatik yeniden yazar (max 2 deneme)
 - **Combined Feedback:** Retry sırasında hem teknik hem oyun hissiyatı eleştirisi birlikte gönderilir
 
-### 🆕 Tier 3 — Sıfırdan Kod Üretim Pipeline
+### 🆕 Tier 3 — Sıfırdan Kod Üretim Pipeline (Multi-Agent, sadece Claude)
 
 ```
 Kullanıcı İsteği → Architect (Plan) → Coder (Kod) → Game Feel (Sessiz Loop) → Final Kod
@@ -227,6 +241,17 @@ Kullanıcı İsteği → Architect (Plan) → Coder (Kod) → Game Feel (Sessiz 
 - Architect kısa bir blueprint çıkarır
 - Coder 8192 token limitiyle tam mimari üretir
 - Game Feel sessiz ve kullanıcıya görünmez şekilde kodu denetler; düşük skorsa Coder tekrar yazar
+
+### 🆕 Tier 4 — SingleAgent Kod Üretim Pipeline (Tüm sağlayıcılar)
+
+```
+Kullanıcı İsteği → Tek AI Çağrısı (Plan + Kod + Self-Critique) → Final Kod
+```
+
+- Claude dışındaki tüm sağlayıcılar (OpenAI, OpenRouter, Groq, Gemini, DeepSeek, Ollama) bu pipeline'ı kullanır
+- Sağlayıcıya özel token limitleri: Groq 32K, Google 65K, diğerleri 16K
+- İngilizce prompt ile daha iyi LLM çıktı kalitesi
+- Game Feel kuralları doğrudan prompt'a gömülü
 
 ---
 
@@ -305,7 +330,12 @@ GROQ_API_KEY=gsk_your_groq_key
 ANTHROPIC_API_KEY=sk-ant-your_anthropic_key
 GEMINI_API_KEY=your_gemini_key
 OPENAI_API_KEY=sk-your_openai_key
+OPENROUTER_API_KEY=sk-or-your_openrouter_key
 OLLAMA_BASE_URL=http://127.0.0.1:11434
+GOOGLE_CLIENT_ID=your_google_client_id
+GOOGLE_CLIENT_SECRET=your_google_client_secret
+GITHUB_CLIENT_ID=your_github_client_id
+GITHUB_CLIENT_SECRET=your_github_client_secret
 EOF
 
 # Backend'i başlat
@@ -327,6 +357,31 @@ npm run dev
 Uygulama otomatik olarak açılacaktır. 🎉
 
 > **Not:** Frontend başlatıldığında Backend çevrimdışıysa otomatik olarak başlatılır.
+
+### 4. Docker ile Kurulum (Alternatif)
+
+```bash
+# Projenin kök dizininde
+docker-compose up --build
+```
+
+Backend `http://localhost:8000` adresinde çalışır. Frontend yine `npm run dev` ile başlatılır.
+
+### 5. Production Build (Masaüstü Uygulaması)
+
+```bash
+cd Frontend/frontend
+
+# Temiz build al
+rm -rf build app .next
+npm run build
+```
+
+Build çıktısı `build/` klasöründe oluşur:
+- **macOS:** `build/mac-arm64/Unity Architect AI.app` veya `build/*.dmg`
+- **Windows:** `build/*.exe` (Windows PC'de build alınmalı)
+
+> Backend, build'e otomatik olarak dahil edilir (`extraResources`). Uygulama açıldığında backend otomatik başlar.
 
 ---
 
@@ -421,6 +476,8 @@ Unity-Architect-AI/
 │   ├── tests/
 │   │   └── test_validator.py        # Validator unit testleri (12 test)
 │   ├── requirements.txt
+│   ├── Dockerfile                   # Backend Docker imajı
+│   ├── .dockerignore
 │   └── .env                         # API anahtarları (git'e eklenmez)
 │
 ├── Frontend/
@@ -438,6 +495,8 @@ Unity-Architect-AI/
 │       ├── nextron.config.js
 │       └── electron-builder.yml
 │
+├── docker-compose.yml              # Docker ile backend başlatma
+├── .env.example                    # Örnek environment değişkenleri
 ├── .gitignore
 └── README.md
 ```
@@ -464,6 +523,10 @@ Backend çalışırken: [http://localhost:8000/docs](http://localhost:8000/docs)
 | `POST` | `/save-workspace` | Workspace yolunu kaydet |
 | `GET` | `/last-workspace/{user_id}` | Son workspace yolunu getir |
 | `POST` | `/write-file` | Dosya yaz (workspace içinde) |
+| `GET` | `/auth/google/url` | Google OAuth başlatma URL'i |
+| `GET` | `/auth/google/callback` | Google OAuth callback |
+| `GET` | `/auth/github/url` | GitHub OAuth başlatma URL'i |
+| `GET` | `/auth/github/callback` | GitHub OAuth callback |
 
 ---
 
@@ -487,7 +550,17 @@ Backend çalışırken: [http://localhost:8000/docs](http://localhost:8000/docs)
 - [x] Sohbet sistemi (çoklu konuşma, geçmiş)
 - [x] Unit testler (Validator)
 
-### 🚧 Devam Eden (Sprint 2.2)
+### ✅ Tamamlanan (Sprint 2.2)
+
+- [x] OpenRouter entegrasyonu (200+ model erişimi)
+- [x] OpenAI direkt API desteği (GPT-5.4 model ailesi)
+- [x] SingleAgent Code Generation Pipeline (Claude dışı sağlayıcılar)
+- [x] Google & GitHub OAuth ile giriş
+- [x] Docker desteği (Dockerfile + docker-compose)
+- [x] Production build (Electron + Backend bundled)
+- [x] Backend auto-start (build'de otomatik başlatma)
+
+### 🚧 Devam Eden (Sprint 3)
 
 - [ ] Built-in Unity Expert (Yerel bilgi bankası + offline destek)
 - [ ] Genişletilmiş Statik Analiz kuralları
@@ -495,9 +568,7 @@ Backend çalışırken: [http://localhost:8000/docs](http://localhost:8000/docs)
 ### 📋 Planlanan
 
 - [ ] Dashboard ve analiz grafikleri
-- [ ] Docker desteği
 - [ ] PDF rapor dışa aktarma
-- [ ] Uygulama paketleme (exe / dmg / AppImage)
 - [ ] Geri bildirim öğrenme sistemi (kullanıcı feedback → kural iyileştirme)
 
 ---

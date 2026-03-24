@@ -16,7 +16,13 @@ class DatabaseManager:
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             # Kullanıcılar
-            cursor.execute('CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, password_hash TEXT)')
+            cursor.execute('CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, password_hash TEXT, email TEXT, avatar_url TEXT, oauth_provider TEXT, oauth_id TEXT)')
+            # Migration: OAuth alanlarını mevcut tabloya ekle
+            for col, col_type in [("email", "TEXT"), ("avatar_url", "TEXT"), ("oauth_provider", "TEXT"), ("oauth_id", "TEXT")]:
+                try:
+                    cursor.execute(f"ALTER TABLE users ADD COLUMN {col} {col_type}")
+                except sqlite3.OperationalError:
+                    pass
             # AI Ayarları
             cursor.execute('''CREATE TABLE IF NOT EXISTS ai_configs (
                 user_id INTEGER PRIMARY KEY, provider_type TEXT, model_name TEXT, api_key TEXT, use_multi_agent INTEGER DEFAULT 1,
@@ -75,6 +81,36 @@ class DatabaseManager:
             if user and pwd_context.verify(password[:72], user[2]):
                 return user
             return None
+
+    # ===================== OAUTH =====================
+    def find_or_create_oauth_user(self, oauth_provider: str, oauth_id: str, username: str, email: str = None, avatar_url: str = None) -> Tuple[int, str]:
+        """OAuth ile giriş yapan kullanıcıyı bul veya oluştur. (user_id, username) döner."""
+        with sqlite3.connect(self.db_path) as conn:
+            # Mevcut OAuth kullanıcısı var mı?
+            user = conn.execute(
+                'SELECT id, username FROM users WHERE oauth_provider = ? AND oauth_id = ?',
+                (oauth_provider, oauth_id)
+            ).fetchone()
+            if user:
+                return (user[0], user[1])
+
+            # Yeni kullanıcı oluştur — username çakışmasını önle
+            base_username = username
+            suffix = 0
+            while True:
+                existing = conn.execute('SELECT id FROM users WHERE username = ?', (base_username,)).fetchone()
+                if not existing:
+                    break
+                suffix += 1
+                base_username = f"{username}_{suffix}"
+
+            conn.execute(
+                'INSERT INTO users (username, password_hash, email, avatar_url, oauth_provider, oauth_id) VALUES (?, ?, ?, ?, ?, ?)',
+                (base_username, "", email, avatar_url, oauth_provider, oauth_id)
+            )
+            conn.commit()
+            new_user = conn.execute('SELECT id, username FROM users WHERE oauth_provider = ? AND oauth_id = ?', (oauth_provider, oauth_id)).fetchone()
+            return (new_user[0], new_user[1])
 
     # ===================== AI CONFIG =====================
     def save_ai_config(self, user_id: int, p_type: str, m_name: str, key: str, use_multi_agent: bool = True) -> None:

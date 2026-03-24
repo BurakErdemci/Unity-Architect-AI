@@ -9,6 +9,7 @@ import {
   CircleX,
 } from "lucide-react";
 import { motion, AnimatePresence, LayoutGroup } from "framer-motion";
+import { TextShimmer } from "./text-shimmer";
 
 // Type definitions
 export interface Subtask {
@@ -426,7 +427,13 @@ export default function AgentPlan({ tasks = initialTasks }: { tasks?: Task[] }) 
                           <span
                             className={`${isCompleted ? "text-muted-foreground line-through" : ""}`}
                           >
-                            {task.title}
+                            {task.status === "in-progress" ? (
+                              <TextShimmer className="font-medium [--base-color:#3b82f6] [--base-gradient-color:#ffffff] dark:[--base-color:#2563eb] dark:[--base-gradient-color:#ffffff]">
+                                {task.title}
+                              </TextShimmer>
+                            ) : (
+                              task.title
+                            )}
                           </span>
                         </div>
 
@@ -563,7 +570,13 @@ export default function AgentPlan({ tasks = initialTasks }: { tasks?: Task[] }) 
                                     <span
                                       className={`cursor-pointer text-sm ${subtask.status === "completed" ? "text-muted-foreground line-through" : ""}`}
                                     >
-                                      {subtask.title}
+                                      {subtask.status === "in-progress" ? (
+                                        <TextShimmer className="font-medium [--base-color:#3b82f6] [--base-gradient-color:#ffffff] dark:[--base-color:#2563eb] dark:[--base-gradient-color:#ffffff]">
+                                          {subtask.title}
+                                        </TextShimmer>
+                                      ) : (
+                                        subtask.title
+                                      )}
                                     </span>
                                   </motion.div>
 

@@ -4,6 +4,7 @@ import axios from 'axios';
 import Editor from '@monaco-editor/react';
 import { SignInPage, Testimonial } from "../components/ui/sign-in";
 import { AnimatedAIChat, AnimatedChatInput, ThinkingIndicator } from "../components/ui/animated-ai-chat";
+import { ModelLogo } from "../components/ui/ModelLogos";
 import {
   Activity,
   AlertTriangle,
@@ -139,6 +140,42 @@ const MarkdownRenderer = ({ content }: { content: string }) => {
 // =====================================================================
 //                       ANA KOMPONENT
 // =====================================================================
+// --- HELPER: Model Avatar ---
+const ModelAvatar = ({ provider, size = 13, containerSize = "h-6 w-6", className = "" }: { provider?: string; size?: number; containerSize?: string; className?: string }) => {
+  const p = provider?.toLowerCase() || "";
+  let bg = "bg-gradient-to-br from-blue-500 to-violet-500"; // Default (KB/Unity)
+  let iconColor = "text-white";
+
+  if (p.includes("anthropic") || p.includes("claude")) {
+    bg = "bg-[#D97757]"; // Claude Authentic Orange
+    iconColor = "text-white";
+  } else if (p.includes("openai")) {
+    bg = "bg-gradient-to-br from-[#10A37F] to-[#0A6B53]"; // OpenAI Green
+    iconColor = "text-white";
+  } else if (p.includes("google") || p.includes("gemini")) {
+    bg = "bg-white"; // Google White
+    iconColor = "text-[#4285F4]";
+  } else if (p.includes("deepseek")) {
+    bg = "bg-gradient-to-br from-[#3B82F6] to-[#1E3A8A]"; // DeepSeek Blue
+    iconColor = "text-white";
+  } else if (p.includes("moonshot") || p.includes("openrouter")) {
+    bg = "bg-gradient-to-br from-[#7C3AED] to-[#4C1D95]"; // Moonshot Purple
+    iconColor = "text-white";
+  } else if (p.includes("groq")) {
+    bg = "bg-gradient-to-br from-[#F55036] to-[#D33C25]"; // Groq Orange/Red
+    iconColor = "text-white";
+  } else if (p.includes("ollama")) {
+    bg = "bg-slate-900"; // Ollama Black
+    iconColor = "text-white";
+  }
+
+  return (
+    <div className={`${containerSize} ${bg} rounded-md flex items-center justify-center shrink-0 ${className} shadow-sm overflow-hidden`}>
+      <ModelLogo provider={provider} size={size} className={iconColor} />
+    </div>
+  );
+};
+
 export default function HomePage() {
   // --- AUTH ---
   const [user, setUser] = useState<UserData | null>(null);
@@ -667,6 +704,42 @@ export default function HomePage() {
       } catch (err: any) { alert(err.response?.data?.detail || "Auth hatası."); }
     };
 
+    // --- OAuth Handler ---
+    const handleOAuth = async (provider: 'google' | 'github') => {
+      try {
+        const res = await axios.get(`${API}/auth/${provider}/url`);
+        const oauthUrl = res.data.url;
+
+        // Popup aç
+        const popup = window.open(oauthUrl, `${provider}_oauth`, 'width=500,height=700,menubar=no,toolbar=no');
+
+        // postMessage ile sonucu al
+        const handler = (event: MessageEvent) => {
+          if (event.data?.type === 'oauth-success') {
+            const userData = { id: event.data.user_id, name: event.data.username };
+            setUser(userData);
+            localStorage.setItem('unityArchitectUser', JSON.stringify(userData));
+            window.removeEventListener('message', handler);
+          } else if (event.data?.type === 'oauth-error') {
+            alert(`OAuth hatası: ${event.data.error}`);
+            window.removeEventListener('message', handler);
+          }
+        };
+        window.addEventListener('message', handler);
+
+        // Popup kapanırsa listener'ı temizle
+        const checkClosed = setInterval(() => {
+          if (popup?.closed) {
+            clearInterval(checkClosed);
+            window.removeEventListener('message', handler);
+          }
+        }, 1000);
+
+      } catch (err: any) {
+        alert(err.response?.data?.detail || `${provider} OAuth başlatılamadı.`);
+      }
+    };
+
     return (
       <div className="bg-[#000000] text-foreground">
         <Head><title>Unity Architect AI | {authMode === 'login' ? 'Giriş' : 'Kayıt'}</title></Head>
@@ -679,9 +752,11 @@ export default function HomePage() {
             </div>
           }
           description={authMode === 'login' ? "Hesabınıza giriş yapın ve Unity projelerinizi geliştirmeye devam edin." : "Yeni bir hesap oluşturun ve kod kalitenizi hemen artırın."}
-          heroImageSrc="https://images.unsplash.com/photo-1616499370260-485e3e5810e7?q=80&w=2160&auto=format&fit=crop" // Unity/Code vibe image
+          heroImageSrc="https://images.unsplash.com/photo-1616499370260-485e3e5810e7?q=80&w=2160&auto=format&fit=crop"
           testimonials={sampleTestimonials}
           onSignIn={handleSubmit}
+          onGoogleSignIn={() => handleOAuth('google')}
+          onGitHubSignIn={() => handleOAuth('github')}
           onToggleMode={() => setAuthMode(authMode === 'login' ? 'register' : 'login')}
           onResetPassword={() => setAuthMode('login')}
         />
@@ -1175,6 +1250,34 @@ export default function HomePage() {
               <div 
                 className={`flex-1 relative z-10 transition-opacity duration-200 ${(code || openedFilePath || isEditorFocused) ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
               >
+                {/* FLOATING ATTACHMENT BUTTON (+) */}
+                {(code || openedFilePath) && (
+                  <motion.div 
+                    initial={{ opacity: 0, scale: 0.8, x: -20 }}
+                    animate={{ opacity: 1, scale: 1, x: 0 }}
+                    className="absolute top-4 left-4 z-30 flex items-center gap-2"
+                  >
+                    <div className="relative group">
+                      <button
+                        onClick={() => setIncludeEditorCode(!includeEditorCode)}
+                        className={`w-8 h-8 rounded-full flex items-center justify-center transition-all shadow-lg backdrop-blur-md border ${
+                          includeEditorCode 
+                            ? 'bg-blue-500 border-blue-400 text-white shadow-blue-500/40 rotate-45' 
+                            : 'bg-slate-900/80 border-slate-700 text-slate-400 hover:text-white hover:border-blue-500/50 hover:shadow-blue-500/20'
+                        }`}
+                      >
+                        <Plus size={18} />
+                      </button>
+                      
+                      {/* Tooltip */}
+                      <div className="absolute left-10 top-1/2 -translate-y-1/2 px-3 py-1.5 bg-[#000000] border border-slate-800 rounded-lg text-[11px] text-slate-300 whitespace-nowrap opacity-0 group-hover:opacity-100 translate-x-2 group-hover:translate-x-0 transition-all pointer-events-none shadow-2xl z-50">
+                        {includeEditorCode ? 'Kodu Çıkar' : 'Kodu AI\'ya Ekle'}
+                        <div className="absolute right-full top-1/2 -translate-y-1/2 border-8 border-transparent border-r-slate-800" />
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+
                 <Editor
                   height="100%"
                   defaultLanguage="csharp"
@@ -1290,9 +1393,7 @@ export default function HomePage() {
         {/* Chat Header */}
         <div className="h-11 border-b border-slate-800/50 flex items-center justify-between px-4 min-w-[420px] shrink-0">
           <div className="flex items-center gap-2">
-            <div className="h-6 w-6 bg-gradient-to-br from-blue-500 to-violet-500 rounded-md flex items-center justify-center">
-              <Bot size={13} className="text-white" />
-            </div>
+            <ModelAvatar provider={aiConfig.provider_type} size={14} />
             {/* MODEL SELECTOR DROPDOWN */}
             <div className="relative">
               <button
@@ -1492,9 +1593,7 @@ export default function HomePage() {
                   {msg.role === 'assistant' ? (
                     // AI Mesajı
                     <div className="flex gap-2.5 max-w-full">
-                      <div className="h-6 w-6 bg-gradient-to-br from-blue-500 to-violet-500 rounded-md flex items-center justify-center shrink-0 mt-0.5">
-                        <Bot size={13} className="text-white" />
-                      </div>
+                      <ModelAvatar provider={aiConfig.provider_type} size={13} className="mt-0.5" />
                       <div className="flex-1 min-w-0">
                         {/* Statik Bulgular */}
                         {msg.smells && msg.smells.length > 0 && (
@@ -1572,9 +1671,7 @@ export default function HomePage() {
               {/* Typing Indicator */}
               {loading && (
                 <div className="flex gap-2.5 chat-message-enter mb-6">
-                  <div className="h-6 w-6 bg-gradient-to-br from-blue-500 to-violet-500 rounded-md flex items-center justify-center shrink-0">
-                    <Bot size={13} className="text-white" />
-                  </div>
+                  <ModelAvatar provider={aiConfig.provider_type} size={13} />
                   <div className="flex-1 min-w-0">
                     {currentPlan.length > 0 && (
                       <div className="mb-4">
@@ -1598,8 +1695,8 @@ export default function HomePage() {
 
         {/* Chat Input - Animated Version */}
         <div className="p-4 border-t border-slate-800/50 bg-[#000000]/80 backdrop-blur-md">
-           {/* File Chip (sadece dosya yüklüyse göster) */}
-           {code.trim() && (
+           {/* File Chip (sadece dosya yüklüyse ve eklenmişse göster) */}
+           {includeEditorCode && code.trim() && (
               <div className="mb-3">
                  <div className="inline-flex items-center gap-2 bg-blue-500/10 border border-blue-500/20 rounded-lg px-2.5 py-1.5 max-w-full group">
                     <Code2 size={13} className="text-blue-400 shrink-0" />
@@ -1607,7 +1704,7 @@ export default function HomePage() {
                        {openedFilePath ? openedFilePath.split('/').pop() : 'kod.cs'}
                     </span>
                     <button
-                       onClick={() => { setCode(''); setOpenedFilePath(null); }}
+                       onClick={() => setIncludeEditorCode(false)}
                        className="p-1 hover:bg-slate-800 rounded text-slate-500 hover:text-slate-300 transition-all"
                     >
                        <X size={10} />
