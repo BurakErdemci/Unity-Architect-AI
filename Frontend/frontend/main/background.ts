@@ -80,30 +80,43 @@ ipcMain.handle('write-file', async (_event, filePath: string, content: string) =
 
 // --- BACKEND YOLLARINI BUL ---
 function getBackendPaths(): { pythonExec: string; pythonScript: string; backendDir: string; sitePackages: string } {
+  const isWin = process.platform === 'win32'
+
   if (isProd) {
     const resourcesPath = process.resourcesPath
     const backendDir = path.join(resourcesPath, 'Backend')
     const pythonScript = path.join(backendDir, 'app', 'main.py')
 
-    // venv'deki site-packages'ı bul (python3.x klasörü dinamik)
-    const venvLib = path.join(backendDir, 'venv', 'lib')
+    // venv'deki site-packages'ı bul
     let sitePackages = ''
-    try {
-      const pyDirs = fs.readdirSync(venvLib).filter(d => d.startsWith('python'))
-      if (pyDirs.length > 0) {
-        sitePackages = path.join(venvLib, pyDirs[0], 'site-packages')
+    if (isWin) {
+      // Windows: venv/Lib/site-packages
+      const winSitePackages = path.join(backendDir, 'venv', 'Lib', 'site-packages')
+      if (fs.existsSync(winSitePackages)) {
+        sitePackages = winSitePackages
       }
-    } catch {}
+    } else {
+      // macOS/Linux: venv/lib/python3.x/site-packages
+      const venvLib = path.join(backendDir, 'venv', 'lib')
+      try {
+        const pyDirs = fs.readdirSync(venvLib).filter(d => d.startsWith('python'))
+        if (pyDirs.length > 0) {
+          sitePackages = path.join(venvLib, pyDirs[0], 'site-packages')
+        }
+      } catch {}
+    }
 
-    // Sistem python3 kullan (venv symlink'leri build'de kırılır)
-    const pythonExec = 'python3'
+    // Sistem python kullan (venv symlink'leri build'de kırılır)
+    const pythonExec = isWin ? 'python' : 'python3'
 
     return { pythonExec, pythonScript, backendDir, sitePackages }
   } else {
     const appPath = app.getAppPath()
     const projectRoot = path.resolve(appPath, '..', '..')
     const backendDir = path.join(projectRoot, 'Backend')
-    const pythonExec = path.join(backendDir, 'venv', 'bin', 'python3')
+    const pythonExec = isWin
+      ? path.join(backendDir, 'venv', 'Scripts', 'python.exe')
+      : path.join(backendDir, 'venv', 'bin', 'python3')
     const pythonScript = path.join(backendDir, 'app', 'main.py')
     return { pythonExec, pythonScript, backendDir, sitePackages: '' }
   }
@@ -132,7 +145,7 @@ async function startPythonBackend() {
   }
 
   // Python'ın erişilebilir olup olmadığını kontrol et (venv veya sistem)
-  if (pythonExec !== 'python3' && !fs.existsSync(pythonExec)) {
+  if (pythonExec !== 'python3' && pythonExec !== 'python' && !fs.existsSync(pythonExec)) {
     console.error(`--- PYTHON BULUNAMADI: ${pythonExec} ---`)
     return
   }
@@ -147,7 +160,7 @@ async function startPythonBackend() {
   const spawnEnv = {
     ...process.env,
     PYTHONUNBUFFERED: '1',
-    ...(sitePackages ? { PYTHONPATH: sitePackages + (process.env.PYTHONPATH ? `:${process.env.PYTHONPATH}` : '') } : {}),
+    ...(sitePackages ? { PYTHONPATH: sitePackages + (process.env.PYTHONPATH ? `${process.platform === 'win32' ? ';' : ':'}${process.env.PYTHONPATH}` : '') } : {}),
   }
 
   pyBackendProcess = spawn(pythonExec, [pythonScript], {
