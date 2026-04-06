@@ -9,6 +9,27 @@ import axios from 'axios'
 const isProd = process.env.NODE_ENV === 'production'
 let pyBackendProcess: ChildProcess | null = null
 
+function isAllowedUnityScriptPath(filePath: string, workspacePath: string): boolean {
+  try {
+    const resolvedFile = path.resolve(filePath)
+    const resolvedWorkspace = path.resolve(workspacePath)
+    const relativePath = path.relative(resolvedWorkspace, resolvedFile)
+
+    if (!relativePath || relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+      return false
+    }
+
+    const parts = relativePath.split(path.sep)
+    if (parts.length < 3) return false
+    if (parts[0] !== 'Assets' || parts[1] !== 'Scripts') return false
+    if (path.extname(resolvedFile).toLowerCase() !== '.cs') return false
+
+    return true
+  } catch {
+    return false
+  }
+}
+
 if (isProd) {
   serve({ directory: 'app' })
 } else {
@@ -65,8 +86,11 @@ ipcMain.handle('read-file', async (_event, filePath: string) => {
   } catch { return null }
 })
 
-ipcMain.handle('write-file', async (_event, filePath: string, content: string) => {
+ipcMain.handle('write-file', async (_event, filePath: string, content: string, workspacePath?: string) => {
   try {
+    if (!workspacePath || !isAllowedUnityScriptPath(filePath, workspacePath)) {
+      return { success: false, error: 'Dosya yalnızca workspace içindeki Assets/Scripts altına yazılabilir.' }
+    }
     const dir = path.dirname(filePath)
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true })
@@ -76,6 +100,34 @@ ipcMain.handle('write-file', async (_event, filePath: string, content: string) =
   } catch (err: any) {
     return { success: false, error: err.message }
   }
+})
+
+ipcMain.handle('file-exists', async (_event, filePath: string, workspacePath?: string) => {
+  if (!workspacePath || !isAllowedUnityScriptPath(filePath, workspacePath)) {
+    return false
+  }
+  return fs.existsSync(filePath)
+})
+
+ipcMain.handle('write-multiple-files', async (_event, files: { path: string; content: string }[], workspacePath?: string) => {
+  const results: { path: string; success: boolean; error?: string }[] = []
+  for (const file of files) {
+    try {
+      if (!workspacePath || !isAllowedUnityScriptPath(file.path, workspacePath)) {
+        results.push({ path: file.path, success: false, error: 'Dosya yalnızca workspace içindeki Assets/Scripts altına yazılabilir.' })
+        continue
+      }
+      const dir = path.dirname(file.path)
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true })
+      }
+      fs.writeFileSync(file.path, file.content, 'utf-8')
+      results.push({ path: file.path, success: true })
+    } catch (err: any) {
+      results.push({ path: file.path, success: false, error: err.message })
+    }
+  }
+  return results
 })
 
 // --- BACKEND YOLLARINI BUL ---

@@ -108,13 +108,44 @@ CRITICAL RULES:
 - Camera: Smooth follow with slight lag, never rigid lock.
 - Effects: Use Time.timeScale for hit-stop, screen shake for impacts.
 
-[OUTPUT FORMAT — FOLLOW EXACTLY]
+[CLARIFICATION — BEFORE WRITING CODE]
+If the user's request is vague or missing critical details (e.g., "RPG sistemi yap", "inventory yap", "bir oyun yap"), DO NOT write code yet.
+Instead, ask ALL missing questions in a SINGLE message (max 4 questions). Examples:
+- 2D mi 3D mü?
+- Veri nerede saklanacak (ScriptableObject / JSON / PlayerPrefs)?
+- UI gerekiyor mu?
+- Mevcut sistemle entegrasyon var mı?
+
+If the request is already specific enough (e.g., "2D platformer Rigidbody tabanlı karakter kontrolcüsü"), skip questions and generate directly.
+If the previous conversation context shows the user already answered clarification questions, use those answers and generate code — do NOT ask again.
+
+[TOKEN LIMIT — GRACEFUL ENDING]
+If you cannot fit the ENTIRE system in a single response:
+1. Write the most important, FULLY WORKING part (e.g., core class + main methods — no half-finished code).
+2. At the very end, add this section:
+   ⏳ **Devam:** [Yazılmayan dosya/sistem adlarını listele]
+   Devam edeyim mi? ✋
+3. NEVER leave a half-open method, unclosed brace, or syntax error — everything you write must compile.
+
+[OUTPUT FORMAT — FOLLOW EXACTLY — NO EXCEPTIONS]
 1. ONE short sentence summarizing your approach (e.g., "Here is your rb.velocity-based 2D movement system:")
-2. Immediately output a ```csharp block with the COMPLETE, WORKING code — no half-finished methods!
-3. Below the code, write ONLY a "🎮 Editor Setup" section with 1-3 bullet points about which components to attach in Unity Inspector.
+2. For EACH FILE output a separate section — NEVER merge multiple files into one block:
+
+   **📄 FileName.cs**
+   ```csharp
+   // full, working code for this file only
+   ```
+
+   **📄 AnotherFile.cs**
+   ```csharp
+   // full, working code for this file only
+   ```
+
+3. Single-file systems: still use ONE ```csharp block with the **📄 FileName.cs** header above it.
+4. Below ALL code blocks, write ONLY a "🎮 Editor Setup" section with 1-3 bullet points.
 
 [BANNED]
-- NO "Findings", "Performance", "Score", "Analysis" headers
+- NO merging multiple classes/files into a single ```csharp block — EVERY file gets its own block
 - NO truncated code or "..." placeholders
 - NO lengthy explanations — be concise
 - NO greetings or farewells"""
@@ -125,6 +156,7 @@ CRITICAL RULES:
             logger.error(f"SingleAgent CodeGen hatası: {e}")
             response = f"❌ Kod üretimi başarısız: {str(e)}"
 
+        response = self._fix_truncated_response(response)
         duration = int((time.time() - start) * 1000)
 
         if self.progress_callback:
@@ -138,3 +170,23 @@ CRITICAL RULES:
         self._result.combined_response = response
 
         return self._result
+
+    def _is_truncated(self, text: str) -> bool:
+        """Yanıtın token limitinde kesilip kesilmediğini kontrol eder (açık ``` bloğu var mı)."""
+        if not text:
+            return False
+        blocks = re.findall(r'```', text)
+        return len(blocks) % 2 == 1
+
+    def _fix_truncated_response(self, text: str) -> str:
+        """Kesilmiş yanıtı kapatır ve kullanıcıya devam mesajı ekler."""
+        if not self._is_truncated(text):
+            return text
+        logger.warning("  [Truncation] Yanıt token limitinde kesildi — devam mesajı ekleniyor.")
+        fixed = text.rstrip() + "\n// ... (yanıt kesildi)\n```"
+        fixed += (
+            "\n\n---\n"
+            "⏳ **Token limitine ulaşıldı — yanıt kesildi.**\n\n"
+            "Kalan dosyaları yazmamı ister misin? **Devam et** yazman yeterli. ✋"
+        )
+        return fixed

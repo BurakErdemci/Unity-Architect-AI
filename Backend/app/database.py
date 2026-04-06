@@ -1,16 +1,56 @@
 import sqlite3
 import json
 import os
-from datetime import datetime
-from passlib.context import CryptContext
+import secrets
+from datetime import datetime, timedelta
+import bcrypt
 from typing import List, Dict, Any, Optional, Tuple
-
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+from cryptography.fernet import Fernet, InvalidToken
 
 class DatabaseManager:
     def __init__(self, db_path: str):
         self.db_path = db_path
+        self.session_ttl_minutes = int(os.environ.get("SESSION_TTL_MINUTES", "1440"))
+        self._fernet = self._build_fernet()
         self._create_tables()
+
+    def _build_fernet(self) -> Fernet:
+        env_key = os.environ.get("API_KEY_ENCRYPTION_KEY")
+        if env_key:
+            return Fernet(env_key.encode("utf-8"))
+
+        db_dir = os.path.dirname(self.db_path) or "."
+        os.makedirs(db_dir, exist_ok=True)
+        key_path = os.path.join(db_dir, "api_key_fernet.key")
+
+        if os.path.exists(key_path):
+            with open(key_path, "rb") as file:
+                key = file.read().strip()
+        else:
+            key = Fernet.generate_key()
+            with open(key_path, "wb") as file:
+                file.write(key)
+            try:
+                os.chmod(key_path, 0o600)
+            except OSError:
+                pass
+
+        return Fernet(key)
+
+    def _encrypt_api_key(self, api_key: str) -> str:
+        encrypted = self._fernet.encrypt(api_key.encode("utf-8")).decode("utf-8")
+        return f"enc:{encrypted}"
+
+    def _decrypt_api_key(self, stored_value: str) -> str:
+        if not stored_value:
+            return ""
+        if not stored_value.startswith("enc:"):
+            return stored_value
+        token = stored_value[4:].encode("utf-8")
+        try:
+            return self._fernet.decrypt(token).decode("utf-8")
+        except InvalidToken:
+            return ""
 
     def _create_tables(self):
         with sqlite3.connect(self.db_path) as conn:
@@ -63,11 +103,40 @@ class DatabaseManager:
                 updated_at TEXT NOT NULL,
                 PRIMARY KEY (user_id, provider_type),
                 FOREIGN KEY (user_id) REFERENCES users (id))''')
+            cursor.execute('''CREATE TABLE IF NOT EXISTS sessions (
+                token TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users (id))''')
+            try:
+                cursor.execute("ALTER TABLE sessions ADD COLUMN expires_at TEXT")
+            except sqlite3.OperationalError:
+                pass
+            cursor.execute('''CREATE TABLE IF NOT EXISTS oauth_states (
+                state TEXT PRIMARY KEY,
+                provider TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )''')
+            conn.commit()
+        self._backfill_session_expiry()
+
+    def _backfill_session_expiry(self):
+        with sqlite3.connect(self.db_path) as conn:
+            rows = conn.execute(
+                "SELECT token, created_at FROM sessions WHERE expires_at IS NULL OR expires_at = ''"
+            ).fetchall()
+            for token, created_at in rows:
+                try:
+                    created_dt = datetime.strptime(created_at, "%Y-%m-%d %H:%M:%S")
+                except ValueError:
+                    created_dt = datetime.now()
+                expires_at = (created_dt + timedelta(minutes=self.session_ttl_minutes)).strftime("%Y-%m-%d %H:%M:%S")
+                conn.execute("UPDATE sessions SET expires_at = ? WHERE token = ?", (expires_at, token))
             conn.commit()
 
     # ===================== AUTH =====================
     def create_user(self, username: str, password: str) -> bool:
-        hashed = pwd_context.hash(password[:72])
+        hashed = bcrypt.hashpw(password[:72].encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
         try:
             with sqlite3.connect(self.db_path) as conn:
                 conn.execute('INSERT INTO users (username, password_hash) VALUES (?, ?)', (username, hashed))
@@ -78,9 +147,71 @@ class DatabaseManager:
     def verify_user(self, username: str, password: str) -> Optional[Tuple]:
         with sqlite3.connect(self.db_path) as conn:
             user = conn.execute('SELECT id, username, password_hash FROM users WHERE username = ?', (username,)).fetchone()
-            if user and pwd_context.verify(password[:72], user[2]):
+            if user and bcrypt.checkpw(password[:72].encode("utf-8"), user[2].encode("utf-8")):
                 return user
             return None
+
+    # ===================== SESSION =====================
+    def create_session(self, user_id: int) -> str:
+        token = secrets.token_urlsafe(32)
+        now_dt = datetime.now()
+        now = now_dt.strftime("%Y-%m-%d %H:%M:%S")
+        expires_at = (now_dt + timedelta(minutes=self.session_ttl_minutes)).strftime("%Y-%m-%d %H:%M:%S")
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute('DELETE FROM sessions WHERE expires_at < ?', (now,))
+            conn.execute(
+                'INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)',
+                (token, user_id, now, expires_at)
+            )
+            conn.commit()
+        return token
+
+    def get_user_by_session(self, token: str) -> Optional[Tuple[int, str]]:
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute(
+                '''SELECT users.id, users.username
+                   FROM sessions
+                   JOIN users ON users.id = sessions.user_id
+                   WHERE sessions.token = ? AND sessions.expires_at >= ?''',
+                (token, now)
+            ).fetchone()
+            conn.execute('DELETE FROM sessions WHERE expires_at < ?', (now,))
+            conn.commit()
+            return (row[0], row[1]) if row else None
+
+    def delete_session(self, token: str) -> None:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute('DELETE FROM sessions WHERE token = ?', (token,))
+            conn.commit()
+
+    # ===================== OAUTH STATE =====================
+    def create_oauth_state(self, provider: str) -> str:
+        state = secrets.token_urlsafe(32)
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute('DELETE FROM oauth_states WHERE created_at < ?', ((datetime.now() - timedelta(minutes=15)).strftime("%Y-%m-%d %H:%M:%S"),))
+            conn.execute(
+                'INSERT INTO oauth_states (state, provider, created_at) VALUES (?, ?, ?)',
+                (state, provider, now)
+            )
+            conn.commit()
+        return state
+
+    def consume_oauth_state(self, provider: str, state: str) -> bool:
+        if not state:
+            return False
+        cutoff = (datetime.now() - timedelta(minutes=15)).strftime("%Y-%m-%d %H:%M:%S")
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute(
+                'SELECT state FROM oauth_states WHERE state = ? AND provider = ? AND created_at >= ?',
+                (state, provider, cutoff)
+            ).fetchone()
+            if not row:
+                return False
+            conn.execute('DELETE FROM oauth_states WHERE state = ?', (state,))
+            conn.commit()
+            return True
 
     # ===================== OAUTH =====================
     def find_or_create_oauth_user(self, oauth_provider: str, oauth_id: str, username: str, email: str = None, avatar_url: str = None) -> Tuple[int, str]:
@@ -130,10 +261,11 @@ class DatabaseManager:
     def save_api_key(self, user_id: int, provider_type: str, api_key: str) -> None:
         """Provider için API key'i kaydet/güncelle."""
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        encrypted_key = self._encrypt_api_key(api_key)
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
                 'INSERT OR REPLACE INTO api_keys (user_id, provider_type, api_key, updated_at) VALUES (?, ?, ?, ?)',
-                (user_id, provider_type, api_key, now)
+                (user_id, provider_type, encrypted_key, now)
             )
             conn.commit()
 
@@ -144,7 +276,12 @@ class DatabaseManager:
                 'SELECT api_key FROM api_keys WHERE user_id = ? AND provider_type = ?',
                 (user_id, provider_type)
             ).fetchone()
-            return row[0] if row else None
+            if not row:
+                return None
+            api_key = self._decrypt_api_key(row[0])
+            if api_key and not row[0].startswith("enc:"):
+                self.save_api_key(user_id, provider_type, api_key)
+            return api_key or None
 
     def get_all_api_keys(self, user_id: int) -> Dict[str, str]:
         """Kullanıcının tüm provider key'lerini döndür. {provider_type: masked_key}"""
@@ -153,7 +290,14 @@ class DatabaseManager:
                 'SELECT provider_type, api_key FROM api_keys WHERE user_id = ?',
                 (user_id,)
             ).fetchall()
-            return {r[0]: r[1] for r in rows}
+            result = {}
+            for provider_type, stored_key in rows:
+                api_key = self._decrypt_api_key(stored_key)
+                if api_key:
+                    result[provider_type] = api_key
+                    if not stored_key.startswith("enc:"):
+                        self.save_api_key(user_id, provider_type, api_key)
+            return result
 
     def delete_api_key(self, user_id: int, provider_type: str) -> None:
         """Provider için kaydedilmiş API key'i sil."""
@@ -178,6 +322,11 @@ class DatabaseManager:
         with sqlite3.connect(self.db_path) as conn:
             res = conn.execute('SELECT original_code, ai_suggestion, smells FROM history WHERE id = ?', (item_id,)).fetchone()
             return {"code": res[0], "suggestion": res[1], "smells": json.loads(res[2])} if res else None
+
+    def get_analysis_owner(self, item_id: int) -> Optional[int]:
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute('SELECT user_id FROM history WHERE id = ?', (item_id,)).fetchone()
+            return row[0] if row else None
 
     def delete_analysis(self, item_id: int) -> None:
         with sqlite3.connect(self.db_path) as conn:
@@ -207,6 +356,11 @@ class DatabaseManager:
                 (user_id,)
             ).fetchall()
             return [{"id": r[0], "title": r[1], "created_at": r[2], "updated_at": r[3]} for r in rows]
+
+    def get_conversation_owner(self, conv_id: int) -> Optional[int]:
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute('SELECT user_id FROM conversations WHERE id = ?', (conv_id,)).fetchone()
+            return row[0] if row else None
 
     def rename_conversation(self, conv_id: int, new_title: str) -> None:
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")

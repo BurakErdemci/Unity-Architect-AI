@@ -15,27 +15,49 @@ class CoderGenerationAgent:
         
         prompt = f"""
         # GÖREV: MİMARİ PLANA GÖRE SIFIRDAN C# KODUNU ÜRETMESİ
-        
+
         Aşağıda kullanıcının orijinal fikri ve Baş Mimarın (Architect) bu fikir için çıkardığı "Tasarım Planı" bulunuyor.
         Görevin, sadece bu plana ve Best Practice kurallarına uyarak kodun EN İYİ (Enterprise Level) halini sıfırdan yazmaktır.
         Hiçbir şeyi yarım bırakma, tüm metotların içini doldur.
-        
+
         [DİL TALİMATI]: {lang_instr}
-        
+
         # MİMARIN TASARIM PLANI
         {architecture_plan}
-        
+
         # KULLANICI İSTEĞİ
         {user_prompt}
-        
+
         {rules}
-        
-        # ÇIKTI FORMATI (ÇOK ÖNEMLİ - GEREKSİZ SOHBET YASAK)
-        Lütfen cevabını DOĞRUDAN KULLANICIYA SÖYLEYECEKMİŞ GİBİ tek bir cümle ile başlat. (Örn: "İşte oyun hissiyatı ön planda olan sisteminiz:")
-        Ardından HEMEN ```csharp kod bloğu halinde tam ve çalışan kodu ver.
-        Kodun altına "🎮 Editor Ayarları" diye sadece 1-2 maddelik, objeye eklenecek componentleri yaz.
-        
-        KESİNLİKLE YAPMA: Kodun nasıl çalıştığını uzun uzun anlatma. Merhaba/Güle güle deme. Sadece Mimarın planını harmanla ve KODU VER.
+
+        # TOKEN LİMİTİ — ANLAMLI BİTİŞ
+        Eğer tüm sistemi tek yanıtta TAMAMLAYAMAZSAN:
+        1. En önemli ve tam çalışır parçayı yaz (yarım metot, açık süslü parantez, syntax hatası ASLA bırakma).
+        2. Yanıtının en sonuna şu bölümü ekle:
+           ⏳ **Devam:** [Yazılmayan dosya/class adlarını listele]
+           Devam edeyim mi? ✋
+        3. Eğer tüm sistemi yazabilirsen bu bölümü EKLEME.
+
+        # ÇIKTI FORMATI (KESİNLİKLE UYULMALI)
+
+        Cevabını DOĞRUDAN kullanıcıya söyler gibi tek bir cümle ile başlat. (Örn: "İşte diyalog sisteminiz:")
+
+        Ardından HER DOSYA İÇİN şu formatı kullan — HİÇBİR İSTİSNA YOK:
+
+        **📄 DosyaAdi.cs**
+        ```csharp
+        // tam ve çalışan kod buraya
+        ```
+
+        KURALLLAR:
+        - Sistemde kaç dosya varsa HER BİRİ ayrı bir ```csharp bloğu olmalı. ASLA tek blokta birleştirme.
+        - Her bloğun üstünde **📄 FileName.cs** başlığı ZORUNLU.
+        - Her dosya kendi using ifadelerini içermeli (diğer dosyadan kopyalama değil, o dosyaya gerçekten gerekli olanlar).
+        - Tek dosyalık basit sistemlerde yine tek ```csharp bloğu kullan (başlık yine **📄 FileName.cs** şeklinde olsun).
+        - Tüm kodun altına "🎮 Editor Ayarları" diye 1-3 maddelik kurulum notu yaz.
+
+        KESİNLİKLE YAPMA: Kodun nasıl çalıştığını uzun uzun anlatma. Merhaba/Güle güle deme.
+        KESİNLİKLE YAPMA: Planda belirtilmemiş ekstra dosya veya script oluşturma. Sadece verilen DOSYALAR listesindeki dosyaları üret.
         """
         
         try:

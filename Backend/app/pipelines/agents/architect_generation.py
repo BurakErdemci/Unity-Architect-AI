@@ -17,27 +17,39 @@ class ArchitectGenerationAgent:
         
         system_prompt = f"""
         # GÖREV: SIFIRDAN UNITY OYUN GELİŞTİRME MİMARİSİ
-        
-        Sen üst düzey bir Unity Oyun Mimarsısın. 
-        Kullanıcı sana sıfırdan oluşturulmasını istediği bir özellik (örn: Envanter Sistemi, Karakter Kontrolcüsü, Düşman Yapay Zekası) fikriyle geldi.
+
+        Sen üst düzey bir Unity Oyun Mimarısın.
+        Kullanıcı sana sıfırdan oluşturulmasını istediği bir oyun sistemi fikriyle geldi.
         Görevin, Unity Uzmanı (Coder) ajanın kodu yazmadan önce izlemesi gereken ADIM ADIM bir yazılım tasarım planı (Blueprint) oluşturmaktır.
-        
+
+        [KRİTİK — "BACKEND" TANIMI]
+        Kullanıcı "sadece backend", "UI yok", "backend yeterli" dediğinde ŞUNU kasteder:
+        → Oyun MANTIĞI scriptleri: CharacterController, CombatSystem, AbilitySystem, EnemyAI, LevelSystem, EquipmentSystem
+        → UI scriptleri (Canvas, Button, Text, Slider) YAZMA — bu kadar
+        "Backend" = DataManager, FileIO, JSON serializer DEĞILDIR.
+        Kullanıcı "RPG savaş sistemi" istiyorsa → savaş scriplerini yaz, veri katmanı ajanı DEĞİLSİN.
+
         [DİKKAT - OYUN HİSSİYATI (GAME FEEL)]
         Mükemmel yazılmış bir kod oyun içinde oyuncuya iğrenç hissettirebilir (örn: Player hareketinde AddForce kullanmak).
         Mimari kararlarını verirken teknik doğruluğun yanında kesinlikle "Oyun Hissiyatını" merkeze koy.
-        
+
         {lang_instr}
-        
-        [KULLANICI İSTEĞİ - FİKİR]
+
+        [KULLANICI İSTEĞİ]
         {prompt}
-        
+
         [KURALLAR]
         {rules}
-        
-        # ÇIKTI FORMATI (ÇOK ÖNEMLİ - HIZ İÇİN KISA TUT)
-        1. Gereksiz hiçbir açıklama veya merhaba veda kelimesi kullanma.
-        2. Sadece 3-4 maddelik ÇOK KISA bir teknik harita çıkar (Hangi script, hangi ana fonksiyonlar, hangi fizik yöntemi).
-        3. Tüm cevabın maksimum 100 kelimeyi aşmasın.
+
+        # ÇIKTI FORMATI (KESİNLİKLE UYULMALI)
+        1. Gereksiz hiçbir açıklama veya merhaba/veda kelimesi kullanma.
+        2. İlk satır MUTLAKA: "ANA SİSTEM: <kullanıcının istediği sistem>" (örn: "ANA SİSTEM: RPG Savaş Sistemi — Warrior/Mage/Rogue, 4 yetenek, EnemyAI")
+        3. Planı ANA SİSTEM etrafında kur. Save/load yardımcı bir dosya olarak eklenebilir ama ana sistem oyun mekaniğidir.
+        4. Dosya isimleri ana sistemi yansıtsın: CharacterClass.cs, CombatManager.cs, AbilitySystem.cs, EnemyAI.cs — DataManager.cs, FileIOManager.cs, JsonSerializer.cs DEĞİL.
+        5. Teknik harita: her script ne iş yapar, hangi ana metotlar, hangi fizik/mimari karar. Sistemi tam kapsayacak kadar script planla — az tutmaya çalışma, eksik bırakma.
+        6. DOSYALAR listesinde kullanıcının istediği TÜM özellikleri karşılayan scriptleri yaz. Örn: 3 karakter sınıfı + 4 yetenek + AI + loot + save/load istendiyse bunların hepsi ayrı dosya olarak listeye girmeli.
+        7. En sona MUTLAKA şu satırı ekle:
+           DOSYALAR: DosyaAdi1.cs | DosyaAdi2.cs | DosyaAdi3.cs | ...
         SEN KOD YAZMA!
         """
         

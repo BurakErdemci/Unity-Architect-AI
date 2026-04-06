@@ -33,6 +33,7 @@ interface SignInPageProps {
   title?: React.ReactNode;
   description?: React.ReactNode;
   authMode?: 'login' | 'register';
+  notice?: React.ReactNode;
   heroImageSrc?: string;
   testimonials?: Testimonial[];
   onSignIn?: (event: React.FormEvent<HTMLFormElement>) => void;
@@ -67,6 +68,7 @@ export const SignInPage: React.FC<SignInPageProps> = ({
   title = <span className="font-light text-foreground tracking-tighter">Hoş Geldiniz</span>,
   description = "Hesabınıza giriş yapın ve devam edin",
   authMode = 'login',
+  notice,
   heroImageSrc,
   testimonials = [],
   onSignIn,
@@ -85,6 +87,11 @@ export const SignInPage: React.FC<SignInPageProps> = ({
           <div className="flex flex-col gap-6">
             <h1 className="animate-element animate-delay-100 text-4xl md:text-5xl font-semibold leading-tight">{title}</h1>
             <p className="animate-element animate-delay-200 text-muted-foreground">{description}</p>
+            {notice && (
+              <div className="animate-element animate-delay-250 rounded-2xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+                {notice}
+              </div>
+            )}
 
             <form className="space-y-5" onSubmit={onSignIn}>
               <div className="animate-element animate-delay-300">

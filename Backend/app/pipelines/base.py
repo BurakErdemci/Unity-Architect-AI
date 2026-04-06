@@ -36,6 +36,15 @@ class PipelineResult:
     game_feel_data: Optional[Dict] = None  # Game Feel kategorileri
     retry_count: int = 0  # Kaç deneme yapıldı
 
+    # Clarification Gate (Phase 9)
+    clarification_needed: bool = False   # True ise pipeline durduruldu
+    clarification_questions: str = ""    # Kullanıcıya gösterilecek soru metni
+
+    # Scope Warning (Phase 9 — Token Maliyet Kontrolü)
+    scope_warning: bool = False          # True ise plan büyük, kullanıcı onayı bekleniyor
+    scope_warning_plan: str = ""         # Architect planı (devam seçilirse kullanılır)
+    scope_file_count: int = 0            # Planlanan dosya sayısı
+
     def to_dict(self) -> Dict[str, Any]:
         """Frontend'e gönderilecek pipeline bilgisini döndürür."""
         return {

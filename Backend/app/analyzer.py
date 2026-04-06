@@ -1,33 +1,5 @@
 import re
 
-class CodeProcessor:
-    """Gelen metnin niyetini ve dilini kontrol eden zeka katmanı."""
-
-    @staticmethod
-    def is_actually_code(text: str):
-        """Metnin gerçekten Unity C# kodu olup olmadığını kesinleştirir."""
-        general = ["{", "}", ";"]
-        unity_specific = ["using UnityEngine", "MonoBehaviour", "SerializeField", "void Update", "void Start", "GetComponent"]
-
-        score = sum(1 for ind in general if ind in text)
-        unity_score = sum(1 for ind in unity_specific if ind in text)
-
-        return score >= 2 and unity_score >= 1
-
-    @staticmethod
-    def detect_intent(query: str):
-        q = query.lower().strip()
-
-        out_of_scope = ["unreal", "godot", "python", "react", "django", "javascript", "html", "css", "atatürk", "yemek"]
-        if any(term in q for term in out_of_scope):
-            return "OUT_OF_SCOPE"
-
-        chat_words = ["selam", "merhaba", "hi", "nasılsın", "kimsin", "eyw", "saol", "teşekkür"]
-        if any(word in q for word in chat_words) and len(q.split()) < 15:
-            return "GREETING"
-
-        return "ANALYSIS"
-
 class UnityAnalyzer:
     """Unity scriptlerini analiz eden motor."""
 
@@ -53,6 +25,12 @@ class UnityAnalyzer:
         smells.extend(self._check_distance_in_update())
         smells.extend(self._check_animator_string_params())
         smells.extend(self._check_addcomponent_in_update())
+
+        # Her smell'e gerçek kod satırını ekle (format_analysis somut fix gösterebilsin)
+        for smell in smells:
+            line_num = smell.get("line")
+            if isinstance(line_num, int) and 0 < line_num <= len(self.lines):
+                smell["code"] = self.lines[line_num - 1].strip()
 
         return {
             "smells": smells,

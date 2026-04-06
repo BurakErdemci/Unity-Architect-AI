@@ -20,13 +20,26 @@
     "jsx": "preserve",
     "baseUrl": ".",
     "paths": {
-      "@/*": ["renderer/*"]
-    }
+      "@/*": [
+        "renderer/*"
+      ]
+    },
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ]
   },
   "exclude": [
     "node_modules",
     "renderer/next.config.js",
     "app",
     "dist"
+  ],
+  "include": [
+    "next-env.d.ts",
+    ".next/types/**/*.ts",
+    "**/*.ts",
+    "**/*.tsx"
   ]
 }
