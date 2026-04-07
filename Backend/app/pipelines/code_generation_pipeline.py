@@ -23,6 +23,7 @@ class CodeGenerationPipeline(BasePipeline):
     """
 
     GAME_FEEL_THRESHOLD = 7.0  # Bu skorun altındaysa Coder tekrar yazar
+    BATCH_SIZE = 10            # Tek seferde max yazılacak dosya sayısı
 
     def __init__(
         self,
@@ -37,11 +38,15 @@ class CodeGenerationPipeline(BasePipeline):
         coding_provider: Any = None,        # Coder + GameFeel için ayrı provider (opsiyonel)
         coding_provider_type: str = "",     # Örn: "openrouter"
         existing_plan: str = "",            # Scope onayında architect tekrar çalışmasın
+        batch_files: list = None,           # Sadece bu dosyaları yaz (continuation modu)
+        skip_gate: bool = False,            # Gate daha önce soru sorduysa tekrar çalıştırma
     ):
         super().__init__("", "", provider, language, context, "", user_message, provider_type, progress_callback)
         self.prompt = prompt
         self.scope_confirmed = scope_confirmed
         self.existing_plan = existing_plan
+        self.batch_files = batch_files or []
+        self.skip_gate = skip_gate
 
         # Hybrid provider: planlama Claude, kod yazma OpenRouter gibi
         _coding = coding_provider or provider
@@ -72,29 +77,30 @@ class CodeGenerationPipeline(BasePipeline):
         rules_str = get_relevant_rules(self.prompt)
         lang_instr = get_language_instr(self.language)
 
-        # --- ADIM 0: CLARIFICATION GATE ---
-        logger.info("  Step 0: Clarification Gate kontrol ediliyor...")
-        gate_result = await asyncio.to_thread(
-            self.gate.check,
-            self.prompt,
-            self.context or "",
-        )
+        # --- ADIM 0: CLARIFICATION GATE (batch/continuation/skip modunda atla) ---
+        if not self.batch_files and not self.skip_gate:
+            logger.info("  Step 0: Clarification Gate kontrol ediliyor...")
+            gate_result = await asyncio.to_thread(
+                self.gate.check,
+                self.prompt,
+                self.context or "",
+            )
 
-        if gate_result.get("status") == "NEEDS_CLARIFICATION":
-            questions = gate_result.get("questions", [])
-            formatted = self.gate.format_questions(questions)
-            logger.info(f"  [Gate] NEEDS_CLARIFICATION — {len(questions)} soru döndürüldü.")
-            self._result.clarification_needed = True
-            self._result.clarification_questions = formatted
-            self._result.combined_response = formatted
-            return self._result
+            if gate_result.get("status") == "NEEDS_CLARIFICATION":
+                questions = gate_result.get("questions", [])
+                formatted = self.gate.format_questions(questions)
+                logger.info(f"  [Gate] NEEDS_CLARIFICATION — {len(questions)} soru döndürüldü.")
+                self._result.clarification_needed = True
+                self._result.clarification_questions = formatted
+                self._result.combined_response = formatted
+                return self._result
 
-        logger.info("  [Gate] PROCEED — Architect başlatılıyor.")
+            logger.info("  [Gate] PROCEED — Architect başlatılıyor.")
 
-        # --- ADIM 1: ARCHITECT PLANLAMASI (onay senaryosunda atla) ---
-        if self.existing_plan:
-            logger.info("  Step 1: Mevcut plan kullanılıyor (Architect atlandı).")
+        # --- ADIM 1: ARCHITECT PLANLAMASI (batch/onay senaryosunda atla) ---
+        if self.existing_plan or self.batch_files:
             plan = self.existing_plan
+            logger.info("  Step 1: Mevcut plan kullanılıyor (Architect atlandı).")
             if self.progress_callback: self.progress_callback("step1", "completed", 0)
         else:
             if self.progress_callback: self.progress_callback("step1", "in-progress")
@@ -111,8 +117,11 @@ class CodeGenerationPipeline(BasePipeline):
         self._result.step2_analysis = StepResult("Mimari Plan", True, 0, plan)
 
         # --- SCOPE CHECK: Çok büyük sistemlerde onay iste, diğerlerinde bilgi ver ---
-        planned_files = self._count_planned_files(plan)
-        if len(planned_files) >= 15 and not self.scope_confirmed:
+        planned_files = self._count_planned_files(plan) if plan else []
+        self._result.all_planned_files = planned_files
+
+        # batch_files verilmişse scope check atla (continuation modu)
+        if not self.batch_files and len(planned_files) >= 15 and not self.scope_confirmed:
             logger.info(f"  [Scope] {len(planned_files)} dosya planlandı — kullanıcı onayı bekleniyor.")
             warning_msg = self._format_scope_warning(planned_files)
             self._result.scope_warning = True
@@ -121,17 +130,38 @@ class CodeGenerationPipeline(BasePipeline):
             self._result.combined_response = warning_msg
             return self._result
 
+        # --- BATCH SPLIT: İlk çalıştırmada BATCH_SIZE'a göre böl ---
+        if self.batch_files:
+            # Continuation modu: sadece verilen dosyaları yaz
+            active_files = self.batch_files
+            logger.info(f"  [Batch] Continuation modu — {len(active_files)} dosya yazılacak: {active_files}")
+        elif len(planned_files) > self.BATCH_SIZE:
+            # İlk çalıştırma: ilk batch'i al, kalanları kaydet
+            active_files = planned_files[:self.BATCH_SIZE]
+            remaining = planned_files[self.BATCH_SIZE:]
+            self._result.has_continuation = True
+            self._result.remaining_files = remaining
+            logger.info(f"  [Batch] {len(planned_files)} dosya planlandı — ilk {len(active_files)} yazılıyor, {len(remaining)} kaldı.")
+        else:
+            active_files = planned_files
+
         # --- ADIM 2: CODER + GAME FEEL SILENT LOOP ---
         MAX_ATTEMPTS = 2
         final_response = ""
         gf_score = 10.0  # Varsayılan: yeterli
         gf_result = {}
 
-        # Architect'in dosya listesini coder'a kısıt olarak ver
+        # Coder'a sadece active_files kısıtını ver
         files_constraint = ""
-        if planned_files:
-            files_list = ", ".join(planned_files)
-            files_constraint = f"\n\n[KAPSAM KISITI — KESİNLİKLE UYULMALI]\nSadece şu dosyaları üret: {files_list}\nBu listede olmayan dosya EKLEME. Listedeki dosyaların içeriğini tam ve eksiksiz yaz."
+        if active_files:
+            files_list = ", ".join(active_files)
+            files_constraint = (
+                f"\n\n[KAPSAM KISITI — KESİNLİKLE UYULMALI]\n"
+                f"Sadece şu {len(active_files)} dosyayı üret: {files_list}\n"
+                f"Bu listede OLMAYAN hiçbir dosya üretme — interface, base class, helper dahil.\n"
+                f"Listenin dışına çıkmak yasaktır. Fazladan dosya eklersen sistem bozulur.\n"
+                f"Listedeki her dosyanın içeriğini tam ve eksiksiz yaz."
+            )
 
         for attempt in range(1, MAX_ATTEMPTS + 1):
             if self.progress_callback: self.progress_callback("step2", "in-progress")
@@ -140,33 +170,37 @@ class CodeGenerationPipeline(BasePipeline):
                 logger.info("  Step 2: Coder Kodu üretiyor...")
                 current_plan = plan + files_constraint
             else:
-                logger.info(f"  Step 2 (Retry): 🎮 Game Feel düşük ({gf_score:.1f}), Coder tekrar yazıyor...")
-                # Game Feel feedback'ini plana ekle
+                logger.info(f"  Step 2 (Retry): 🎮 Game Feel düşük ({gf_score:.1f}), Coder mevcut kodu düzeltiyor...")
                 suggestions = "\n".join(f"- {s}" for s in gf_result.get("suggestions", []))
                 movement = gf_result.get("movement", {})
                 combat = gf_result.get("combat", {})
                 physics = gf_result.get("physics", {})
 
+                # Önceki kodu coder'a göster — sıfırdan yazmasın, sadece düzeltsin
+                prev_code_section = f"\n\n[ÖNCEKİ KOD — BU KODU TEMEL AL]\n{final_response}\n"
+
                 game_feel_feedback = f"""
 
-[🎮 OYUN HİSSİYATI GERİ BİLDİRİMİ — BU SORUNLARI DÜZELT]
-Önceki kodun oyun hissiyatı puanı: {gf_score:.1f}/10 (Yetersiz!)
+[🎮 OYUN HİSSİYATI DÜZELTMESİ]
+Skor: {gf_score:.1f}/10 — Yetersiz.
 
 Hareket: {movement.get('verdict', '?')} — {movement.get('detail', '')}
 Combat: {combat.get('verdict', '?')} — {combat.get('detail', '')}
 Fizik: {physics.get('verdict', '?')} — {physics.get('detail', '')}
 
-Somut düzeltme talimatları:
+Düzeltme talimatları:
 {suggestions}
+- rb.velocity veya CharacterController kullan, AddForce KULLANMA
+- Gravity multiplier ekle (havada asılı kalmasın)
+- Input anında tepki versin (snappy)
 
-ÖNEMLİ: Bu sefer OYUN HİSSİYATINI (Game Feel) ön plana koy!
-- Hareket: rb.velocity veya CharacterController kullan, AddForce KULLANMA
-- Düşüş: Gravity multiplier ekle (havada asılı kalmasın)
-- Combat: Input anında tepki versin, gecikme olmasın
-- Oyuncu kontrolü keskin ve tatmin edici (snappy) olmalı
-[KAPSAM KISITI] Sadece mevcut dosyaları düzelt. YENİ DOSYA EKLEME.
+[KESİNLİKLE UYULMALI]
+- Yukarıdaki ÖNCEKİ KODU temel al, sıfırdan yazma.
+- Oyun hissiyatını etkileyen kısımları düzelt.
+- Dosya sayısını ve isimlerini ASLA değiştirme.
+- Düzeltilmiş veya düzeltilmemiş BÜTÜN dosyaları eksiksiz yaz (hiçbirini atma).
 """
-                current_plan = plan + files_constraint + game_feel_feedback
+                current_plan = plan + files_constraint + prev_code_section + game_feel_feedback
 
             final_response = await asyncio.to_thread(
                 self.coder.generate_code,
@@ -212,8 +246,8 @@ Somut düzeltme talimatları:
         self._result.step3_code_fix = StepResult("Kod Üretimi", True, 0, final_response)
 
         # Dosya listesi bilgi prefix'i — kullanıcıya ne üretildiğini göster
-        if planned_files:
-            plan_prefix = self._format_plan_prefix(planned_files)
+        if active_files:
+            plan_prefix = self._format_plan_prefix(active_files)
             final_response = plan_prefix + final_response
 
         # Finalize — kullanıcıya sadece temiz kod gösterilir
@@ -225,19 +259,36 @@ Somut düzeltme talimatları:
     def _count_planned_files(self, plan: str) -> list:
         """Plan metnindeki 'DOSYALAR: ...' satırından dosya listesini çıkarır.
         Bulunamazsa fallback olarak .cs referanslarını say."""
-        # Birincil: DOSYALAR: satırını parse et
-        match = re.search(r'DOSYALAR\s*:\s*(.+)', plan, re.IGNORECASE)
+        primary_files = []
+
+        # Birincil: DOSYALAR: bloğunu çok satırlı olarak yakala
+        # Architect bazen 29 dosyayı birden fazla satıra bölebilir
+        match = re.search(r'DOSYALAR\s*:\s*(.+?)(?:\n\n|\Z)', plan, re.IGNORECASE | re.DOTALL)
         if match:
             raw = match.group(1)
-            files = [f.strip() for f in raw.split('|') if f.strip()]
-            # .cs uzantısı yoksa ekle
-            files = [f if f.endswith('.cs') else f + '.cs' for f in files]
-            logger.info(f"  [Scope] DOSYALAR satırından {len(files)} dosya tespit edildi.")
-            return files
-        # Fallback: klasik .cs referansları
-        matches = re.findall(r'\b[A-Za-z][A-Za-z0-9_]*\.cs\b', plan)
-        result = list(dict.fromkeys(matches))
-        logger.info(f"  [Scope] Fallback regex ile {len(result)} dosya tespit edildi.")
+            # Hem | hem satır sonu hem virgül ayraçlarını destekle
+            parts = re.split(r'[|\n,]+', raw)
+            files = [f.strip() for f in parts if f.strip() and not f.strip().startswith('#')]
+            # .cs uzantısı yoksa ekle, sadece gerçek dosya isimlerini al
+            files = [
+                (f if f.endswith('.cs') else f + '.cs')
+                for f in files
+                if re.match(r'^[A-Za-z][A-Za-z0-9_]*(?:\.cs)?$', f.strip())
+            ]
+            primary_files = files
+
+        # Fallback: tüm .cs referanslarını bul
+        fallback_matches = re.findall(r'\b[A-Za-z][A-Za-z0-9_]*\.cs\b', plan)
+        fallback_files = list(dict.fromkeys(fallback_matches))
+
+        # İkisinden daha büyük olanı kullan (architect satırı böldüyse fallback daha doğru olabilir)
+        if len(primary_files) >= len(fallback_files):
+            result = primary_files
+            logger.info(f"  [Scope] DOSYALAR satırından {len(result)} dosya tespit edildi.")
+        else:
+            result = fallback_files
+            logger.info(f"  [Scope] Fallback regex ile {len(result)} dosya tespit edildi (DOSYALAR satırı: {len(primary_files)}).")
+
         return result
 
     def _format_plan_prefix(self, files: list) -> str:

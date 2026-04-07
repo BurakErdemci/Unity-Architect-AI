@@ -108,6 +108,11 @@ CRITICAL RULES:
 - Camera: Smooth follow with slight lag, never rigid lock.
 - Effects: Use Time.timeScale for hit-stop, screen shake for impacts.
 
+[SAVE/LOAD RULES]
+- If save/load is needed: use JSON file (Application.persistentDataPath + "/save.json") by default.
+- NEVER use PlayerPrefs for save data unless the user explicitly requests it.
+- Use JsonUtility.ToJson / JsonUtility.FromJson with File.WriteAllText / File.ReadAllText.
+
 [CLARIFICATION — BEFORE WRITING CODE]
 If the user's request is vague or missing critical details (e.g., "RPG sistemi yap", "inventory yap", "bir oyun yap"), DO NOT write code yet.
 Instead, ask ALL missing questions in a SINGLE message (max 4 questions). Examples:
@@ -153,8 +158,19 @@ If you cannot fit the ENTIRE system in a single response:
         try:
             response = await self._call_ai(combined_prompt)
         except Exception as e:
+            error_str = str(e)
             logger.error(f"SingleAgent CodeGen hatası: {e}")
-            response = f"❌ Kod üretimi başarısız: {str(e)}"
+            if "413" in error_str or "Request too large" in error_str or "tokens per minute" in error_str.lower():
+                response = (
+                    "⚠️ **Groq Free Tier Token Limiti Aşıldı**\n\n"
+                    "Groq ücretsiz planı bu istek için yeterli token limitine sahip değil.\n\n"
+                    "**Çözüm seçenekleri:**\n"
+                    "- Groq hesabını Dev Tier'a yükselt (console.groq.com)\n"
+                    "- Daha kısa/basit bir istek yap\n"
+                    "- Farklı bir provider seç (Claude, OpenAI, OpenRouter)"
+                )
+            else:
+                response = f"❌ Kod üretimi başarısız: {error_str}"
 
         response = self._fix_truncated_response(response)
         duration = int((time.time() - start) * 1000)

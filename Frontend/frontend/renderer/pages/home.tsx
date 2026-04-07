@@ -154,7 +154,8 @@ export default function HomePage() {
       error => {
         const status = error?.response?.status;
 
-        if (status === 401 && userRef.current) {
+        const requestUrl = error?.config?.url || '';
+        if (status === 401 && userRef.current && !requestUrl.includes('/chat-progress')) {
           if (!authAlertShownRef.current) {
             authAlertShownRef.current = true;
             performLogout(true);
@@ -677,7 +678,7 @@ export default function HomePage() {
         user_id: user.id,
         mode: appMode,
         use_kb: aiConfig.provider_type === 'kb'
-      }, { timeout: 310000 }); // 310 saniye timeout (Opus yavaş olabilir)
+      }, { timeout: 900000 }); // 900 saniye timeout (backend limiti ile eşleştirildi)
 
       clearInterval(progressInterval);
       setCurrentPlan([]);

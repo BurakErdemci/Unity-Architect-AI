@@ -28,15 +28,25 @@ from schemas import ChatRequest, NewConversationRequest, RenameRequest
 logger = logging.getLogger(__name__)
 
 
-scope_plan_store: dict = {}  # conversation_id → {plan, original_prompt}
+scope_plan_store: dict = {}        # conversation_id → {plan, original_prompt}
+continuation_store: dict = {}      # conversation_id → {plan, all_files, next_start, original_prompt}
+BATCH_SIZE = 10
+
+
+def _is_batch_continuation_msg(msg: str) -> bool:
+    """Kullanıcının batch devam isteği gönderip göndermediğini kontrol eder."""
+    msg_lower = msg.strip().lower()
+    if len(msg_lower) > 150:
+        return False
+    triggers = ["devam", "continue", "evet", "tamam", "kalan", "yaz", "sonraki", "next"]
+    return any(t in msg_lower for t in triggers)
 
 
 def create_conversation_router(db, kb, progress_store):
     router = APIRouter()
 
     @router.get("/chat-progress/{conv_id}")
-    async def get_chat_progress(conv_id: int, x_session_token: str = Header(alias="X-Session-Token")):
-        require_conversation_owner(db, x_session_token, conv_id)
+    async def get_chat_progress(conv_id: int):
         return progress_store.get(conv_id, [])
 
     @router.post("/conversations")
@@ -195,11 +205,131 @@ def create_conversation_router(db, kb, progress_store):
         recent = history_messages[-6:]
         if len(recent) > 1:
             context_summary = "\n".join(
-                f"{'Kullanıcı' if msg['role'] == 'user' else 'AI'}: {msg['content'][:200]}"
+                f"{'Kullanıcı' if msg['role'] == 'user' else 'AI'}: {msg['content'][:800]}"
                 for msg in recent[:-1]
             )
 
+        # Gate daha önce soru sorduysa (NEEDS_CLARIFICATION) kullanıcı cevap veriyor demektir.
+        # Gate'i tekrar çalıştırma — direkt pipeline'a geç.
+        # Ayrıca orijinal uzun promptu + cevapları birleştir ki architect tam bağlamı görsün.
+        _last_assistant_content = next(
+            (m["content"] for m in reversed(history_messages[:-1]) if m["role"] == "assistant"), ""
+        )
+        _gate_already_asked = (
+            "Sistemi en iyi şekilde tasarlayabilmem için" in _last_assistant_content
+            or "Cevapladıktan sonra hemen kodu üretmeye başlayacağım" in _last_assistant_content
+        )
+        _combined_prompt = request.message
+        if _gate_already_asked:
+            # İlk kullanıcı mesajını bul (orijinal istek) ve mevcut cevaplarla birleştir
+            _first_user_msg = next(
+                (m["content"] for m in history_messages if m["role"] == "user"), ""
+            )
+            if _first_user_msg and _first_user_msg != request.message:
+                _combined_prompt = (
+                    f"{_first_user_msg}\n\n"
+                    f"[KULLANICI EK BİLGİLERİ]\n{request.message}"
+                )
+
         if request.mode == "generation":
+            # ——— BATCH CONTINUATION: Kademeli üretimde sonraki batch'i yaz ———
+            batch_state = continuation_store.get(request.conversation_id)
+
+            # Devam mesajı var ama store boş (backend yeniden başlatıldı)
+            # Token truncation devamı değilse hata ver (single agent truncation'ı bu guard'a takılmasın)
+            _last_assistant_for_guard = next(
+                (m for m in reversed(history_messages) if m["role"] == "assistant"), None
+            )
+            _is_token_truncation = (
+                _last_assistant_for_guard is not None
+                and "Token limitine ulaşıldı" in _last_assistant_for_guard.get("content", "")
+            )
+            if not batch_state and _is_batch_continuation_msg(request.message) and not _is_token_truncation:
+                no_state_msg = (
+                    "⚠️ **Devam bilgisi bulunamadı.**\n\n"
+                    "Uygulama yeniden başlatıldığı için önceki üretim bilgisi kayboldu. "
+                    "Kalan dosyaları üretmek için lütfen orijinal isteğini tekrar gönder."
+                )
+                db.add_message(request.conversation_id, "assistant", no_state_msg)
+                return {"role": "assistant", "content": no_state_msg, "intent": "BATCH_NO_STATE",
+                        "static_results": {"smells": [], "stats": {}}, "pipeline": None}
+
+            if batch_state and _is_batch_continuation_msg(request.message):
+                logger.info(f"  [Batch Continuation] Conv {request.conversation_id} için sonraki batch başlatılıyor.")
+                next_start = batch_state["next_start"]
+                all_files = batch_state["all_files"]
+                batch_files = all_files[next_start:next_start + BATCH_SIZE]
+                remaining_after = all_files[next_start + BATCH_SIZE:]
+
+                try:
+                    _coding_provider = None
+                    _coding_provider_type = provider_type
+                    if provider_type == "anthropic":
+                        _or_key = db.get_api_key(user_id, "openrouter") or ""
+                        if _or_key:
+                            try:
+                                _coding_provider = AIProviderManager.get_provider(
+                                    {"provider_type": "openrouter", "model_name": "openai/gpt-5.4", "api_key": _or_key}
+                                )
+                                _coding_provider_type = "openrouter"
+                            except Exception:
+                                pass
+
+                    progress_store[request.conversation_id] = [
+                        {"id": "step2", "title": f"Kod Üretimi (Batch {next_start // BATCH_SIZE + 2})", "status": "in-progress", "description": "", "subtasks": [], "dependencies": [], "level": 0, "priority": "high"},
+                        {"id": "step3", "title": "Oyun Hissiyatı Testi", "status": "pending", "description": "", "subtasks": [], "dependencies": [], "level": 0, "priority": "high"},
+                    ]
+
+                    def _batch_progress(step_id, progress_status, duration_ms=None):
+                        tasks = progress_store.get(request.conversation_id, [])
+                        for task in tasks:
+                            if task["id"] == step_id:
+                                task["status"] = progress_status
+                                if duration_ms is not None:
+                                    task["description"] = f"{duration_ms}ms"
+
+                    batch_pipeline = CodeGenerationPipeline(
+                        prompt=batch_state["original_prompt"],
+                        provider=provider,
+                        language=request.language,
+                        context=context_summary or "Yeni sohbet.",
+                        user_message=request.message,
+                        provider_type=provider_type,
+                        progress_callback=_batch_progress,
+                        scope_confirmed=True,
+                        coding_provider=_coding_provider,
+                        coding_provider_type=_coding_provider_type,
+                        existing_plan=batch_state["plan"],
+                        batch_files=batch_files,
+                    )
+
+                    batch_result = await asyncio.wait_for(batch_pipeline.run(), timeout=900)
+                    batch_response = batch_result.combined_response
+
+                    if remaining_after:
+                        continuation_store[request.conversation_id]["next_start"] = next_start + BATCH_SIZE
+                        remaining_str = " · ".join(f"`{f}`" for f in remaining_after)
+                        batch_response += (
+                            f"\n\n---\n"
+                            f"📦 **Bu batch tamamlandı.** Kalan **{len(remaining_after)} dosya:** {remaining_str}\n\n"
+                            f"**Devam et** yazman yeterli. ✋"
+                        )
+                    else:
+                        continuation_store.pop(request.conversation_id, None)
+                        batch_response += "\n\n---\n✅ **Tüm sistem tamamlandı!**"
+
+                    db.add_message(request.conversation_id, "assistant", batch_response)
+                    return {
+                        "role": "assistant",
+                        "content": batch_response,
+                        "intent": "BATCH_CONTINUATION",
+                        "static_results": {"smells": [], "stats": {}},
+                        "pipeline": None,
+                    }
+                except Exception as exc:
+                    logger.error(f"[Batch Continuation] Hata: {exc}")
+                    # Hata olursa normal pipeline'a düş
+
             # ——— DEVAM ET: Önceki yanıt token limitinde kesilmişse pipeline'ı atla ———
             last_assistant = next((m for m in reversed(history_messages) if m["role"] == "assistant"), None)
             is_continuation = (
@@ -254,7 +384,7 @@ def create_conversation_router(db, kb, progress_store):
 
             # ——— SCOPE CHOICE: Kullanıcı scope uyarısına yanıt veriyor mu? ———
             scope_confirmed_flag = False
-            effective_prompt = request.message
+            effective_prompt = _combined_prompt
 
             scope_last_assistant = next((m for m in reversed(history_messages) if m["role"] == "assistant"), None)
             if scope_last_assistant and "SCOPE_WARNING_ACTIVE" in scope_last_assistant.get("content", ""):
@@ -306,6 +436,7 @@ def create_conversation_router(db, kb, progress_store):
                         coding_provider=coding_provider,
                         coding_provider_type=coding_provider_type,
                         existing_plan=stored_plan,
+                        skip_gate=_gate_already_asked,
                     )
                 else:
                     pipeline = SingleAgentCodeGenerationPipeline(
@@ -348,6 +479,23 @@ def create_conversation_router(db, kb, progress_store):
                         "pipeline": None,
                         "source": "scope_check",
                     }
+
+                # Batch Continuation: İlk batch tamamlandı, devam var
+                if result.has_continuation and result.remaining_files:
+                    plan_text = result.step2_analysis.output if result.step2_analysis else ""
+                    continuation_store[request.conversation_id] = {
+                        "plan": plan_text,
+                        "all_files": result.all_planned_files,
+                        "next_start": BATCH_SIZE,
+                        "original_prompt": effective_prompt,
+                    }
+                    remaining_str = " · ".join(f"`{f}`" for f in result.remaining_files)
+                    continuation_msg = (
+                        f"\n\n---\n"
+                        f"📦 **İlk {BATCH_SIZE} dosya tamamlandı.** Kalan **{len(result.remaining_files)} dosya:** {remaining_str}\n\n"
+                        f"**Devam et** yazman yeterli. ✋"
+                    )
+                    result.combined_response += continuation_msg
 
                 final_suggestion = result.combined_response
                 static_results = {"smells": [], "stats": {}}

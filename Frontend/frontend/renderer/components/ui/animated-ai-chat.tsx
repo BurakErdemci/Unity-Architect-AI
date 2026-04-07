@@ -153,6 +153,9 @@ export function AnimatedChatInput({
     includeEditorCode?: boolean;
     onToggleIncludeCode?: () => void;
 }) {
+    // Typing state is INTERNAL — does not propagate to parent on every keystroke.
+    // This prevents home.tsx (with its large message list) from re-rendering while the user types.
+    const [internalValue, setInternalValue] = useState(value);
     const [attachments, setAttachments] = useState<string[]>([]);
     const [activeSuggestion, setActiveSuggestion] = useState<number>(-1);
     const [showCommandPalette, setShowCommandPalette] = useState(false);
@@ -163,6 +166,13 @@ export function AnimatedChatInput({
     const [inputFocused, setInputFocused] = useState(false);
     const commandPaletteRef = useRef<HTMLDivElement>(null);
 
+    // Sync internal value when parent resets to '' (after submit) or sets a prefix command
+    useEffect(() => {
+        if (value === '' || value !== internalValue) {
+            setInternalValue(value);
+        }
+    }, [value]);
+
     const commandSuggestions: CommandSuggestion[] = [
         { icon: <ImageIcon className="w-4 h-4" />, label: "Clone UI", description: "Generate a UI from a screenshot", prefix: "/clone" },
         { icon: <Figma className="w-4 h-4" />, label: "Import Figma", description: "Import a design from Figma", prefix: "/figma" },
@@ -171,14 +181,14 @@ export function AnimatedChatInput({
     ];
 
     useEffect(() => {
-        if (value.startsWith('/') && !value.includes(' ')) {
+        if (internalValue.startsWith('/') && !internalValue.includes(' ')) {
             setShowCommandPalette(true);
-            const matchingSuggestionIndex = commandSuggestions.findIndex(cmd => cmd.prefix.startsWith(value));
+            const matchingSuggestionIndex = commandSuggestions.findIndex(cmd => cmd.prefix.startsWith(internalValue));
             setActiveSuggestion(matchingSuggestionIndex);
         } else {
             setShowCommandPalette(false);
         }
-    }, [value]);
+    }, [internalValue]);
 
     useEffect(() => {
         const handleClickOutside = (event: MouseEvent) => {
@@ -204,7 +214,7 @@ export function AnimatedChatInput({
                 e.preventDefault();
                 if (activeSuggestion >= 0) {
                     const selectedCommand = commandSuggestions[activeSuggestion];
-                    setValue(selectedCommand.prefix + ' ');
+                    setInternalValue(selectedCommand.prefix + ' ');
                     setShowCommandPalette(false);
                 }
             } else if (e.key === 'Escape') {
@@ -213,13 +223,14 @@ export function AnimatedChatInput({
             }
         } else if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault();
-            if (value.trim()) handleSendMessage();
+            if (internalValue.trim()) handleSendMessage();
         }
     };
 
     const handleSendMessage = () => {
-        if (value.trim() && !isLoading) {
-            onSendMessage(value);
+        if (internalValue.trim() && !isLoading) {
+            onSendMessage(internalValue);
+            setInternalValue("");
             setValue("");
             adjustHeight(true);
         }
@@ -249,7 +260,7 @@ export function AnimatedChatInput({
                                         activeSuggestion === index ? "bg-white/10 text-white" : "text-white/70 hover:bg-white/5"
                                     )}
                                     onClick={() => {
-                                        setValue(suggestion.prefix + ' ');
+                                        setInternalValue(suggestion.prefix + ' ');
                                         setShowCommandPalette(false);
                                     }}
                                 >
@@ -266,9 +277,9 @@ export function AnimatedChatInput({
             <div className="p-3">
                 <Textarea
                     ref={textareaRef}
-                    value={value}
+                    value={internalValue}
                     onChange={(e) => {
-                        setValue(e.target.value);
+                        setInternalValue(e.target.value);
                         adjustHeight();
                     }}
                     onKeyDown={handleKeyDown}
@@ -313,7 +324,7 @@ export function AnimatedChatInput({
                     </button>
                 </div>
                 
-                <button type="button" onClick={handleSendMessage} disabled={isLoading || !value.trim()} className={cn("px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5", value.trim() ? "bg-white text-[#0A0A0B]" : "bg-white/[0.05] text-white/40")}>
+                <button type="button" onClick={handleSendMessage} disabled={isLoading || !internalValue.trim()} className={cn("px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5", internalValue.trim() ? "bg-white text-[#0A0A0B]" : "bg-white/[0.05] text-white/40")}>
                     {isLoading ? <LoaderIcon className="w-3 h-3 animate-spin" /> : <SendIcon className="w-3 h-3" />}
                     <span>Send</span>
                 </button>

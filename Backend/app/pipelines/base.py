@@ -45,6 +45,11 @@ class PipelineResult:
     scope_warning_plan: str = ""         # Architect planı (devam seçilirse kullanılır)
     scope_file_count: int = 0            # Planlanan dosya sayısı
 
+    # Batch Continuation — çok dosyalı sistemlerde kademeli üretim
+    has_continuation: bool = False               # True ise daha yazılacak dosya var
+    remaining_files: list = field(default_factory=list)   # Kalan dosyalar
+    all_planned_files: list = field(default_factory=list) # Architect'in tam dosya listesi
+
     def to_dict(self) -> Dict[str, Any]:
         """Frontend'e gönderilecek pipeline bilgisini döndürür."""
         return {
