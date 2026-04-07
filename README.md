@@ -23,6 +23,7 @@
 - [Multi-Agent Mimarisi](#-multi-agent-mimarisi)
 - [Pipeline Sistemi](#-pipeline-sistemi)
 - [Mimari](#-mimari-genel-bakış)
+- [Geliştirme Hikayeleri](#-geliştirme-hikayeleri--alınan-dersler)
 - [Kurulum](#-kurulum)
 - [Kullanım](#-kullanım)
 - [Teknoloji Yığını](#-teknoloji-yığını)
@@ -161,7 +162,8 @@ Sistem, her biri belirli bir uzmanlık alanına sahip **7 bağımsız ajan** kul
 
 | Ajan | Rol | Çıktı |
 |------|-----|-------|
-| 🏗️ **Architect** | Sıfırdan mimari plan oluşturur | Kısa tasarım blueprint'i |
+| 🚦 **Clarification Gate** | Muğlak isteklerde eksik bilgileri tespit eder | Maksimum 4 soru veya "geç" kararı |
+| 🏗️ **Architect** | Sıfırdan mimari plan oluşturur | Kısa tasarım blueprint'i (ADIM 0→3 scope garantisi) |
 | 💻 **Coder** | Plana göre sıfırdan kod üretir | Tam çalışan C# kodu |
 
 ### Ajan Güvenlik Mekanizmaları
@@ -235,23 +237,65 @@ Hızlı ve basit; tek bir LLM çağrısıyla analiz-düzeltme yapar.
 ### 🆕 Tier 3 — Sıfırdan Kod Üretim Pipeline (Multi-Agent, sadece Claude)
 
 ```
-Kullanıcı İsteği → Architect (Plan) → Coder (Kod) → Game Feel (Sessiz Loop) → Final Kod
+Kullanıcı İsteği
+      │
+      ▼
+Clarification Gate ──── Muğlak? ──► Soru Sor (max 4) ──► Kullanıcı Cevaplar
+      │ Yeterince Spesifik                                         │
+      │◄────────────────────────────────────────────────────────────┘
+      ▼
+  Architect
+  ┌─────────────────────────────────────────────────┐
+  │ ADIM 0: Kullanıcının tüm isteklerini listele    │
+  │ ADIM 1-2: Mimari plan (Bölüm A + Bölüm B)      │
+  │ ADIM 3: Scope doğrulama (her istek ✅ olmalı)  │
+  └─────────────────┬───────────────────────────────┘
+                    │ Dosya listesi (örn: 23 dosya)
+                    ▼
+              Batch Splitter
+              (BATCH_SIZE = 10)
+         ┌────────┬────────┐
+         ▼        ▼        ▼
+      Batch 1  Batch 2  Batch 3
+      (10 dos) (10 dos) (3 dos)
+         │        │        │
+         └────────┴────────┘
+                  │ her batch → Coder
+                  ▼
+               Coder
+          (max 8192 token)
+                  │
+                  ▼
+         Game Feel Loop
+    (sessiz denetim, düşük skorsa yeniden yaz)
+                  │
+                  ▼
+           ✅ Final Kod
 ```
 
-- Architect kısa bir blueprint çıkarır
-- Coder 8192 token limitiyle tam mimari üretir
-- Game Feel sessiz ve kullanıcıya görünmez şekilde kodu denetler; düşük skorsa Coder tekrar yazar
+- **Clarification Gate:** Kullanıcı muğlak istek yaptıysa önce soru sorar (max 4 soru, tek mesajda). Cevap verildikten sonra bir daha sormaz — `skip_gate` mekanizmasıyla atlar.
+- **Architect Scope Garantisi:** ADIM 0'da tüm kullanıcı istekleri numaralandırılır. ADIM 3'te her istek için ✅/❌ doğrulaması yapılır. ❌ olan özellik varsa Architect kendi planına geri döner ve ekler.
+- **Batch Splitting:** Büyük sistemler (örn. 23 dosyalık RPG) 10'ar dosyalık batch'lere bölünür. Her batch ayrı Coder çağrısıyla üretilir. Kullanıcı "devam et" yazarak sonraki batch'i başlatır.
+- **Continuation State:** Batch durumu sunucunun `continuation_store`'unda saklanır; kullanıcı "devam et / evet / tamam" yazınca otomatik algılanır.
 
 ### 🆕 Tier 4 — SingleAgent Kod Üretim Pipeline (Tüm sağlayıcılar)
 
 ```
-Kullanıcı İsteği → Tek AI Çağrısı (Plan + Kod + Self-Critique) → Final Kod
+Kullanıcı İsteği → Tek AI Çağrısı (Plan + Kod + Game Feel kuralları gömülü) → Final Kod
+                                        │
+                              Token limitinde kesildi?
+                                   YES │ NO
+                                       │    ▼
+                              Açık ``` ▼  Sonuç
+                              kapatılır + "devam et" mesajı
 ```
 
 - Claude dışındaki tüm sağlayıcılar (OpenAI, OpenRouter, Groq, Gemini, DeepSeek, Ollama) bu pipeline'ı kullanır
-- Sağlayıcıya özel token limitleri: Groq 32K, Google 65K, diğerleri 16K
+- Sağlayıcıya özel token limitleri: Google 65K, Groq 32K, diğerleri 16K
 - İngilizce prompt ile daha iyi LLM çıktı kalitesi
-- Game Feel kuralları doğrudan prompt'a gömülü
+- Game Feel kuralları, Save/Load kuralları ve output format doğrudan prompt'a gömülü
+- Token kesintisinde yanıt otomatik kapatılır, kullanıcı "devam et" ile devam edebilir
+- **Groq Free Tier:** 413/token-limit hatası geldiğinde teknik API mesajı yerine kullanıcı dostu hata gösterilir
 
 ---
 
@@ -293,6 +337,94 @@ Kullanıcı İsteği → Tek AI Çağrısı (Plan + Kod + Self-Critique) → Fin
 │  └───────────────┘  └────────┘  └────────────────────────┘ │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## 🛠️ Geliştirme Hikayeleri & Alınan Dersler
+
+Projeyi geliştirirken karşılaşılan gerçek problemler ve çözümleri:
+
+---
+
+### 1. "Tek Claude çok pahalı" — Neden 2-Ajan Mimarisine Geçtik?
+
+İlk tasarımda sıfırdan kod üretimi için tek bir Claude çağrısı kullanılıyordu: tüm kod tek seferde, tek prompt'ta. Basit sistemler için yeterliydi ama karmaşık isteklerde (RPG, survival, inventory+crafting+quest birlikte) problem ortaya çıktı:
+
+- **Token maliyeti:** Tek çağrıda hem planlama hem kodlama hem de game feel denetimi yapmak, her seferinde çok büyük ve pahalı bir prompt anlamına geliyordu.
+- **Kalite tutarsızlığı:** AI bazen planlamaya, bazen kodlamaya odaklanıyor; ikisini aynı anda iyi yapamıyordu.
+
+**Çözüm:** Sorumlulukları ayır. **Architect** sadece plan yapar (hafif, hızlı, ucuz), **Coder** sadece kod yazar (yoğun, odaklı). İki küçük uzman çağrısı, bir büyük generalist çağrısından hem daha ucuz hem daha kaliteli çıktı verdi.
+
+---
+
+### 2. Architect 7 Özellikten Sadece 3'ünü Planlıyordu
+
+Gerçek bir kullanıcı testi: RPG için şu 7 özellik istendi — hareket, savaş, düşman AI, **envanter, ekipman, görev sistemi, save/load**. Architect planına bakınca sadece hareket, savaş ve AI vardı. 4 özellik yok.
+
+**Neden oluyordu?** Architect prompt'unda "kullanıcının isteklerini karşıla" diyordu ama hangi isteklerin karşılanıp karşılanmadığını doğrulayan bir mekanizma yoktu. AI büyük scope'ta önce aklına gelenleri planlıyor, geri kalanları unutuyordu.
+
+**Çözüm: ADIM 0 + ADIM 3**
+
+```
+ADIM 0: Kullanıcının mesajındaki her isteği numaralandır
+  İSTEK-1: envanter sistemi
+  İSTEK-2: ekipman
+  ...
+  TOPLAM: 7 istek
+
+ADIM 3: Her istek için kontrol et
+  ✅ İSTEK-1: envanter → InventoryManager.cs
+  ❌ İSTEK-2: ekipman → DOSYA YOK → hemen ADIM 2'ye ekle
+```
+
+Artık Architect kendi planını kendi doğruluyor. ❌ bulursa düzeltmeden devam edemiyor.
+
+---
+
+### 3. Clarification Gate İki Kez Soru Soruyordu
+
+Kullanıcı muğlak bir istek yaptığında Gate soru soruyordu. Kullanıcı cevap verince Gate **tekrar** soru soruyordu — sanki ilk konuşmayı hiç görmemiş gibi.
+
+**Neden?** `context_summary` sadece 200 karakter tutuluyordu. Cevap verildiğinde Gate, orijinal prompt + soruları göremiyordu, her şeyi yeniden değerlendirip tekrar soru soruyordu.
+
+**Çözüm 1:** `context_summary` limitini 800 karaktere çıkar.  
+**Çözüm 2:** Son assistant mesajında soru işareti var mı? Varsa `skip_gate = True` geç, doğrudan Architect'e gönder.  
+**Çözüm 3:** `_combined_prompt` — orijinal istek + kullanıcının cevapları birleştirilerek Architect'e gönderilir. Böylece Architect kısa cevapları değil, tam bağlamı görür.
+
+---
+
+### 4. "Devam Et" Yanlış Hata Veriyordu
+
+Single agent token limitinde kesildiğinde kullanıcı "devam et" yazıyordu. Ama sistem "aktif bir batch oturumu yok" hatası veriyordu.
+
+**Neden?** Multi-agent batch sistemi `continuation_store`'u doldurur. Single agent ise doldurmaz — token kesintisi onun mekanizması değil. Ama "devam et" mesajını dinleyen guard ikisini ayırt etmiyordu.
+
+**Çözüm:** Guard'a ekstra kontrol: son assistant mesajı "Token limitine ulaşıldı" içeriyor mu? İçeriyorsa single agent kesintisidir, `no_state_msg` gösterme, normal konuşma olarak devam et.
+
+---
+
+### 5. Save Sistemi PlayerPrefs Kullanıyordu
+
+Single agent ile üretilen RPG kodlarında SaveSystem her seferinde `PlayerPrefs` ile veri kaydediyordu. Bu Unity'de küçük, geçici veriler için kabul edilebilir ama save/load sistemi için yanlış — büyük veri, binary olmayan yapı, platform kısıtlamaları.
+
+**Çözüm:** Single agent prompt'una `[SAVE/LOAD RULES]` bölümü eklendi:
+```
+- JSON dosyası kullan: Application.persistentDataPath + "/save.json"
+- ASLA PlayerPrefs kullanma (kullanıcı açıkça istemediği sürece)
+- JsonUtility.ToJson / FromJson + File.WriteAllText / ReadAllText
+```
+
+Sonraki üretimlerde SaveManager doğru JSON implementasyonuyla geliyor.
+
+---
+
+### 6. Büyük Sistemlerde Token Limiti — Batch Sistemi
+
+23 dosyalık RPG sistemi tek Coder çağrısına sığmıyor. 8192 token limitinde yarım kod, açık süslü parantez, syntax hatası çıkıyor.
+
+**Çözüm:** Architect planındaki dosya listesini parse et, 10'arlı gruplara böl. Her grup ayrı Coder çağrısı. Kullanıcıya "Batch 1/3 tamamlandı, devam edeyim mi?" göster. Durum `continuation_store`'da saklanır, kullanıcı "devam et" deyince bir sonraki batch başlar.
+
+Gerçek test: 23 dosyalık tam RPG sistemi (PlayerController, EnemyAI, InventoryManager, CraftingManager, QuestManager, SaveManager dahil) 3 batch'te eksiksiz üretildi.
 
 ---
 
@@ -560,6 +692,18 @@ Backend çalışırken: [http://localhost:8000/docs](http://localhost:8000/docs)
 - [x] Production build (Electron + Backend bundled)
 - [x] Backend auto-start (build'de otomatik başlatma)
 
+### ✅ Tamamlanan (Sprint 2.3)
+
+- [x] Clarification Gate — muğlak isteklerde soru-cevap akışı, bir kez sorar
+- [x] Architect ADIM 0 + ADIM 3 — scope garantisi, hiçbir kullanıcı isteği atlanamaz
+- [x] Batch Splitting (BATCH_SIZE=10) — 23+ dosyalık büyük sistemler 10'ar dosyalık batch'lerde üretilir
+- [x] `continuation_store` — batch durumu hafızada, "devam et" ile sonraki batch
+- [x] skip_gate mekanizması — clarification cevabı verildikten sonra Gate'i atla
+- [x] combined_prompt — orijinal istek + cevaplar birleştirilerek Architect'e gönderilir
+- [x] Single Agent token kesinti fix — "devam et" artık yanlış hata vermiyor
+- [x] Single Agent Save/Load kuralları — PlayerPrefs yerine JSON dosyası zorunlu
+- [x] Groq free tier hata mesajı — 413/token-limit hatası kullanıcı dostu mesaja dönüştürülür
+
 ### 🚧 Devam Eden (Sprint 3)
 
 - [ ] Built-in Unity Expert (Yerel bilgi bankası + offline destek)
@@ -567,6 +711,7 @@ Backend çalışırken: [http://localhost:8000/docs](http://localhost:8000/docs)
 
 ### 📋 Planlanan
 
+- [ ] Code Memory Snapshot — önceki üretilen dosyaları SQLite'ta özet olarak sakla, modifikasyon isteklerinde akıllı context injection
 - [ ] Dashboard ve analiz grafikleri
 - [ ] PDF rapor dışa aktarma
 - [ ] Geri bildirim öğrenme sistemi (kullanıcı feedback → kural iyileştirme)
