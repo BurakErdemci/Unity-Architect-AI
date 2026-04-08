@@ -153,7 +153,7 @@ def create_conversation_router(db, kb, progress_store):
             return {"role": "assistant", "content": kb_miss_msg, "intent": intent,
                     "static_results": {"smells": [], "stats": {}}, "pipeline": None, "source": "kb_miss"}
 
-        provider_type, model_name, _, use_multi_agent = db.get_ai_config(user_id)
+        provider_type, model_name, _, use_multi_agent, force_claude_coder = db.get_ai_config(user_id)
         api_key = (db.get_api_key(user_id, provider_type) or "") if provider_type not in ("ollama", "kb") else ""
 
         try:
@@ -165,13 +165,14 @@ def create_conversation_router(db, kb, progress_store):
             db.add_message(request.conversation_id, "assistant", error_msg)
             return {"role": "assistant", "content": error_msg, "intent": "ERROR", "static_results": {"smells": []}, "pipeline": None}
 
-        # Hybrid provider: Anthropic planlama yapar, OpenRouter kod yazar (ucuz)
+        # Hybrid provider: Anthropic planlama/mimari yapar, GPT kod yazar
         coding_provider = None
         coding_provider_type = provider_type
-        if provider_type == "anthropic":
+        if provider_type == "anthropic" and not force_claude_coder:
             _or_key = db.get_api_key(user_id, "openrouter") or ""
+            _oa_key = db.get_api_key(user_id, "openai") or ""
             if _or_key:
-                _or_model = "openai/gpt-5.4"  # GPT-5.4 via OpenRouter
+                _or_model = "openai/gpt-5.4"
                 try:
                     coding_provider = AIProviderManager.get_provider(
                         {"provider_type": "openrouter", "model_name": _or_model, "api_key": _or_key}
@@ -179,7 +180,17 @@ def create_conversation_router(db, kb, progress_store):
                     coding_provider_type = "openrouter"
                     logger.info(f"[Hybrid] Planlama: Anthropic ({model_name}) | Kod yazma: OpenRouter ({_or_model})")
                 except Exception:
-                    pass  # OpenRouter kurulamazsa sadece Anthropic kullan
+                    pass
+            elif _oa_key:
+                _oa_model = "gpt-5.4"
+                try:
+                    coding_provider = AIProviderManager.get_provider(
+                        {"provider_type": "openai", "model_name": _oa_model, "api_key": _oa_key}
+                    )
+                    coding_provider_type = "openai"
+                    logger.info(f"[Hybrid] Planlama: Anthropic ({model_name}) | Kod yazma: OpenAI ({_oa_model})")
+                except Exception:
+                    pass
 
         classifier = IntentClassifierAgent(provider)
         intent = await classifier.classify_async(request.message)
@@ -536,6 +547,8 @@ def create_conversation_router(db, kb, progress_store):
                         user_message=request.message,
                         provider_type=provider_type,
                         progress_callback=update_progress,
+                        coding_provider=coding_provider,
+                        coding_provider_type=coding_provider_type,
                     )
                 else:
                     pipeline = SingleAgentPipeline(

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import { Check, Copy, FileDown } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -6,7 +6,7 @@ import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/cjs/styles/prism";
 
 
-export const MarkdownRenderer = ({
+const MarkdownRendererInner = ({
   content,
   workspacePath,
   onExportToUnity,
@@ -78,3 +78,5 @@ export const MarkdownRenderer = ({
     </ReactMarkdown>
   );
 };
+
+export const MarkdownRenderer = memo(MarkdownRendererInner);

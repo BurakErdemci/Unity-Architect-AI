@@ -52,11 +52,11 @@ class CodeGenerationPipeline(BasePipeline):
         _coding = coding_provider or provider
         self.coding_provider_type = coding_provider_type or provider_type
 
-        # Ajanları başlat — planlama ajanları her zaman ana provider'ı kullanır
+        # Ajanları başlat — planlama ve oyun hissiyatı Claude, kod yazma GPT
         self.gate = ClarificationGateAgent(self.provider)
         self.architect = ArchitectGenerationAgent(self.provider)
         self.coder = CoderGenerationAgent(_coding)
-        self.game_feel = GameFeelAgent(_coding)
+        self.game_feel = GameFeelAgent(self.provider)  # Oyun hissiyatı: Claude
 
     _TOKEN_LIMITS = {
         "groq": 32000,

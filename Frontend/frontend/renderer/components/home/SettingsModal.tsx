@@ -97,23 +97,21 @@ export const SettingsModal = ({
                 />
               </div>
             )}
-            {aiConfig.provider_type === 'anthropic' && (
-              <div className="flex items-center justify-between p-3 rounded-xl border border-slate-800/80 bg-slate-900/30">
-                <div>
-                  <p className="text-xs font-semibold text-slate-300">Multi-Agent Sistemi</p>
-                  <p className="text-[10px] text-slate-500 mt-0.5">Yüksek token maliyeti, uzman incelemesi</p>
-                </div>
-                <label className="relative inline-flex items-center cursor-pointer">
-                  <input
-                    type="checkbox"
-                    className="sr-only peer"
-                    checked={aiConfig.use_multi_agent}
-                    onChange={(e) => onChange({ ...aiConfig, use_multi_agent: e.target.checked })}
-                  />
-                  <div className="w-9 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
-                </label>
+            <div className="flex items-center justify-between p-3 rounded-xl border border-slate-800/80 bg-slate-900/30">
+              <div>
+                <p className="text-xs font-semibold text-slate-300">Multi-Agent Sistemi</p>
+                <p className="text-[10px] text-slate-500 mt-0.5">Model seçiciden de açılabilir • Anthropic key zorunlu</p>
               </div>
-            )}
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="sr-only peer"
+                  checked={aiConfig.use_multi_agent}
+                  onChange={(e) => onChange({ ...aiConfig, use_multi_agent: e.target.checked })}
+                />
+                <div className="w-9 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+              </label>
+            </div>
             <div className="flex gap-3 pt-2 mt-2 border-t border-slate-800/50">
               <button
                 onClick={onSave}

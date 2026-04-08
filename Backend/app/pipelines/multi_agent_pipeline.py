@@ -16,18 +16,24 @@ logger = logging.getLogger(__name__)
 
 class MultiAgentPipeline(BasePipeline):
     """
-    Tier 2: Multi-Agent Mimarisi. (Sadece Claude API için)
-    Orchestrator planlar -> Expert yazar -> Critic denetler.
+    Tier 2: Multi-Agent Mimarisi.
+    Orchestrator (Claude) planlar -> Expert (GPT veya Claude) yazar -> Critic (Claude) denetler.
     """
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, coding_provider=None, coding_provider_type: str = "", **kwargs):
         super().__init__(*args, **kwargs)
         self._smells: List[Dict] = []
-        
-        # Ajanları başlat (Hepsi aynı Claude provider'ını kullanır)
+
+        # Expert için ayrı provider kullanılabilir (Hybrid: Claude planlar, GPT yazar)
+        _expert_provider = coding_provider if coding_provider else self.provider
+        _coder_type = coding_provider_type or self.provider_type
+
         self.orchestrator = OrchestratorAgent(self.provider)
-        self.expert = UnityExpertAgent(self.provider)
-        self.critic = CriticAgent(self.provider)
-        self.game_feel = GameFeelAgent(self.provider)
+        self.expert = UnityExpertAgent(_expert_provider)
+        self.critic = CriticAgent(_expert_provider)    # Teknik analiz: GPT
+        self.game_feel = GameFeelAgent(self.provider)  # Oyun hissiyatı: Claude
+
+        if coding_provider:
+            logger.info(f"[MultiAgent] Hybrid mod: Orchestrator+GameFeel=Claude, Expert+Critic={_coder_type}")
 
     async def run(self):
         pipeline_start = time.time()

@@ -20,13 +20,13 @@ def create_config_router(db):
         user_id, _ = require_user(db, x_session_token, req.user_id)
         if req.api_key and req.provider_type not in ("ollama", "kb"):
             db.save_api_key(user_id, req.provider_type, req.api_key)
-        db.save_ai_config(user_id, req.provider_type, req.model_name, "", req.use_multi_agent)
+        db.save_ai_config(user_id, req.provider_type, req.model_name, "", req.use_multi_agent, req.force_claude_coder)
         return {"status": "success"}
 
     @router.get("/get-ai-config/{user_id}")
     async def get_config(user_id: int, x_session_token: str = Header(alias="X-Session-Token")):
         require_user(db, x_session_token, user_id)
-        provider_type, model_name, _old_key, use_multi_agent = db.get_ai_config(user_id)
+        provider_type, model_name, _old_key, use_multi_agent, force_claude_coder = db.get_ai_config(user_id)
         has_key = False
         if provider_type not in ("ollama", "kb"):
             has_key = bool(db.get_api_key(user_id, provider_type))
@@ -34,6 +34,7 @@ def create_config_router(db):
             "provider_type": provider_type,
             "model_name": model_name,
             "use_multi_agent": use_multi_agent,
+            "force_claude_coder": force_claude_coder,
             "has_key": has_key,
         }
 

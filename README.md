@@ -353,7 +353,7 @@ Projeyi geliştirirken karşılaşılan gerçek problemler ve çözümleri:
 - **Token maliyeti:** Tek çağrıda hem planlama hem kodlama hem de game feel denetimi yapmak, her seferinde çok büyük ve pahalı bir prompt anlamına geliyordu.
 - **Kalite tutarsızlığı:** AI bazen planlamaya, bazen kodlamaya odaklanıyor; ikisini aynı anda iyi yapamıyordu.
 
-**Çözüm:** Sorumlulukları ayır. **Architect** sadece plan yapar (hafif, hızlı, ucuz), **Coder** sadece kod yazar (yoğun, odaklı). İki küçük uzman çağrısı, bir büyük generalist çağrısından hem daha ucuz hem daha kaliteli çıktı verdi.
+**Çözüm:** Sorumlulukları ayırdım. **Architect** sadece plan yapar (hafif, hızlı, ucuz), **Coder** sadece kod yazar (yoğun, odaklı). İki küçük uzman çağrısı, bir büyük generalist çağrısından hem daha ucuz hem daha kaliteli çıktı verdi.
 
 ---
 
@@ -366,13 +366,13 @@ Gerçek bir kullanıcı testi: RPG için şu 7 özellik istendi — hareket, sav
 **Çözüm: ADIM 0 + ADIM 3**
 
 ```
-ADIM 0: Kullanıcının mesajındaki her isteği numaralandır
+ADIM 0: Kullanıcının mesajındaki her isteği numaralandırdım.
   İSTEK-1: envanter sistemi
   İSTEK-2: ekipman
   ...
   TOPLAM: 7 istek
 
-ADIM 3: Her istek için kontrol et
+ADIM 3: Her istek için kontrol ettirdim.
   ✅ İSTEK-1: envanter → InventoryManager.cs
   ❌ İSTEK-2: ekipman → DOSYA YOK → hemen ADIM 2'ye ekle
 ```
@@ -387,8 +387,8 @@ Kullanıcı muğlak bir istek yaptığında Gate soru soruyordu. Kullanıcı cev
 
 **Neden?** `context_summary` sadece 200 karakter tutuluyordu. Cevap verildiğinde Gate, orijinal prompt + soruları göremiyordu, her şeyi yeniden değerlendirip tekrar soru soruyordu.
 
-**Çözüm 1:** `context_summary` limitini 800 karaktere çıkar.  
-**Çözüm 2:** Son assistant mesajında soru işareti var mı? Varsa `skip_gate = True` geç, doğrudan Architect'e gönder.  
+**Çözüm 1:** `context_summary` limitini 800 karaktere çıkardım.
+**Çözüm 2:** Son assistant mesajında soru işareti var mı? Varsa `skip_gate = True` geç, doğrudan Architect'e gönder. 
 **Çözüm 3:** `_combined_prompt` — orijinal istek + kullanıcının cevapları birleştirilerek Architect'e gönderilir. Böylece Architect kısa cevapları değil, tam bağlamı görür.
 
 ---
@@ -407,7 +407,7 @@ Single agent token limitinde kesildiğinde kullanıcı "devam et" yazıyordu. Am
 
 Single agent ile üretilen RPG kodlarında SaveSystem her seferinde `PlayerPrefs` ile veri kaydediyordu. Bu Unity'de küçük, geçici veriler için kabul edilebilir ama save/load sistemi için yanlış — büyük veri, binary olmayan yapı, platform kısıtlamaları.
 
-**Çözüm:** Single agent prompt'una `[SAVE/LOAD RULES]` bölümü eklendi:
+**Çözüm:** Single agent prompt'una `[SAVE/LOAD RULES]` bölümü ekledim:
 ```
 - JSON dosyası kullan: Application.persistentDataPath + "/save.json"
 - ASLA PlayerPrefs kullanma (kullanıcı açıkça istemediği sürece)
@@ -422,7 +422,7 @@ Sonraki üretimlerde SaveManager doğru JSON implementasyonuyla geliyor.
 
 23 dosyalık RPG sistemi tek Coder çağrısına sığmıyor. 8192 token limitinde yarım kod, açık süslü parantez, syntax hatası çıkıyor.
 
-**Çözüm:** Architect planındaki dosya listesini parse et, 10'arlı gruplara böl. Her grup ayrı Coder çağrısı. Kullanıcıya "Batch 1/3 tamamlandı, devam edeyim mi?" göster. Durum `continuation_store`'da saklanır, kullanıcı "devam et" deyince bir sonraki batch başlar.
+**Çözüm:** Architect planındaki dosya listesini parse etttim, 10'arlı gruplara böldüm. Her grup ayrı Coder çağrısı. Kullanıcıya "Batch 1/3 tamamlandı, devam edeyim mi?" göster. Durum `continuation_store`'da saklanır, kullanıcı "devam et" deyince bir sonraki batch başlar.
 
 Gerçek test: 23 dosyalık tam RPG sistemi (PlayerController, EnemyAI, InventoryManager, CraftingManager, QuestManager, SaveManager dahil) 3 batch'te eksiksiz üretildi.
 

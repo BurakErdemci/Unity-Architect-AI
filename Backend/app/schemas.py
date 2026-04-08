@@ -18,6 +18,7 @@ class AIConfigRequest(BaseModel):
     model_name: str
     api_key: str
     use_multi_agent: bool = True
+    force_claude_coder: bool = False
 
 
 class UpdateFileRequest(BaseModel):

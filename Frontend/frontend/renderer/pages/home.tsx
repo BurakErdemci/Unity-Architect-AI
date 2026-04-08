@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Head from 'next/head';
 import axios from 'axios';
 import Editor from '@monaco-editor/react';
@@ -30,6 +30,7 @@ import {
   Trash2,
   Upload,
   X,
+  HelpCircle,
 } from "lucide-react";
 import { motion, AnimatePresence } from 'framer-motion';
 import AgentPlan, { Task } from '../components/ui/agent-plan';
@@ -96,11 +97,12 @@ export default function HomePage() {
   // --- SETTINGS ---
   const [showSettings, setShowSettings] = useState(false);
   const [aiConfig, setAiConfig] = useState<AIConfig>({
-    provider_type: 'kb', api_key: '', model_name: 'unity-kb-v1', use_multi_agent: true
+    provider_type: 'kb', api_key: '', model_name: 'unity-kb-v1', use_multi_agent: true, force_claude_coder: false
   });
   const [availableModels, setAvailableModels] = useState<AvailableModels>({ local: [], cloud: [] });
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
   const [providersWithKeys, setProvidersWithKeys] = useState<string[]>([]);
+  const [showMultiAgentInfo, setShowMultiAgentInfo] = useState(false);
 
   // --- EDITING ---
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -511,7 +513,7 @@ export default function HomePage() {
     } catch { return false; }
   };
 
-  const handleExportToUnity = async (codeString: string) => {
+  const handleExportToUnity = useCallback(async (codeString: string) => {
     if (!workspacePath) return;
     const targetDir = `${workspacePath}/Assets/Scripts`;
     
@@ -553,7 +555,7 @@ export default function HomePage() {
         exportResult: null,
       });
     }
-  };
+  }, [workspacePath]);
 
   const exportSingleFile = async (fileName: string, content: string) => {
     if (!ipc || !exportModal || !workspacePath) return;
@@ -1310,10 +1312,10 @@ export default function HomePage() {
               >
                 <div className="flex flex-col">
                   <span className="text-[12px] font-semibold text-slate-300 leading-tight">
-                    {aiConfig.model_name || 'Model Seçin'}
+                    {aiConfig.use_multi_agent ? 'Multi-Agent' : (aiConfig.model_name || 'Model Seçin')}
                   </span>
                   <span className="text-[9px] text-slate-500 leading-tight capitalize">
-                    {aiConfig.provider_type}
+                    {aiConfig.use_multi_agent ? 'Claude + GPT' : aiConfig.provider_type}
                   </span>
                 </div>
                 <ChevronDown size={14} className="text-slate-500" />
@@ -1331,8 +1333,80 @@ export default function HomePage() {
                       initial={{ opacity: 0, y: -10 }}
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0, y: -10 }}
-                      className="absolute top-10 left-0 w-64 bg-[#000000] border border-slate-700 shadow-2xl rounded-xl z-50 overflow-hidden"
+                      className="absolute top-10 left-0 w-64 bg-[#000000] border border-slate-700 shadow-2xl rounded-xl z-50"
                     >
+                      {/* TABS: TEK AJAN / MULTI-AGENT */}
+                      <div className="flex border-b border-slate-800/80">
+                        <button
+                          onClick={async () => {
+                            const newCfg = { ...aiConfig, use_multi_agent: false };
+                            setAiConfig(newCfg);
+                            setShowMultiAgentInfo(false);
+                            if (user) await axios.post(`${API}/save-ai-config`, { ...newCfg, user_id: user.id });
+                          }}
+                          className={`flex-1 py-2 text-[11px] font-semibold transition-colors ${!aiConfig.use_multi_agent ? 'text-blue-400 border-b-2 border-blue-500' : 'text-slate-500 hover:text-slate-300'}`}
+                        >
+                          Tek Ajan
+                        </button>
+                        <div className="flex-1 flex items-center justify-center">
+                          <button
+                            onClick={async () => {
+                              const newCfg = { ...aiConfig, use_multi_agent: true, provider_type: 'anthropic' };
+                              setAiConfig(newCfg);
+                              setShowMultiAgentInfo(false);
+                              if (user) await axios.post(`${API}/save-ai-config`, { ...newCfg, user_id: user.id });
+                            }}
+                            className={`py-2 text-[11px] font-semibold transition-colors ${aiConfig.use_multi_agent ? 'text-blue-400 border-b-2 border-blue-500' : 'text-slate-500 hover:text-slate-300'}`}
+                          >
+                            Multi-Agent
+                          </button>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setShowMultiAgentInfo(v => !v); }}
+                            className="ml-1 text-slate-600 hover:text-slate-400 transition-colors"
+                            title="Multi-Agent hakkında bilgi"
+                          >
+                            <HelpCircle size={12} />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* INFO PANEL — inline, no overflow clipping */}
+                      {showMultiAgentInfo && (
+                        <div className="mx-2 mt-2 mb-1 bg-[#0a0a0f] border border-blue-900/60 rounded-xl p-3">
+                          <p className="text-[11px] font-bold text-blue-400 mb-2">
+                            {appMode === 'analysis' ? '🔍 Kod Analizi — Multi-Agent' : '✨ Sıfırdan Üretim — Multi-Agent'}
+                          </p>
+                          <div className="space-y-1.5 text-[10px] text-slate-400">
+                            {appMode === 'analysis' ? (
+                              <>
+                                <div className="flex gap-2"><span className="shrink-0">🎯</span><span><span className="text-slate-300 font-semibold">Orchestrator:</span> Kodu inceler, düzeltme planı çıkarır.</span></div>
+                                <div className="flex gap-2"><span className="shrink-0">🔧</span><span><span className="text-slate-300 font-semibold">Unity Expert:</span> {aiConfig.force_claude_coder ? 'Claude kodu yeniden yazar.' : 'GPT key varsa GPT teknik kodu yazar.'}</span></div>
+                                <div className="flex gap-2"><span className="shrink-0">⚖️</span><span><span className="text-slate-300 font-semibold">Critic:</span> {aiConfig.force_claude_coder ? 'Claude' : 'GPT'} teknik kaliteyi puanlar.</span></div>
+                                <div className="flex gap-2"><span className="shrink-0">🎮</span><span><span className="text-slate-300 font-semibold">Game Feel:</span> Claude oyun hissiyatını değerlendirir.</span></div>
+                                <div className="flex gap-2"><span className="shrink-0">🔁</span><span><span className="text-slate-300 font-semibold">Reflexive Loop:</span> Skor 8/10 altındaysa Expert otomatik yeniden yazar.</span></div>
+                              </>
+                            ) : (
+                              <>
+                                <div className="flex gap-2"><span className="shrink-0">🚦</span><span><span className="text-slate-300 font-semibold">Clarification Gate:</span> İstek muğlaksa soru sorar, sonra başlar.</span></div>
+                                <div className="flex gap-2"><span className="shrink-0">🏗️</span><span><span className="text-slate-300 font-semibold">Architect (Claude):</span> Mimari plan oluşturur. Anthropic API zorunludur.</span></div>
+                                <div className="flex gap-2"><span className="shrink-0">💻</span><span><span className="text-slate-300 font-semibold">Coder:</span> {aiConfig.force_claude_coder ? 'Claude yazar (manuel seçim).' : 'GPT key varsa GPT, yoksa Claude yazar.'}</span></div>
+                                <div className="flex gap-2"><span className="shrink-0">🎮</span><span><span className="text-slate-300 font-semibold">Game Feel:</span> Sessizce denetler, düşük skorsa Coder tekrar yazar.</span></div>
+                              </>
+                            )}
+                            <div className="mt-2 pt-2 border-t border-amber-900/40 bg-amber-900/10 rounded-lg px-2 py-1.5">
+                              <p className="text-amber-400 font-semibold text-[10px] mb-0.5">⚠️ Token Kullanımı</p>
+                              <p className="text-slate-500">
+                                {appMode === 'analysis'
+                                  ? 'Her analiz isteği 4–5 ayrı AI çağrısı yapar. Tek ajan moduna kıyasla 4–5× daha fazla token harcar.'
+                                  : "Her üretim isteği 3–4 AI çağrısı yapar. Büyük sistemler 10'ar dosyalık batch'lere bölünür — her batch ayrı maliyet oluşturur."}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* TEK AJAN İÇERİĞİ */}
+                      {!aiConfig.use_multi_agent && (
                       <div className="max-h-[60vh] overflow-y-auto custom-scrollbar">
                         {/* YEREL BİLGİ BANKASI (KB) — Varsayılan Sistem */}
                         <div className="p-1">
@@ -1369,7 +1443,6 @@ export default function HomePage() {
                                 key={m.id}
                                 onClick={async () => {
                                   if (!hasKey) {
-                                    // Key yoksa settings'e yönlendir
                                     setAiConfig({ ...aiConfig, provider_type: m.provider, model_name: m.id });
                                     setIsModelDropdownOpen(false);
                                     setShowSettings(true);
@@ -1426,29 +1499,70 @@ export default function HomePage() {
                           )}
                         </div>
                       </div>
+                      )}
 
-                      {/* MULTI-AGENT TOGGLE (ONLY FOR ANTHROPIC) */}
-                      {aiConfig.provider_type === 'anthropic' && (
-                        <div className="px-3 py-2.5 border-t border-slate-800/80 bg-blue-900/10 flex items-center justify-between">
-                          <div>
-                            <p className="text-[11px] font-semibold text-blue-400">Multi-Agent Modu</p>
-                            <p className="text-[9px] text-slate-500 mt-0.5">Mimar + Uzman + Eleştirmen</p>
-                          </div>
-                          <label className="relative inline-flex items-center cursor-pointer">
-                            <input 
-                              type="checkbox" 
-                              className="sr-only" 
-                              checked={aiConfig.use_multi_agent}
-                              onChange={async (e) => {
-                                const newCfg = { ...aiConfig, use_multi_agent: e.target.checked };
-                                setAiConfig(newCfg);
-                                if (user) await axios.post(`${API}/save-ai-config`, { ...newCfg, user_id: user.id });
-                              }}
-                            />
-                            <div className={`w-9 h-5 rounded-full flex items-center transition-colors relative ${aiConfig.use_multi_agent ? 'bg-blue-500' : 'bg-slate-700'}`}>
-                              <div className={`absolute w-3.5 h-3.5 bg-white rounded-full transition-transform ${aiConfig.use_multi_agent ? 'translate-x-[18px]' : 'translate-x-[3px]'}`}></div>
+                      {/* MULTI-AGENT İÇERİĞİ */}
+                      {aiConfig.use_multi_agent && (
+                        <div className="p-3 space-y-2">
+                          {/* Anthropic — Zorunlu */}
+                          <div className={`flex items-center justify-between px-3 py-2.5 rounded-xl border ${providersWithKeys.includes('anthropic') ? 'border-emerald-800/50 bg-emerald-900/10' : 'border-red-800/50 bg-red-900/10'}`}>
+                            <div>
+                              <p className="text-[11px] font-semibold text-slate-300 flex items-center gap-1.5">
+                                <span>Anthropic</span>
+                                <span className="text-[9px] bg-red-500/20 text-red-400 px-1.5 py-0.5 rounded-full">Zorunlu</span>
+                              </p>
+                              <p className="text-[9px] text-slate-500 mt-0.5">Architect (Mimar) ajanı için</p>
                             </div>
-                          </label>
+                            {providersWithKeys.includes('anthropic') ? (
+                              <span className="text-[10px] text-emerald-400 font-semibold">✓ Kayıtlı</span>
+                            ) : (
+                              <button onClick={() => { setIsModelDropdownOpen(false); setShowSettings(true); }} className="text-[9px] text-red-400 hover:text-red-300 underline">Key Ekle</button>
+                            )}
+                          </div>
+
+                          {/* OpenRouter / OpenAI — Opsiyonel */}
+                          <div className={`flex items-center justify-between px-3 py-2.5 rounded-xl border ${(providersWithKeys.includes('openrouter') || providersWithKeys.includes('openai')) ? 'border-purple-800/50 bg-purple-900/10' : 'border-slate-800/50 bg-slate-900/20'}`}>
+                            <div>
+                              <p className="text-[11px] font-semibold text-slate-300 flex items-center gap-1.5">
+                                <span>OpenRouter / OpenAI</span>
+                                <span className="text-[9px] bg-slate-700 text-slate-400 px-1.5 py-0.5 rounded-full">Opsiyonel</span>
+                              </p>
+                              <p className="text-[9px] text-slate-500 mt-0.5">GPT ile kod üretimi için (biri yeterli)</p>
+                            </div>
+                            {(providersWithKeys.includes('openrouter') || providersWithKeys.includes('openai')) ? (
+                              <span className="text-[10px] text-purple-400 font-semibold">✓ Kayıtlı</span>
+                            ) : (
+                              <button onClick={() => { setIsModelDropdownOpen(false); setShowSettings(true); }} className="text-[9px] text-slate-500 hover:text-slate-300 underline">Key Ekle</button>
+                            )}
+                          </div>
+
+                          {/* Coder seçimi — sadece GPT key varsa göster */}
+                          {(providersWithKeys.includes('openrouter') || providersWithKeys.includes('openai')) && (
+                            <div className="flex items-center justify-between px-3 py-2 rounded-xl border border-slate-800/50 bg-slate-900/20">
+                              <div>
+                                <p className="text-[11px] font-semibold text-slate-300">Coder Ajanı</p>
+                                <p className="text-[9px] text-slate-500 mt-0.5">
+                                  {aiConfig.force_claude_coder ? '💜 Claude yazacak' : '🤖 GPT yazacak'}
+                                </p>
+                              </div>
+                              <label className="relative inline-flex items-center cursor-pointer" title="Aktif: GPT yazar · Kapalı: Claude yazar">
+                                <input
+                                  type="checkbox"
+                                  className="sr-only peer"
+                                  checked={!aiConfig.force_claude_coder}
+                                  onChange={async (e) => {
+                                    const newCfg = { ...aiConfig, force_claude_coder: !e.target.checked };
+                                    setAiConfig(newCfg);
+                                    if (user) await axios.post(`${API}/save-ai-config`, { ...newCfg, user_id: user.id });
+                                  }}
+                                />
+                                <div className="w-9 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-purple-600"></div>
+                              </label>
+                            </div>
+                          )}
+                          {!(providersWithKeys.includes('openrouter') || providersWithKeys.includes('openai')) && (
+                            <p className="text-[9px] text-slate-600 text-center px-2">💜 Coder: Claude kullanacak</p>
+                          )}
                         </div>
                       )}
 

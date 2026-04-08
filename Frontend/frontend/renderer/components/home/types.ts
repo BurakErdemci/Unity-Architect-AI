@@ -43,6 +43,7 @@ export interface AIConfig {
   api_key: string;
   model_name: string;
   use_multi_agent: boolean;
+  force_claude_coder: boolean;
   has_key?: boolean;
 }
 

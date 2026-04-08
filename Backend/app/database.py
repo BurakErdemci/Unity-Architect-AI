@@ -73,6 +73,10 @@ class DatabaseManager:
                 cursor.execute("ALTER TABLE ai_configs ADD COLUMN use_multi_agent INTEGER DEFAULT 1")
             except sqlite3.OperationalError:
                 pass # Sütun zaten var
+            try:
+                cursor.execute("ALTER TABLE ai_configs ADD COLUMN force_claude_coder INTEGER DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass # Sütun zaten var
             # Eski Geçmiş (geriye uyumluluk)
             cursor.execute('''CREATE TABLE IF NOT EXISTS history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, timestamp TEXT, title TEXT,
@@ -244,18 +248,18 @@ class DatabaseManager:
             return (new_user[0], new_user[1])
 
     # ===================== AI CONFIG =====================
-    def save_ai_config(self, user_id: int, p_type: str, m_name: str, key: str, use_multi_agent: bool = True) -> None:
+    def save_ai_config(self, user_id: int, p_type: str, m_name: str, key: str, use_multi_agent: bool = True, force_claude_coder: bool = False) -> None:
         with sqlite3.connect(self.db_path) as conn:
-            conn.execute('INSERT OR REPLACE INTO ai_configs (user_id, provider_type, model_name, api_key, use_multi_agent) VALUES (?, ?, ?, ?, ?)',
-                         (user_id, p_type, m_name, key, 1 if use_multi_agent else 0))
+            conn.execute('INSERT OR REPLACE INTO ai_configs (user_id, provider_type, model_name, api_key, use_multi_agent, force_claude_coder) VALUES (?, ?, ?, ?, ?, ?)',
+                         (user_id, p_type, m_name, key, 1 if use_multi_agent else 0, 1 if force_claude_coder else 0))
             conn.commit()
 
-    def get_ai_config(self, user_id: int) -> Tuple[str, str, str, bool]:
+    def get_ai_config(self, user_id: int) -> Tuple[str, str, str, bool, bool]:
         with sqlite3.connect(self.db_path) as conn:
-            res = conn.execute('SELECT provider_type, model_name, api_key, use_multi_agent FROM ai_configs WHERE user_id = ?', (user_id,)).fetchone()
+            res = conn.execute('SELECT provider_type, model_name, api_key, use_multi_agent, force_claude_coder FROM ai_configs WHERE user_id = ?', (user_id,)).fetchone()
             if res:
-                return (res[0], res[1], res[2], bool(res[3]))
-            return ("ollama", "qwen2.5-coder:7b", "", True)
+                return (res[0], res[1], res[2], bool(res[3]), bool(res[4]))
+            return ("ollama", "qwen2.5-coder:7b", "", True, False)
 
     # ===================== API KEY KASASI =====================
     def save_api_key(self, user_id: int, provider_type: str, api_key: str) -> None:
