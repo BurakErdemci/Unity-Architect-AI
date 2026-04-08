@@ -99,6 +99,24 @@ export default function HomePage() {
   const [aiConfig, setAiConfig] = useState<AIConfig>({
     provider_type: 'kb', api_key: '', model_name: 'unity-kb-v1', use_multi_agent: true, force_claude_coder: false
   });
+
+  // Aktif provider: multi-agent modda her zaman Claude (orchestrator), single-agent modda seçili provider
+  const effectiveProvider = aiConfig.use_multi_agent ? 'anthropic' : aiConfig.provider_type;
+
+  // Header'da gösterilecek model adı — provider ile uyumsuzsa "Model Seçin" göster
+  const displayModelName = (() => {
+    if (aiConfig.use_multi_agent) return 'Multi-Agent';
+    const name = aiConfig.model_name?.toLowerCase() || '';
+    const p = aiConfig.provider_type;
+    if (!name) return 'Model Seçin';
+    const isClaudeModel = name.includes('claude');
+    const isGptModel = name.includes('gpt') || name.startsWith('openai/');
+    const isGeminiModel = name.includes('gemini') || name.includes('google/');
+    if (isClaudeModel && p !== 'anthropic') return 'Model Seçin';
+    if (isGptModel && !['openai', 'openrouter'].includes(p)) return 'Model Seçin';
+    if (isGeminiModel && p !== 'google') return 'Model Seçin';
+    return aiConfig.model_name || 'Model Seçin';
+  })();
   const [availableModels, setAvailableModels] = useState<AvailableModels>({ local: [], cloud: [] });
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
   const [providersWithKeys, setProvidersWithKeys] = useState<string[]>([]);
@@ -1075,7 +1093,10 @@ export default function HomePage() {
             )}
           </div>
           <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1.5 bg-[#000000] border border-slate-800 rounded-lg px-3 py-1.5">
+            <div
+              className="flex items-center gap-1.5 bg-[#000000] border border-slate-800 rounded-lg px-3 py-1.5"
+              title="AI yanıt dili — kod editörünün dilini değil, yapay zekanın sana hangi dilde cevap vereceğini belirler"
+            >
               <Languages size={12} className="text-blue-500" />
               <select
                 value={lang}
@@ -1303,7 +1324,7 @@ export default function HomePage() {
         {/* Chat Header */}
         <div className="h-11 border-b border-slate-800/50 flex items-center justify-between px-4 min-w-[420px] shrink-0">
           <div className="flex items-center gap-2">
-            <ModelAvatar provider={aiConfig.provider_type} size={14} />
+            <ModelAvatar provider={effectiveProvider} size={14} />
             {/* MODEL SELECTOR DROPDOWN */}
             <div className="relative">
               <button
@@ -1312,7 +1333,7 @@ export default function HomePage() {
               >
                 <div className="flex flex-col">
                   <span className="text-[12px] font-semibold text-slate-300 leading-tight">
-                    {aiConfig.use_multi_agent ? 'Multi-Agent' : (aiConfig.model_name || 'Model Seçin')}
+                    {displayModelName}
                   </span>
                   <span className="text-[9px] text-slate-500 leading-tight capitalize">
                     {aiConfig.use_multi_agent ? 'Claude + GPT' : aiConfig.provider_type}
@@ -1615,7 +1636,7 @@ export default function HomePage() {
                   {msg.role === 'assistant' ? (
                     // AI Mesajı
                     <div className="flex gap-2.5 max-w-full">
-                      <ModelAvatar provider={aiConfig.provider_type} size={13} className="mt-0.5" />
+                      <ModelAvatar provider={effectiveProvider} size={13} className="mt-0.5" />
                       <div className="flex-1 min-w-0">
                         {/* Statik Bulgular */}
                         {msg.smells && msg.smells.length > 0 && (
@@ -1710,7 +1731,7 @@ export default function HomePage() {
               {/* Typing Indicator */}
               {loading && (
                 <div className="flex gap-2.5 chat-message-enter mb-6">
-                  <ModelAvatar provider={aiConfig.provider_type} size={13} />
+                  <ModelAvatar provider={effectiveProvider} size={13} />
                   <div className="flex-1 min-w-0">
                     {currentPlan.length > 0 && (
                       <div className="mb-4">

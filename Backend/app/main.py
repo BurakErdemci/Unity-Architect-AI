@@ -1,9 +1,12 @@
 import logging
 import os
 from pathlib import Path
+from dotenv import load_dotenv
+
+# .env'yi diğer modüller import edilmeden önce yükle
+load_dotenv(Path(__file__).parent.parent / ".env")
 
 import uvicorn
-from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -20,8 +23,6 @@ from routes import (
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-load_dotenv(Path(__file__).parent.parent / ".env")
 
 
 def _resolve_db_path() -> str:

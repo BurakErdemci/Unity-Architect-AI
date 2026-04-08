@@ -38,7 +38,7 @@ def _is_batch_continuation_msg(msg: str) -> bool:
     msg_lower = msg.strip().lower()
     if len(msg_lower) > 150:
         return False
-    triggers = ["devam", "continue", "evet", "tamam", "kalan", "yaz", "sonraki", "next"]
+    triggers = ["devam et", "continue", "kalan dosyaları", "sonraki dosyaları", "next batch"]
     return any(t in msg_lower for t in triggers)
 
 

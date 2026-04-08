@@ -236,6 +236,29 @@ async function startPythonBackend() {
   pyBackendProcess.on('exit', (code) => {
     console.log(`--- BACKEND KAPANDI (exit code: ${code}) ---`);
   });
+
+  // Backend ayağa kalkana kadar bekle (max 30 saniye)
+  await waitForBackend(30000)
+}
+
+async function waitForBackend(timeoutMs: number): Promise<void> {
+  const interval = 500
+  const maxAttempts = timeoutMs / interval
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      await axios.get('http://127.0.0.1:8000/')
+      console.log(`--- BACKEND HAZIR (${(i * interval / 1000).toFixed(1)}s) ---`)
+      return
+    } catch (err: any) {
+      if (err.response) {
+        // Sunucu cevap verdi (404/500 olsa da ayakta)
+        console.log(`--- BACKEND HAZIR (${(i * interval / 1000).toFixed(1)}s) ---`)
+        return
+      }
+    }
+    await new Promise(resolve => setTimeout(resolve, interval))
+  }
+  console.warn('--- BACKEND 30s içinde hazır olmadı, devam ediliyor ---')
 }
 
 // --- TEK INSTANCE KİLİDİ (Nextron çift restart'ı önler) ---

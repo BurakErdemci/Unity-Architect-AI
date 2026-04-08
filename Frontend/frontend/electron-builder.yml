@@ -16,10 +16,11 @@ extraResources:
       - "app/**/*"
       - "venv/**/*"
       - "requirements.txt"
-      - ".env"
       - "!**/__pycache__/**"
       - "!**/*.pyc"
       - "!**/.git/**"
+  - from: ../../Backend/.env
+    to: Backend/.env
 mac:
   category: public.app-category.developer-tools
   target:

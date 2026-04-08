@@ -4,6 +4,18 @@ import { AnimatePresence, motion } from "framer-motion";
 import { AIConfig } from "./types";
 
 
+const DEFAULT_MODELS: Record<string, string> = {
+  anthropic: "claude-sonnet-4-6",
+  openai: "gpt-5.4",
+  openrouter: "openai/gpt-5.4",
+  google: "gemini-2.5-flash",
+  groq: "llama-3.3-70b-versatile",
+  deepseek: "deepseek-chat",
+  ollama: "qwen2.5-coder:7b",
+  kb: "unity-kb-v1",
+};
+
+
 interface SettingsModalProps {
   open: boolean;
   aiConfig: AIConfig;
@@ -48,7 +60,7 @@ export const SettingsModal = ({
               <select
                 style={{ backgroundColor: '#000000', color: 'white' }}
                 value={aiConfig.provider_type}
-                onChange={e => onChange({ ...aiConfig, provider_type: e.target.value, api_key: '' })}
+                onChange={e => onChange({ ...aiConfig, provider_type: e.target.value, api_key: '', model_name: DEFAULT_MODELS[e.target.value] || '' })}
                 className="w-full bg-[#000000] border border-slate-800 rounded-xl p-3 text-white text-sm outline-none focus:border-blue-500 transition-colors"
               >
                 <option value="groq">Groq (Bulut)</option>
@@ -87,13 +99,7 @@ export const SettingsModal = ({
                   value={aiConfig.model_name}
                   onChange={e => onChange({ ...aiConfig, model_name: e.target.value })}
                   className="w-full bg-[#000000] border border-slate-800 rounded-xl p-3 text-white text-sm outline-none focus:border-blue-500 transition-colors"
-                  placeholder={
-                    aiConfig.provider_type === "anthropic" ? "claude-sonnet-4-6" :
-                    aiConfig.provider_type === "ollama" ? "qwen2.5-coder:7b" :
-                    aiConfig.provider_type === "google" ? "gemini-2.5-flash" :
-                    aiConfig.provider_type === "openai" ? "gpt-5.4-mini" :
-                    aiConfig.provider_type === "openrouter" ? "openai/gpt-5.4-mini" : "llama-3.3-70b-versatile"
-                  }
+                  placeholder={DEFAULT_MODELS[aiConfig.provider_type] || "model-adı-girin"}
                 />
               </div>
             )}
@@ -107,7 +113,11 @@ export const SettingsModal = ({
                   type="checkbox"
                   className="sr-only peer"
                   checked={aiConfig.use_multi_agent}
-                  onChange={(e) => onChange({ ...aiConfig, use_multi_agent: e.target.checked })}
+                  onChange={(e) => onChange({
+                    ...aiConfig,
+                    use_multi_agent: e.target.checked,
+                    ...(e.target.checked ? { provider_type: 'anthropic' } : {})
+                  })}
                 />
                 <div className="w-9 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
               </label>

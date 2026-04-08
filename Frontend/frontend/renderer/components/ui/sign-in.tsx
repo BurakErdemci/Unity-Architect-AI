@@ -39,7 +39,6 @@ interface SignInPageProps {
   onSignIn?: (event: React.FormEvent<HTMLFormElement>) => void;
   onGoogleSignIn?: () => void;
   onGitHubSignIn?: () => void;
-  onResetPassword?: () => void;
   onToggleMode?: () => void;
 }
 
@@ -74,7 +73,6 @@ export const SignInPage: React.FC<SignInPageProps> = ({
   onSignIn,
   onGoogleSignIn,
   onGitHubSignIn,
-  onResetPassword,
   onToggleMode,
 }) => {
   const [showPassword, setShowPassword] = useState(false);
@@ -113,12 +111,11 @@ export const SignInPage: React.FC<SignInPageProps> = ({
                 </GlassInputWrapper>
               </div>
 
-              <div className="animate-element animate-delay-500 flex items-center justify-between text-sm">
+              <div className="animate-element animate-delay-500 flex items-center text-sm">
                 <label className="flex items-center gap-3 cursor-pointer">
                   <input type="checkbox" name="rememberMe" className="custom-checkbox" />
                   <span className="text-foreground/90">Beni hatırla</span>
                 </label>
-                <a href="#" onClick={(e) => { e.preventDefault(); onResetPassword?.(); }} className="hover:underline text-violet-400 transition-colors">Şifremi sıfırla</a>
               </div>
 
               <button type="submit" className="animate-element animate-delay-600 w-full rounded-2xl bg-[#0a0a0a] border border-slate-800 py-4 font-bold text-slate-300 hover:text-white hover:border-violet-500/60 hover:bg-violet-500/10 hover:shadow-[0_0_25px_-5px_rgba(139,92,246,0.4)] transition-all duration-300 active:scale-[0.98]">

@@ -4,10 +4,7 @@ import { useEffect, useRef, useCallback, useTransition } from "react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 import {
-    ImageIcon,
     FileUp,
-    Figma,
-    MonitorIcon,
     CircleUserRound,
     ArrowUpIcon,
     Paperclip,
@@ -15,7 +12,6 @@ import {
     SendIcon,
     XIcon,
     LoaderIcon,
-    Sparkles,
     Command,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -173,12 +169,7 @@ export function AnimatedChatInput({
         }
     }, [value]);
 
-    const commandSuggestions: CommandSuggestion[] = [
-        { icon: <ImageIcon className="w-4 h-4" />, label: "Clone UI", description: "Generate a UI from a screenshot", prefix: "/clone" },
-        { icon: <Figma className="w-4 h-4" />, label: "Import Figma", description: "Import a design from Figma", prefix: "/figma" },
-        { icon: <MonitorIcon className="w-4 h-4" />, label: "Create Page", description: "Generate a new web page", prefix: "/page" },
-        { icon: <Sparkles className="w-4 h-4" />, label: "Improve", description: "Improve existing UI design", prefix: "/improve" },
-    ];
+    const commandSuggestions: CommandSuggestion[] = [];
 
     useEffect(() => {
         if (internalValue.startsWith('/') && !internalValue.includes(' ')) {
