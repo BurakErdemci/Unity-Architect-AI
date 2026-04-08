@@ -2,9 +2,9 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# System deps for bcrypt/cryptography
+# System deps for bcrypt/cryptography/grpcio
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc libffi-dev && \
+    gcc g++ libffi-dev libssl-dev && \
     rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
