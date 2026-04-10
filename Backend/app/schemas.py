@@ -47,6 +47,7 @@ class ChatRequest(BaseModel):
     user_id: int
     mode: str = "analysis"
     use_kb: bool = True
+    use_or_for_coder: bool = False
 
 
 class WorkspaceRequest(BaseModel):

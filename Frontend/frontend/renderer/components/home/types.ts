@@ -2,6 +2,8 @@ export interface ModelInfo {
   id: string;
   name: string;
   provider: string;
+  openrouter_id?: string;
+  paid?: boolean;
 }
 
 export interface AvailableModels {

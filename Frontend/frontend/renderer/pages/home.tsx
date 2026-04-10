@@ -103,24 +103,41 @@ export default function HomePage() {
   // Aktif provider: multi-agent modda her zaman Claude (orchestrator), single-agent modda seçili provider
   const effectiveProvider = aiConfig.use_multi_agent ? 'anthropic' : aiConfig.provider_type;
 
-  // Header'da gösterilecek model adı — provider ile uyumsuzsa "Model Seçin" göster
-  const displayModelName = (() => {
-    if (aiConfig.use_multi_agent) return 'Multi-Agent';
-    const name = aiConfig.model_name?.toLowerCase() || '';
-    const p = aiConfig.provider_type;
-    if (!name) return 'Model Seçin';
-    const isClaudeModel = name.includes('claude');
-    const isGptModel = name.includes('gpt') || name.startsWith('openai/');
-    const isGeminiModel = name.includes('gemini') || name.includes('google/');
-    if (isClaudeModel && p !== 'anthropic') return 'Model Seçin';
-    if (isGptModel && !['openai', 'openrouter'].includes(p)) return 'Model Seçin';
-    if (isGeminiModel && p !== 'google') return 'Model Seçin';
-    return aiConfig.model_name || 'Model Seçin';
-  })();
   const [availableModels, setAvailableModels] = useState<AvailableModels>({ local: [], cloud: [] });
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
+  // Her model için ayrı OpenRouter modu: { [modelId]: true/false }
+  const [modelOrToggles, setModelOrToggles] = useState<Record<string, boolean>>({});
   const [providersWithKeys, setProvidersWithKeys] = useState<string[]>([]);
+
+  // Multi-agent'ta Anthropic için kullanılacak gerçek Claude modeli
+  // (aiConfig.model_name GPT gibi yanlış bir değer tutabilir — claude içermiyorsa opus'a düşer)
+  const claudeModelForMA = aiConfig.model_name?.includes('claude')
+    ? aiConfig.model_name
+    : 'claude-opus-4-6';
+
+  // Multi-agent'ta kodlama için hangi provider kullanılıyor
+  // GPT-5.4'te OR toggle açıksa OpenRouter tercih edilir; kapalıysa OpenAI native öncelikli
+  const gpt54OrToggled = modelOrToggles['gpt-5.4'] ?? false;
+  const maCoderProvider =
+    gpt54OrToggled && providersWithKeys.includes('openrouter') ? 'openrouter'
+    : providersWithKeys.includes('openai') ? 'openai'
+    : providersWithKeys.includes('openrouter') ? 'openrouter'
+    : null;
   const [showMultiAgentInfo, setShowMultiAgentInfo] = useState(false);
+
+  // Header'da gösterilecek model adı — yüklü model listesinden isim arar, bulamazsa ID gösterir
+  const displayModelName = (() => {
+    if (aiConfig.use_multi_agent) return 'Multi-Agent';
+    if (!aiConfig.model_name) return 'Model Seçin';
+    const found = availableModels.cloud.find(m =>
+      m.id === aiConfig.model_name || m.openrouter_id === aiConfig.model_name
+    );
+    if (found) return found.name;
+    // Fallback: openrouter prefix'ini sil (openai/gpt-5.4 → gpt-5.4)
+    const name = aiConfig.model_name;
+    if (name.includes('/')) return name.split('/').slice(1).join('/');
+    return name;
+  })();
 
   // --- EDITING ---
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -697,7 +714,8 @@ export default function HomePage() {
         language: lang,
         user_id: user.id,
         mode: appMode,
-        use_kb: aiConfig.provider_type === 'kb'
+        use_kb: aiConfig.provider_type === 'kb',
+        use_or_for_coder: gpt54OrToggled,
       }, { timeout: 900000 }); // 900 saniye timeout (backend limiti ile eşleştirildi)
 
       clearInterval(progressInterval);
@@ -874,6 +892,16 @@ export default function HomePage() {
         onLogout={() => {
           setShowSettings(false);
           handleLogout();
+        }}
+        onDeleteKey={async (provider) => {
+          if (!window.confirm(`"${provider}" API key'i silmek istediğinize emin misiniz?\n\nBu işlem geri alınamaz.`)) return;
+          try {
+            await axios.delete(`${API}/api-keys/${user.id}/${provider}`);
+            await fetchProvidersWithKeys(user.id);
+            setAiConfig(prev => ({ ...prev, api_key: '' }));
+          } catch (err) {
+            alert('Key silinirken bir hata oluştu.');
+          }
         }}
       />
 
@@ -1328,7 +1356,17 @@ export default function HomePage() {
             {/* MODEL SELECTOR DROPDOWN */}
             <div className="relative">
               <button
-                onClick={() => { setIsModelDropdownOpen(!isModelDropdownOpen); if (!isModelDropdownOpen) fetchAvailableModels(); }}
+                onClick={() => {
+                  const opening = !isModelDropdownOpen;
+                  setIsModelDropdownOpen(opening);
+                  if (opening) {
+                    fetchAvailableModels();
+                    // Mevcut seçili model OpenRouter üzerinden çalışıyorsa o modelin toggle'ını aç
+                    if (aiConfig.provider_type === 'openrouter') {
+                      setModelOrToggles(prev => ({ ...prev, [aiConfig.model_name]: true }));
+                    }
+                  }
+                }}
                 className="flex items-center gap-1.5 hover:bg-slate-800 px-2 py-1 rounded transition-all text-left"
               >
                 <div className="flex flex-col">
@@ -1397,11 +1435,30 @@ export default function HomePage() {
                           <p className="text-[11px] font-bold text-blue-400 mb-2">
                             {appMode === 'analysis' ? '🔍 Kod Analizi — Multi-Agent' : '✨ Sıfırdan Üretim — Multi-Agent'}
                           </p>
+                          {/* Model özeti */}
+                          <div className="mb-2 px-2 py-1.5 rounded-lg bg-slate-900/60 border border-slate-800/60 flex flex-col gap-0.5">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[9px] text-slate-500">Mimar / Orkestratör</span>
+                              <span className="text-[9px] font-mono text-orange-400">{claudeModelForMA}</span>
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <span className="text-[9px] text-slate-500">Kodlama Ajanı</span>
+                              <span className={`text-[9px] font-mono ${aiConfig.force_claude_coder || !maCoderProvider ? 'text-orange-400' : maCoderProvider === 'openrouter' ? 'text-purple-400' : 'text-emerald-400'}`}>
+                                {aiConfig.force_claude_coder
+                                  ? claudeModelForMA
+                                  : maCoderProvider === 'openrouter'
+                                    ? 'openai/gpt-5.4 (OR)'
+                                    : maCoderProvider === 'openai'
+                                      ? 'gpt-5.4 (OpenAI)'
+                                      : claudeModelForMA}
+                              </span>
+                            </div>
+                          </div>
                           <div className="space-y-1.5 text-[10px] text-slate-400">
                             {appMode === 'analysis' ? (
                               <>
                                 <div className="flex gap-2"><span className="shrink-0">🎯</span><span><span className="text-slate-300 font-semibold">Orchestrator:</span> Kodu inceler, düzeltme planı çıkarır.</span></div>
-                                <div className="flex gap-2"><span className="shrink-0">🔧</span><span><span className="text-slate-300 font-semibold">Unity Expert:</span> {aiConfig.force_claude_coder ? 'Claude kodu yeniden yazar.' : 'GPT key varsa GPT teknik kodu yazar.'}</span></div>
+                                <div className="flex gap-2"><span className="shrink-0">🔧</span><span><span className="text-slate-300 font-semibold">Unity Expert:</span> {aiConfig.force_claude_coder ? 'Claude kodu yeniden yazar.' : 'GPT key varsa GPT, yoksa Claude yazar.'}</span></div>
                                 <div className="flex gap-2"><span className="shrink-0">⚖️</span><span><span className="text-slate-300 font-semibold">Critic:</span> {aiConfig.force_claude_coder ? 'Claude' : 'GPT'} teknik kaliteyi puanlar.</span></div>
                                 <div className="flex gap-2"><span className="shrink-0">🎮</span><span><span className="text-slate-300 font-semibold">Game Feel:</span> Claude oyun hissiyatını değerlendirir.</span></div>
                                 <div className="flex gap-2"><span className="shrink-0">🔁</span><span><span className="text-slate-300 font-semibold">Reflexive Loop:</span> Skor 8/10 altındaysa Expert otomatik yeniden yazar.</span></div>
@@ -1409,7 +1466,7 @@ export default function HomePage() {
                             ) : (
                               <>
                                 <div className="flex gap-2"><span className="shrink-0">🚦</span><span><span className="text-slate-300 font-semibold">Clarification Gate:</span> İstek muğlaksa soru sorar, sonra başlar.</span></div>
-                                <div className="flex gap-2"><span className="shrink-0">🏗️</span><span><span className="text-slate-300 font-semibold">Architect (Claude):</span> Mimari plan oluşturur. Anthropic API zorunludur.</span></div>
+                                <div className="flex gap-2"><span className="shrink-0">🏗️</span><span><span className="text-slate-300 font-semibold">Architect:</span> Mimari plan oluşturur. Anthropic API zorunludur.</span></div>
                                 <div className="flex gap-2"><span className="shrink-0">💻</span><span><span className="text-slate-300 font-semibold">Coder:</span> {aiConfig.force_claude_coder ? 'Claude yazar (manuel seçim).' : 'GPT key varsa GPT, yoksa Claude yazar.'}</span></div>
                                 <div className="flex gap-2"><span className="shrink-0">🎮</span><span><span className="text-slate-300 font-semibold">Game Feel:</span> Sessizce denetler, düşük skorsa Coder tekrar yazar.</span></div>
                               </>
@@ -1458,36 +1515,74 @@ export default function HomePage() {
                               <Sparkles size={10} /> Bulut API Modelleri
                             </div>
                             {availableModels.cloud.map(m => {
-                              const hasKey = providersWithKeys.includes(m.provider);
+                              // OpenRouter-only model (ör. Kimi): her zaman openrouter kullanır
+                              const isOrOnly = m.provider === 'openrouter' && !m.openrouter_id;
+                              const orToggle = isOrOnly ? true : (modelOrToggles[m.id] ?? false);
+                              const effectiveModelId = (orToggle && m.openrouter_id) ? m.openrouter_id : m.id;
+                              const effectiveProvider = (orToggle && m.openrouter_id) ? 'openrouter' : m.provider;
+                              const hasKey = providersWithKeys.includes(effectiveProvider);
+                              const isActive = aiConfig.model_name === effectiveModelId || aiConfig.model_name === m.id;
                               return (
-                              <button
-                                key={m.id}
-                                onClick={async () => {
-                                  if (!hasKey) {
-                                    setAiConfig({ ...aiConfig, provider_type: m.provider, model_name: m.id });
+                              <div key={m.id} className={`flex items-center gap-1 rounded-lg transition-colors hover:bg-blue-600/10 ${isActive ? 'bg-blue-600/10' : ''}`}>
+                                {/* Model seçim butonu */}
+                                <button
+                                  onClick={async () => {
+                                    if (!hasKey) {
+                                      setAiConfig({ ...aiConfig, provider_type: effectiveProvider, model_name: effectiveModelId });
+                                      setIsModelDropdownOpen(false);
+                                      setShowSettings(true);
+                                      const keyLabel = orToggle ? 'OpenRouter' : m.provider.charAt(0).toUpperCase() + m.provider.slice(1);
+                                      alert(`⚠️ ${keyLabel} için API key girilmedi.\nLütfen Ayarlar'dan API key'inizi girin.`);
+                                      return;
+                                    }
+                                    const newCfg = { ...aiConfig, provider_type: effectiveProvider, model_name: effectiveModelId };
+                                    setAiConfig(newCfg);
                                     setIsModelDropdownOpen(false);
-                                    setShowSettings(true);
-                                    alert(`⚠️ ${m.provider.charAt(0).toUpperCase() + m.provider.slice(1)} için API key girilmedi.\nLütfen Ayarlar'dan API key'inizi girin.`);
-                                    return;
-                                  }
-                                  const newCfg = { ...aiConfig, provider_type: m.provider, model_name: m.id };
-                                  setAiConfig(newCfg);
-                                  setIsModelDropdownOpen(false);
-                                  if (user) await axios.post(`${API}/save-ai-config`, { ...newCfg, user_id: user.id });
-                                }}
-                                className={`w-full text-left px-3 py-2 text-[12px] flex items-center justify-between hover:bg-blue-600/10 rounded-lg transition-colors
-                                  ${aiConfig.model_name === m.id ? 'bg-blue-600/10 text-blue-400' : 'text-slate-300'}`}
-                              >
-                                <div className="flex flex-col">
-                                  <span className="font-medium">{m.name}</span>
-                                  <span className="text-[10px] text-slate-500 capitalize">{m.provider}</span>
-                                </div>
-                                {hasKey ? (
-                                  <span className="text-[9px] bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded-full">Key ✓</span>
-                                ) : (
-                                  <span className="text-[9px] bg-amber-500/20 text-amber-400 px-1.5 py-0.5 rounded-full">Key Yok</span>
+                                    if (user) await axios.post(`${API}/save-ai-config`, { ...newCfg, user_id: user.id });
+                                  }}
+                                  className={`flex-1 text-left px-3 py-2 text-[12px] flex items-center justify-between ${isActive ? 'text-blue-400' : 'text-slate-300'}`}
+                                >
+                                  <div className="flex flex-col">
+                                    <span className="font-medium flex items-center gap-1">
+                                      {m.name}
+                                      {m.paid && (
+                                        <span className="text-[8px] font-bold px-1 py-0.5 rounded bg-amber-500/15 text-amber-400 border border-amber-500/30">
+                                          Pro
+                                        </span>
+                                      )}
+                                    </span>
+                                    <span className={`text-[10px] capitalize ${orToggle ? 'text-purple-500' : m.paid && !orToggle ? 'text-amber-600' : 'text-slate-500'}`}>
+                                      {orToggle ? 'via OpenRouter' : m.paid ? 'ücretli — OR önerilir' : m.provider}
+                                    </span>
+                                  </div>
+                                  {hasKey ? (
+                                    <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${orToggle ? 'bg-purple-500/20 text-purple-400' : 'bg-emerald-500/20 text-emerald-400'}`}>
+                                      {orToggle ? 'OR ✓' : 'Key ✓'}
+                                    </span>
+                                  ) : (
+                                    <span className="text-[9px] bg-amber-500/20 text-amber-400 px-1.5 py-0.5 rounded-full">Key Yok</span>
+                                  )}
+                                </button>
+                                {/* OR toggle — sadece openrouter_id olan modellerde göster */}
+                                {m.openrouter_id && (
+                                  <button
+                                    onClick={e => {
+                                      e.stopPropagation();
+                                      setModelOrToggles(prev => ({ ...prev, [m.id]: !prev[m.id] }));
+                                    }}
+                                    title={orToggle ? 'Native API\'ye geç' : m.paid ? 'OpenRouter önerilir — free tier\'da mevcut değil' : 'OpenRouter üzerinden kullan'}
+                                    className={`mr-2 shrink-0 text-[8px] font-bold px-1.5 py-0.5 rounded border transition-colors ${
+                                      orToggle
+                                        ? 'border-purple-500/60 text-purple-400 bg-purple-500/15'
+                                        : m.paid
+                                          ? 'border-amber-600/50 text-amber-600 hover:text-amber-400 hover:border-amber-500/60'
+                                          : 'border-slate-700 text-slate-600 hover:text-slate-400 hover:border-slate-600'
+                                    }`}
+                                  >
+                                    OR
+                                  </button>
                                 )}
-                              </button>
+                              </div>
                               );
                             })}
                           </div>
@@ -1532,7 +1627,10 @@ export default function HomePage() {
                                 <span>Anthropic</span>
                                 <span className="text-[9px] bg-red-500/20 text-red-400 px-1.5 py-0.5 rounded-full">Zorunlu</span>
                               </p>
-                              <p className="text-[9px] text-slate-500 mt-0.5">Architect (Mimar) ajanı için</p>
+                              <p className="text-[9px] text-slate-500 mt-0.5">
+                                Architect, Orchestrator, Game Feel
+                                <span className="ml-1 font-mono text-orange-400/70">{claudeModelForMA}</span>
+                              </p>
                             </div>
                             {providersWithKeys.includes('anthropic') ? (
                               <span className="text-[10px] text-emerald-400 font-semibold">✓ Kayıtlı</span>
@@ -1542,16 +1640,29 @@ export default function HomePage() {
                           </div>
 
                           {/* OpenRouter / OpenAI — Opsiyonel */}
-                          <div className={`flex items-center justify-between px-3 py-2.5 rounded-xl border ${(providersWithKeys.includes('openrouter') || providersWithKeys.includes('openai')) ? 'border-purple-800/50 bg-purple-900/10' : 'border-slate-800/50 bg-slate-900/20'}`}>
+                          <div className={`flex items-center justify-between px-3 py-2.5 rounded-xl border ${
+                            maCoderProvider === 'openrouter' ? 'border-purple-800/50 bg-purple-900/10'
+                            : maCoderProvider === 'openai'   ? 'border-emerald-800/50 bg-emerald-900/10'
+                            : 'border-slate-800/50 bg-slate-900/20'
+                          }`}>
                             <div>
                               <p className="text-[11px] font-semibold text-slate-300 flex items-center gap-1.5">
                                 <span>OpenRouter / OpenAI</span>
                                 <span className="text-[9px] bg-slate-700 text-slate-400 px-1.5 py-0.5 rounded-full">Opsiyonel</span>
                               </p>
-                              <p className="text-[9px] text-slate-500 mt-0.5">GPT ile kod üretimi için (biri yeterli)</p>
+                              <p className="text-[9px] text-slate-500 mt-0.5">
+                                Expert, Critic —{' '}
+                                {maCoderProvider === 'openrouter'
+                                  ? <span className="font-mono text-purple-400/80">openai/gpt-5.4 via OpenRouter</span>
+                                  : maCoderProvider === 'openai'
+                                    ? <span className="font-mono text-emerald-400/80">gpt-5.4 via OpenAI</span>
+                                    : <span className="text-slate-600">key yok, Claude kullanılacak</span>}
+                              </p>
                             </div>
-                            {(providersWithKeys.includes('openrouter') || providersWithKeys.includes('openai')) ? (
-                              <span className="text-[10px] text-purple-400 font-semibold">✓ Kayıtlı</span>
+                            {maCoderProvider === 'openrouter' ? (
+                              <span className="text-[10px] text-purple-400 font-semibold">OpenRouter key seçili</span>
+                            ) : maCoderProvider === 'openai' ? (
+                              <span className="text-[10px] text-emerald-400 font-semibold">OpenAI key seçili</span>
                             ) : (
                               <button onClick={() => { setIsModelDropdownOpen(false); setShowSettings(true); }} className="text-[9px] text-slate-500 hover:text-slate-300 underline">Key Ekle</button>
                             )}

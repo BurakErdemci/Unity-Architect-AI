@@ -12,7 +12,6 @@ import {
     SendIcon,
     XIcon,
     LoaderIcon,
-    Command,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import * as React from "react"
@@ -310,9 +309,7 @@ export function AnimatedChatInput({
                         <Paperclip className="w-3.5 h-3.5" />
                         {includeEditorCode && <span className="text-[10px] font-semibold tracking-wider">KOD EKLENİYOR</span>}
                     </button>
-                    <button type="button" onClick={() => setShowCommandPalette(prev => !prev)} className={cn("p-2 text-white/40 hover:text-white/90 rounded-lg transition-colors border border-transparent", showCommandPalette && "bg-white/10 text-white/90 border-white/10")}>
-                        <Command className="w-3.5 h-3.5" />
-                    </button>
+
                 </div>
                 
                 <button type="button" onClick={handleSendMessage} disabled={isLoading || !internalValue.trim()} className={cn("px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5", internalValue.trim() ? "bg-white text-[#0A0A0B]" : "bg-white/[0.05] text-white/40")}>

@@ -20,16 +20,24 @@ class GeminiProvider(AIProvider):
         genai.configure(api_key=api_key)
         
         # --- AKILLI İSİM DÜZELTİCİ ---
-        # 404 hatalarını önlemek için alternatif isimleri deniyoruz
+        # 404 hatalarını önlemek için doğru API isimlerine eşliyoruz
         raw_name = model_name.lower() if model_name else ""
-        if "2.5-flash" in raw_name:
+        if "3.1-pro" in raw_name:
+            self.model_id = "gemini-3.1-pro-preview"
+        elif "3.1-flash-lite" in raw_name:
+            self.model_id = "gemini-3.1-flash-lite-preview"
+        elif "3-flash" in raw_name or "3.0-flash" in raw_name:
+            self.model_id = "gemini-3-flash-preview"
+        elif "2.5-pro" in raw_name:
+            self.model_id = "gemini-2.5-pro"
+        elif "2.5-flash-lite" in raw_name:
+            self.model_id = "gemini-2.5-flash-lite"
+        elif "2.5-flash" in raw_name:
             self.model_id = "gemini-2.5-flash"
         elif "1.5-flash" in raw_name:
             self.model_id = "gemini-1.5-flash"
         elif "2.0-flash" in raw_name or "2-flash" in raw_name:
             self.model_id = "gemini-2.5-flash"  # 2.0-flash kotası 0, 2.5'e yönlendir
-        elif "3-flash" in raw_name:
-            self.model_id = "gemini-3-flash-preview"
         else:
             self.model_id = model_name if model_name else "gemini-2.5-flash"
 
@@ -90,7 +98,7 @@ class AnthropicProvider(AIProvider):
         elif "opus-4-6" in raw_name or "opus" in raw_name:
             self.model_name = "claude-opus-4-6"
         elif "haiku" in raw_name:
-            self.model_name = "claude-haiku-4-6"
+            self.model_name = "claude-haiku-4-5"
         else:
             self.model_name = "claude-sonnet-4-6"
 
@@ -153,11 +161,13 @@ class AIProviderManager:
             return OpenAICompatibleProvider(api_key=api_key, base_url="https://api.groq.com/openai/v1", model_name=m_name or DEFAULT_GROQ_MODEL)
         elif p_type == "openrouter" and api_key:
             return OpenAICompatibleProvider(api_key=api_key, base_url="https://openrouter.ai/api/v1", model_name=m_name or "openai/gpt-4.1")
+        elif p_type == "moonshot" and api_key:
+            return OpenAICompatibleProvider(api_key=api_key, base_url="https://api.moonshot.cn/v1", model_name=m_name or "kimi-k2")
         elif p_type == "ollama":
             return OllamaProvider(model_name=m_name)
         
         # API key gerektiren provider seçilmiş ama key yoksa → hata fırlat
-        cloud_providers = ("anthropic", "google", "openai", "deepseek", "groq", "openrouter")
+        cloud_providers = ("anthropic", "google", "openai", "deepseek", "groq", "openrouter", "moonshot")
         if p_type in cloud_providers and not api_key:
             raise ValueError(
                 f"⚠️ {p_type.capitalize()} için API key girilmedi. "

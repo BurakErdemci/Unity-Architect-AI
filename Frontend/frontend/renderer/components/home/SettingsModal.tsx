@@ -1,16 +1,17 @@
-import { LogOut, Settings, X } from "lucide-react";
+import { LogOut, Settings, Trash2, X } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 
 import { AIConfig } from "./types";
 
 
 const DEFAULT_MODELS: Record<string, string> = {
-  anthropic: "claude-sonnet-4-6",
+  anthropic: "claude-sonnet-4-6",  // Haiku: claude-haiku-4-5, Opus: claude-opus-4-6
   openai: "gpt-5.4",
-  openrouter: "openai/gpt-5.4",
+  openrouter: "moonshotai/kimi-k2",
   google: "gemini-2.5-flash",
   groq: "llama-3.3-70b-versatile",
   deepseek: "deepseek-chat",
+  moonshot: "kimi-k2",
   ollama: "qwen2.5-coder:7b",
   kb: "unity-kb-v1",
 };
@@ -24,6 +25,7 @@ interface SettingsModalProps {
   onClose: () => void;
   onSave: () => Promise<void>;
   onLogout: () => void;
+  onDeleteKey: (provider: string) => Promise<void>;
 }
 
 
@@ -35,6 +37,7 @@ export const SettingsModal = ({
   onClose,
   onSave,
   onLogout,
+  onDeleteKey,
 }: SettingsModalProps) => (
   <AnimatePresence>
     {open && (
@@ -70,7 +73,8 @@ export const SettingsModal = ({
                 <option value="google">Google Gemini (Bulut)</option>
                 <option value="openai">OpenAI (Bulut)</option>
                 <option value="deepseek">DeepSeek (Reasoning)</option>
-                <option value="openrouter">OpenRouter (Kimi, vb.)</option>
+                <option value="moonshot">Moonshot (Kimi)</option>
+                <option value="openrouter">OpenRouter (Çoklu Model)</option>
               </select>
             </div>
             {aiConfig.provider_type !== 'ollama' && aiConfig.provider_type !== 'kb' && (
@@ -89,6 +93,14 @@ export const SettingsModal = ({
                   className="w-full bg-[#000000] border border-slate-800 rounded-xl p-3 text-white text-sm outline-none focus:border-blue-500 transition-colors"
                   placeholder={providersWithKeys.includes(aiConfig.provider_type) ? "Kayıtlı key kullanılacak (değiştirmek için yeni key girin)" : "API key girin..."}
                 />
+                {providersWithKeys.includes(aiConfig.provider_type) && !aiConfig.api_key && (
+                  <button
+                    onClick={() => onDeleteKey(aiConfig.provider_type)}
+                    className="mt-2 flex items-center gap-1.5 text-[11px] text-red-500/70 hover:text-red-400 transition-colors"
+                  >
+                    <Trash2 size={12} /> API Key Sil
+                  </button>
+                )}
               </div>
             )}
             {aiConfig.provider_type !== 'kb' && (

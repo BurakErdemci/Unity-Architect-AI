@@ -166,12 +166,14 @@ def create_conversation_router(db, kb, progress_store):
             return {"role": "assistant", "content": error_msg, "intent": "ERROR", "static_results": {"smells": []}, "pipeline": None}
 
         # Hybrid provider: Anthropic planlama/mimari yapar, GPT kod yazar
+        # use_or_for_coder=True ise OR tercih edilir, yoksa OpenAI native öncelikli
         coding_provider = None
         coding_provider_type = provider_type
         if provider_type == "anthropic" and not force_claude_coder:
-            _or_key = db.get_api_key(user_id, "openrouter") or ""
             _oa_key = db.get_api_key(user_id, "openai") or ""
-            if _or_key:
+            _or_key = db.get_api_key(user_id, "openrouter") or ""
+            prefer_or = request.use_or_for_coder and bool(_or_key)
+            if prefer_or:
                 _or_model = "openai/gpt-5.4"
                 try:
                     coding_provider = AIProviderManager.get_provider(
@@ -189,6 +191,16 @@ def create_conversation_router(db, kb, progress_store):
                     )
                     coding_provider_type = "openai"
                     logger.info(f"[Hybrid] Planlama: Anthropic ({model_name}) | Kod yazma: OpenAI ({_oa_model})")
+                except Exception:
+                    pass
+            elif _or_key:
+                _or_model = "openai/gpt-5.4"
+                try:
+                    coding_provider = AIProviderManager.get_provider(
+                        {"provider_type": "openrouter", "model_name": _or_model, "api_key": _or_key}
+                    )
+                    coding_provider_type = "openrouter"
+                    logger.info(f"[Hybrid] Planlama: Anthropic ({model_name}) | Kod yazma: OpenRouter ({_or_model})")
                 except Exception:
                     pass
 
@@ -276,8 +288,26 @@ def create_conversation_router(db, kb, progress_store):
                     _coding_provider = None
                     _coding_provider_type = provider_type
                     if provider_type == "anthropic":
+                        _oa_key = db.get_api_key(user_id, "openai") or ""
                         _or_key = db.get_api_key(user_id, "openrouter") or ""
-                        if _or_key:
+                        _prefer_or = request.use_or_for_coder and bool(_or_key)
+                        if _prefer_or:
+                            try:
+                                _coding_provider = AIProviderManager.get_provider(
+                                    {"provider_type": "openrouter", "model_name": "openai/gpt-5.4", "api_key": _or_key}
+                                )
+                                _coding_provider_type = "openrouter"
+                            except Exception:
+                                pass
+                        elif _oa_key:
+                            try:
+                                _coding_provider = AIProviderManager.get_provider(
+                                    {"provider_type": "openai", "model_name": "gpt-5.4", "api_key": _oa_key}
+                                )
+                                _coding_provider_type = "openai"
+                            except Exception:
+                                pass
+                        elif _or_key:
                             try:
                                 _coding_provider = AIProviderManager.get_provider(
                                     {"provider_type": "openrouter", "model_name": "openai/gpt-5.4", "api_key": _or_key}
