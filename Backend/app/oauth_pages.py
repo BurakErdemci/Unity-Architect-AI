@@ -24,7 +24,8 @@ def oauth_success_page(completion_code: str) -> str:
 
 
 def oauth_error_page(error: str) -> str:
-    safe_error = error.replace('"', '\\"').replace("'", "\\'")
+    import html
+    safe_error = html.escape(error, quote=True)
     return f"""<!DOCTYPE html><html><head><title>Giriş Hatası</title></head>
 <body style="background:#000;color:#ff4444;display:flex;align-items:center;justify-content:center;height:100vh;font-family:system-ui;">
 <div style="text-align:center;">

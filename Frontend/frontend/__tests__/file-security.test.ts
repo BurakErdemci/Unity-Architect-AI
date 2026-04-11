@@ -1,4 +1,7 @@
-import { describe, it, expect } from 'vitest'
+import fs from 'fs'
+import os from 'os'
+import path from 'path'
+import { afterEach, beforeEach, describe, it, expect } from 'vitest'
 import {
   isAllowedUnityScriptPath,
   isAllowedWorkspacePath,
@@ -6,6 +9,18 @@ import {
 } from '../main/helpers/file-security'
 
 const WS = '/project/MyGame'
+let tempRoot = ''
+
+beforeEach(() => {
+  tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'unity-file-security-'))
+})
+
+afterEach(() => {
+  if (tempRoot) {
+    fs.rmSync(tempRoot, { recursive: true, force: true })
+    tempRoot = ''
+  }
+})
 
 describe('isAllowedUnityScriptPath — geçerli yollar', () => {
   it('Assets/Scripts doğrudan altındaki .cs dosyasına izin verir', () => {
@@ -54,6 +69,20 @@ describe('isAllowedUnityScriptPath — path traversal koruması', () => {
 
   it('başka bir workspace içindeki geçerli yolu reddeder', () => {
     expect(isAllowedUnityScriptPath('/other-project/Assets/Scripts/Hack.cs', WS)).toBe(false)
+  })
+
+  it('symlink klasör altına yeni dosya yazmayı reddeder', () => {
+    const workspace = path.join(tempRoot, 'workspace')
+    const scriptsDir = path.join(workspace, 'Assets', 'Scripts')
+    const outsideDir = path.join(tempRoot, 'outside')
+    const linkDir = path.join(scriptsDir, 'Linked')
+
+    fs.mkdirSync(scriptsDir, { recursive: true })
+    fs.mkdirSync(outsideDir, { recursive: true })
+    fs.symlinkSync(outsideDir, linkDir, 'dir')
+
+    const targetFile = path.join(linkDir, 'Exploit.cs')
+    expect(isAllowedUnityScriptPath(targetFile, workspace)).toBe(false)
   })
 })
 

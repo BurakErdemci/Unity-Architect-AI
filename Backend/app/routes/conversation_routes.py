@@ -1,7 +1,9 @@
 import asyncio
 import logging
+from collections import defaultdict
+from time import time
 
-from fastapi import APIRouter, Header
+from fastapi import APIRouter, Header, HTTPException
 
 from ai_providers import AIProviderManager
 from analyzer import UnityAnalyzer
@@ -31,6 +33,22 @@ logger = logging.getLogger(__name__)
 scope_plan_store: dict = {}        # conversation_id → {plan, original_prompt}
 continuation_store: dict = {}      # conversation_id → {plan, all_files, next_start, original_prompt}
 BATCH_SIZE = 10
+
+# --- RATE LIMITING: Kullanıcı başına dakikada max istek ---
+CHAT_RATE_LIMIT: defaultdict = defaultdict(list)
+CHAT_RATE_LIMIT_MAX = 15           # dakikada max istek
+CHAT_RATE_LIMIT_WINDOW = 60        # saniye
+
+
+def _check_chat_rate_limit(user_id: int):
+    """Kullanıcı başına /chat ve /analyze rate limit kontrolü."""
+    now = time()
+    attempts = CHAT_RATE_LIMIT[user_id]
+    # Eski kayıtları temizle
+    CHAT_RATE_LIMIT[user_id] = [t for t in attempts if now - t < CHAT_RATE_LIMIT_WINDOW]
+    if len(CHAT_RATE_LIMIT[user_id]) >= CHAT_RATE_LIMIT_MAX:
+        raise HTTPException(429, "Çok fazla istek gönderdiniz. Lütfen bir dakika bekleyin.")
+    CHAT_RATE_LIMIT[user_id].append(now)
 
 
 def _is_batch_continuation_msg(msg: str) -> bool:
@@ -70,6 +88,10 @@ def create_conversation_router(db, kb, progress_store):
     async def delete_conversation(conv_id: int, x_session_token: str = Header(alias="X-Session-Token")):
         require_conversation_owner(db, x_session_token, conv_id)
         db.delete_conversation(conv_id)
+        # Memory store'ları temizle (unbounded growth önlemi)
+        scope_plan_store.pop(conv_id, None)
+        continuation_store.pop(conv_id, None)
+        progress_store.pop(conv_id, None)
         return {"status": "success"}
 
     @router.put("/conversations/{conv_id}")
@@ -82,6 +104,7 @@ def create_conversation_router(db, kb, progress_store):
     async def chat(request: ChatRequest, x_session_token: str = Header(alias="X-Session-Token")):
         user_id, _ = require_user(db, x_session_token, request.user_id)
         require_conversation_owner(db, x_session_token, request.conversation_id)
+        _check_chat_rate_limit(user_id)
         logger.info(f"Chat İsteği - User: {user_id}, Conv: {request.conversation_id}")
 
         db.add_message(request.conversation_id, "user", request.message)
@@ -548,7 +571,7 @@ def create_conversation_router(db, kb, progress_store):
                 pipeline_info = None
             except Exception as exc:
                 logger.error(f"Generation Pipeline hatası: {exc}")
-                final_suggestion = f"❌ Pipeline Hatası: {str(exc)}"
+                final_suggestion = "❌ Kod üretimi sırasında bir hata oluştu. Lütfen tekrar deneyin veya daha basit bir istek gönderin."
                 static_results = {"smells": [], "stats": {}}
                 pipeline_info = None
         elif is_csharp:
@@ -604,7 +627,7 @@ def create_conversation_router(db, kb, progress_store):
                 pipeline_info = None
             except Exception as exc:
                 logger.error(f"Pipeline hatası: {exc}")
-                final_suggestion = f"❌ Pipeline Hatası: {str(exc)}"
+                final_suggestion = "❌ Kod analizi sırasında bir hata oluştu. Lütfen tekrar deneyin veya daha kısa bir kod gönderin."
                 static_results = {"smells": [], "stats": {}}
                 pipeline_info = None
         else:
@@ -622,7 +645,8 @@ def create_conversation_router(db, kb, progress_store):
             try:
                 final_suggestion = await asyncio.to_thread(provider.analyze_code, prompt)
             except Exception as exc:
-                final_suggestion = f"❌ AI Hatası: {str(exc)}"
+                logger.error(f"AI yanıt hatası: {exc}")
+                final_suggestion = "❌ AI yanıt üretemedi. Lütfen tekrar deneyin veya farklı bir model seçin."
 
             static_results = {"smells": [], "stats": {}}
             pipeline_info = None

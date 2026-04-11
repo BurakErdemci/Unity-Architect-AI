@@ -2,6 +2,8 @@ import asyncio
 import json
 import logging
 import re
+from collections import defaultdict
+from time import time
 
 from fastapi import APIRouter, Header, HTTPException, status
 
@@ -26,13 +28,27 @@ def clean_response(text: str) -> str:
 def create_analysis_router(db):
     router = APIRouter()
 
+    # --- RATE LIMITING ---
+    ANALYZE_RATE_LIMIT: defaultdict = defaultdict(list)
+    ANALYZE_RATE_LIMIT_MAX = 15
+    ANALYZE_RATE_LIMIT_WINDOW = 60
+
+    def _check_analyze_rate_limit(user_id: int):
+        now = time()
+        attempts = ANALYZE_RATE_LIMIT[user_id]
+        ANALYZE_RATE_LIMIT[user_id] = [t for t in attempts if now - t < ANALYZE_RATE_LIMIT_WINDOW]
+        if len(ANALYZE_RATE_LIMIT[user_id]) >= ANALYZE_RATE_LIMIT_MAX:
+            raise HTTPException(429, "Çok fazla analiz isteği. Lütfen bir dakika bekleyin.")
+        ANALYZE_RATE_LIMIT[user_id].append(now)
+
     @router.post("/analyze")
     async def analyze_code(request: AnalysisRequest, x_session_token: str = Header(alias="X-Session-Token")):
         user_id, _ = require_user(db, x_session_token, request.user_id)
+        _check_analyze_rate_limit(user_id)
         logger.info(f"Analiz İsteği - User ID: {user_id}")
 
         is_csharp = CodeDetector.is_csharp(request.code)
-        provider_type, model_name, _, _use_multi_agent = db.get_ai_config(user_id)
+        provider_type, model_name, _, _use_multi_agent, _force_claude = db.get_ai_config(user_id)
         api_key = (db.get_api_key(user_id, provider_type) or "") if provider_type not in ("ollama", "kb") else ""
 
         try:
