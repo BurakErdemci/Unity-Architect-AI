@@ -1,33 +1,28 @@
 import path from 'path'
 import fs from 'fs'
-import { app, ipcMain, dialog } from 'electron'
+import net from 'net'
+import { app, ipcMain, dialog, safeStorage } from 'electron'
 import serve from 'electron-serve'
 import { createWindow } from './helpers'
 import { spawn, ChildProcess } from 'child_process'
 import axios from 'axios'
+import {
+  isAllowedUnityScriptPath,
+  isAllowedWorkspacePath,
+  isAllowedWorkspaceReadFile,
+} from './helpers/file-security'
+import { sessionGet, sessionSet, sessionClear } from './helpers/session-storage-handlers'
 
 const isProd = process.env.NODE_ENV === 'production'
 let pyBackendProcess: ChildProcess | null = null
+let backendPort: number | null = null
+const BACKEND_HOST = '127.0.0.1'
 
-function isAllowedUnityScriptPath(filePath: string, workspacePath: string): boolean {
-  try {
-    const resolvedFile = path.resolve(filePath)
-    const resolvedWorkspace = path.resolve(workspacePath)
-    const relativePath = path.relative(resolvedWorkspace, resolvedFile)
-
-    if (!relativePath || relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
-      return false
-    }
-
-    const parts = relativePath.split(path.sep)
-    if (parts.length < 3) return false
-    if (parts[0] !== 'Assets' || parts[1] !== 'Scripts') return false
-    if (path.extname(resolvedFile).toLowerCase() !== '.cs') return false
-
-    return true
-  } catch {
-    return false
+function getBackendBaseUrl(): string {
+  if (!backendPort) {
+    throw new Error('Backend URL henüz hazır değil.')
   }
+  return `http://${BACKEND_HOST}:${backendPort}`
 }
 
 if (isProd) {
@@ -58,8 +53,11 @@ ipcMain.handle('open-folder-dialog', async () => {
   return result.filePaths[0]
 })
 
-ipcMain.handle('read-directory', async (_event, dirPath: string) => {
+ipcMain.handle('read-directory', async (_event, dirPath: string, workspacePath?: string) => {
   try {
+    if (!workspacePath || !isAllowedWorkspacePath(dirPath, workspacePath)) {
+      return []
+    }
     const entries = fs.readdirSync(dirPath, { withFileTypes: true })
     const items = entries
       .filter(e => !e.name.startsWith('.'))
@@ -79,8 +77,11 @@ ipcMain.handle('read-directory', async (_event, dirPath: string) => {
   } catch { return [] }
 })
 
-ipcMain.handle('read-file', async (_event, filePath: string) => {
+ipcMain.handle('read-file', async (_event, filePath: string, workspacePath?: string) => {
   try {
+    if (!workspacePath || !isAllowedWorkspaceReadFile(filePath, workspacePath)) {
+      return null
+    }
     const content = fs.readFileSync(filePath, 'utf-8')
     return { path: filePath, name: path.basename(filePath), content }
   } catch { return null }
@@ -130,6 +131,61 @@ ipcMain.handle('write-multiple-files', async (_event, files: { path: string; con
   return results
 })
 
+// --- IPC: SESSION STORAGE (safeStorage) ---
+const makeSessionDeps = () => ({
+  userDataPath: app.getPath('userData'),
+  safeStorage,
+})
+
+ipcMain.handle('session-get', () => sessionGet(makeSessionDeps()))
+ipcMain.handle('session-set', (_event, token: string) => sessionSet(makeSessionDeps(), token))
+ipcMain.handle('session-clear', () => sessionClear(makeSessionDeps()))
+ipcMain.handle('get-backend-base-url', () => getBackendBaseUrl())
+
+function findAvailablePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer()
+    server.listen(0, BACKEND_HOST, () => {
+      const address = server.address()
+      if (!address || typeof address === 'string') {
+        server.close(() => reject(new Error('Boş port bulunamadı.')))
+        return
+      }
+
+      const selectedPort = address.port
+      server.close((error) => {
+        if (error) {
+          reject(error)
+          return
+        }
+        resolve(selectedPort)
+      })
+    })
+    server.on('error', reject)
+  })
+}
+
+async function waitForBackendHealth(timeoutMs: number): Promise<void> {
+  const interval = 500
+  const maxAttempts = timeoutMs / interval
+
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      const response = await axios.get(`${getBackendBaseUrl()}/health`, { timeout: interval })
+      if (response.data?.status === 'ok' && response.data?.service === 'unity-architect-ai') {
+        console.log(`--- BACKEND HAZIR (${(i * interval / 1000).toFixed(1)}s) ${getBackendBaseUrl()} ---`)
+        return
+      }
+    } catch {
+      // backend henüz hazır değil
+    }
+
+    await new Promise(resolve => setTimeout(resolve, interval))
+  }
+
+  throw new Error(`Backend ${timeoutMs}ms içinde hazır olmadı.`)
+}
+
 // --- BACKEND YOLLARINI BUL ---
 function getBackendPaths(): { pythonExec: string; pythonScript: string; backendDir: string; sitePackages: string } {
   const isWin = process.platform === 'win32'
@@ -174,19 +230,10 @@ function getBackendPaths(): { pythonExec: string; pythonScript: string; backendD
   }
 }
 
-// --- AKILLI BACKEND KONTROLÜ ---
+// --- BACKEND BAŞLATMA ---
 async function startPythonBackend() {
-  try {
-    await axios.get('http://127.0.0.1:8000/');
-    console.log('--- BACKEND ZATEN AYAKTA, BAŞLATILMADI ---');
-    return;
-  } catch (err: any) {
-    if (err.response) {
-      console.log('--- PORT 8000 MEŞGUL (404/500), YENİDEN BAŞLATILMADI ---');
-      return;
-    }
-    console.log('--- BACKEND ÇEVRİMDIŞI, BAŞLATILIYOR... ---');
-  }
+  backendPort = await findAvailablePort()
+  console.log(`--- BACKEND İÇİN PORT SEÇİLDİ: ${backendPort} ---`)
 
   const { pythonExec, pythonScript, backendDir, sitePackages } = getBackendPaths()
 
@@ -212,6 +259,7 @@ async function startPythonBackend() {
   const spawnEnv = {
     ...process.env,
     PYTHONUNBUFFERED: '1',
+    PORT: String(backendPort),
     ...(sitePackages ? { PYTHONPATH: sitePackages + (process.env.PYTHONPATH ? `${process.platform === 'win32' ? ';' : ':'}${process.env.PYTHONPATH}` : '') } : {}),
   }
 
@@ -237,28 +285,7 @@ async function startPythonBackend() {
     console.log(`--- BACKEND KAPANDI (exit code: ${code}) ---`);
   });
 
-  // Backend ayağa kalkana kadar bekle (max 30 saniye)
-  await waitForBackend(30000)
-}
-
-async function waitForBackend(timeoutMs: number): Promise<void> {
-  const interval = 500
-  const maxAttempts = timeoutMs / interval
-  for (let i = 0; i < maxAttempts; i++) {
-    try {
-      await axios.get('http://127.0.0.1:8000/')
-      console.log(`--- BACKEND HAZIR (${(i * interval / 1000).toFixed(1)}s) ---`)
-      return
-    } catch (err: any) {
-      if (err.response) {
-        // Sunucu cevap verdi (404/500 olsa da ayakta)
-        console.log(`--- BACKEND HAZIR (${(i * interval / 1000).toFixed(1)}s) ---`)
-        return
-      }
-    }
-    await new Promise(resolve => setTimeout(resolve, interval))
-  }
-  console.warn('--- BACKEND 30s içinde hazır olmadı, devam ediliyor ---')
+  await waitForBackendHealth(30000)
 }
 
 // --- TEK INSTANCE KİLİDİ (Nextron çift restart'ı önler) ---

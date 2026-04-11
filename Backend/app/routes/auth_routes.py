@@ -8,6 +8,7 @@ import httpx
 from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
+from auth_utils import get_current_user
 from oauth_pages import oauth_error_page, oauth_success_page
 from schemas import AuthRequest
 
@@ -18,14 +19,26 @@ GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
 GITHUB_CLIENT_ID = os.environ.get("GITHUB_CLIENT_ID", "")
 GITHUB_CLIENT_SECRET = os.environ.get("GITHUB_CLIENT_SECRET", "")
-OAUTH_REDIRECT_BASE = "http://127.0.0.1:8000"
+OAUTH_REDIRECT_BASE = os.environ.get("OAUTH_REDIRECT_BASE", "").rstrip("/")
 LOGIN_WINDOW_SECONDS = 300
 LOGIN_MAX_ATTEMPTS = 5
-FAILED_LOGIN_ATTEMPTS = defaultdict(deque)
+FAILED_LOGIN_ATTEMPTS: defaultdict = defaultdict(deque)
+
+OAUTH_COMPLETION_WINDOW_SECONDS = 60
+OAUTH_COMPLETION_MAX_ATTEMPTS = 10
+OAUTH_COMPLETION_ATTEMPTS: defaultdict = defaultdict(deque)
 
 
 def create_auth_router(db):
     router = APIRouter()
+
+    def _get_redirect_base(request: Request | None = None) -> str:
+        if OAUTH_REDIRECT_BASE:
+            return OAUTH_REDIRECT_BASE
+        if request is not None:
+            return str(request.base_url).rstrip("/")
+        port = os.environ.get("PORT", "8000")
+        return f"http://127.0.0.1:{port}"
 
     def _validate_auth_request(req: AuthRequest) -> tuple[str, str]:
         username = req.username.strip()
@@ -87,11 +100,50 @@ def create_auth_router(db):
             db.delete_session(x_session_token)
         return {"status": "success"}
 
+    @router.get("/me")
+    async def me(x_session_token: str = Header(alias="X-Session-Token")):
+        user_id, _ = get_current_user(db, x_session_token)
+        profile = db.get_user_profile(user_id)
+        if not profile:
+            raise HTTPException(404, "Kullanıcı bulunamadı.")
+        return profile
+
+    @router.get("/auth/providers")
+    async def auth_providers():
+        return {
+            "google": bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET),
+            "github": bool(GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET),
+        }
+
+    @router.post("/auth/complete/{code}")
+    async def complete_oauth(code: str, request: Request):
+        client_ip = request.client.host if request.client else "unknown"
+        now = time()
+        attempts = OAUTH_COMPLETION_ATTEMPTS[client_ip]
+        while attempts and now - attempts[0] > OAUTH_COMPLETION_WINDOW_SECONDS:
+            attempts.popleft()
+        if len(attempts) >= OAUTH_COMPLETION_MAX_ATTEMPTS:
+            raise HTTPException(429, "Çok fazla deneme. Lütfen daha sonra tekrar deneyin.")
+        attempts.append(now)
+
+        session_token = db.consume_oauth_completion(code)
+        if not session_token:
+            raise HTTPException(400, "Harici giriş doğrulanamadı.")
+        user = db.get_user_by_session(session_token)
+        if not user:
+            raise HTTPException(401, "Harici giriş oturumu geçersiz.")
+        profile = db.get_user_profile(user[0])
+        if not profile:
+            raise HTTPException(404, "Kullanıcı bulunamadı.")
+        # Başarıda IP sayacını temizle (gerçek kullanıcıya yer aç)
+        OAUTH_COMPLETION_ATTEMPTS.pop(client_ip, None)
+        return {**profile, "session_token": session_token}
+
     @router.get("/auth/google/url")
-    async def google_auth_url():
+    async def google_auth_url(request: Request):
         if not GOOGLE_CLIENT_ID:
             raise HTTPException(500, "Google ile giriş şu anda kullanılamıyor.")
-        redirect_uri = f"{OAUTH_REDIRECT_BASE}/auth/google/callback"
+        redirect_uri = f"{_get_redirect_base(request)}/auth/google/callback"
         state = db.create_oauth_state("google")
         url = (
             "https://accounts.google.com/o/oauth2/v2/auth?"
@@ -106,10 +158,10 @@ def create_auth_router(db):
         return {"url": url}
 
     @router.get("/auth/github/url")
-    async def github_auth_url():
+    async def github_auth_url(request: Request):
         if not GITHUB_CLIENT_ID:
             raise HTTPException(500, "GitHub ile giriş şu anda kullanılamıyor.")
-        redirect_uri = f"{OAUTH_REDIRECT_BASE}/auth/github/callback"
+        redirect_uri = f"{_get_redirect_base(request)}/auth/github/callback"
         state = db.create_oauth_state("github")
         url = (
             "https://github.com/login/oauth/authorize?"
@@ -121,13 +173,13 @@ def create_auth_router(db):
         return {"url": url}
 
     @router.get("/auth/google/callback", response_class=HTMLResponse)
-    async def google_callback(code: str = "", state: str = ""):
+    async def google_callback(request: Request, code: str = "", state: str = ""):
         if not code:
             return oauth_error_page("Google ile giriş tamamlanamadı.")
         if not db.consume_oauth_state("google", state):
             return oauth_error_page("Google ile giriş doğrulanamadı.")
         try:
-            redirect_uri = f"{OAUTH_REDIRECT_BASE}/auth/google/callback"
+            redirect_uri = f"{_get_redirect_base(request)}/auth/google/callback"
             async with httpx.AsyncClient() as client:
                 token_resp = await client.post(
                     "https://oauth2.googleapis.com/token",
@@ -154,15 +206,16 @@ def create_auth_router(db):
             email = user_info.get("email", "")
             name = user_info.get("name", email.split("@")[0])
             avatar = user_info.get("picture", "")
-            user_id, username = db.find_or_create_oauth_user("google", oauth_id, name, email, avatar)
+            user_id, _username = db.find_or_create_oauth_user("google", oauth_id, name, email, avatar)
             session_token = db.create_session(user_id)
-            return oauth_success_page(user_id, username, email, avatar, session_token)
+            completion_code = db.create_oauth_completion(session_token)
+            return oauth_success_page(completion_code)
         except Exception as exc:
             logger.error(f"Google OAuth hatası: {exc}")
             return oauth_error_page("Google ile giriş tamamlanamadı.")
 
     @router.get("/auth/github/callback", response_class=HTMLResponse)
-    async def github_callback(code: str = "", state: str = ""):
+    async def github_callback(request: Request, code: str = "", state: str = ""):
         if not code:
             return oauth_error_page("GitHub ile giriş tamamlanamadı.")
         if not db.consume_oauth_state("github", state):
@@ -203,9 +256,10 @@ def create_auth_router(db):
             oauth_id = str(user_info.get("id", ""))
             name = user_info.get("login", "github_user")
             avatar = user_info.get("avatar_url", "")
-            user_id, username = db.find_or_create_oauth_user("github", oauth_id, name, email, avatar)
+            user_id, _username = db.find_or_create_oauth_user("github", oauth_id, name, email, avatar)
             session_token = db.create_session(user_id)
-            return oauth_success_page(user_id, username, email, avatar, session_token)
+            completion_code = db.create_oauth_completion(session_token)
+            return oauth_success_page(completion_code)
         except Exception as exc:
             logger.error(f"GitHub OAuth hatası: {exc}")
             return oauth_error_page("GitHub ile giriş tamamlanamadı.")

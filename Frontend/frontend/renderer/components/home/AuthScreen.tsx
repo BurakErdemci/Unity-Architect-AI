@@ -11,10 +11,14 @@ interface AuthScreenProps {
   onSubmit: (event: React.FormEvent<HTMLFormElement>) => Promise<void>;
   onOAuth: (provider: "google" | "github") => Promise<void>;
   onToggleMode: () => void;
+  oauthProviders: {
+    google: boolean;
+    github: boolean;
+  };
 }
 
 
-export const AuthScreen = ({ authMode, notice, onSubmit, onOAuth, onToggleMode }: AuthScreenProps) => (
+export const AuthScreen = ({ authMode, notice, onSubmit, onOAuth, onToggleMode, oauthProviders }: AuthScreenProps) => (
   <div className="bg-[#000000] text-foreground">
     <Head><title>Unity Architect AI | {authMode === "login" ? "Giriş" : "Kayıt"}</title></Head>
     <SignInPage
@@ -33,6 +37,7 @@ export const AuthScreen = ({ authMode, notice, onSubmit, onOAuth, onToggleMode }
       onGoogleSignIn={() => onOAuth("google")}
       onGitHubSignIn={() => onOAuth("github")}
       onToggleMode={onToggleMode}
+      oauthProviders={oauthProviders}
     />
   </div>
 );

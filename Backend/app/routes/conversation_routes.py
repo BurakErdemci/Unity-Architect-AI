@@ -46,7 +46,8 @@ def create_conversation_router(db, kb, progress_store):
     router = APIRouter()
 
     @router.get("/chat-progress/{conv_id}")
-    async def get_chat_progress(conv_id: int):
+    async def get_chat_progress(conv_id: int, x_session_token: str = Header(alias="X-Session-Token")):
+        require_conversation_owner(db, x_session_token, conv_id)
         return progress_store.get(conv_id, [])
 
     @router.post("/conversations")

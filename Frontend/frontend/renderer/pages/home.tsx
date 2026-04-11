@@ -3,6 +3,7 @@ import Head from 'next/head';
 import axios from 'axios';
 import Editor from '@monaco-editor/react';
 import { AnimatedChatInput, ThinkingIndicator } from "../components/ui/animated-ai-chat";
+import { ToastContainer, useToast } from "../components/ui/Toast";
 import {
   Activity,
   AlertTriangle,
@@ -43,7 +44,7 @@ import { WorkspaceScreen } from '../components/home/WorkspaceScreen';
 import { splitCodeIntoFiles } from '../components/home/export-utils';
 import { AIConfig, AvailableModels, Conversation, ExportModalState, FileEntry, Message, UserData } from '../components/home/types';
 
-const API = 'http://127.0.0.1:8000';
+let API = '';
 
 // IPC helper (Electron preload)
 const ipc = typeof window !== 'undefined' ? (window as any).ipc : null;
@@ -73,6 +74,7 @@ export default function HomePage() {
   const [chatInput, setChatInput] = useState('');
   const [lang, setLang] = useState('tr');
   const [loading, setLoading] = useState(false);
+  const [backendReady, setBackendReady] = useState(false);
   const [currentPlan, setCurrentPlan] = useState<Task[]>([]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isChatOpen, setIsChatOpen] = useState(true);
@@ -104,6 +106,7 @@ export default function HomePage() {
   const effectiveProvider = aiConfig.use_multi_agent ? 'anthropic' : aiConfig.provider_type;
 
   const [availableModels, setAvailableModels] = useState<AvailableModels>({ local: [], cloud: [] });
+  const [oauthProviders, setOauthProviders] = useState({ google: false, github: false });
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
   // Her model için ayrı OpenRouter modu: { [modelId]: true/false }
   const [modelOrToggles, setModelOrToggles] = useState<Record<string, boolean>>({});
@@ -154,6 +157,21 @@ export default function HomePage() {
   const authAlertShownRef = useRef(false);
   const errorAlertShownRef = useRef(false);
 
+  // --- TOAST ---
+  const { toasts, showToast, dismissToast } = useToast();
+
+  const persistSessionToken = useCallback(async (sessionToken: string) => {
+    const persisted = await ipc?.invoke('session-set', sessionToken).catch(() => false);
+    if (persisted !== true) {
+      showToast(
+        "Oturum güvenli şekilde bu cihaza kaydedilemedi. Uygulamayı kapatırsanız tekrar giriş yapmanız gerekebilir.",
+        'warning'
+      );
+      return false;
+    }
+    return true;
+  }, [showToast]);
+
   const performLogout = (showMessage = false, message = "Oturumunuz sona erdi. Lütfen tekrar giriş yapın.") => {
     if (userRef.current?.sessionToken) {
       axios.post(`${API}/logout`).catch(() => undefined);
@@ -161,7 +179,7 @@ export default function HomePage() {
     setUser(null);
     userRef.current = null;
     setSessionTokenHeader(null);
-    localStorage.removeItem('unityArchitectUser');
+    ipc?.invoke('session-clear').catch(() => undefined);
     setWorkspacePath(null);
     setLastWorkspacePath(null);
     setRootFolderPath(null);
@@ -172,7 +190,7 @@ export default function HomePage() {
     setCode('');
     setAuthNotice(null);
     if (showMessage) {
-      alert(message);
+      showToast(message, 'warning');
     }
   };
 
@@ -190,9 +208,7 @@ export default function HomePage() {
       response => response,
       error => {
         const status = error?.response?.status;
-
-        const requestUrl = error?.config?.url || '';
-        if (status === 401 && userRef.current && !requestUrl.includes('/chat-progress')) {
+        if (status === 401 && userRef.current) {
           if (!authAlertShownRef.current) {
             authAlertShownRef.current = true;
             performLogout(true);
@@ -203,7 +219,7 @@ export default function HomePage() {
         } else if (status === 403) {
           if (!authAlertShownRef.current) {
             authAlertShownRef.current = true;
-            alert(error?.response?.data?.detail || "Bu işlem için yetkiniz yok.");
+            showToast(error?.response?.data?.detail || "Bu işlem için yetkiniz yok.", 'warning');
             setTimeout(() => {
               authAlertShownRef.current = false;
             }, 1000);
@@ -211,7 +227,7 @@ export default function HomePage() {
         } else if (!error?.response && userRef.current) {
           if (!errorAlertShownRef.current) {
             errorAlertShownRef.current = true;
-            alert("Sunucuya ulaşılamadı. Backend çalışıyor mu kontrol edin.");
+            showToast("Sunucuya ulaşılamadı. Backend çalışıyor mu kontrol edin.", 'error');
             setTimeout(() => {
               errorAlertShownRef.current = false;
             }, 1000);
@@ -227,41 +243,61 @@ export default function HomePage() {
     };
   }, []);
 
-  // --- Modelleri uygulama açılışında yükle (user gerekmez) ---
   useEffect(() => {
-    fetchAvailableModels();
-  }, []);
+    const loadBackendBaseUrl = async () => {
+      try {
+        const baseUrl = ipc ? await ipc.invoke('get-backend-base-url') : '';
+        if (!baseUrl || typeof baseUrl !== 'string') {
+          throw new Error('Backend URL alınamadı.')
+        }
+        API = baseUrl;
+        setBackendReady(true);
+        await Promise.all([fetchAuthProviders(), fetchAvailableModels()]);
+      } catch (err) {
+        console.error("Backend URL alınamadı:", err);
+        setBackendReady(false);
+        showToast("Backend bağlantısı kurulamadı.", 'error');
+      }
+    };
+
+    loadBackendBaseUrl();
+  }, [showToast]);
 
   // --- Session Persistence ---
   useEffect(() => {
-    const savedUser = localStorage.getItem('unityArchitectUser');
-    if (savedUser) {
-      try {
-        const parsedUser = JSON.parse(savedUser);
-        if (!parsedUser?.sessionToken) {
-          localStorage.removeItem('unityArchitectUser');
-          setSessionTokenHeader(null);
-          return;
-        }
-        setSessionTokenHeader(parsedUser.sessionToken);
-        setUser(parsedUser);
-      } catch (e) {
+    const restoreSession = async () => {
+      if (!backendReady || !API) return;
+      // Migration: eski localStorage session'ı safeStorage'a taşı
+      const oldSaved = localStorage.getItem('unityArchitectUser');
+      if (oldSaved) {
+        try {
+          const parsed = JSON.parse(oldSaved);
+          if (parsed?.sessionToken) {
+            await persistSessionToken(parsed.sessionToken);
+          }
+        } catch {}
         localStorage.removeItem('unityArchitectUser');
-        setSessionTokenHeader(null);
       }
-    }
-  }, []);
+
+      // safeStorage'dan session token oku
+      const token: string | null = ipc ? await ipc.invoke('session-get').catch(() => null) : null;
+      if (token) {
+        hydrateSession(token, true).catch(() => undefined);
+      }
+    };
+    restoreSession();
+  }, [backendReady]);
 
   // --- Fetch on login ---
   useEffect(() => {
-    if (user) {
+    if (backendReady && user) {
       fetchConversations(user.id);
       fetchAIConfig(user.id);
       fetchAvailableModels();
       fetchLastWorkspace(user.id);
       fetchProvidersWithKeys(user.id);
     }
-  }, [user]);
+  }, [user, backendReady]);
 
   // --- API CALLS ---
   const fetchConversations = async (userId: number) => {
@@ -302,6 +338,44 @@ export default function HomePage() {
     } catch (err) { console.error("Modeller alınamadı:", err); }
   };
 
+  const fetchAuthProviders = async () => {
+    try {
+      const res = await axios.get(`${API}/auth/providers`);
+      if (res.data) setOauthProviders({
+        google: Boolean(res.data.google),
+        github: Boolean(res.data.github),
+      });
+    } catch (err) {
+      setOauthProviders({ google: false, github: false });
+      console.error("OAuth provider bilgisi alınamadı:", err);
+    }
+  };
+
+  const hydrateSession = useCallback(async (sessionToken: string, persistSession: boolean) => {
+    setSessionTokenHeader(sessionToken);
+    try {
+      const res = await axios.get(`${API}/me`);
+      const userData = {
+        id: res.data.user_id,
+        name: res.data.username,
+        sessionToken,
+      };
+      setUser(userData);
+      setAuthNotice(null);
+      if (persistSession) {
+        await persistSessionToken(sessionToken);
+      } else {
+        await ipc?.invoke('session-clear').catch(() => undefined);
+      }
+      return userData;
+    } catch (err) {
+      setSessionTokenHeader(null);
+      ipc?.invoke('session-clear').catch(() => undefined);
+      setUser(null);
+      throw err;
+    }
+  }, [persistSessionToken]);
+
   // --- WORKSPACE FUNCTIONS ---
   const fetchLastWorkspace = async (userId: number) => {
     try {
@@ -314,7 +388,7 @@ export default function HomePage() {
     setWorkspacePath(path);
     setRootFolderPath(path);
     if (ipc) {
-      const entries = await ipc.invoke('read-directory', path);
+      const entries = await ipc.invoke('read-directory', path, path);
       setFileTree(entries || []);
     }
     setExpandedDirs(new Set());
@@ -359,16 +433,16 @@ export default function HomePage() {
 
       // Cloud provider ama ne yeni key var ne kasada key var → uyar
       if (isCloud && !configToSave.api_key && !providersWithKeys.includes(configToSave.provider_type)) {
-        alert(`⚠️ ${configToSave.provider_type} için API key girilmedi. Bu provider'ı kullanabilmek için bir API key girmelisiniz.`);
+        showToast(`${configToSave.provider_type} için API key girilmedi. Bu provider'ı kullanabilmek için bir API key girmelisiniz.`, 'warning');
         return;
       }
 
       await axios.post(`${API}/save-ai-config`, configToSave);
       setAiConfig({ ...aiConfig, api_key: '' }); // UI'da key gösterme
       if (user) await fetchProvidersWithKeys(user.id);
-      alert("Ayarlar kaydedildi!");
+      showToast("Ayarlar kaydedildi!", 'success');
       setShowSettings(false);
-    } catch (err) { alert("Kaydedilemedi."); }
+    } catch (err) { showToast("Kaydedilemedi.", 'error'); }
   };
 
   const createNewConversation = async (preserveCode = false) => {
@@ -445,7 +519,7 @@ export default function HomePage() {
     } else {
       next.add(dirPath);
       if (!dirContents[dirPath]) {
-        const entries = await ipc.invoke('read-directory', dirPath);
+        const entries = await ipc.invoke('read-directory', dirPath, workspacePath);
         setDirContents(prev => ({ ...prev, [dirPath]: entries || [] }));
       }
     }
@@ -454,7 +528,7 @@ export default function HomePage() {
 
   const openFile = async (filePath: string) => {
     if (!ipc) return;
-    const result = await ipc.invoke('read-file', filePath);
+    const result = await ipc.invoke('read-file', filePath, workspacePath);
     if (result) {
       setCode(result.content);
       setOpenedFilePath(result.path);
@@ -633,13 +707,13 @@ export default function HomePage() {
 
   const refreshFileTree = async () => {
     if (!ipc || !workspacePath) return;
-    const entries = await ipc.invoke('read-directory', workspacePath);
+    const entries = await ipc.invoke('read-directory', workspacePath, workspacePath);
     setFileTree(entries || []);
     // Genişletilmiş dizinleri de yenile
     const newDirContents = { ...dirContents };
     for (const dir of expandedDirs) {
       try {
-        const dirEntries = await ipc.invoke('read-directory', dir);
+        const dirEntries = await ipc.invoke('read-directory', dir, workspacePath);
         newDirContents[dir] = dirEntries || [];
       } catch {}
     }
@@ -774,6 +848,11 @@ export default function HomePage() {
         return;
       }
 
+      if (!backendReady || !API) {
+        setAuthNotice("Backend henüz hazır değil. Lütfen birkaç saniye sonra tekrar deneyin.");
+        return;
+      }
+
       setAuthForm({ username, password });
       setAuthNotice(null);
 
@@ -781,13 +860,7 @@ export default function HomePage() {
       try {
         const res = await axios.post(`${API}${url}`, { username, password });
         if (authMode === 'login') {
-          const userData = { id: res.data.user_id, name: res.data.username, sessionToken: res.data.session_token };
-          setSessionTokenHeader(userData.sessionToken);
-          setUser(userData);
-          setAuthNotice(null);
-          if (rememberMe) {
-            localStorage.setItem('unityArchitectUser', JSON.stringify(userData));
-          }
+          await hydrateSession(res.data.session_token, rememberMe);
         } else {
           setAuthNotice("Kayıt oluşturuldu. Şimdi giriş yapabilirsiniz.");
           setAuthMode('login');
@@ -806,19 +879,33 @@ export default function HomePage() {
 
     const handleOAuth = async (provider: 'google' | 'github') => {
       setAuthNotice(null);
+      if (!backendReady || !API) {
+        setAuthNotice("Backend henüz hazır değil. Lütfen birkaç saniye sonra tekrar deneyin.");
+        return;
+      }
       try {
         const res = await axios.get(`${API}/auth/${provider}/url`);
         const oauthUrl = res.data.url;
         const popup = window.open(oauthUrl, `${provider}_oauth`, 'width=500,height=700,menubar=no,toolbar=no');
+        if (!popup) {
+          setAuthNotice("Harici giriş penceresi açılamadı. Tarayıcı engeli olup olmadığını kontrol edin.");
+          return;
+        }
 
         const handler = (event: MessageEvent) => {
-          if (event.data?.type === 'oauth-success') {
-            const userData = { id: event.data.user_id, name: event.data.username, sessionToken: event.data.session_token };
-            setSessionTokenHeader(userData.sessionToken);
-            setUser(userData);
-            setAuthNotice(null);
-            localStorage.setItem('unityArchitectUser', JSON.stringify(userData));
+          if (event.origin !== API || event.source !== popup) {
+            return;
+          }
+
+          if (event.data?.type === 'oauth-complete' && typeof event.data.code === 'string') {
             window.removeEventListener('message', handler);
+            axios.post(`${API}/auth/complete/${event.data.code}`)
+              .then(async (completeRes) => {
+                await hydrateSession(completeRes.data.session_token, true);
+              })
+              .catch(() => {
+                setAuthNotice("Harici giriş işlemi tamamlanamadı. Lütfen tekrar deneyin.");
+              });
           } else if (event.data?.type === 'oauth-error') {
             setAuthNotice("Harici giriş işlemi tamamlanamadı. Lütfen tekrar deneyin.");
             window.removeEventListener('message', handler);
@@ -842,6 +929,7 @@ export default function HomePage() {
       <AuthScreen
         authMode={authMode}
         notice={authNotice}
+        oauthProviders={oauthProviders}
         onSubmit={handleAuthSubmit}
         onOAuth={handleOAuth}
         onToggleMode={() => {
@@ -900,7 +988,7 @@ export default function HomePage() {
             await fetchProvidersWithKeys(user.id);
             setAiConfig(prev => ({ ...prev, api_key: '' }));
           } catch (err) {
-            alert('Key silinirken bir hata oluştu.');
+            showToast('Key silinirken bir hata oluştu.', 'error');
           }
         }}
       />
@@ -1532,7 +1620,7 @@ export default function HomePage() {
                                       setIsModelDropdownOpen(false);
                                       setShowSettings(true);
                                       const keyLabel = orToggle ? 'OpenRouter' : m.provider.charAt(0).toUpperCase() + m.provider.slice(1);
-                                      alert(`⚠️ ${keyLabel} için API key girilmedi.\nLütfen Ayarlar'dan API key'inizi girin.`);
+                                      showToast(`${keyLabel} için API key girilmedi. Lütfen Ayarlar'dan API key'inizi girin.`, 'warning');
                                       return;
                                     }
                                     const newCfg = { ...aiConfig, provider_type: effectiveProvider, model_name: effectiveModelId };
@@ -1911,6 +1999,8 @@ export default function HomePage() {
           </button>
         )
       }
+
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </div >
   );
 }

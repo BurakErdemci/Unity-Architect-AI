@@ -5,6 +5,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from contextlib import closing
 from urllib.parse import parse_qs, urlparse
 from pathlib import Path
 
@@ -21,8 +22,12 @@ class TestPhase3SecurityStress(unittest.TestCase):
         self.temp_dir = tempfile.mkdtemp(prefix="phase3_security_")
         self.db_path = os.path.join(self.temp_dir, "phase3_security.db")
         os.environ["DB_PATH"] = self.db_path
+        os.environ["GOOGLE_CLIENT_ID"] = "test-google-client"
+        os.environ["GOOGLE_CLIENT_SECRET"] = "test-google-secret"
+        os.environ["GITHUB_CLIENT_ID"] = "test-github-client"
+        os.environ["GITHUB_CLIENT_SECRET"] = "test-github-secret"
 
-        for module_name in ("main", "database"):
+        for module_name in ("main", "database", "routes", "routes.auth_routes"):
             sys.modules.pop(module_name, None)
 
         database_module = importlib.import_module("database")
@@ -42,9 +47,13 @@ class TestPhase3SecurityStress(unittest.TestCase):
 
     def tearDown(self):
         self.client.close()
-        for module_name in ("main", "database"):
+        for module_name in ("main", "database", "routes", "routes.auth_routes"):
             sys.modules.pop(module_name, None)
         os.environ.pop("DB_PATH", None)
+        os.environ.pop("GOOGLE_CLIENT_ID", None)
+        os.environ.pop("GOOGLE_CLIENT_SECRET", None)
+        os.environ.pop("GITHUB_CLIENT_ID", None)
+        os.environ.pop("GITHUB_CLIENT_SECRET", None)
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     def _register_and_login(self, username: str, password: str = "12345678") -> dict:
@@ -74,6 +83,10 @@ class TestPhase3SecurityStress(unittest.TestCase):
         user = self._register_and_login("session_user")
         headers = self._auth_headers(user["session_token"])
 
+        me_res = self.client.get("/me", headers=headers)
+        self.assertEqual(me_res.status_code, 200, me_res.text)
+        self.assertEqual(me_res.json()["user_id"], user["user_id"])
+
         protected_res = self.client.get(f"/conversations/{user['user_id']}", headers=headers)
         self.assertEqual(protected_res.status_code, 200, protected_res.text)
 
@@ -83,6 +96,9 @@ class TestPhase3SecurityStress(unittest.TestCase):
         logout_res = self.client.post("/logout", headers=headers)
         self.assertEqual(logout_res.status_code, 200, logout_res.text)
 
+        me_after_logout = self.client.get("/me", headers=headers)
+        self.assertEqual(me_after_logout.status_code, 401, me_after_logout.text)
+
         after_logout_res = self.client.get(f"/conversations/{user['user_id']}", headers=headers)
         self.assertEqual(after_logout_res.status_code, 401, after_logout_res.text)
 
@@ -90,15 +106,17 @@ class TestPhase3SecurityStress(unittest.TestCase):
         user = self._register_and_login("expired_session_user")
         headers = self._auth_headers(user["session_token"])
 
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             conn.execute(
                 "UPDATE sessions SET expires_at = ? WHERE token = ?",
                 ("2000-01-01 00:00:00", user["session_token"]),
             )
-            conn.commit()
 
         expired_res = self.client.get(f"/conversations/{user['user_id']}", headers=headers)
         self.assertEqual(expired_res.status_code, 401, expired_res.text)
+
+        expired_me = self.client.get("/me", headers=headers)
+        self.assertEqual(expired_me.status_code, 401, expired_me.text)
 
     def test_register_rejects_weak_password_and_login_rate_limit_applies(self):
         weak_register_res = self.client.post("/register", json={"username": "weak_user", "password": "123"})
@@ -180,7 +198,7 @@ class TestPhase3SecurityStress(unittest.TestCase):
         )
         self.assertEqual(save_res.status_code, 200, save_res.text)
 
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             row = conn.execute(
                 "SELECT api_key FROM api_keys WHERE user_id = ? AND provider_type = ?",
                 (user["user_id"], "openai"),
@@ -262,27 +280,33 @@ class TestPhase3SecurityStress(unittest.TestCase):
         self.assertEqual(disabled_update_res.status_code, 410, disabled_update_res.text)
 
     def test_oauth_urls_include_state_and_callback_rejects_invalid_state(self):
-        google_url_res = self.client.get("/auth/google/url")
-        self.assertIn(google_url_res.status_code, (200, 500))
+        providers_res = self.client.get("/auth/providers")
+        self.assertEqual(providers_res.status_code, 200, providers_res.text)
+        self.assertTrue(providers_res.json()["google"])
+        self.assertTrue(providers_res.json()["github"])
 
-        if google_url_res.status_code == 200:
-            google_url = google_url_res.json()["url"]
-            query = parse_qs(urlparse(google_url).query)
-            self.assertTrue(query.get("state"))
-            invalid_google = self.client.get("/auth/google/callback?code=test-code&state=invalid-state")
-            self.assertEqual(invalid_google.status_code, 200)
-            self.assertIn("Google ile giriş doğrulanamadı", invalid_google.text)
+        google_url_res = self.client.get("/auth/google/url")
+        self.assertEqual(google_url_res.status_code, 200, google_url_res.text)
+
+        google_url = google_url_res.json()["url"]
+        query = parse_qs(urlparse(google_url).query)
+        self.assertTrue(query.get("state"))
+        invalid_google = self.client.get("/auth/google/callback?code=test-code&state=invalid-state")
+        self.assertEqual(invalid_google.status_code, 200)
+        self.assertIn("Google ile giriş doğrulanamadı", invalid_google.text)
 
         github_url_res = self.client.get("/auth/github/url")
-        self.assertIn(github_url_res.status_code, (200, 500))
+        self.assertEqual(github_url_res.status_code, 200, github_url_res.text)
 
-        if github_url_res.status_code == 200:
-            github_url = github_url_res.json()["url"]
-            query = parse_qs(urlparse(github_url).query)
-            self.assertTrue(query.get("state"))
-            invalid_github = self.client.get("/auth/github/callback?code=test-code&state=invalid-state")
-            self.assertEqual(invalid_github.status_code, 200)
-            self.assertIn("GitHub ile giriş doğrulanamadı", invalid_github.text)
+        github_url = github_url_res.json()["url"]
+        query = parse_qs(urlparse(github_url).query)
+        self.assertTrue(query.get("state"))
+        invalid_github = self.client.get("/auth/github/callback?code=test-code&state=invalid-state")
+        self.assertEqual(invalid_github.status_code, 200)
+        self.assertIn("GitHub ile giriş doğrulanamadı", invalid_github.text)
+
+        invalid_completion = self.client.post("/auth/complete/invalid-code")
+        self.assertEqual(invalid_completion.status_code, 400, invalid_completion.text)
 
     def test_conversation_history_and_chat_ownership_rules(self):
         user_a = self._register_and_login("alice")
@@ -301,7 +325,6 @@ class TestPhase3SecurityStress(unittest.TestCase):
         forbidden_cases = [
             ("GET", f"/conversations/{user_a['user_id']}", None),
             ("GET", f"/conversations/{conv_ids[0]}/messages", None),
-            ("GET", f"/chat-progress/{conv_ids[0]}", None),
             ("DELETE", f"/conversations/{conv_ids[0]}", None),
             ("PUT", f"/conversations/{conv_ids[0]}", {"title": "Hacked"}),
             ("GET", f"/last-workspace/{user_a['user_id']}", None),
@@ -314,6 +337,12 @@ class TestPhase3SecurityStress(unittest.TestCase):
                 403,
                 f"{method} {url} -> {response.status_code} {response.text}",
             )
+
+        own_progress = self.client.get(f"/chat-progress/{conv_ids[0]}", headers=headers_a)
+        self.assertEqual(own_progress.status_code, 200, own_progress.text)
+
+        forbidden_progress = self.client.get(f"/chat-progress/{conv_ids[0]}", headers=headers_b)
+        self.assertEqual(forbidden_progress.status_code, 403, forbidden_progress.text)
 
         invalid_token_headers = self._auth_headers("invalid-token")
         for _ in range(25):

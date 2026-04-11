@@ -40,6 +40,10 @@ interface SignInPageProps {
   onGoogleSignIn?: () => void;
   onGitHubSignIn?: () => void;
   onToggleMode?: () => void;
+  oauthProviders?: {
+    google: boolean;
+    github: boolean;
+  };
 }
 
 // --- SUB-COMPONENTS ---
@@ -74,8 +78,10 @@ export const SignInPage: React.FC<SignInPageProps> = ({
   onGoogleSignIn,
   onGitHubSignIn,
   onToggleMode,
+  oauthProviders,
 }) => {
   const [showPassword, setShowPassword] = useState(false);
+  const hasOAuth = Boolean(oauthProviders?.google || oauthProviders?.github);
 
   return (
     <div className="h-[100dvh] flex flex-col md:flex-row font-geist w-[100dvw]">
@@ -124,30 +130,38 @@ export const SignInPage: React.FC<SignInPageProps> = ({
             </form>
 
             {/* OAuth Divider + Buttons */}
-            <div className="animate-element animate-delay-650 flex items-center gap-3 my-2">
-              <div className="flex-1 h-px bg-slate-800" />
-              <span className="text-xs text-muted-foreground uppercase tracking-wider">veya</span>
-              <div className="flex-1 h-px bg-slate-800" />
-            </div>
+            {hasOAuth && (
+              <>
+                <div className="animate-element animate-delay-650 flex items-center gap-3 my-2">
+                  <div className="flex-1 h-px bg-slate-800" />
+                  <span className="text-xs text-muted-foreground uppercase tracking-wider">veya</span>
+                  <div className="flex-1 h-px bg-slate-800" />
+                </div>
 
-            <div className="animate-element animate-delay-700 flex gap-3">
-              <button
-                type="button"
-                onClick={onGoogleSignIn}
-                className="flex-1 flex items-center justify-center gap-2.5 rounded-2xl bg-[#0a0a0a] border border-slate-800 py-3.5 text-sm font-medium text-slate-300 hover:text-white hover:border-slate-600 hover:bg-slate-900 transition-all duration-300 active:scale-[0.98]"
-              >
-                <GoogleIcon />
-                Google
-              </button>
-              <button
-                type="button"
-                onClick={onGitHubSignIn}
-                className="flex-1 flex items-center justify-center gap-2.5 rounded-2xl bg-[#0a0a0a] border border-slate-800 py-3.5 text-sm font-medium text-slate-300 hover:text-white hover:border-slate-600 hover:bg-slate-900 transition-all duration-300 active:scale-[0.98]"
-              >
-                <GitHubIcon />
-                GitHub
-              </button>
-            </div>
+                <div className="animate-element animate-delay-700 flex gap-3">
+                  {oauthProviders?.google && (
+                    <button
+                      type="button"
+                      onClick={onGoogleSignIn}
+                      className="flex-1 flex items-center justify-center gap-2.5 rounded-2xl bg-[#0a0a0a] border border-slate-800 py-3.5 text-sm font-medium text-slate-300 hover:text-white hover:border-slate-600 hover:bg-slate-900 transition-all duration-300 active:scale-[0.98]"
+                    >
+                      <GoogleIcon />
+                      Google
+                    </button>
+                  )}
+                  {oauthProviders?.github && (
+                    <button
+                      type="button"
+                      onClick={onGitHubSignIn}
+                      className="flex-1 flex items-center justify-center gap-2.5 rounded-2xl bg-[#0a0a0a] border border-slate-800 py-3.5 text-sm font-medium text-slate-300 hover:text-white hover:border-slate-600 hover:bg-slate-900 transition-all duration-300 active:scale-[0.98]"
+                    >
+                      <GitHubIcon />
+                      GitHub
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
 
             <p className="animate-element animate-delay-700 text-center text-sm text-muted-foreground mt-4">
               {authMode === 'login' ? 'Hesabınız yok mu?' : 'Zaten hesabınız var mı?'} <a href="#" onClick={(e) => { e.preventDefault(); onToggleMode?.(); }} className="text-violet-400 hover:underline transition-colors font-medium">{authMode === 'login' ? 'Kayıt Ol' : 'Giriş Yap'}</a>
