@@ -212,6 +212,15 @@ function getBackendPaths(): { pythonExec: string; pythonScript: string; backendD
 
 // --- BACKEND BAŞLATMA ---
 async function startPythonBackend() {
+  // Docker modu: Python spawn etme, doğrudan Docker backend'e bağlan
+  if (process.env.USE_DOCKER_BACKEND === 'true') {
+    const dockerPort = parseInt(process.env.DOCKER_BACKEND_PORT || '8000', 10)
+    console.log(`--- DOCKER BACKEND MODU: port ${dockerPort} ---`)
+    backendPort = dockerPort
+    await waitForBackendHealth(30000)
+    return
+  }
+
   // Port'u geçici değişkende tut — sağlıklı başlarsa backendPort'a yaz
   const selectedPort = await findAvailablePort()
   console.log(`--- BACKEND İÇİN PORT SEÇİLDİ: ${selectedPort} ---`)
