@@ -1686,9 +1686,18 @@ export default function HomePage() {
                                 {/* OR toggle — sadece openrouter_id olan modellerde göster */}
                                 {m.openrouter_id && (
                                   <button
-                                    onClick={e => {
+                                    onClick={async e => {
                                       e.stopPropagation();
-                                      setModelOrToggles(prev => ({ ...prev, [m.id]: !prev[m.id] }));
+                                      const newOrState = !modelOrToggles[m.id];
+                                      setModelOrToggles(prev => ({ ...prev, [m.id]: newOrState }));
+                                      // Eğer bu model şu an seçiliyse, aiConfig'i de hemen güncelle
+                                      if (isActive && user) {
+                                        const newModelId = (newOrState && m.openrouter_id) ? m.openrouter_id : m.id;
+                                        const newProvider = (newOrState && m.openrouter_id) ? 'openrouter' : m.provider;
+                                        const newCfg = { ...aiConfig, provider_type: newProvider, model_name: newModelId };
+                                        setAiConfig(newCfg);
+                                        await axios.post(`${API}/save-ai-config`, { ...newCfg, user_id: user.id });
+                                      }
                                     }}
                                     title={orToggle ? 'Native API\'ye geç' : m.paid ? 'OpenRouter önerilir — free tier\'da mevcut değil' : 'OpenRouter üzerinden kullan'}
                                     className={`mr-2 shrink-0 text-[8px] font-bold px-1.5 py-0.5 rounded border transition-colors ${

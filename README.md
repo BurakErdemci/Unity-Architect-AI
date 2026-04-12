@@ -15,6 +15,20 @@
 
 ---
 
+[![AI Karşılaştırması](https://img.shields.io/badge/🤖_AI_Karşılaştırması-Modelleri_Gör-6366f1?style=for-the-badge)](./AI_COMPARISON.md)
+
+---
+
+## ⬇️ İndir
+
+| Platform | İndirme Linki |
+|----------|---------------|
+| 🍎 macOS (Apple Silicon — arm64) | [Unity.Architect.AI-1.0.0-arm64.dmg](https://github.com/BurakErdemci/Unity-Architect-AI/releases/download/v1.0.0/Unity.Architect.AI-1.0.0-arm64.dmg) |
+| 🍎 macOS (Universal — Intel + Apple Silicon) | [Unity.Architect.AI-1.0.0.dmg](https://github.com/BurakErdemci/Unity-Architect-AI/releases/download/v1.0.0/Unity.Architect.AI-1.0.0.dmg) |
+| 🪟 Windows | *Yakında* |
+
+> Tüm sürümler için: [GitHub Releases →](https://github.com/BurakErdemci/Unity-Architect-AI/releases)
+
 </div>
 
 ## 📋 İçindekiler

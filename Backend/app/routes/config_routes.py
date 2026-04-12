@@ -85,7 +85,7 @@ def create_config_router(db):
                 {"id": "gpt-5.4",                  "name": "GPT-5.4",            "provider": "openai",    "openrouter_id": "openai/gpt-5.4"},
                 {"id": "gpt-5.4-nano",             "name": "GPT-5.4 Nano",       "provider": "openai",    "openrouter_id": "openai/gpt-5.4-nano"},
                 {"id": "deepseek-chat",            "name": "DeepSeek V3",        "provider": "deepseek",  "openrouter_id": "deepseek/deepseek-chat"},
-                {"id": "kimi-k2",                  "name": "Kimi K2 (Moonshot)",   "provider": "moonshot",   "openrouter_id": "moonshotai/kimi-k2"},
+                {"id": "kimi-k2.5",                "name": "Kimi K2.5 (Moonshot)",  "provider": "moonshot",   "openrouter_id": "moonshotai/kimi-k2.5"},
             ],
         }
 
