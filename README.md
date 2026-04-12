@@ -25,7 +25,7 @@
 |----------|---------------|
 | 🍎 macOS (Apple Silicon — arm64) | [Unity.Architect.AI-1.0.0-arm64.dmg](https://github.com/BurakErdemci/Unity-Architect-AI/releases/download/v1.0.0/Unity.Architect.AI-1.0.0-arm64.dmg) |
 | 🍎 macOS (Universal — Intel + Apple Silicon) | [Unity.Architect.AI-1.0.0.dmg](https://github.com/BurakErdemci/Unity-Architect-AI/releases/download/v1.0.0/Unity.Architect.AI-1.0.0.dmg) |
-| 🪟 Windows | [Unity Architect AI Setup 1.0.0.exe](https://github.com/BurakErdemci/Unity-Architect-AI/releases/download/v1.0.0/Unity%20Architect%20AI%20Setup%201.0.0.exe) |
+| 🪟 Windows | [Unity.Architect.AI.Setup.1.0.0.exe](https://github.com/BurakErdemci/Unity-Architect-AI/releases/download/v1.0.0/Unity.Architect.AI.Setup.1.0.0.exe) |
 
 > Tüm sürümler için: [GitHub Releases →](https://github.com/BurakErdemci/Unity-Architect-AI/releases)
 
