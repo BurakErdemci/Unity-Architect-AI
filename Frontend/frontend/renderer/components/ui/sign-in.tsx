@@ -81,7 +81,9 @@ export const SignInPage: React.FC<SignInPageProps> = ({
   oauthProviders,
 }) => {
   const [showPassword, setShowPassword] = useState(false);
+  const [password, setPassword] = useState('');
   const hasOAuth = Boolean(oauthProviders?.google || oauthProviders?.github);
+  const showPasswordHint = authMode === 'register' && password.length > 0 && password.length < 8;
 
   return (
     <div className="h-[100dvh] flex flex-col md:flex-row font-geist w-[100dvw]">
@@ -109,12 +111,15 @@ export const SignInPage: React.FC<SignInPageProps> = ({
                 <label className="text-sm font-medium text-muted-foreground">Şifre</label>
                 <GlassInputWrapper>
                   <div className="relative">
-                    <input name="password" type={showPassword ? 'text' : 'password'} placeholder="Şifrenizi girin" className="w-full bg-transparent text-sm p-4 pr-12 rounded-2xl focus:outline-none" />
+                    <input name="password" type={showPassword ? 'text' : 'password'} placeholder="Şifrenizi girin" className="w-full bg-transparent text-sm p-4 pr-12 rounded-2xl focus:outline-none" onChange={(e) => setPassword(e.target.value)} />
                     <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute inset-y-0 right-3 flex items-center">
                       {showPassword ? <EyeOff className="w-5 h-5 text-muted-foreground hover:text-foreground transition-colors" /> : <Eye className="w-5 h-5 text-muted-foreground hover:text-foreground transition-colors" />}
                     </button>
                   </div>
                 </GlassInputWrapper>
+                {showPasswordHint && (
+                  <p className="mt-1.5 text-xs text-amber-400 pl-1">Şifre en az 8 karakter olmalıdır.</p>
+                )}
               </div>
 
               <div className="animate-element animate-delay-500 flex items-center text-sm">

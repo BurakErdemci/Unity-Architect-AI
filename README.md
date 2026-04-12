@@ -93,7 +93,7 @@ Final Skor = (Teknik Denetim × 0.60) + (Oyun Hissiyatı × 0.40)
 
 | Sağlayıcı | Tür | Kullanım | Modeller |
 |-----------|-----|----------|----------|
-| **Anthropic Claude** | ☁️ Bulut | Multi-Agent Pipeline (Tier 2) | Claude 3.5 Sonnet, Claude 3 Opus |
+| **Anthropic Claude** | ☁️ Bulut | Multi-Agent Pipeline (Tier 2) | Claude 4.6 Sonnet, Claude 4.6 Opus |
 | **OpenAI** | ☁️ Bulut | Direkt OpenAI API | GPT-5.4, GPT-5.4-mini, GPT-5.4-nano |
 | **OpenRouter** | ☁️ Bulut | 200+ model erişimi | Kimi 2.5, GPT-5.4, Claude, Gemini vb. |
 | **Groq** | ☁️ Bulut | Hızlı tek-ajan analiz (Tier 1) | Llama, Mixtral |
@@ -101,7 +101,7 @@ Final Skor = (Teknik Denetim × 0.60) + (Oyun Hissiyatı × 0.40)
 | **DeepSeek** | ☁️ Bulut | OpenAI uyumlu API | DeepSeek Coder |
 | **Ollama** | 🖥️ Yerel | Yerel model desteği | Herhangi bir yerel model |
 
-> **Not:** Claude dışındaki tüm sağlayıcılar otomatik olarak **SingleAgent Code Generation** pipeline'ını kullanır. Multi-Agent pipeline sadece Anthropic Claude ile çalışır.
+
 
 ### 🔐 OAuth ile Giriş
 
@@ -531,9 +531,13 @@ Gerçek test: 23 dosyalık tam RPG sistemi (PlayerController, EnemyAI, Inventory
 
 ### Gereksinimler
 
-- **Python 3.9+**
-- **Node.js 18+**
-- **npm 9+**
+| Gereksinim | Sürüm | Not |
+|------------|-------|-----|
+| **Python** | **3.13** | 3.14 desteklenmez — `grpcio` wheel yok |
+| **Node.js** | 18+ | |
+| **npm** | 9+ | Node.js ile birlikte gelir |
+
+> **Önemli:** Python **3.13** kullanın. Python 3.14, `grpcio` paketinin henüz wheel (ön derlenmiş binary) yayınlamaması nedeniyle `pip install` aşamasında hata verir.
 
 ### 1. Repoyu Klonla
 
@@ -544,60 +548,249 @@ cd Unity-Architect-AI
 
 ### 2. Backend Kurulumu
 
+#### Python 3.13 kurulumu (sisteminizde yoksa)
+
+**macOS:**
+```bash
+brew install python@3.13
+```
+
+**Windows:**
+```powershell
+winget install Python.Python.3.13
+# Kurulumdan sonra terminali yeniden başlat
+```
+
+**Linux (Ubuntu/Debian):**
+```bash
+sudo apt install python3.13 python3.13-venv
+```
+
+---
+
+#### Sanal ortam (venv) oluşturma
+
+**macOS / Linux:**
 ```bash
 cd Backend
-
-# Sanal ortam oluştur
-python3 -m venv venv
-source venv/bin/activate  # macOS/Linux
-# venv\Scripts\activate   # Windows
-
-# Bağımlılıkları yükle
+python3.13 -m venv venv
+source venv/bin/activate
 pip install -r requirements.txt
+```
 
-# .env dosyası oluştur
+**Windows (PowerShell):**
+```powershell
+cd Backend
+py -3.13 -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+> **`py -3.13` neden?** Windows'ta birden fazla Python sürümü yüklüyse `python` komutu hangi sürümü kullanacağını bilemez. `py -3.13` Python Launcher aracılığıyla tam olarak 3.13 sürümünü hedefler.
+
+---
+
+#### .env dosyası oluştur
+
+`Backend/.env` dosyası oluştur. Google veya GitHub OAuth kullanmayacaksan içini boş bırakabilirsin:
+
+**macOS / Linux:**
+```bash
 cat > .env << EOF
-GROQ_API_KEY=gsk_your_groq_key
-ANTHROPIC_API_KEY=sk-ant-your_anthropic_key
-GEMINI_API_KEY=your_gemini_key
-OPENAI_API_KEY=sk-your_openai_key
-OPENROUTER_API_KEY=sk-or-your_openrouter_key
-OLLAMA_BASE_URL=http://127.0.0.1:11434
 GOOGLE_CLIENT_ID=your_google_client_id
 GOOGLE_CLIENT_SECRET=your_google_client_secret
 GITHUB_CLIENT_ID=your_github_client_id
 GITHUB_CLIENT_SECRET=your_github_client_secret
 EOF
-
-# Backend'i başlat
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
+
+**Windows** — `.env` dosyasını metin editörüyle oluşturup içine yaz:
+```env
+GOOGLE_CLIENT_ID=your_google_client_id
+GOOGLE_CLIENT_SECRET=your_google_client_secret
+GITHUB_CLIENT_ID=your_github_client_id
+GITHUB_CLIENT_SECRET=your_github_client_secret
+```
+
+> **Not:** Bu değişkenler yalnızca Google/GitHub OAuth girişi içindir. Anthropic, OpenAI, Gemini gibi AI API anahtarları buraya yazılmaz. Bunlar uygulama içindeki Ayarlar ekranından girilir ve işletim sisteminin güvenli deposunda (Keychain / Windows Credential Manager) şifreli saklanır.
+
+---
+
+#### Venv sorun giderme
+
+**`grpcio` veya `protobuf` kurulumu başarısız oluyorsa**
+
+Büyük ihtimalle Python 3.14 kullanılıyordur. Önce sürümü kontrol et:
+
+```bash
+python --version
+# Windows'ta kurulu sürümleri listele:
+py --list
+```
+
+3.14 çıkıyorsa Python 3.13'ü kur, sonra eski venv'i silip yeniden oluştur:
+
+macOS / Linux:
+```bash
+rm -rf venv
+python3.13 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+Windows (PowerShell):
+```powershell
+Remove-Item -Recurse -Force venv
+py -3.13 -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+> Windows'ta `rm -rf` **PowerShell'de çalışmaz**. `Remove-Item -Recurse -Force` kullan veya Git Bash / WSL aç.
+
+---
+
+**`pip` paket çakışması — `google-api-core` vs `grpcio-status`**
+
+Şuna benzer bir hata çıkıyorsa:
+```
+ERROR: pip's dependency resolver does not currently take into account all the packages...
+```
+
+`pip`'i güncelleyip tekrar dene:
+```bash
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+---
+
+**`venv\Scripts\activate` çalışmıyor (Windows)**
+
+PowerShell script çalıştırma politikası kısıtlı olabilir. Bir kereliğine şunu çalıştır:
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+```
+Sonra tekrar `venv\Scripts\activate` dene.
+
+---
 
 ### 3. Frontend Kurulumu
 
 ```bash
 cd Frontend/frontend
-
-# Bağımlılıkları yükle
 npm install
 
 # Uygulamayı başlat (Electron + Next.js)
+# Backend venv aktifse otomatik başlatılır, ayrıca uvicorn çalıştırmana gerek yok
 npm run dev
 ```
 
-Uygulama otomatik olarak açılacaktır. 🎉
+Uygulama otomatik olarak açılacaktır.
 
-> **Not:** Frontend başlatıldığında Backend çevrimdışıysa otomatik olarak başlatılır.
+> **Not:** `npm run dev` çalıştırıldığında Electron, `Backend/venv/Scripts/python` (Windows) veya `Backend/venv/bin/python` (macOS/Linux) ile backend'i otomatik başlatır.
+>
+> **Kayıt ekranında şifre en az 8 karakter olmalıdır.**
 
-### 4. Docker ile Kurulum (Önerilen)
+### 4. Docker ile Kurulum (Önerilen — Python kurulumu gerekmez)
+
+Docker kullanarak backend'i Python kurmadan çalıştırabilirsin. Bu yöntemde sadece **Docker Desktop** ve **Node.js** yeterlidir.
+
+> **Not:** Anthropic, OpenAI, Groq gibi AI API anahtarları `.env` dosyasına yazılmaz. Bunlar uygulama içindeki Ayarlar ekranından girilir ve işletim sisteminin güvenli anahtar deposunda (Keychain/Credential Manager) şifreli olarak saklanır.
+
+#### Gereksinimler
+
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Windows/macOS/Linux)
+- Node.js 18+
+
+#### Adım 1 — `.env` dosyasını oluştur
+
+`Backend/.env` dosyası oluştur. Google veya GitHub ile giriş kullanmayacaksan bu dosyayı boş bırakabilirsin. OAuth kullanacaksan ilgili alanları doldur:
+
+```env
+# Google ile giriş kullanmak istersen:
+GOOGLE_CLIENT_ID=your_google_client_id
+GOOGLE_CLIENT_SECRET=your_google_client_secret
+
+# GitHub ile giriş kullanmak istersen:
+GITHUB_CLIENT_ID=your_github_client_id
+GITHUB_CLIENT_SECRET=your_github_client_secret
+```
+
+#### Adım 2 — Docker backend'i başlat
 
 ```bash
 # Projenin kök dizininde
-docker-compose up --build
+docker compose up --build -d
 ```
 
-Backend `http://localhost:8000` adresinde çalışır. Frontend yine `npm run dev` ile başlatılır.
+İlk çalıştırmada bağımlılıklar indirilir (~1-2 dakika). Sonraki başlatmalarda çok daha hızlıdır.
 
+Backend sağlık kontrolü:
+
+```bash
+curl http://127.0.0.1:8000/health
+# Beklenen çıktı: {"status":"ok","service":"unity-architect-ai"}
+```
+
+#### Adım 3 — Frontend'i kur ve başlat
+
+```bash
+cd Frontend/frontend
+npm install
+
+# Docker modunda başlat (Python spawn etmez, Docker backend'e bağlanır)
+npm run dev:docker
+```
+
+#### Docker loglarını izle
+
+```bash
+# Gerçek zamanlı log akışı
+docker compose logs -f
+
+# Sadece son 50 satır
+docker compose logs --tail=50
+```
+
+#### Docker'ı durdur
+
+```bash
+docker compose down
+```
+
+#### Backend kodunu değiştirince yeniden başlatma
+
+Mac/Linux'ta `kill port` + `npm run dev` yaptığın gibi, Docker'da backend kodunu değiştirince şunu çalıştır:
+
+```bash
+# Rebuild + yeniden başlat (tek komut)
+docker compose up --build -d
+```
+
+Bu komut değişen katmanları yeniden derler ve container'ı yeniden başlatır. Çalışan container'ı durdurmana gerek yok, otomatik halleder.
+
+Sadece yeniden başlatmak istiyorsan (kod değişikliği yoksa):
+
+```bash
+docker compose restart
+```
+
+#### Sorun Giderme
+
+**Build cache bozulması hatası** (`parent snapshot ... does not exist`):
+```bash
+docker builder prune -f
+docker compose up --build -d
+```
+
+**Backend porta bağlanamıyor** — Docker Desktop'ın çalıştığından emin ol, sonra:
+```bash
+docker compose down
+docker compose up --build -d
+```
+
+> **Not:** Kayıt ekranında şifre en az 8 karakter olmalıdır.
 
 ---
 

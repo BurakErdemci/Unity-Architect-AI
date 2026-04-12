@@ -742,6 +742,16 @@ export default function HomePage() {
     const inputToUse = (overrideMessage || chatInput).trim();
     if (!inputToUse || !user) return;
 
+    // Key kontrolü: cloud provider seçili ama key yoksa gönderme
+    const activeProvider = aiConfig.use_multi_agent ? 'anthropic' : aiConfig.provider_type;
+    const cloudProviders = ['anthropic', 'google', 'openai', 'deepseek', 'groq', 'openrouter', 'moonshot'];
+    if (cloudProviders.includes(activeProvider) && !providersWithKeys.includes(activeProvider)) {
+      const providerLabel = activeProvider.charAt(0).toUpperCase() + activeProvider.slice(1);
+      showToast(`${providerLabel} için API key girilmedi. Ayarlar'dan key ekleyin.`, 'warning');
+      setShowSettings(true);
+      return;
+    }
+
     // Eğer aktif sohbet yoksa yeni bir tane oluştur ve devam et
     let targetConvId = activeConvId;
     if (!targetConvId) {
