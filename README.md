@@ -23,6 +23,7 @@
 - [Multi-Agent Mimarisi](#-multi-agent-mimarisi)
 - [Pipeline Sistemi](#-pipeline-sistemi)
 - [Mimari](#-mimari-genel-bakış)
+- [Güvenlik Mimarisi](#-güvenlik-mimarisi)
 - [Geliştirme Hikayeleri](#-geliştirme-hikayeleri--alınan-dersler)
 - [Kurulum](#-kurulum)
 - [Kullanım](#-kullanım)
@@ -340,6 +341,104 @@ Kullanıcı İsteği → Tek AI Çağrısı (Plan + Kod + Game Feel kuralları g
 
 ---
 
+## 🔐 Güvenlik Mimarisi
+
+### IPC Kanal Whitelist
+
+Electron'da renderer process ile main process arasındaki tüm `invoke` çağrıları sabit bir whitelist üzerinden geçer. Liste dışındaki her kanal `Promise.reject` ile anında reddedilir:
+
+```typescript
+// main/helpers/ipc-whitelist.ts
+export const ALLOWED_INVOKE_CHANNELS = new Set([
+  'open-file-dialog', 'open-folder-dialog',
+  'read-directory', 'read-file',
+  'write-file', 'file-exists', 'write-multiple-files',
+  'session-get', 'session-set', 'session-clear',
+  'get-backend-base-url',
+])
+```
+
+IPC testleri (`__tests__/ipc-whitelist.test.ts`) gerçek `ipc-whitelist.ts` dosyasını import eder — kaynak dosya bozulursa testler de fail eder.
+
+### Dosya Sistemi Koruması
+
+Tüm dosya işlemleri `path.resolve()` + `path.relative()` ile path traversal saldırılarına karşı korunur:
+
+| Handler | Kısıt |
+|---------|-------|
+| `read-directory` | Yalnızca workspace dizini içi |
+| `read-file` | Workspace içi + yalnızca `.cs` |
+| `write-file` / `write-multiple-files` | `workspace/Assets/Scripts/**/*.cs` |
+| `file-exists` | `workspace/Assets/Scripts/**/*.cs` |
+
+```typescript
+// Örnekler — bunların hepsi false döner
+isAllowedWorkspaceReadFile('/etc/passwd', workspace)
+isAllowedUnityScriptPath('../../../secrets.cs', workspace)
+isAllowedUnityScriptPath('/tmp/exploit.cs', workspace)
+```
+
+### Session Token Güvenliği — `safeStorage`
+
+Session token artık `localStorage`'da değil, OS'un şifreli deposunda saklanır:
+
+- **Windows** → DPAPI (Data Protection API)
+- **macOS** → Keychain
+
+`session.enc` dosyası `app.getPath('userData')` altında şifreli olarak durur. Mevcut `localStorage` token'ları ilk açılışta otomatik olarak `safeStorage`'a taşınır.
+
+`safeStorage` kullanılamıyorsa (headless ortam vb.) kullanıcıya açıkça uyarı gösterilir — sessiz persistence kaybı olmaz.
+
+### API Key At-Rest Şifrelemesi
+
+Kullanıcıların AI provider API key'leri SQLite'ta Fernet ile şifreli saklanır. Şifreleme anahtarı OS keystore'da tutulur (veritabanıyla aynı dizinde değil):
+
+```
+Öncelik sırası:
+1. API_KEY_ENCRYPTION_KEY env var
+2. Windows Credential Manager / macOS Keychain  (keyring)
+3. Fallback: ~/.unity_architect_ai/api_key_fernet.key
+```
+
+Mevcut kurulumlar ilk açılışta otomatik olarak keystore'a migrate edilir.
+
+Kullanıcı parolaları bcrypt ile hash'lenir — geri çözülmez.
+
+### Rate Limiting — Sliding Window
+
+Brute-force ve credential stuffing saldırılarına karşı IP bazlı sliding window:
+
+| Endpoint | Limit | Pencere |
+|----------|-------|---------|
+| `POST /login` | 5 deneme | 5 dakika |
+| `POST /auth/complete/{code}` | 10 deneme | 1 dakika |
+
+Başarılı girişte sayaç sıfırlanır — meşru kullanıcılar bloke kalmaz.
+
+### Backend Port Güvenliği
+
+Backend sabit port 8000'de değil, başlangıçta `net.createServer({ port: 0 })` ile OS'tan rastgele bir port alır. Port, renderer'a yalnızca `get-backend-base-url` IPC kanalıyla iletilir — renderer URL'yi kendisi belirleyemez.
+
+### OAuth Güvenliği
+
+- Tüm OAuth callback'leri PKCE yerine `state` token doğrulamasıyla CSRF'e karşı korunur
+- `postMessage` yalnızca bilinen `localhost` ve `app://` origin'lerine gönderilir
+- OAuth callback completion code'ları tek kullanımlıktır (`consume_oauth_completion`)
+- Build'e `.env` dahil edilmez — OAuth kimlik bilgisi yoksa butonlar otomatik gizlenir
+
+### Test Kapsamı
+
+| Dosya | Test Sayısı | Kapsam |
+|-------|-------------|--------|
+| `ipc-whitelist.test.ts` | 23 | Whitelist doğruluğu, injection denemeleri, case bypass |
+| `file-security.test.ts` | 20 | Path traversal, workspace sınırı, extension kontrolü |
+| `session-storage.test.ts` | 20 | Round-trip, migration, şifreleme yoksa fallback |
+| `regression-ipc.test.ts` | 18 | background.ts ↔ preload senkronizasyonu |
+| `toast.test.ts` | 19 | Hook mantığı, auto-dismiss, tip doğruluğu |
+| `test_auth_rate_limit.py` | 8 | Rate limit entegrasyon testleri (FastAPI TestClient) |
+
+---
+
 ## 🛠️ Geliştirme Hikayeleri & Alınan Dersler
 
 Projeyi geliştirirken karşılaşılan gerçek problemler ve çözümleri:
@@ -490,7 +589,7 @@ Uygulama otomatik olarak açılacaktır. 🎉
 
 > **Not:** Frontend başlatıldığında Backend çevrimdışıysa otomatik olarak başlatılır.
 
-### 4. Docker ile Kurulum (Alternatif)
+### 4. Docker ile Kurulum (Önerilen)
 
 ```bash
 # Projenin kök dizininde
@@ -499,21 +598,6 @@ docker-compose up --build
 
 Backend `http://localhost:8000` adresinde çalışır. Frontend yine `npm run dev` ile başlatılır.
 
-### 5. Production Build (Masaüstü Uygulaması)
-
-```bash
-cd Frontend/frontend
-
-# Temiz build al
-rm -rf build app .next
-npm run build
-```
-
-Build çıktısı `build/` klasöründe oluşur:
-- **macOS:** `build/mac-arm64/Unity Architect AI.app` veya `build/*.dmg`
-- **Windows:** `build/*.exe` (Windows PC'de build alınmalı)
-
-> Backend, build'e otomatik olarak dahil edilir (`extraResources`). Uygulama açıldığında backend otomatik başlar.
 
 ---
 
@@ -704,10 +788,25 @@ Backend çalışırken: [http://localhost:8000/docs](http://localhost:8000/docs)
 - [x] Single Agent Save/Load kuralları — PlayerPrefs yerine JSON dosyası zorunlu
 - [x] Groq free tier hata mesajı — 413/token-limit hatası kullanıcı dostu mesaja dönüştürülür
 
-### 🚧 Devam Eden (Sprint 3)
+### ✅ Tamamlanan (Sprint 2.4 — Güvenlik Sertleştirme)
 
-- [ ] Built-in Unity Expert (Yerel bilgi bankası + offline destek)
-- [ ] Genişletilmiş Statik Analiz kuralları
+- [x] IPC kanal whitelist — renderer'dan yalnızca izinli kanallar çağrılabilir
+- [x] Dosya sistemi path traversal koruması — `workspace/Assets/Scripts/*.cs` sınırı
+- [x] Session token `safeStorage`'a taşındı — Windows DPAPI / macOS Keychain
+- [x] `localStorage → safeStorage` otomatik migration
+- [x] API key şifreleme anahtarı OS keystore'a taşındı (keyring)
+- [x] Rate limiting — `/login` (5/5dk) ve `/auth/complete` (10/60sn)
+- [x] OAuth `app://` origin fix — production Electron'da OAuth akışı artık çalışıyor
+- [x] Backend dinamik port — hardcode 8000 kaldırıldı
+- [x] `.env` build'e dahil edilmiyor — OAuth kimlik bilgisi yoksa butonlar gizleniyor
+- [x] PyInstaller entegrasyonu — hedef makinede Python kurulu olmasına gerek yok
+- [x] Backend başlatma hatası kalıcı hata ekranı — sessiz başarısızlık ortadan kalktı
+- [x] 108 frontend unit testi (Vitest) + 8 backend entegrasyon testi
+
+### ✅ Tamamlanan (Sprint 3)
+
+- [x] Built-in Unity Expert (Yerel bilgi bankası + offline destek)
+- [x] Genişletilmiş Statik Analiz kuralları
 
 ### 📋 Planlanan
 

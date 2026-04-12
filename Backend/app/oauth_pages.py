@@ -11,10 +11,13 @@ def oauth_success_page(completion_code: str) -> str:
       "http://localhost:8888",
       "http://127.0.0.1:8888",
       "http://localhost:3000",
-      "http://127.0.0.1:3000"
+      "http://127.0.0.1:3000",
+      "app://"
     ];
     allowedOrigins.forEach((origin) => {{
-      window.opener.postMessage({{ type: "oauth-complete", code: "{completion_code}" }}, origin);
+      try {{
+        window.opener.postMessage({{ type: "oauth-complete", code: "{completion_code}" }}, origin);
+      }} catch (_) {{}}
     }});
     setTimeout(() => window.close(), 1000);
   }} else {{
@@ -38,10 +41,13 @@ def oauth_error_page(error: str) -> str:
       "http://localhost:8888",
       "http://127.0.0.1:8888",
       "http://localhost:3000",
-      "http://127.0.0.1:3000"
+      "http://127.0.0.1:3000",
+      "app://"
     ];
     allowedOrigins.forEach((origin) => {{
-      window.opener.postMessage({{ type: "oauth-error", error: "{safe_error}" }}, origin);
+      try {{
+        window.opener.postMessage({{ type: "oauth-error", error: "{safe_error}" }}, origin);
+      }} catch (_) {{}}
     }});
   }}
 </script></body></html>"""

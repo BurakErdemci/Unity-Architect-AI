@@ -32,7 +32,13 @@ from code_fixer import CodeFixer
 logger = logging.getLogger(__name__)
 
 # ─── Sabitler ───────────────────────────────────────────────────────────────
-KB_FILE = Path(__file__).parent / "unity_kb.json"
+def _get_kb_path() -> Path:
+    # PyInstaller ile dondurulmuş binary: sys._MEIPASS geçici extract dizinidir
+    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+        return Path(sys._MEIPASS) / 'knowledge' / 'unity_kb.json'
+    return Path(__file__).parent / 'unity_kb.json'
+
+KB_FILE = _get_kb_path()
 
 # Türkçe karakterleri normalize etmek için eşleştirme tablosu
 _TR_NORMALIZE = str.maketrans(

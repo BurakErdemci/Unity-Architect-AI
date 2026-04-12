@@ -10,26 +10,32 @@ files:
       - package.json
       - app
 extraResources:
-  - from: ../../Backend
+  - from: ../../Backend/dist/backend
     to: Backend
     filter:
-      - "app/**/*"
-      - "venv/**/*"
-      - "requirements.txt"
-      - "!**/__pycache__/**"
-      - "!**/*.pyc"
-      - "!**/.git/**"
-  - from: ../../Backend/.env
-    to: Backend/.env
+      - "**/*"
 mac:
   category: public.app-category.developer-tools
+  # identity: null → imzasız build (test dağıtımı için)
+  # Developer ID sertifikan olduğunda bu satırı kaldır
+  identity: null
+  hardenedRuntime: false
   target:
-    - dmg
-    - zip
+    - target: dmg
+      arch:
+        - x64
+        - arm64
 win:
   target:
-    - nsis
-linux:
-  target:
-    - AppImage
+    - target: nsis
+      arch:
+        - x64
+  requestedExecutionLevel: asInvoker
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  installerLanguages:
+    - tr_TR
+    - en_US
+  language: 1055
 publish: null

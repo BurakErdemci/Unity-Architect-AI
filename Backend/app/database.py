@@ -16,21 +16,55 @@ class DatabaseManager:
         self._create_tables()
 
     def _build_fernet(self) -> Fernet:
+        # 1. Explicit env var — CI veya ileri kullanıcı override'ı
         env_key = os.environ.get("API_KEY_ENCRYPTION_KEY")
         if env_key:
             return Fernet(env_key.encode("utf-8"))
 
+        # 2. OS keystore — Windows Credential Manager / macOS Keychain
+        #    Key asla DB dizinine yazılmaz, OS'un güvenli deposunda tutulur
+        try:
+            import keyring
+            _KR_SERVICE = "unity-architect-ai"
+            _KR_USER = "fernet-key"
+
+            stored = keyring.get_password(_KR_SERVICE, _KR_USER)
+            if stored:
+                return Fernet(stored.encode("utf-8"))
+
+            # Eski dosya tabanlı key varsa keystore'a migrate et
+            db_dir = os.path.dirname(self.db_path) or "."
+            legacy_path = os.path.join(db_dir, "api_key_fernet.key")
+            if os.path.exists(legacy_path):
+                with open(legacy_path, "rb") as f:
+                    key = f.read().strip()
+                keyring.set_password(_KR_SERVICE, _KR_USER, key.decode("utf-8"))
+                try:
+                    os.remove(legacy_path)
+                except OSError:
+                    pass
+                return Fernet(key)
+
+            # İlk kurulum: yeni key üret, keystore'a kaydet
+            key = Fernet.generate_key()
+            keyring.set_password(_KR_SERVICE, _KR_USER, key.decode("utf-8"))
+            return Fernet(key)
+
+        except Exception:
+            pass
+
+        # 3. Fallback: keyring kullanılamıyorsa dosya tabanlı (eski davranış)
         db_dir = os.path.dirname(self.db_path) or "."
         os.makedirs(db_dir, exist_ok=True)
         key_path = os.path.join(db_dir, "api_key_fernet.key")
 
         if os.path.exists(key_path):
-            with open(key_path, "rb") as file:
-                key = file.read().strip()
+            with open(key_path, "rb") as f:
+                key = f.read().strip()
         else:
             key = Fernet.generate_key()
-            with open(key_path, "wb") as file:
-                file.write(key)
+            with open(key_path, "wb") as f:
+                f.write(key)
             try:
                 os.chmod(key_path, 0o600)
             except OSError:

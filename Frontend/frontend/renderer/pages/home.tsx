@@ -75,6 +75,7 @@ export default function HomePage() {
   const [lang, setLang] = useState('tr');
   const [loading, setLoading] = useState(false);
   const [backendReady, setBackendReady] = useState(false);
+  const [backendError, setBackendError] = useState(false);
   const [currentPlan, setCurrentPlan] = useState<Task[]>([]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isChatOpen, setIsChatOpen] = useState(true);
@@ -256,7 +257,7 @@ export default function HomePage() {
       } catch (err) {
         console.error("Backend URL alınamadı:", err);
         setBackendReady(false);
-        showToast("Backend bağlantısı kurulamadı.", 'error');
+        setBackendError(true);
       }
     };
 
@@ -835,6 +836,27 @@ export default function HomePage() {
   // =====================================================================
   //                        GİRİŞ EKRANI (NEW MODERN UI)
   // =====================================================================
+  if (backendError) {
+    return (
+      <div className="h-screen bg-[#000000] flex items-center justify-center">
+        <div className="text-center max-w-md px-6">
+          <div className="text-red-500 text-5xl mb-6">⚠</div>
+          <h2 className="text-white text-xl font-semibold mb-3">Uygulama başlatılamadı</h2>
+          <p className="text-slate-400 text-sm mb-6">
+            Arka plan servisi çalışmıyor. Uygulamayı kapatıp yeniden açmayı deneyin.
+            Sorun devam ederse lütfen destek ile iletişime geçin.
+          </p>
+          <button
+            onClick={() => { if (typeof window !== 'undefined') window.location.reload(); }}
+            className="px-5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-sm rounded-lg transition-colors"
+          >
+            Yeniden Dene
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (!user) {
     const handleAuthSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
       event.preventDefault();

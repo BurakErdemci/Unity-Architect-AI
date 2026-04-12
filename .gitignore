@@ -18,7 +18,10 @@ frontend/app/
 Frontend/frontend/node_modules/
 Frontend/frontend/.next/
 Frontend/frontend/dist/
+Frontend/frontend/build/
 Frontend/frontend/app/
+Backend/dist/
+Backend/build/
 *.tsbuildinfo
 
 # macOS

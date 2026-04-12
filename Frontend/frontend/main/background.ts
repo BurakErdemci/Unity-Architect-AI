@@ -191,33 +191,13 @@ function getBackendPaths(): { pythonExec: string; pythonScript: string; backendD
   const isWin = process.platform === 'win32'
 
   if (isProd) {
+    // PyInstaller ile derlenmiş tek binary — Python kurulu olmasına gerek yok
     const resourcesPath = process.resourcesPath
     const backendDir = path.join(resourcesPath, 'Backend')
-    const pythonScript = path.join(backendDir, 'app', 'main.py')
-
-    // venv'deki site-packages'ı bul
-    let sitePackages = ''
-    if (isWin) {
-      // Windows: venv/Lib/site-packages
-      const winSitePackages = path.join(backendDir, 'venv', 'Lib', 'site-packages')
-      if (fs.existsSync(winSitePackages)) {
-        sitePackages = winSitePackages
-      }
-    } else {
-      // macOS/Linux: venv/lib/python3.x/site-packages
-      const venvLib = path.join(backendDir, 'venv', 'lib')
-      try {
-        const pyDirs = fs.readdirSync(venvLib).filter(d => d.startsWith('python'))
-        if (pyDirs.length > 0) {
-          sitePackages = path.join(venvLib, pyDirs[0], 'site-packages')
-        }
-      } catch {}
-    }
-
-    // Sistem python kullan (venv symlink'leri build'de kırılır)
-    const pythonExec = isWin ? 'python' : 'python3'
-
-    return { pythonExec, pythonScript, backendDir, sitePackages }
+    const backendExec = isWin ? 'backend.exe' : 'backend'
+    const pythonExec = path.join(backendDir, backendExec)
+    // pythonScript boş: binary doğrudan çalıştırılır, script argümanı gerekmez
+    return { pythonExec, pythonScript: '', backendDir, sitePackages: '' }
   } else {
     const appPath = app.getAppPath()
     const projectRoot = path.resolve(appPath, '..', '..')
@@ -232,60 +212,62 @@ function getBackendPaths(): { pythonExec: string; pythonScript: string; backendD
 
 // --- BACKEND BAŞLATMA ---
 async function startPythonBackend() {
-  backendPort = await findAvailablePort()
-  console.log(`--- BACKEND İÇİN PORT SEÇİLDİ: ${backendPort} ---`)
+  // Port'u geçici değişkende tut — sağlıklı başlarsa backendPort'a yaz
+  const selectedPort = await findAvailablePort()
+  console.log(`--- BACKEND İÇİN PORT SEÇİLDİ: ${selectedPort} ---`)
 
-  const { pythonExec, pythonScript, backendDir, sitePackages } = getBackendPaths()
+  const { pythonExec, pythonScript, backendDir } = getBackendPaths()
 
-  // Script dosyasının varlığını kontrol et
-  if (!fs.existsSync(pythonScript)) {
-    console.error(`--- BACKEND SCRIPT BULUNAMADI: ${pythonScript} ---`)
-    return
+  if (pythonScript) {
+    // Dev modu: python script'i kontrol et
+    if (!fs.existsSync(pythonScript)) {
+      throw new Error(`Backend script bulunamadı: ${pythonScript}`)
+    }
+    if (!fs.existsSync(pythonExec)) {
+      throw new Error(`Python bulunamadı: ${pythonExec}`)
+    }
+  } else {
+    // Prod modu: PyInstaller binary'sini kontrol et
+    if (!fs.existsSync(pythonExec)) {
+      throw new Error(`Backend binary bulunamadı: ${pythonExec}`)
+    }
   }
 
-  // Python'ın erişilebilir olup olmadığını kontrol et (venv veya sistem)
-  if (pythonExec !== 'python3' && pythonExec !== 'python' && !fs.existsSync(pythonExec)) {
-    console.error(`--- PYTHON BULUNAMADI: ${pythonExec} ---`)
-    return
-  }
-
-  console.log(`--- BACKEND BAŞLATILIYOR: ${pythonExec} ${pythonScript} ---`)
+  const spawnArgs = pythonScript ? [pythonScript] : []
+  console.log(`--- BACKEND BAŞLATILIYOR: ${pythonExec} ${spawnArgs.join(' ')} ---`)
   console.log(`--- BACKEND CWD: ${backendDir} ---`)
-  if (sitePackages) {
-    console.log(`--- PYTHONPATH: ${sitePackages} ---`)
-  }
 
-  // PYTHONPATH ile venv paketlerini sistem python3'e tanıt
-  const spawnEnv = {
-    ...process.env,
-    PYTHONUNBUFFERED: '1',
-    PORT: String(backendPort),
-    ...(sitePackages ? { PYTHONPATH: sitePackages + (process.env.PYTHONPATH ? `${process.platform === 'win32' ? ';' : ':'}${process.env.PYTHONPATH}` : '') } : {}),
-  }
+  // Port'u şimdi yaz ki waitForBackendHealth kullanabilsin
+  backendPort = selectedPort
 
-  pyBackendProcess = spawn(pythonExec, [pythonScript], {
+  pyBackendProcess = spawn(pythonExec, spawnArgs, {
     stdio: ['ignore', 'pipe', 'pipe'],
     cwd: backendDir,
-    env: spawnEnv,
+    env: { ...process.env, PYTHONUNBUFFERED: '1', PORT: String(selectedPort) },
   });
 
-  // Backend loglarını Electron console'a yönlendir
   pyBackendProcess.stdout?.on('data', (data) => {
     console.log(`[Backend] ${data.toString().trim()}`)
   })
   pyBackendProcess.stderr?.on('data', (data) => {
     console.error(`[Backend] ${data.toString().trim()}`)
   })
-
   pyBackendProcess.on('error', (err) => {
-    console.error('Python başlatılamadı:', err);
-  });
-
+    console.error('Backend başlatılamadı:', err)
+  })
   pyBackendProcess.on('exit', (code) => {
-    console.log(`--- BACKEND KAPANDI (exit code: ${code}) ---`);
-  });
+    console.log(`--- BACKEND KAPANDI (exit code: ${code}) ---`)
+  })
 
-  await waitForBackendHealth(30000)
+  try {
+    await waitForBackendHealth(30000)
+  } catch (err) {
+    // Sağlık kontrolü başarısız — port'u sıfırla, pencere yine de açılacak
+    backendPort = null
+    pyBackendProcess?.kill()
+    pyBackendProcess = null
+    throw err
+  }
 }
 
 // --- TEK INSTANCE KİLİDİ (Nextron çift restart'ı önler) ---
@@ -306,7 +288,12 @@ if (!gotTheLock) {
 
     ; (async () => {
       await app.whenReady()
-      await startPythonBackend();
+      try {
+        await startPythonBackend()
+      } catch (err) {
+        console.error('--- BACKEND BAŞLATILAMADI, PENCERE YINE DE AÇILIYOR ---', err)
+        backendPort = null
+      }
 
       const mainWindow = createWindow('main', {
         width: 1280,
