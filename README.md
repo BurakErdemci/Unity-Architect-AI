@@ -147,7 +147,7 @@ Google ve GitHub hesaplarıyla hızlı giriş desteği:
 
 ## 🤖 Multi-Agent Mimarisi
 
-Sistem, her biri belirli bir uzmanlık alanına sahip **7 bağımsız ajan** kullanır:
+Sistem, her biri belirli bir uzmanlık alanına sahip **8 bağımsız ajan** kullanır:
 
 ### Analiz Pipeline Ajanları
 
@@ -328,7 +328,7 @@ Kullanıcı İsteği → Tek AI Çağrısı (Plan + Kod + Game Feel kuralları g
 │                                      │                      │
 │  ┌────────────┐  ┌──────────┐  ┌─────▼──────┐              │
 │  │ Statik     │  │ Report   │  │ Agent Team │              │
-│  │ Analyzer   │  │ Engine   │  │ (7 Ajan)   │              │
+│  │ Analyzer   │  │ Engine   │  │ (8 Ajan)   │              │
 │  │ (regex)    │  │ (skor)   │  │            │              │
 │  └────────────┘  └──────────┘  └─────┬──────┘              │
 │                                      │                      │
@@ -452,7 +452,7 @@ Projeyi geliştirirken karşılaşılan gerçek problemler ve çözümleri:
 - **Token maliyeti:** Tek çağrıda hem planlama hem kodlama hem de game feel denetimi yapmak, her seferinde çok büyük ve pahalı bir prompt anlamına geliyordu.
 - **Kalite tutarsızlığı:** AI bazen planlamaya, bazen kodlamaya odaklanıyor; ikisini aynı anda iyi yapamıyordu.
 
-**Çözüm:** Sorumlulukları ayırdım. **Architect** sadece plan yapar (hafif, hızlı, ucuz), **Coder** sadece kod yazar (yoğun, odaklı). İki küçük uzman çağrısı, bir büyük generalist çağrısından hem daha ucuz hem daha kaliteli çıktı verdi.
+**Çözüm:** Sorumlulukları ayırdım. **Architect** yani Claude sadece plan yapar (hafif, hızlı, ucuz), **Coder** yani Chatgpt sadece kod yazar (yoğun, odaklı). İki küçük uzman çağrısı, bir büyük generalist çağrısından hem daha ucuz hem daha kaliteli çıktı verdi.
 
 ---
 
