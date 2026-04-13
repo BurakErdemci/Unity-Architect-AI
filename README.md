@@ -749,9 +749,11 @@ Docker kullanarak backend'i Python kurmadan çalıştırabilirsin. Bu yöntemde 
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Windows/macOS/Linux)
 - Node.js 18+
 
-#### Adım 1 — `.env` dosyasını oluştur
+#### Adım 1 — `.env` dosyasını oluştur (isteğe bağlı)
 
-`Backend/.env` dosyası oluştur. Google veya GitHub ile giriş kullanmayacaksan bu dosyayı boş bırakabilirsin. OAuth kullanacaksan ilgili alanları doldur:
+Google veya GitHub ile giriş kullanmayacaksan bu adımı atlayabilirsin — Docker otomatik olarak devam eder. OAuth kullanacaksan `Backend/.env` dosyasını oluşturup ilgili alanları doldur:
+
+> **Not:** Docker Compose `.env` dosyası bulunamazsa hata vermez (`required: false` ile yapılandırılmıştır). Çok eski bir Docker Desktop sürümü kullanıyorsan (`docker compose version` < 2.24) dosyayı boş da olsa oluşturman gerekebilir: `echo. > Backend\.env` (Windows) veya `touch Backend/.env` (macOS/Linux).
 
 ```env
 # Google ile giriş kullanmak istersen:

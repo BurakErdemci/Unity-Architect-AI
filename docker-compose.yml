@@ -8,7 +8,8 @@ services:
     volumes:
       - backend-data:/data
     env_file:
-      - ./Backend/.env
+      - path: ./Backend/.env
+        required: false
     environment:
       - DB_PATH=/data/unity_master_v3.db
     restart: unless-stopped
