@@ -70,6 +70,18 @@ Kullanıcı mesajlarını analiz edip **doğru pipeline'a** yönlendiren hibrit 
 
 > İki katmanlı yaklaşım: **Hızlı statik filtre** (regex) + **LLM fallback** (belirsiz durumlarda Claude/Groq ile sınıflandırma).
 
+### 📚 KB Modu — Yerel Unity Bilgi Bankası (Offline Destek)
+
+Unity Architect AI'ın benzersiz özelliklerinden biri: **internet bağlantısı veya AI API anahtarı olmadan** bile Unity sorularını yanıtlayabilmesi.
+
+- **Yerel bilgi bankası** (`unity_kb.json`) — Unity'ye özel yüzlerce kural, best practice ve açıklama içerir
+- **Offline çalışma** — AI servisi yoksa veya seçilmemişse KB Modu devreye girer
+- **Anlık yanıt** — API çağrısı olmadığı için gecikme sıfır
+- **Kapsam:** Performans kuralları, fizik, kamera, animasyon, shader, UI/Canvas ve daha fazlası
+- **AI ile birlikte kullanım** — KB bilgisi AI yanıtına bağlam olarak eklenerek daha isabetli sonuçlar üretilir
+
+---
+
 ### 🎮 Oyun Hissiyatı (Game Feel) Analizi
 
 Kod kalitesinin ötesinde, **oyuncunun kodu çalıştırdığında ne hissedeceğini** puanlayan benzersiz bir ajan:
@@ -112,13 +124,16 @@ Final Skor = (Teknik Denetim × 0.60) + (Oyun Hissiyatı × 0.40)
 
 | Sağlayıcı | Tür | Kullanım | Modeller |
 |-----------|-----|----------|----------|
-| **Anthropic Claude** | ☁️ Bulut | Multi-Agent Pipeline (Tier 2) | Claude 4.6 Sonnet, Claude 4.6 Opus |
+| **Anthropic Claude** | ☁️ Bulut | Multi-Agent Pipeline + Hibrit mod | Claude 4.6 Sonnet, Claude 4.6 Opus |
 | **OpenAI** | ☁️ Bulut | Direkt OpenAI API | GPT-5.4, GPT-5.4-mini, GPT-5.4-nano |
-| **OpenRouter** | ☁️ Bulut | 200+ model erişimi | Kimi 2.5, GPT-5.4, Claude, Gemini vb. |
-| **Groq** | ☁️ Bulut | Hızlı tek-ajan analiz (Tier 1) | Llama, Mixtral |
+| **OpenRouter** | ☁️ Bulut | 200+ model erişimi | Kimi K2.5, GPT-5.4, Claude, Gemini vb. |
+| **Groq** | ☁️ Bulut | Hızlı tek-ajan analiz | Llama, Mixtral |
 | **Google Gemini** | ☁️ Bulut | Alternatif bulut sağlayıcı | Gemini Pro, Gemini Ultra |
 | **DeepSeek** | ☁️ Bulut | OpenAI uyumlu API | DeepSeek Coder |
+| **Moonshot** | ☁️ Bulut | Kimi model ailesi | Kimi K2.5 |
 | **Ollama** | 🖥️ Yerel | Yerel model desteği | Herhangi bir yerel model |
+
+> **Hibrit Claude + ChatGPT Modu:** Claude mimari planlamayı yapar, ChatGPT (OpenAI / OpenRouter) kodu yazar. Game Feel analizi her zaman Claude'da kalır. Bu kombinasyon özellikle uzun kod üretiminde maliyeti ciddi ölçüde düşürür. Tek toggle ile full Claude moduna geçmek de mümkündür.
 
 
 
@@ -166,17 +181,21 @@ Google ve GitHub hesaplarıyla hızlı giriş desteği:
 
 ## 🤖 Multi-Agent Mimarisi
 
-Sistem, her biri belirli bir uzmanlık alanına sahip **8 bağımsız ajan** kullanır:
+Sistem, her biri belirli bir uzmanlık alanına sahip **8 bağımsız ajan** kullanır.
+
+> **Hibrit Claude + ChatGPT Modu:** Claude mimari planlamayı yapar (Orchestrator), ChatGPT kodu yazar (Coder) — OpenAI direkt API veya OpenRouter üzerinden. Uzun kod bloklarında ChatGPT çok daha uygun maliyetli. Game Feel analizi her zaman Claude'da kalır. Tek toggle ile tüm pipeline'ı full Claude moduna almak da mümkündür.
 
 ### Analiz Pipeline Ajanları
 
-| Ajan | Rol | Çıktı |
-|------|-----|-------|
-| 🎯 **Intent Classifier** | Kullanıcı niyetini algılar | `GREETING`, `GENERATION`, `ANALYSIS`, `CHAT` |
-| 📋 **Orchestrator** | Mimari düzeltme planı çıkarır | Kısa teknik harita (max 100 kelime) |
-| 🔧 **Unity Expert** | Plana göre kodu düzeltir/yeniden yazar | Temiz, Enterprise-level C# kodu |
-| ⚖️ **Critic** | Düzeltilmiş kodu denetler ve puanlar | JSON: `{score, review_message, fatal_errors_found}` |
-| 🎮 **Game Feel** | Oyun hissiyatını değerlendirir | JSON: `{game_feel_score, movement, combat, physics, ...}` |
+| Ajan | Rol | Çıktı | Provider |
+|------|-----|-------|---------|
+| 🎯 **Intent Classifier** | Kullanıcı niyetini algılar | `GREETING`, `GENERATION`, `ANALYSIS`, `CHAT` | Claude |
+| 📋 **Orchestrator** | Mimari düzeltme planı çıkarır | Kısa teknik harita (max 100 kelime) | Claude |
+| 🔧 **Unity Expert** | Plana göre kodu düzeltir/yeniden yazar | Temiz, Enterprise-level C# kodu | Claude veya ChatGPT* |
+| ⚖️ **Critic** | Düzeltilmiş kodu denetler ve puanlar | JSON: `{score, review_message, fatal_errors_found}` | Claude veya ChatGPT* |
+| 🎮 **Game Feel** | Oyun hissiyatını değerlendirir | JSON: `{game_feel_score, movement, combat, physics, ...}` | **Her zaman Claude** |
+
+*Hibrit modda Expert ve Critic ChatGPT (OpenAI / OpenRouter) kullanır. Full Claude modunda tüm ajanlar Claude'da çalışır.
 
 ### Kod Üretim Pipeline Ajanları
 
@@ -212,7 +231,7 @@ Sistem, her biri belirli bir uzmanlık alanına sahip **8 bağımsız ajan** kul
 
 ## ⚙️ Pipeline Sistemi
 
-### 🔍 Tier 1 — Tek Ajan Analizi (Groq, Ollama, Gemini)
+### 🔍 Tier 1 — Tek Ajan Analizi (Tüm sağlayıcılar)
 
 ```
 Kullanıcı Kodu → Statik Analiz → AI Analiz → Kod Düzeltme → Sonuç
@@ -353,7 +372,7 @@ Kullanıcı İsteği → Tek AI Çağrısı (Plan + Kod + Game Feel kuralları g
 │                                      │                      │
 │  ┌───────────────┐  ┌────────┐  ┌────▼───────────────────┐ │
 │  │ AI Providers  │  │ SQLite │  │ Validator + Sanitizer  │ │
-│  │ (6 sağlayıcı) │  │  DB    │  │ (JSON clean, clamp)   │ │
+│  │ (8 sağlayıcı) │  │  DB    │  │ (JSON clean, clamp)   │ │
 │  └───────────────┘  └────────┘  └────────────────────────┘ │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -464,14 +483,20 @@ Projeyi geliştirirken karşılaşılan gerçek problemler ve çözümleri:
 
 ---
 
-### 1. "Tek Claude çok pahalı" — Neden 2-Ajan Mimarisine Geçtik?
+### 1. "Claude kodu yeniden yazınca token patlaması" — Hibrit Claude + ChatGPT Mimarisi
 
-İlk tasarımda sıfırdan kod üretimi için tek bir Claude çağrısı kullanılıyordu: tüm kod tek seferde, tek prompt'ta. Basit sistemler için yeterliydi ama karmaşık isteklerde (RPG, survival, inventory+crafting+quest birlikte) problem ortaya çıktı:
+İlk tasarımda tüm Multi-Agent pipeline Claude kullanıyordu: plan, kod, analiz, game feel — hepsi Claude. İki temel sorun ortaya çıktı:
 
-- **Token maliyeti:** Tek çağrıda hem planlama hem kodlama hem de game feel denetimi yapmak, her seferinde çok büyük ve pahalı bir prompt anlamına geliyordu.
-- **Kalite tutarsızlığı:** AI bazen planlamaya, bazen kodlamaya odaklanıyor; ikisini aynı anda iyi yapamıyordu.
+- **Reflexive Loop maliyeti:** Game Feel ajanı kodu sık sık beğenmiyordu (skor < 8.0). Bu Reflexive Loop'u tetikliyor ve Expert kodu yeniden yazıyordu — yani Orchestrator + Expert + Critic + Game Feel + tekrar Expert + tekrar Critic. Her döngü yeni Claude çağrıları demek. Büyük sistemlerde birkaç döngü sonrası maliyet kontrolden çıkıyordu.
+- **Uzun kod blokları için Claude pahalı:** Claude kodlamada güçlü fakat uzun bloklar için yüksek maliyet. ChatGPT aynı kalitede kodu çok daha ucuza üretiyor.
 
-**Çözüm:** Sorumlulukları ayırdım. **Architect** yani Claude sadece plan yapar (hafif, hızlı, ucuz), **Coder** yani Chatgpt sadece kod yazar (yoğun, odaklı). İki küçük uzman çağrısı, bir büyük generalist çağrısından hem daha ucuz hem daha kaliteli çıktı verdi.
+**Çözüm — Claude + ChatGPT hibrit modu:**
+
+Mimari planlamayı Claude yapıyor (Orchestrator) — bir kere, kısa ve ucuz. Asıl kodu ise ChatGPT yazıyor (OpenAI direkt API veya OpenRouter üzerinden GPT-5.4). Uzun kod bloklarında ChatGPT Claude'a kıyasla çok daha uygun maliyetli. Game Feel analizi hâlâ Claude üzerinde kalıyor — nüanslı oyun hissiyatı yorumu için Claude daha isabetli.
+
+- **Hibrit modda desteklenen**: OpenAI direkt API veya OpenRouter üzerinden ChatGPT modelleri (GPT-5.4 vb.)
+- **Full Claude modu**: İsteyenler tek toggle ile tüm pipeline'ı Claude'a yönlendirebilir
+- **Sonuç**: Aynı kalitede çıktı, token maliyeti ciddi ölçüde düşer
 
 ---
 
@@ -840,7 +865,7 @@ docker compose up --build -d
 ### Backend
 | Teknoloji | Kullanım |
 |-----------|----------|
-| **Python 3.9+** | Ana backend dili |
+| **Python 3.9+** (önerilen: 3.13) | Ana backend dili |
 | **FastAPI** | REST API framework |
 | **SQLite / SQLAlchemy** | Kullanıcı verileri, sohbet geçmişi, workspace |
 | **Uvicorn** | ASGI sunucu |
@@ -906,7 +931,7 @@ Unity-Architect-AI/
 │   ├── requirements.txt
 │   ├── Dockerfile                   # Backend Docker imajı
 │   ├── .dockerignore
-│   └── .env                         # API anahtarları (git'e eklenmez)
+│   └── .env                         # OAuth kimlik bilgileri — sadece Google/GitHub için (git'e eklenmez)
 │
 ├── Frontend/
 │   └── frontend/
@@ -1015,9 +1040,19 @@ Backend çalışırken: [http://localhost:8000/docs](http://localhost:8000/docs)
 - [x] Backend başlatma hatası kalıcı hata ekranı — sessiz başarısızlık ortadan kalktı
 - [x] 108 frontend unit testi (Vitest) + 8 backend entegrasyon testi
 
+### ✅ Tamamlanan (Sprint 2.5 — Cross-Platform & Provider Genişletme)
+
+- [x] Moonshot/Kimi K2.5 provider desteği eklendi
+- [x] Docker backend modu — Python kurulmadan `npm run dev:docker` ile geliştirme
+- [x] Windows cross-platform build — PyInstaller + electron-builder NSIS installer
+- [x] Hibrit multi-agent modu — Game Feel her zaman Claude, teknik analiz seçilen provider
+- [x] API key doğrulama — key girilmemiş sağlayıcıyla mesaj gönderildiğinde kullanıcı uyarılır
+- [x] Kayıt ekranında şifre minimum 8 karakter uyarısı
+- [x] Python 3.13 uyumluluğu (requirements.txt versiyon pinleri güncellendi)
+
 ### ✅ Tamamlanan (Sprint 3)
 
-- [x] Built-in Unity Expert (Yerel bilgi bankası + offline destek)
+- [x] Built-in Unity Expert (KB Modu) — yerel Unity bilgi bankası, offline destek
 - [x] Genişletilmiş Statik Analiz kuralları
 
 ### 📋 Planlanan

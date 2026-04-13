@@ -342,7 +342,7 @@ class DatabaseManager:
             res = conn.execute('SELECT provider_type, model_name, api_key, use_multi_agent, force_claude_coder FROM ai_configs WHERE user_id = ?', (user_id,)).fetchone()
             if res:
                 return (res[0], res[1], res[2], bool(res[3]), bool(res[4]))
-            return ("ollama", "qwen2.5-coder:7b", "", True, False)
+            return ("kb", "unity-kb-v1", "", False, False)
 
     # ===================== API KEY KASASI =====================
     def save_api_key(self, user_id: int, provider_type: str, api_key: str) -> None:
