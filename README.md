@@ -273,7 +273,7 @@ Hızlı ve basit; tek bir LLM çağrısıyla analiz-düzeltme yapar.
 - **Reflexive Loop:** Skor 8.0 altındaysa Expert kodu otomatik yeniden yazar (max 2 deneme)
 - **Combined Feedback:** Retry sırasında hem teknik hem oyun hissiyatı eleştirisi birlikte gönderilir
 
-### 🆕 Tier 3 — Sıfırdan Kod Üretim Pipeline (Multi-Agent, sadece Claude)
+### 🆕 Tier 3 — Sıfırdan Kod Üretim Pipeline (Multi-Agent, Hibrit Claude + ChatGPT)
 
 ```
 Kullanıcı İsteği
@@ -283,7 +283,7 @@ Clarification Gate ──── Muğlak? ──► Soru Sor (max 4) ──► Ku
       │ Yeterince Spesifik                                         │
       │◄────────────────────────────────────────────────────────────┘
       ▼
-  Architect
+  Architect [Claude]
   ┌─────────────────────────────────────────────────┐
   │ ADIM 0: Kullanıcının tüm isteklerini listele    │
   │ ADIM 1-2: Mimari plan (Bölüm A + Bölüm B)      │
@@ -301,16 +301,18 @@ Clarification Gate ──── Muğlak? ──► Soru Sor (max 4) ──► Ku
          └────────┴────────┘
                   │ her batch → Coder
                   ▼
-               Coder
+         Coder [Claude veya ChatGPT*]
           (max 8192 token)
                   │
                   ▼
-         Game Feel Loop
+         Game Feel Loop [Claude]
     (sessiz denetim, düşük skorsa yeniden yaz)
                   │
                   ▼
            ✅ Final Kod
 ```
+
+*Hibrit modda Coder, ChatGPT (OpenAI direkt veya OpenRouter) kullanır. Full Claude modunda tüm ajanlar Claude'da çalışır.
 
 - **Clarification Gate:** Kullanıcı muğlak istek yaptıysa önce soru sorar (max 4 soru, tek mesajda). Cevap verildikten sonra bir daha sormaz — `skip_gate` mekanizmasıyla atlar.
 - **Architect Scope Garantisi:** ADIM 0'da tüm kullanıcı istekleri numaralandırılır. ADIM 3'te her istek için ✅/❌ doğrulaması yapılır. ❌ olan özellik varsa Architect kendi planına geri döner ve ekler.
