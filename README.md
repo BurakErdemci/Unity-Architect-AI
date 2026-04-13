@@ -239,7 +239,7 @@ Kullanıcı Kodu → Statik Analiz → AI Analiz → Kod Düzeltme → Sonuç
 
 Hızlı ve basit; tek bir LLM çağrısıyla analiz-düzeltme yapar.
 
-### 🔗 Tier 2 — Multi-Agent Analiz (Claude)
+### 🔗 Tier 2 — Multi-Agent Analiz (Claude+Chatgpt)
 
 ```
                     ┌─────────────┐
