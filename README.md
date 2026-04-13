@@ -239,7 +239,7 @@ Kullanıcı Kodu → Statik Analiz → AI Analiz → Kod Düzeltme → Sonuç
 
 Hızlı ve basit; tek bir LLM çağrısıyla analiz-düzeltme yapar.
 
-### 🔗 Tier 2 — Multi-Agent Analiz (Claude+Chatgpt)
+### 🔗 Tier 2 — Multi-Agent Analiz (Claude+ChatGPT)
 
 ```
                     ┌─────────────┐
@@ -331,7 +331,7 @@ Kullanıcı İsteği → Tek AI Çağrısı (Plan + Kod + Game Feel kuralları g
                               kapatılır + "devam et" mesajı
 ```
 
-- Claude dışındaki tüm sağlayıcılar (OpenAI, OpenRouter, Groq, Gemini, DeepSeek, Ollama) bu pipeline'ı kullanır
+- Tüm sağlayıcılar (OpenAI, OpenRouter, Groq, Gemini, DeepSeek, Ollama, Claude) bu pipeline'ı kullanır
 - Sağlayıcıya özel token limitleri: Google 65K, Groq 32K, diğerleri 16K
 - İngilizce prompt ile daha iyi LLM çıktı kalitesi
 - Game Feel kuralları, Save/Load kuralları ve output format doğrudan prompt'a gömülü
