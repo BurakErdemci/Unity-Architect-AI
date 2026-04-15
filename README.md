@@ -16,6 +16,7 @@
 ---
 
 [![AI Karşılaştırması](https://img.shields.io/badge/🤖_AI_Karşılaştırması-Modelleri_Gör-6366f1?style=for-the-badge)](./AI_COMPARISON.md)
+[![English](https://img.shields.io/badge/🌐_README-English-blue?style=for-the-badge)](./README_EN.md)
 
 ---
 
