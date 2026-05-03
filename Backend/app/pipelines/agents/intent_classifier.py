@@ -35,31 +35,32 @@ _OUT_OF_SCOPE_KEYWORDS = [
 class IntentClassifierAgent:
     """
     Kullanıcı mesajını aşağıdaki kategorilere sınıflandırır:
-    
-    - GREETING     : Sadece selamlama (merhaba, selam, nasılsın)
-    - GENERATION   : Kod üretme isteği (yaz, oluştur, kur, yap)
-    - ANALYSIS     : Mevcut kodu analiz etme / hata bulma
-    - CHAT         : Unity ile ilgili genel soru-cevap
+
+    - GREETING     : Sadece selamlama
+    - GENERATION   : Kod üretme isteği (ŞİMDİ yaz)
+    - ANALYSIS     : Mevcut kodu detaylı analiz et, rapor çıkar
+    - FIX          : Belirtilen hatayı düzelt
+    - CHAT         : Unity ile ilgili genel soru, planlama, fikir alışverişi
     - OUT_OF_SCOPE : Unity/C# dışı konular
     """
-    
+
     INTENT_PROMPT = """Sen bir metin sınıflandırıcısın. Kullanıcının mesajını analiz edip,
-TAM OLARAK aşağıdaki 5 kategoriden BİRİNİ döndür. Başka hiçbir şey yazma.
+TAM OLARAK aşağıdaki 6 kategoriden BİRİNİ döndür. Başka hiçbir şey yazma.
 
 KATEGORİLER:
-- GREETING     → Mesajın TEK amacı selamlama, hal hatır sorma, teşekkür etme ise
-- GENERATION   → Kullanıcı yeni bir kod, script, sistem, class yazılmasını istiyorsa
-- ANALYSIS     → Kullanıcı mevcut bir kodu incelemek, hataları bulmak, optimize etmek istiyorsa
-- CHAT         → Unity/C# ile ilgili genel bilgi sorusu, kavram açıklaması istiyorsa
-- OUT_OF_SCOPE → Mesaj Unity/C# ile hiç ilgisi yoksa (yemek, siyaset, başka diller gibi)
+- GREETING     → Sadece selamlama, hal hatır sorma, teşekkür etme.
+- GENERATION   → Kullanıcı ŞİMDİ bir kod, script veya sistem YAZILMASINI istiyorsa.
+- ANALYSIS     → Mevcut kodu detaylı analiz etmek, rapor çıkarmak istiyorsa.
+- FIX          → Belirli bir hatayı, bug'ı düzeltmek istiyorsa.
+- CHAT         → Unity ile ilgili genel soru, kavram açıklaması, FİKİR ALIŞVERİŞİ, PLANLAMA veya BAĞLAM kurma.
+- OUT_OF_SCOPE → Mesaj Unity/C# ile hiç ilgisi yoksa.
 
 ÖNEMLİ KURALLAR:
-1. Mesaj selamlama İÇERSE AMA başka bir istek de varsa → o isteğin türünü seç (GREETING değil!)
-   Örnek: "Merhaba, bana bir hareket sistemi yazar mısın?" → GENERATION
-   Örnek: "Selam, Raycast nedir?" → CHAT
-2. Mesajda "yaz", "kur", "oluştur", "yap", "geliştir", "ekle", "implement" gibi fiiller varsa → GENERATION
-3. Mesajda "analiz et", "incele", "kontrol et", "hata bul", "optimize et" gibi fiiller varsa → ANALYSIS
-4. Mesajda Unity kavramları (Raycast, GetComponent, Coroutine vb.) geçip basit bir açıklama isteniyorsa → CHAT
+1. "Kuracağız", "yapacağız", "mimariyi konuşalım", "aklınızda bulunsun" gibi cümleler GENERATION değildir! Bunlar CHAT (Planlama/Bağlam) kategorisidir.
+2. Sadece "yaz", "oluştur", "kodunu ver", "kod üret" gibi NET EMİRLER varsa GENERATION seç.
+3. Kullanıcı bir hatadan bahsediyorsa veya "neden çalışmıyor" diyorsa FIX seç.
+4. Eğer mesaj hem selamlama hem iş içeriyorsa işin türünü seç.
+5. Emin değilsen CHAT seç. Kullanıcıyı dinlemek, hemen kod üretmekten daha güvenlidir.
 
 KULLANICI MESAJI:
 "{message}"
@@ -92,22 +93,17 @@ CEVAP (tek kelime):"""
     def _static_prefilter(self, message: str) -> Optional[str]:
         """
         Çok net durumları LLM'e sormadan yakalar.
-        Sadece tek kelime / kısa selamlama veya açıkça kapsam dışı mesajlar.
-        Karışık mesajlar (selamlama + istek) buradan geçer → LLM karar verir.
         """
         q = message.lower().strip()
         q_clean = re.sub(r'[!?.,:;]', '', q).strip()
         words = q_clean.split()
         
-        # Pür selamlama: 1-3 kelime ve hepsi selamlama sözlüğünde
         if len(words) <= 3 and q_clean in _PURE_GREETINGS:
             return "GREETING"
         
-        # Pür selamlama (tek kelime eşleşme)
         if len(words) == 1 and words[0] in _PURE_GREETINGS:
             return "GREETING"
         
-        # Açıkça kapsam dışı (Unity kelimesi yoksa + kapsam dışı kelime varsa)
         unity_keywords = ["unity", "c#", "csharp", "gameobject", "monobehaviour", "oyun", "game"]
         has_unity_context = any(kw in q for kw in unity_keywords)
         has_out_of_scope = any(kw in q for kw in _OUT_OF_SCOPE_KEYWORDS)
@@ -115,31 +111,6 @@ CEVAP (tek kelime):"""
         if has_out_of_scope and not has_unity_context and len(words) < 20:
             return "OUT_OF_SCOPE"
         
-        # Kod içeren mesajlarda intent tespiti (LLM'siz)
-        # "analiz et", "incele", "kontrol et" gibi fiiller + Unity kodu = ANALYSIS
-        code_indicators = ["{", "}", "void ", "class ", "using "]
-        has_code = sum(1 for ind in code_indicators if ind in message) >= 2
-
-        if has_code:
-            analysis_words = [
-                "analiz", "incele", "kontrol", "bak", "hata bul", "optimize",
-                "review", "check", "değerlendir", "nasıl", "ne dersin",
-                "düzelt", "iyileştir", "sorun", "yanlış", "hatalı",
-            ]
-            generation_words = [
-                "yaz", "oluştur", "kur", "yap", "geliştir", "ekle",
-                "implement", "create", "generate", "build",
-            ]
-            q_lower = q
-
-            if any(w in q_lower for w in analysis_words):
-                return "ANALYSIS"
-            if any(w in q_lower for w in generation_words):
-                return "GENERATION"
-            # Kod var ama yönlendirme yok → varsayılan olarak analiz
-            return "ANALYSIS"
-
-        # Karışık veya belirsiz → LLM'e bırak
         return None
     
     def _llm_classify(self, message: str) -> str:
@@ -161,22 +132,16 @@ CEVAP (tek kelime):"""
             return "CHAT"
         
         clean = response.strip().upper()
+        valid_intents = {"GREETING", "GENERATION", "ANALYSIS", "FIX", "CHAT", "OUT_OF_SCOPE"}
         
-        # Doğrudan eşleşme
-        valid_intents = {"GREETING", "GENERATION", "ANALYSIS", "CHAT", "OUT_OF_SCOPE"}
-        
-        # İlk kelimeye bak (LLM bazen açıklama ekleyebilir)
         first_word = clean.split()[0] if clean.split() else ""
-        # Noktalama temizle
         first_word = re.sub(r'[^A-Z_]', '', first_word)
         
         if first_word in valid_intents:
             return first_word
         
-        # Yanıtta geçen intent'i ara
         for intent in valid_intents:
             if intent in clean:
                 return intent
         
-        # Hiçbiri bulunamazsa güvenli fallback
         return "CHAT"

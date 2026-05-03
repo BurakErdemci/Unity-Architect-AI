@@ -12,6 +12,7 @@ from code_detector import CodeDetector
 from pipelines import (
     CodeGenerationPipeline,
     MultiAgentPipeline,
+    QuickFixPipeline,
     SingleAgentCodeGenerationPipeline,
     SingleAgentPipeline,
 )
@@ -99,6 +100,52 @@ def create_conversation_router(db, kb, progress_store):
         require_conversation_owner(db, x_session_token, conv_id)
         db.rename_conversation(conv_id, req.title)
         return {"status": "success"}
+
+    @router.post("/conversations/{conv_id}/compact")
+    async def compact_conversation(conv_id: int, x_session_token: str = Header(alias="X-Session-Token")):
+        """Sohbeti özetle ve hafızaya kaydet (Claude Code /compact gibi)."""
+        user_id, _ = require_user(db, x_session_token)
+        require_conversation_owner(db, x_session_token, conv_id)
+
+        messages = db.get_conversation_messages(conv_id)
+        if len(messages) < 4:
+            return {"status": "skip", "reason": "Özetlenecek yeterli mesaj yok."}
+
+        # AI config'i al
+        provider_type, model_name, _, _, _ = db.get_ai_config(user_id)
+        api_key = (db.get_api_key(user_id, provider_type) or "") if provider_type not in ("ollama", "kb") else ""
+
+        try:
+            provider = AIProviderManager.get_provider(
+                {"provider_type": provider_type, "model_name": model_name, "api_key": api_key}
+            )
+        except ValueError:
+            raise HTTPException(400, "AI provider bağlanamıyor. API key kontrol edin.")
+
+        # Son 20 mesajı özetle
+        history_text = "\n".join(
+            f"{'Kullanıcı' if m['role'] == 'user' else 'AI'}: {m['content'][:500]}"
+            for m in messages[-20:]
+        )
+
+        compact_prompt = f"""Aşağıdaki sohbeti kısa ve öz bir şekilde özetle.
+Kullanıcının ne istediğini, hangi konularda konuşulduğunu, alınan kararları ve önemli teknik detayları belirt.
+Max 300 kelime. Türkçe yaz.
+
+SOHBET:
+{history_text}
+
+ÖZET:"""
+
+        try:
+            import asyncio
+            summary = await asyncio.to_thread(provider.analyze_code, compact_prompt, 1024)
+            db.compact_conversation(conv_id, summary.strip())
+            logger.info(f"[Compact] Conv {conv_id} özetlendi ({len(messages)} mesaj -> hafıza)")
+            return {"status": "success", "summary": summary.strip()}
+        except Exception as exc:
+            logger.error(f"[Compact] Hata: {exc}")
+            raise HTTPException(500, "Sohbet özetlenemedi.")
 
     @router.post("/chat")
     async def chat(request: ChatRequest, x_session_token: str = Header(alias="X-Session-Token")):
@@ -240,18 +287,58 @@ def create_conversation_router(db, kb, progress_store):
             db.add_message(request.conversation_id, "assistant", PROMPT_OUT_OF_SCOPE)
             return {"role": "assistant", "content": PROMPT_OUT_OF_SCOPE, "intent": "OUT_OF_SCOPE", "static_results": {"smells": []}, "pipeline": None}
 
-        if request.mode != "generation" and intent == "GENERATION" and not is_csharp:
-            redirect_msg = (
-                "Şu an **Kod Analizi** modundasın — kod üretmek için lütfen üstten **Sıfırdan Üret** sekmesine geç. 🚀"
-            )
-            db.add_message(request.conversation_id, "assistant", redirect_msg)
-            return {"role": "assistant", "content": redirect_msg, "intent": "GENERATION_REDIRECT", "static_results": {"smells": []}, "pipeline": None}
+        # ─── FIX PIPELINE ───
+        if intent == "FIX":
+            fix_code = request.editor_code or (request.message if is_csharp else "")
+            try:
+                fix_pipeline = QuickFixPipeline(
+                    code=fix_code,
+                    provider=provider,
+                    language=request.language,
+                    user_message=request.message,
+                )
+                fix_result = await asyncio.wait_for(fix_pipeline.run(), timeout=120)
+                step = fix_result.step2_analysis
+
+                fix_data = None
+                if step and step.output and step.output.get("fixed_code"):
+                    fix_data = {
+                        "original_code": fix_code,
+                        "fixed_code": step.output["fixed_code"],
+                        "explanation": step.output.get("explanation", ""),
+                        "editor_hint": step.output.get("editor_hint"),
+                    }
+
+                db.add_message(request.conversation_id, "assistant", fix_result.combined_response)
+                return {
+                    "role": "assistant",
+                    "content": fix_result.combined_response,
+                    "intent": "FIX",
+                    "static_results": {"smells": [], "stats": {}},
+                    "pipeline": None,
+                    "fix_data": fix_data,
+                }
+            except asyncio.TimeoutError:
+                msg = "⏱️ Hata düzeltme zaman aşımına uğradı. Lütfen tekrar deneyin."
+                db.add_message(request.conversation_id, "assistant", msg)
+                return {"role": "assistant", "content": msg, "intent": "FIX", "static_results": {"smells": []}, "pipeline": None, "fix_data": None}
+            except Exception as exc:
+                logger.error(f"QuickFix hatası: {exc}")
+                msg = "❌ Hata düzeltme sırasında sorun oluştu. Lütfen tekrar deneyin."
+                db.add_message(request.conversation_id, "assistant", msg)
+                return {"role": "assistant", "content": msg, "intent": "FIX", "static_results": {"smells": []}, "pipeline": None, "fix_data": None}
 
         history_messages = db.get_conversation_messages(request.conversation_id)
         context_summary = ""
+        
+        # Hafıza özeti varsa bağlama ekle
+        memory = db.get_memory(request.conversation_id)
+        if memory:
+            context_summary = f"[ÖNCEKİ SOHBET HAFIZASI]\n{memory}\n\n"
+        
         recent = history_messages[-6:]
         if len(recent) > 1:
-            context_summary = "\n".join(
+            context_summary += "\n".join(
                 f"{'Kullanıcı' if msg['role'] == 'user' else 'AI'}: {msg['content'][:800]}"
                 for msg in recent[:-1]
             )
@@ -278,7 +365,7 @@ def create_conversation_router(db, kb, progress_store):
                     f"[KULLANICI EK BİLGİLERİ]\n{request.message}"
                 )
 
-        if request.mode == "generation":
+        if intent == "GENERATION" or request.mode == "generation":
             # ——— BATCH CONTINUATION: Kademeli üretimde sonraki batch'i yaz ———
             batch_state = continuation_store.get(request.conversation_id)
 
@@ -578,9 +665,7 @@ def create_conversation_router(db, kb, progress_store):
             try:
                 progress_store[request.conversation_id] = [
                     {"id": "step1", "title": "Statik Analiz", "status": "pending", "description": "", "subtasks": [], "dependencies": [], "level": 0, "priority": "high"},
-                    {"id": "step2", "title": "Derin AI Analizi", "status": "pending", "description": "", "subtasks": [], "dependencies": [], "level": 0, "priority": "high"},
-                    {"id": "step3", "title": "Kod Düzeltme", "status": "pending", "description": "", "subtasks": [], "dependencies": [], "level": 0, "priority": "high"},
-                    {"id": "step4", "title": "Self-Critique", "status": "pending", "description": "", "subtasks": [], "dependencies": [], "level": 0, "priority": "high"},
+                    {"id": "step2", "title": "AI Analiz + Düzeltme", "status": "pending", "description": "", "subtasks": [], "dependencies": [], "level": 0, "priority": "high"},
                 ]
 
                 def update_progress(step_id: str, progress_status: str, duration_ms: int = None):
@@ -658,12 +743,26 @@ def create_conversation_router(db, kb, progress_store):
                 auto_title += "..."
             db.rename_conversation(request.conversation_id, auto_title)
 
+        # Context doluluk hesapla
+        all_msgs = db.get_conversation_messages(request.conversation_id)
+        total_chars = sum(len(m["content"]) for m in all_msgs)
+        # ~4 char = 1 token, model context: ~128k token = ~512k char
+        max_context_chars = 200_000  # Güvenli sınır (token limitinin altında)
+        context_pct = min(100, int((total_chars / max_context_chars) * 100))
+
         return {
             "role": "assistant",
             "content": final_suggestion,
             "intent": intent,
             "static_results": static_results,
             "pipeline": pipeline_info,
+            "context_usage": {
+                "percent": context_pct,
+                "total_chars": total_chars,
+                "max_chars": max_context_chars,
+                "should_compact": context_pct >= 85,
+                "message_count": len(all_msgs),
+            },
         }
 
     return router

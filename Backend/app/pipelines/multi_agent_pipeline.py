@@ -235,9 +235,20 @@ Lütfen yukarıdaki eleştirileri dikkate alarak kodu TAMAMEN yeniden yaz.
         total = int((time.time() - pipeline_start) * 1000)
         self._result.total_duration_ms = total
 
+        # Partner tadında, kısa bir özet oluştur
+        summary_msg = self._result.summary if self._result.summary else "Kodu inceledim ve optimize ettim."
+        
+        # Eğer çok uzunsa (essay modundaysa) ilk 2 cümleyi al
+        short_summary = summary_msg.split('\n')[0] 
+        if len(short_summary) > 150:
+            short_summary = short_summary[:147] + "..."
+
         parts = []
-        if self._result.analysis_text: parts.append(self._result.analysis_text)
+        # AI'ın samimi bir girişi (Antigravity tarzı)
+        prefix = f"✅ **İşlem Tamam!** {short_summary}"
+        parts.append(prefix)
+        
         if self._result.fixed_code: 
-            # Düzeltilmiş kodu UI'ın kod bloğunda (Kopyala butonuyla) gösterebilmesi için Markdown ile sarıyoruz
             parts.append(f"```csharp\n{self._result.fixed_code}\n```")
+        
         self._result.combined_response = "\n\n".join(parts)

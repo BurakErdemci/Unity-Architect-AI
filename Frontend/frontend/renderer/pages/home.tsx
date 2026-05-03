@@ -36,12 +36,15 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 import AgentPlan, { Task } from '../components/ui/agent-plan';
 import { AuthScreen } from '../components/home/AuthScreen';
+import { DiffViewer, DiffData } from '../components/home/DiffViewer';
+import { FileCreationApproval, PendingFile } from '../components/home/FileCreationApproval';
 import { ExportModal } from '../components/home/ExportModal';
 import { MarkdownRenderer } from '../components/home/MarkdownRenderer';
 import { ModelAvatar } from '../components/home/ModelAvatar';
 import { SettingsModal } from '../components/home/SettingsModal';
 import { WorkspaceScreen } from '../components/home/WorkspaceScreen';
-import { splitCodeIntoFiles } from '../components/home/export-utils';
+import { parseGeneratedFiles, splitCodeIntoFiles } from '../components/home/export-utils';
+import { defineUnityTheme, THEME_NAME } from '../components/home/monaco-theme';
 import { AIConfig, AvailableModels, Conversation, ExportModalState, FileEntry, Message, UserData } from '../components/home/types';
 
 let API = '';
@@ -82,7 +85,7 @@ export default function HomePage() {
   const [sidebarTab, setSidebarTab] = useState<'chats' | 'files'>('chats');
   const [isDragging, setIsDragging] = useState(false);
   const [dragRejectMsg, setDragRejectMsg] = useState('');
-  const [appMode, setAppMode] = useState<'analysis' | 'generation'>('analysis');
+  const appMode = 'auto';
   const [isEditorFocused, setIsEditorFocused] = useState(false);
   const [includeEditorCode, setIncludeEditorCode] = useState(false);
 
@@ -150,6 +153,16 @@ export default function HomePage() {
   // --- EXPORT MODAL ---
   const [exportModal, setExportModal] = useState<ExportModalState | null>(null);
   const [exportFileName, setExportFileName] = useState('');
+
+  // --- DIFF VIEWER (FIX pipeline) ---
+  const [pendingFix, setPendingFix] = useState<{ data: DiffData; messageId?: number; applied?: boolean } | null>(null);
+
+  // --- FILE CREATION APPROVAL (kod üretim pipeline) ---
+  const [pendingGenFiles, setPendingGenFiles] = useState<{ files: PendingFile[]; messageId: number } | null>(null);
+
+  // --- CONTEXT USAGE (Hafıza Barı) ---
+  const [contextUsage, setContextUsage] = useState<{ percent: number; should_compact: boolean; message_count: number }>({ percent: 0, should_compact: false, message_count: 0 });
+  const [isCompacting, setIsCompacting] = useState(false);
 
   // --- REFS ---
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -465,6 +478,7 @@ export default function HomePage() {
   const selectConversation = async (conv: Conversation) => {
     if (editingId) return;
     setActiveConvId(conv.id);
+    setContextUsage({ percent: 0, should_compact: false, message_count: 0 });
     await fetchMessages(conv.id);
   };
 
@@ -502,14 +516,6 @@ export default function HomePage() {
     if (result) {
       setCode(result.content);
       setOpenedFilePath(result.path);
-      // Otomatik yeni sohbet oluştur
-      if (user) {
-        const fileName = result.path.split('/').pop() || 'Dosya';
-        const res = await axios.post(`${API}/conversations`, { user_id: user.id, title: fileName });
-        await fetchConversations(user.id);
-        setActiveConvId(res.data.id);
-        setMessages([]);
-      }
     }
   };
 
@@ -533,14 +539,6 @@ export default function HomePage() {
     if (result) {
       setCode(result.content);
       setOpenedFilePath(result.path);
-      // Otomatik yeni sohbet oluştur
-      if (user) {
-        const fileName = result.path.split('/').pop() || 'Dosya';
-        const res = await axios.post(`${API}/conversations`, { user_id: user.id, title: fileName });
-        await fetchConversations(user.id);
-        setActiveConvId(res.data.id);
-        setMessages([]);
-      }
     }
   };
 
@@ -573,12 +571,6 @@ export default function HomePage() {
       const text = await file.text();
       setCode(text);
       setOpenedFilePath(file.name);
-      if (user && !activeConvId) {
-        const res = await axios.post(`${API}/conversations`, { user_id: user.id, title: file.name });
-        await fetchConversations(user.id);
-        setActiveConvId(res.data.id);
-        setMessages([]);
-      }
     }
   };
 
@@ -666,6 +658,38 @@ export default function HomePage() {
       });
     }
   }, [workspacePath]);
+
+  // Workspace tree'ye bakarak dosya için en uygun path'i öner
+  const suggestFilePath = (fileName: string): string => {
+    if (!workspacePath) return fileName;
+    const base = `${workspacePath}/Assets/Scripts`;
+    if (!fileTree || fileTree.length === 0) return `${base}/${fileName}`;
+
+    // Mevcut .cs dosyalarının bulunduğu klasörleri topla
+    const csDirs: Record<string, number> = {};
+    const collectDirs = (entries: typeof fileTree) => {
+      for (const e of entries) {
+        if (!e.isDirectory && e.extension === '.cs') {
+          const dir = e.path.substring(0, e.path.lastIndexOf('/'));
+          csDirs[dir] = (csDirs[dir] || 0) + 1;
+        }
+      }
+    };
+    collectDirs(fileTree);
+
+    // Dosya adıyla semantik eşleşme (örn. EnemyAI.cs → Enemy klasörü)
+    const nameLower = fileName.replace('.cs', '').toLowerCase();
+    for (const dir of Object.keys(csDirs)) {
+      const dirName = dir.split('/').pop()?.toLowerCase() || '';
+      if (nameLower.includes(dirName) || dirName.includes(nameLower.slice(0, 4))) {
+        return `${dir}/${fileName}`;
+      }
+    }
+
+    // En çok .cs dosyası olan klasörü seç
+    const topDir = Object.entries(csDirs).sort((a, b) => b[1] - a[1])[0]?.[0];
+    return topDir ? `${topDir}/${fileName}` : `${base}/${fileName}`;
+  };
 
   const exportSingleFile = async (fileName: string, content: string) => {
     if (!ipc || !exportModal || !workspacePath) return;
@@ -801,14 +825,15 @@ export default function HomePage() {
         mode: appMode,
         use_kb: aiConfig.provider_type === 'kb',
         use_or_for_coder: gpt54OrToggled,
-      }, { timeout: 900000 }); // 900 saniye timeout (backend limiti ile eşleştirildi)
+        editor_code: code || '',
+      }, { timeout: 900000 });
 
       clearInterval(progressInterval);
       setCurrentPlan([]);
 
-      // AI yanıtını ekle
+      const aiMsgId = Date.now() + 1;
       const aiMsg: Message = {
-        id: Date.now() + 1,
+        id: aiMsgId,
         role: 'assistant',
         content: res.data.content,
         smells: res.data.static_results?.smells || [],
@@ -816,6 +841,31 @@ export default function HomePage() {
         pipeline: res.data.pipeline || null
       };
       setMessages(prev => [...prev, aiMsg]);
+
+      // FIX intent — diff viewer aç
+      if (res.data.intent === 'FIX' && res.data.fix_data) {
+        setPendingFix({ data: res.data.fix_data, messageId: aiMsgId });
+      }
+
+      // GENERATION intent — dosya onay akışını başlat
+      const isGenIntent = ['GENERATION', 'BATCH_CONTINUATION', 'CONTINUATION'].includes(res.data.intent);
+      if (isGenIntent && workspacePath) {
+        const parsed = parseGeneratedFiles(res.data.content);
+        if (parsed.length > 0) {
+          const withPaths: PendingFile[] = parsed.map(f => ({
+            name: f.name,
+            code: f.code,
+            suggestedPath: suggestFilePath(f.name),
+          }));
+          setPendingGenFiles({ files: withPaths, messageId: aiMsgId });
+        }
+      }
+
+      // Context kullanım barını güncelle
+      if (res.data.context_usage) {
+        setContextUsage(res.data.context_usage);
+      }
+
       fetchConversations(user.id); // Başlık güncellenmiş olabilir
     } catch (err: any) {
       clearInterval(progressInterval);
@@ -834,6 +884,32 @@ export default function HomePage() {
       setMessages(prev => [...prev, errorMsg]);
     }
     setLoading(false);
+  };
+
+  const compactConversation = async () => {
+    if (!activeConvId || isCompacting) return;
+    setIsCompacting(true);
+    try {
+      const res = await axios.post(`${API}/conversations/${activeConvId}/compact`);
+      if (res.data.status === 'success') {
+        // Mesajları yeniden yükle (artık sadece özet mesajı olacak)
+        const msgRes = await axios.get(`${API}/conversations/${activeConvId}/messages`);
+        setMessages(msgRes.data.map((m: any) => ({
+          id: m.id,
+          role: m.role,
+          content: m.content,
+          smells: m.smells || [],
+          timestamp: m.timestamp,
+        })));
+        setContextUsage({ percent: 5, should_compact: false, message_count: 1 });
+        showToast('Sohbet özetlendi! Hafıza korunarak temiz bir sayfadan devam ediyorsun.', 'success');
+      } else {
+        showToast(res.data.reason || 'Özetlenemedi.', 'warning');
+      }
+    } catch {
+      showToast('Özetleme sırasında hata oluştu.', 'error');
+    }
+    setIsCompacting(false);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -1210,35 +1286,18 @@ export default function HomePage() {
               {isSidebarOpen ? <ChevronLeft size={16} /> : <ChevronRight size={16} />}
             </button>
             
-            {/* MODE TOGGLE */}
-            <div className="flex bg-[#000000] p-1 rounded-lg border border-slate-800/50 hidden sm:flex">
-              <button 
-                onClick={() => setAppMode('analysis')}
-                className={`flex items-center gap-1.5 px-3 py-1 rounded text-[11px] font-semibold transition-all ${appMode === 'analysis' ? 'bg-blue-600/20 text-blue-400' : 'text-slate-500 hover:text-slate-300'}`}
-              >
-                🔍 Kodu İncele
-              </button>
-              <button 
-                onClick={() => setAppMode('generation')}
-                className={`flex items-center gap-1.5 px-3 py-1 rounded text-[11px] font-semibold transition-all ${appMode === 'generation' ? 'bg-emerald-600/20 text-emerald-400' : 'text-slate-500 hover:text-slate-300'}`}
-              >
-                ✨ Sıfırdan Üret
-              </button>
+            {/* Açık Dosya Göstergesi */}
+            <div className="flex items-center gap-2 border-l border-slate-800/50 pl-3 ml-1">
+              <Code2 size={14} className="text-blue-500" />
+              <span className="text-[12px] font-semibold text-slate-400">
+                {openedFilePath ? openedFilePath.split('/').pop() : 'C# Editor'}
+              </span>
+              {openedFilePath && (
+                <button onClick={() => { setOpenedFilePath(null); setCode(''); }} className="p-0.5 hover:bg-slate-700 rounded text-slate-500">
+                  <X size={12} />
+                </button>
+              )}
             </div>
-
-            {appMode === 'analysis' && (
-              <div className="flex items-center gap-2 border-l border-slate-800/50 pl-3 ml-1">
-                <Code2 size={14} className="text-blue-500" />
-                <span className="text-[12px] font-semibold text-slate-400">
-                  {openedFilePath ? openedFilePath.split('/').pop() : 'C# Editor'}
-                </span>
-                {openedFilePath && (
-                  <button onClick={() => { setOpenedFilePath(null); setCode(''); }} className="p-0.5 hover:bg-slate-700 rounded text-slate-500">
-                    <X size={12} />
-                  </button>
-                )}
-              </div>
-            )}
           </div>
           <div className="flex items-center gap-2">
             <div
@@ -1284,20 +1343,7 @@ export default function HomePage() {
             </div>
           )}
           
-          {appMode === 'generation' ? (
-            <div className="flex-1 flex flex-col items-center justify-center text-slate-600 gap-4 bg-[#000000]">
-              <div className="bg-emerald-500/10 border border-emerald-500/20 p-6 rounded-3xl">
-                <Sparkles size={48} className="text-emerald-500/50" />
-              </div>
-              <div className="text-center">
-                <h3 className="text-lg font-bold text-slate-300">Sıfırdan Kod Üretim Modu</h3>
-                <p className="text-[13px] text-slate-500 mt-2 max-w-sm">
-                  Bu modda kod yapıştırmanıza gerek yok. Sadece sağ taraftaki sohbet alanından ne istediğinizi (örn: "Basit bir Karakter Kontrolcüsü yaz") söyleyin. Mimar ajanımız oyun hissiyatını (Game Feel) gözeterek sizin için en uygun C# mimarisini kurup yazıp teslim edecektir.
-                </p>
-              </div>
-            </div>
-          ) : (
-            <div className="flex-1 relative flex flex-col bg-[#000000]">
+          <div className="flex-1 relative flex flex-col bg-[#000000]">
               {/* Empty State Overlay */}
               {!code && !openedFilePath && !isEditorFocused && (
                 <div 
@@ -1311,16 +1357,16 @@ export default function HomePage() {
                   <h3 className="text-lg font-semibold text-slate-300 tracking-tight">C# Editörü</h3>
                   <div className="mt-3 text-center space-y-1.5 pointer-events-none">
                     <p className="text-[13px] text-slate-500 font-medium tracking-wide">
-                      Analiz için Unity kodunuzu buraya yapıştırın
+                      Kodu buraya yapıştır veya sol panelden bir .cs dosyası seç
                     </p>
                     <p className="text-[12px] text-slate-600">
-                      veya bir .cs dosyasını bu alana sürükleyip bırakın
+                      ya da sağdaki chat'ten direkt bir şey iste
                     </p>
                   </div>
                   <div className="mt-10 flex gap-6 text-[10px] font-mono text-slate-700 font-semibold uppercase tracking-widest pointer-events-none">
-                    <span className="flex items-center gap-1.5"><Activity size={14}/> Statik Analiz</span>
-                    <span className="flex items-center gap-1.5"><Cpu size={14}/> Mimari Değerlendirme</span>
-                    <span className="flex items-center gap-1.5"><Sparkles size={14}/> Best Practices</span>
+                    <span className="flex items-center gap-1.5"><Activity size={14}/> Bug Fix</span>
+                    <span className="flex items-center gap-1.5"><Cpu size={14}/> Kod Üretim</span>
+                    <span className="flex items-center gap-1.5"><Sparkles size={14}/> Analiz</span>
                   </div>
                 </div>
               )}
@@ -1360,85 +1406,11 @@ export default function HomePage() {
                 <Editor
                   height="100%"
                   defaultLanguage="csharp"
-                  theme="vs-dark"
+                  theme={THEME_NAME}
                   value={code}
                   onChange={(val) => setCode(val || '')}
                   onMount={(editor, monaco) => {
-                    // 1. Tema Özelleştirmesi (Siyah arkaplana tam uyuşum)
-                    monaco.editor.defineTheme('unityArchitectDark', {
-                      base: 'vs-dark',
-                      inherit: true,
-                      rules: [
-                        { token: 'class', foreground: '4EC9B0' },
-                        { token: 'method', foreground: 'DCDCAA' },
-                        { token: 'property', foreground: '9CDCFE' }
-                      ],
-                      colors: {
-                        'editor.background': '#000000',
-                        'editorLineNumber.foreground': '#334155',
-                      }
-                    });
-                    monaco.editor.setTheme('unityArchitectDark');
-
-                    // 2. Muazzam C# Semantic Tokenizer (VS Code Dark+ Taklidi)
-                    // C# Monarch tokenları Unity class'larını ve IEnumerator'u renklendiremediği için 
-                    // bu custom kod Semantic Tokenlar ekleyerek Sınıfları Cyan, Metotları Sarı yapıyor.
-                    monaco.languages.registerDocumentSemanticTokensProvider('csharp', {
-                      getLegend: function () {
-                        return { tokenTypes: ['class', 'method', 'property'], tokenModifiers: [] };
-                      },
-                      provideDocumentSemanticTokens: function (model, lastResultId, token) {
-                        const lines = model.getLinesContent();
-                        const data: number[] = [];
-                        let prevLine = 0; let prevChar = 0;
-
-                        for (let i = 0; i < lines.length; i++) {
-                          const line = lines[i];
-                          const tokensInLine: { index: number, length: number, type: number }[] = [];
-                          
-                          // Metotlar (Örn: GetComponent, SendMessage) -> Yellow
-                          const methodRegex = /\b([a-zA-Z_]\w*)\s*\(/g;
-                          let match;
-                          while ((match = methodRegex.exec(line)) !== null) {
-                            const word = match[1];
-                            if (!['if', 'while', 'for', 'switch', 'catch', 'typeof', 'sizeof'].includes(word)) {
-                              tokensInLine.push({ index: match.index, length: word.length, type: 1 });
-                            }
-                          }
-                          
-                          // Sınıflar (Örn: ZombieEnemy, Rigidbody, IEnumerator) -> Cyan
-                          const classRegex = /\b([A-Z][a-zA-Z0-9_]*)\b/g;
-                          while ((match = classRegex.exec(line)) !== null) {
-                            const word = match[1];
-                            if (!tokensInLine.some(t => t.index === match.index)) {
-                               tokensInLine.push({ index: match.index, length: word.length, type: 0 });
-                            }
-                          }
-
-                          // Property/Değişkenler (Örn: speed, player, rb) -> Light Blue
-                          const propRegex = /\b([a-z_][a-zA-Z0-9_]*)\b/g;
-                          const keywords = ['public','private','protected','class','void','float','int','bool','var','new','return','if','else','while','for','foreach','in','using','namespace','yield', 'true', 'false', 'null', 'string'];
-                          while ((match = propRegex.exec(line)) !== null) {
-                            const word = match[1];
-                            if (!keywords.includes(word) && !tokensInLine.some(t => t.index === match.index)) {
-                               tokensInLine.push({ index: match.index, length: word.length, type: 2 });
-                            }
-                          }
-
-                          tokensInLine.sort((a, b) => a.index - b.index);
-                          
-                          for (const t of tokensInLine) {
-                            const deltaLine = i - prevLine;
-                            const deltaStart = deltaLine === 0 ? t.index - prevChar : t.index;
-                            data.push(deltaLine, deltaStart, t.length, t.type, 0);
-                            prevLine = i; prevChar = t.index;
-                          }
-                        }
-                        return { data: new Uint32Array(data) };
-                      },
-                      releaseDocumentSemanticTokens: function (resultId) {}
-                    });
-                    
+                    defineUnityTheme(monaco);
                     editor.onDidFocusEditorWidget(() => setIsEditorFocused(true));
                     editor.onDidBlurEditorWidget(() => setIsEditorFocused(false));
                   }}
@@ -1459,7 +1431,6 @@ export default function HomePage() {
                 />
               </div>
             </div>
-          )}
         </div>{/* end drag-drop wrapper */}
       </div>
 
@@ -1553,7 +1524,7 @@ export default function HomePage() {
                       {showMultiAgentInfo && (
                         <div className="mx-2 mt-2 mb-1 bg-[#0a0a0f] border border-blue-900/60 rounded-xl p-3">
                           <p className="text-[11px] font-bold text-blue-400 mb-2">
-                            {appMode === 'analysis' ? '🔍 Kod Analizi — Multi-Agent' : '✨ Sıfırdan Üretim — Multi-Agent'}
+                            🤖 Multi-Agent Pipeline
                           </p>
                           {/* Model özeti */}
                           <div className="mb-2 px-2 py-1.5 rounded-lg bg-slate-900/60 border border-slate-800/60 flex flex-col gap-0.5">
@@ -1575,29 +1546,14 @@ export default function HomePage() {
                             </div>
                           </div>
                           <div className="space-y-1.5 text-[10px] text-slate-400">
-                            {appMode === 'analysis' ? (
-                              <>
-                                <div className="flex gap-2"><span className="shrink-0">🎯</span><span><span className="text-slate-300 font-semibold">Orchestrator:</span> Kodu inceler, düzeltme planı çıkarır.</span></div>
-                                <div className="flex gap-2"><span className="shrink-0">🔧</span><span><span className="text-slate-300 font-semibold">Unity Expert:</span> {aiConfig.force_claude_coder ? 'Claude kodu yeniden yazar.' : 'GPT key varsa GPT, yoksa Claude yazar.'}</span></div>
-                                <div className="flex gap-2"><span className="shrink-0">⚖️</span><span><span className="text-slate-300 font-semibold">Critic:</span> {aiConfig.force_claude_coder ? 'Claude' : 'GPT'} teknik kaliteyi puanlar.</span></div>
-                                <div className="flex gap-2"><span className="shrink-0">🎮</span><span><span className="text-slate-300 font-semibold">Game Feel:</span> Claude oyun hissiyatını değerlendirir.</span></div>
-                                <div className="flex gap-2"><span className="shrink-0">🔁</span><span><span className="text-slate-300 font-semibold">Reflexive Loop:</span> Skor 8/10 altındaysa Expert otomatik yeniden yazar.</span></div>
-                              </>
-                            ) : (
-                              <>
-                                <div className="flex gap-2"><span className="shrink-0">🚦</span><span><span className="text-slate-300 font-semibold">Clarification Gate:</span> İstek muğlaksa soru sorar, sonra başlar.</span></div>
-                                <div className="flex gap-2"><span className="shrink-0">🏗️</span><span><span className="text-slate-300 font-semibold">Architect:</span> Mimari plan oluşturur. Anthropic API zorunludur.</span></div>
-                                <div className="flex gap-2"><span className="shrink-0">💻</span><span><span className="text-slate-300 font-semibold">Coder:</span> {aiConfig.force_claude_coder ? 'Claude yazar (manuel seçim).' : 'GPT key varsa GPT, yoksa Claude yazar.'}</span></div>
-                                <div className="flex gap-2"><span className="shrink-0">🎮</span><span><span className="text-slate-300 font-semibold">Game Feel:</span> Sessizce denetler, düşük skorsa Coder tekrar yazar.</span></div>
-                              </>
-                            )}
+                            <div className="flex gap-2"><span className="shrink-0">🎯</span><span><span className="text-slate-300 font-semibold">Orchestrator:</span> İsteği analiz eder, plan çıkarır.</span></div>
+                            <div className="flex gap-2"><span className="shrink-0">🔧</span><span><span className="text-slate-300 font-semibold">Unity Expert / Coder:</span> {aiConfig.force_claude_coder ? 'Claude kodu yazar.' : 'GPT key varsa GPT, yoksa Claude yazar.'}</span></div>
+                            <div className="flex gap-2"><span className="shrink-0">⚖️</span><span><span className="text-slate-300 font-semibold">Critic:</span> Teknik kaliteyi puanlar.</span></div>
+                            <div className="flex gap-2"><span className="shrink-0">🎮</span><span><span className="text-slate-300 font-semibold">Game Feel:</span> Claude oyun hissiyatını değerlendirir.</span></div>
+                            <div className="flex gap-2"><span className="shrink-0">🔁</span><span><span className="text-slate-300 font-semibold">Reflexive Loop:</span> Skor 8/10 altındaysa otomatik yeniden yazar.</span></div>
                             <div className="mt-2 pt-2 border-t border-amber-900/40 bg-amber-900/10 rounded-lg px-2 py-1.5">
                               <p className="text-amber-400 font-semibold text-[10px] mb-0.5">⚠️ Token Kullanımı</p>
-                              <p className="text-slate-500">
-                                {appMode === 'analysis'
-                                  ? 'Her analiz isteği 4–5 ayrı AI çağrısı yapar. Tek ajan moduna kıyasla 4–5× daha fazla token harcar.'
-                                  : "Her üretim isteği 3–4 AI çağrısı yapar. Büyük sistemler 10'ar dosyalık batch'lere bölünür — her batch ayrı maliyet oluşturur."}
-                              </p>
+                              <p className="text-slate-500">Her istek 4–5 ayrı AI çağrısı yapar. Tek ajan moduna kıyasla 4–5× daha fazla token harcar.</p>
                             </div>
                           </div>
                         </div>
@@ -1849,6 +1805,54 @@ export default function HomePage() {
           </button>
         </div>
 
+        {/* Context Usage Bar (Claude Code /compact tarzı) */}
+        {activeConvId && contextUsage.percent > 0 && (
+          <div className="px-4 py-1.5 border-b border-slate-800/30 shrink-0">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex-1 flex items-center gap-2">
+                <div className="flex-1 h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                  <motion.div
+                    className="h-full rounded-full"
+                    initial={{ width: 0 }}
+                    animate={{ width: `${contextUsage.percent}%` }}
+                    transition={{ duration: 0.5, ease: 'easeOut' }}
+                    style={{
+                      background: contextUsage.percent >= 95 ? '#ef4444'
+                        : contextUsage.percent >= 85 ? '#f59e0b'
+                        : contextUsage.percent >= 60 ? '#3b82f6'
+                        : '#22c55e',
+                    }}
+                  />
+                </div>
+                <span className={`text-[10px] font-mono whitespace-nowrap ${
+                  contextUsage.percent >= 85 ? 'text-amber-400' : 'text-slate-500'
+                }`}>
+                  %{contextUsage.percent}
+                </span>
+              </div>
+              {contextUsage.percent >= 50 && (
+                <button
+                  onClick={compactConversation}
+                  disabled={isCompacting}
+                  className={`text-[9px] px-2 py-0.5 rounded-full font-medium transition-all ${
+                    contextUsage.should_compact
+                      ? 'bg-amber-500/20 text-amber-400 hover:bg-amber-500/30 animate-pulse'
+                      : 'bg-slate-700/50 text-slate-400 hover:bg-slate-700'
+                  }`}
+                  title="Sohbeti özetle ve hafızayı temizle"
+                >
+                  {isCompacting ? '⏳ Özetleniyor...' : '📝 Compact'}
+                </button>
+              )}
+            </div>
+            {contextUsage.should_compact && !isCompacting && (
+              <p className="text-[9px] text-amber-500/70 mt-0.5">
+                Hafıza dolmak üzere. Compact ile sohbeti özetleyebilirsin.
+              </p>
+            )}
+          </div>
+        )}
+
         {/* Chat Messages */}
         <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-4 min-w-[420px]">
           {!activeConvId ? (
@@ -1859,15 +1863,8 @@ export default function HomePage() {
               </p>
             </div>
           ) : messages.length === 0 && !loading ? (
-            <div className="flex flex-col items-center justify-center h-full text-slate-600 gap-3">
-              <Sparkles size={28} className="opacity-20 text-blue-500" />
-              <div className="text-center">
-                <p className="text-[12px] font-medium text-slate-400">Merhaba! 👋</p>
-                <p className="text-[11px] text-slate-600 mt-1">
-                  Unity kodunuzu ortadaki editöre yapıştırın,<br />
-                  sonra buradan analiz isteyin.
-                </p>
-              </div>
+            <div className="flex items-center justify-center h-full">
+              <Sparkles size={20} className="opacity-10 text-blue-500" />
             </div>
           ) : (
             <>
@@ -1953,6 +1950,45 @@ export default function HomePage() {
                             </button>
                           </div>
                         )}
+                        {/* File Creation Approval — kod üretim sonucu */}
+                        {pendingGenFiles && pendingGenFiles.messageId === msg.id && (
+                          <FileCreationApproval
+                            files={pendingGenFiles.files}
+                            onAcceptOne={async (file) => {
+                              if (!ipc || !workspacePath) return;
+                              await ipc.invoke('write-file', file.suggestedPath, file.code, workspacePath);
+                              refreshFileTree();
+                            }}
+                            onSkipOne={() => {}}
+                            onAcceptAll={async (files) => {
+                              if (!ipc || !workspacePath) return;
+                              for (const file of files) {
+                                await ipc.invoke('write-file', file.suggestedPath, file.code, workspacePath);
+                              }
+                              refreshFileTree();
+                            }}
+                            onDone={() => setPendingGenFiles(null)}
+                          />
+                        )}
+
+                        {/* Diff Viewer — FIX pipeline sonucu */}
+                        {pendingFix && pendingFix.messageId === msg.id && (
+                          <DiffViewer
+                            diffData={pendingFix.data}
+                            filename={openedFilePath ? openedFilePath.split('/').pop() : undefined}
+                            applied={pendingFix.applied}
+                            onAccept={async (fixedCode) => {
+                              setCode(fixedCode);
+                              setPendingFix(prev => prev ? { ...prev, applied: true } : null);
+                              if (ipc && openedFilePath && workspacePath) {
+                                await ipc.invoke('write-file', openedFilePath, fixedCode, workspacePath);
+                                refreshFileTree();
+                              }
+                              showToast(`✅ ${openedFilePath ? openedFilePath.split('/').pop() : 'Dosya'} güncellendi`, 'success');
+                            }}
+                            onReject={() => setPendingFix(null)}
+                          />
+                        )}
                       </div>
                     </div>
                   ) : (
@@ -2017,7 +2053,7 @@ export default function HomePage() {
               setValue={setChatInput}
               onSendMessage={(msg) => sendMessage(msg)}
               isLoading={loading}
-              placeholder={code.trim() ? "Bu kodu analiz et..." : "Unity hakkında bir şey sor..."}
+              placeholder={code.trim() ? "Bu kodu analiz et, düzelt, veya bir şey sor..." : "Kod yaz, analiz et, hata düzelt — ne istersen..."}
               className="border-slate-800/50"
               includeEditorCode={includeEditorCode}
               onToggleIncludeCode={() => setIncludeEditorCode(!includeEditorCode)}

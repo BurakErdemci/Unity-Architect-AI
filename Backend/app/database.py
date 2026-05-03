@@ -161,6 +161,11 @@ class DatabaseManager:
                 session_token TEXT NOT NULL,
                 created_at TEXT NOT NULL
             )''')
+            # Migration: conversations tablosuna memory_summary sütunu ekle
+            try:
+                cursor.execute("ALTER TABLE conversations ADD COLUMN memory_summary TEXT DEFAULT ''")
+            except sqlite3.OperationalError:
+                pass  # Sütun zaten var
             conn.commit()
         self._backfill_session_expiry()
 
@@ -486,6 +491,38 @@ class DatabaseManager:
                 {"id": r[0], "role": r[1], "content": r[2], "smells": json.loads(r[3]), "timestamp": r[4]}
                 for r in rows
             ]
+
+    # ===================== HAFIZA (MEMORY) =====================
+    def save_memory(self, conv_id: int, summary: str) -> None:
+        """Sohbet özetini (compact) hafızaya kaydet."""
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
+            conn.execute(
+                'UPDATE conversations SET memory_summary = ?, updated_at = ? WHERE id = ?',
+                (summary, now, conv_id)
+            )
+            conn.commit()
+
+    def get_memory(self, conv_id: int) -> str:
+        """Sohbetin hafıza özetini getir."""
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
+            row = conn.execute(
+                'SELECT memory_summary FROM conversations WHERE id = ?', (conv_id,)
+            ).fetchone()
+            return (row[0] or "") if row else ""
+
+    def compact_conversation(self, conv_id: int, summary: str) -> None:
+        """Sohbeti compact'la: özeti kaydet, eski mesajları sil, özet mesajını ekle."""
+        self.save_memory(conv_id, summary)
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
+            conn.execute('DELETE FROM messages WHERE conversation_id = ?', (conv_id,))
+            # Özeti tek bir "system" mesajı olarak ekle — kullanıcı UI'da görür
+            conn.execute(
+                'INSERT INTO messages (conversation_id, role, content, smells_json, timestamp) VALUES (?, ?, ?, ?, ?)',
+                (conv_id, 'assistant', f'📝 **Sohbet özetlendi.**\n\n{summary}', '[]', now)
+            )
+            conn.commit()
 
     # ===================== WORKSPACE =====================
     def _ensure_workspace_table(self):
