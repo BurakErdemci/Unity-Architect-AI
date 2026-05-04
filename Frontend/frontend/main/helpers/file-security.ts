@@ -41,7 +41,10 @@ function safeResolve(filePath: string): string {
  */
 export function isAllowedUnityScriptPath(filePath: string, workspacePath: string): boolean {
   try {
-    const resolvedFile = safeResolve(filePath)
+    // Eğer yol absolute değilse, önce workspace ile birleştirip öyle kontrol etmeliyiz
+    const absoluteFilePath = path.isAbsolute(filePath) ? filePath : path.resolve(workspacePath, filePath)
+    
+    const resolvedFile = safeResolve(absoluteFilePath)
     const resolvedWorkspace = safeResolve(workspacePath)
     const relativePath = path.relative(resolvedWorkspace, resolvedFile)
 

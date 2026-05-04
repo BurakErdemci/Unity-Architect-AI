@@ -55,16 +55,18 @@ ipcMain.handle('open-folder-dialog', async () => {
 
 ipcMain.handle('read-directory', async (_event, dirPath: string, workspacePath?: string) => {
   try {
-    if (!workspacePath || !isAllowedWorkspacePath(dirPath, workspacePath)) {
+    if (!workspacePath) return [];
+    const fullPath = path.isAbsolute(dirPath) ? dirPath : path.join(workspacePath, dirPath);
+    if (!isAllowedWorkspacePath(fullPath, workspacePath)) {
       return []
     }
-    const entries = fs.readdirSync(dirPath, { withFileTypes: true })
+    const entries = fs.readdirSync(fullPath, { withFileTypes: true })
     const items = entries
       .filter(e => !e.name.startsWith('.'))
       .filter(e => e.isDirectory() || path.extname(e.name).toLowerCase() === '.cs')
       .map(e => ({
         name: e.name,
-        path: path.join(dirPath, e.name),
+        path: path.join(fullPath, e.name),
         isDirectory: e.isDirectory(),
         extension: e.isDirectory() ? '' : path.extname(e.name).toLowerCase()
       }))
@@ -79,51 +81,61 @@ ipcMain.handle('read-directory', async (_event, dirPath: string, workspacePath?:
 
 ipcMain.handle('read-file', async (_event, filePath: string, workspacePath?: string) => {
   try {
-    if (!workspacePath || !isAllowedWorkspaceReadFile(filePath, workspacePath)) {
+    if (!workspacePath) return null;
+    const fullPath = path.isAbsolute(filePath) ? filePath : path.join(workspacePath, filePath);
+    if (!isAllowedWorkspaceReadFile(fullPath, workspacePath)) {
       return null
     }
-    const content = fs.readFileSync(filePath, 'utf-8')
-    return { path: filePath, name: path.basename(filePath), content }
+    const content = fs.readFileSync(fullPath, 'utf-8')
+    return { path: fullPath, name: path.basename(fullPath), content }
   } catch { return null }
 })
 
 ipcMain.handle('write-file', async (_event, filePath: string, content: string, workspacePath?: string) => {
   try {
-    if (!workspacePath || !isAllowedUnityScriptPath(filePath, workspacePath)) {
+    if (!workspacePath) return { success: false, error: 'Workspace path eksik.' };
+    const fullPath = path.isAbsolute(filePath) ? filePath : path.join(workspacePath, filePath);
+
+    if (!isAllowedUnityScriptPath(fullPath, workspacePath)) {
       return { success: false, error: 'Dosya yalnızca workspace içindeki Assets/Scripts altına yazılabilir.' }
     }
-    const dir = path.dirname(filePath)
+    const dir = path.dirname(fullPath)
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true })
     }
-    fs.writeFileSync(filePath, content, 'utf-8')
-    return { success: true, path: filePath }
+    fs.writeFileSync(fullPath, content, 'utf-8')
+    return { success: true, path: fullPath }
   } catch (err: any) {
     return { success: false, error: err.message }
   }
 })
 
 ipcMain.handle('file-exists', async (_event, filePath: string, workspacePath?: string) => {
-  if (!workspacePath || !isAllowedUnityScriptPath(filePath, workspacePath)) {
+  if (!workspacePath) return false;
+  const fullPath = path.isAbsolute(filePath) ? filePath : path.join(workspacePath, filePath);
+  if (!isAllowedUnityScriptPath(fullPath, workspacePath)) {
     return false
   }
-  return fs.existsSync(filePath)
+  return fs.existsSync(fullPath)
 })
 
 ipcMain.handle('write-multiple-files', async (_event, files: { path: string; content: string }[], workspacePath?: string) => {
   const results: { path: string; success: boolean; error?: string }[] = []
+  if (!workspacePath) return results;
+
   for (const file of files) {
     try {
-      if (!workspacePath || !isAllowedUnityScriptPath(file.path, workspacePath)) {
-        results.push({ path: file.path, success: false, error: 'Dosya yalnızca workspace içindeki Assets/Scripts altına yazılabilir.' })
+      const fullPath = path.isAbsolute(file.path) ? file.path : path.join(workspacePath, file.path);
+      if (!isAllowedUnityScriptPath(fullPath, workspacePath)) {
+        results.push({ path: fullPath, success: false, error: 'Dosya yalnızca workspace içindeki Assets/Scripts altına yazılabilir.' })
         continue
       }
-      const dir = path.dirname(file.path)
+      const dir = path.dirname(fullPath)
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true })
       }
-      fs.writeFileSync(file.path, file.content, 'utf-8')
-      results.push({ path: file.path, success: true })
+      fs.writeFileSync(fullPath, file.content, 'utf-8')
+      results.push({ path: fullPath, success: true })
     } catch (err: any) {
       results.push({ path: file.path, success: false, error: err.message })
     }

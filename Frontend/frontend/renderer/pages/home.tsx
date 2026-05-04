@@ -40,6 +40,7 @@ import { AuthScreen } from '../components/home/AuthScreen';
 import { DiffViewer, DiffData } from '../components/home/DiffViewer';
 import { FileCreationApproval, PendingFile } from '../components/home/FileCreationApproval';
 import { ThinkingBlock } from '../components/home/ThinkingBlock';
+import { ToolBlock } from '../components/home/ToolBlock';
 import { GenerationModeSelector, GenerationMode } from '../components/home/GenerationModeSelector';
 import { ExportModal } from '../components/home/ExportModal';
 import { MarkdownRenderer } from '../components/home/MarkdownRenderer';
@@ -133,9 +134,9 @@ export default function HomePage() {
   const gpt54OrToggled = modelOrToggles['gpt-5.4'] ?? false;
   const maCoderProvider =
     gpt54OrToggled && providersWithKeys.includes('openrouter') ? 'openrouter'
-    : providersWithKeys.includes('openai') ? 'openai'
-    : providersWithKeys.includes('openrouter') ? 'openrouter'
-    : null;
+      : providersWithKeys.includes('openai') ? 'openai'
+        : providersWithKeys.includes('openrouter') ? 'openrouter'
+          : null;
   const [showMultiAgentInfo, setShowMultiAgentInfo] = useState(false);
 
   // Header'da gösterilecek model adı — yüklü model listesinden isim arar, bulamazsa ID gösterir
@@ -295,7 +296,7 @@ export default function HomePage() {
           if (parsed?.sessionToken) {
             await persistSessionToken(parsed.sessionToken);
           }
-        } catch {}
+        } catch { }
         localStorage.removeItem('unityArchitectUser');
       }
 
@@ -624,15 +625,15 @@ export default function HomePage() {
   const handleExportToUnity = useCallback(async (codeString: string) => {
     if (!workspacePath) return;
     const targetDir = `${workspacePath}/Assets/Scripts`;
-    
+
     // Sınıf adını regex ile bul
     const classMatch = codeString.match(/class\s+(\w+)/);
     const className = classMatch ? classMatch[1] : 'NewScript';
     const suggestedName = `${className}.cs`;
-    
+
     // Çoklu sınıf kontrolü
     const allClasses = [...codeString.matchAll(/class\s+(\w+)/g)];
-    
+
     if (allClasses.length > 1) {
       // Çoklu dosya modu
       const files = splitCodeIntoFiles(codeString, workspacePath);
@@ -722,13 +723,13 @@ export default function HomePage() {
     const results = await ipc.invoke('write-multiple-files', filesToWrite, workspacePath);
     const successCount = results.filter((r: any) => r.success).length;
     const failCount = results.filter((r: any) => !r.success).length;
-    
+
     let message = `✅ ${successCount} dosya başarıyla oluşturuldu!`;
     if (failCount > 0) {
       const errors = results.filter((r: any) => !r.success).map((r: any) => r.error).join(', ');
       message += `\n❌ ${failCount} dosya yazılamadı: ${errors}`;
     }
-    
+
     setExportModal(prev => prev ? {
       ...prev,
       exportResult: { success: failCount === 0, message }
@@ -746,7 +747,7 @@ export default function HomePage() {
       try {
         const dirEntries = await ipc.invoke('read-directory', dir, workspacePath);
         newDirContents[dir] = dirEntries || [];
-      } catch {}
+      } catch { }
     }
     setDirContents(newDirContents);
   };
@@ -812,111 +813,179 @@ export default function HomePage() {
     setLoading(true);
     setCurrentPlan([]);
 
-    // Polling interval
-    const progressInterval = setInterval(async () => {
-      try {
-        const res = await axios.get(`${API}/chat-progress/${targetConvId}`);
-        if (res.data && res.data.length > 0) {
-          setCurrentPlan(res.data);
-        }
-      } catch (e) {}
-    }, 1000);
+    // SSE Streaming ile mesajı gönder
+    const aiMsgId = Date.now() + 1;
+    let currentAiMsg: Message = {
+      id: aiMsgId,
+      role: 'assistant',
+      content: '',
+      smells: [],
+      timestamp: new Date().toISOString(),
+      thinking: null,
+      tool_calls: [],
+    };
+
+    // AI mesajını ekrana boş olarak ekle (yavaş yavaş dolacak)
+    setMessages(prev => [...prev, currentAiMsg]);
 
     try {
-      const res = await axios.post(`${API}/chat`, {
-        conversation_id: targetConvId,
-        message: messageContent,
-        language: lang,
-        user_id: user.id,
-        mode: appMode,
-        use_kb: aiConfig.provider_type === 'kb',
-        use_or_for_coder: gpt54OrToggled,
-        editor_code: code || '',
-        use_thinking: useThinking,
-        generation_mode: generationMode,
-        generation_confirmed: false,
-      }, { timeout: 900000 });
+      const response = await fetch(`${API}/chat-stream`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Session-Token': user.sessionToken,
+        },
+        body: JSON.stringify({
+          conversation_id: targetConvId,
+          message: messageContent,
+          language: lang,
+          user_id: user.id,
+          mode: appMode,
+          use_kb: aiConfig.provider_type === 'kb',
+          use_or_for_coder: gpt54OrToggled,
+          editor_code: code || '',
+          use_thinking: useThinking,
+          generation_mode: generationMode,
+          generation_confirmed: false,
+        }),
+      });
 
-      clearInterval(progressInterval);
-      setCurrentPlan([]);
-
-      const aiMsgId = Date.now() + 1;
-      const aiMsg: Message = {
-        id: aiMsgId,
-        role: 'assistant',
-        content: res.data.content,
-        smells: res.data.static_results?.smells || [],
-        timestamp: new Date().toISOString(),
-        pipeline: res.data.pipeline || null,
-        thinking: res.data.thinking || null,
-        thinking_duration_ms: res.data.thinking_duration_ms || null,
-      };
-      setMessages(prev => [...prev, aiMsg]);
-
-      // GENERATION_PLAN — plan kartı göster
-      if (res.data.intent === 'GENERATION_PLAN') {
-        setPendingPlan({
-          content: res.data.content,
-          originalMessage: res.data.original_message || messageContent,
-          mode: res.data.generation_mode || generationMode,
-        });
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
       }
 
-      // FIX intent — diff viewer aç
-      if (res.data.intent === 'FIX' && res.data.fix_data) {
-        setPendingFix({ data: res.data.fix_data, messageId: aiMsgId });
-      }
+      // Bağlantı kuruldu, akış başladı. Geçici yükleme animasyonunu kaldır.
+      setLoading(false);
 
-      // GENERATION intent — dosya onay akışını başlat
-      const isGenIntent = ['GENERATION', 'BATCH_CONTINUATION', 'CONTINUATION'].includes(res.data.intent);
-      if (isGenIntent && workspacePath) {
-        const parsed = parseGeneratedFiles(res.data.content);
-        if (parsed.length > 0) {
-          const withPaths: PendingFile[] = parsed.map(f => ({
-            name: f.name,
-            code: f.code,
-            suggestedPath: suggestFilePath(f.name),
-          }));
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder('utf-8');
 
-          if (generationMode === 'auto' && ipc) {
-            // OTOMATİK MOD: Dosyaları direkt oluştur, onay sorma
-            let created = 0;
-            for (const file of withPaths) {
+      if (reader) {
+        let buffer = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n\n');
+          buffer = lines.pop() || ''; // Son tamamlanmamış parçayı buffer'da bırak
+
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
               try {
-                await ipc.invoke('write-file', file.suggestedPath, file.code, workspacePath);
-                created++;
+                const data = JSON.parse(line.slice(6));
+
+                // SSE Event İşleme
+                setMessages(prevMessages => {
+                  return prevMessages.map(msg => {
+                    if (msg.id === aiMsgId) {
+                      const updatedMsg = { ...msg };
+
+                      if (data.type === 'thinking') {
+                        updatedMsg.thinking = (updatedMsg.thinking || '') + (data.text || '');
+                        if (data.duration_ms) updatedMsg.thinking_duration_ms = data.duration_ms;
+                      }
+                      else if (data.type === 'tool_call') {
+                        if (!updatedMsg.tool_calls) updatedMsg.tool_calls = [];
+                        updatedMsg.tool_calls.push({
+                          tool: data.tool,
+                          args: data.arguments,
+                        });
+                      }
+                      else if (data.type === 'tool_result') {
+                        if (updatedMsg.tool_calls && updatedMsg.tool_calls.length > 0) {
+                          // En son eklenen tool'u bul ve sonucunu yaz
+                          const lastTool = updatedMsg.tool_calls[updatedMsg.tool_calls.length - 1];
+                          if (lastTool.tool === data.tool) {
+                            lastTool.summary = data.summary;
+                            lastTool.success = data.success;
+                          }
+                        }
+                      }
+                      else if (data.type === 'text' || data.type === 'response') {
+                        updatedMsg.content += data.content;
+                      }
+
+                      currentAiMsg = updatedMsg;
+                      return updatedMsg;
+                    }
+                    return msg;
+                  });
+                });
+
+                // Context Usage İşleme
+                if (data.type === 'context_usage') {
+                  setContextUsage({
+                    percent: data.percent,
+                    should_compact: data.should_compact,
+                    message_count: data.message_count
+                  });
+                }
+
+                // Kod üretim kontrolü (Final response sonrası)
+                if (data.type === 'done' || data.type === 'response') {
+                  // Final içeriği garantilemek için state dışındaki biriken içeriği kullanabiliriz
+                  // Veya mevcutta biriken içeriği parametre olarak alabiliriz
+                  const finalContent = currentAiMsg?.content || "";
+                  if (workspacePath && finalContent) {
+                    const parsed = parseGeneratedFiles(finalContent);
+                    if (parsed.length > 0) {
+                      // Dosyaları hazırla ve eski hallerini (diff için) oku
+                      const prepareFiles = async () => {
+                        const withPaths: PendingFile[] = [];
+                        for (const f of parsed) {
+                          const suggestedPath = f.path || suggestFilePath(f.name);
+                          let originalCode = "";
+                          if (ipc) {
+                            try {
+                              // Dosya varsa eski içeriğini oku
+                              const res = await ipc.invoke('read-file', suggestedPath, workspacePath);
+                              originalCode = res ? res.content : null;
+                            } catch (err) {
+                              // Dosya yoksa boş string (yeni dosya)
+                              originalCode = "";
+                            }
+                          }
+                          withPaths.push({
+                            name: f.name,
+                            code: f.code,
+                            suggestedPath: suggestedPath,
+                            originalCode: originalCode
+                          });
+                        }
+
+                        if (generationMode === 'auto' && ipc) {
+                          // Otomatik modda dosyaları yaz ama özeti göster
+                          for (const file of withPaths) {
+                            await ipc.invoke('write-file', file.suggestedPath, file.code, workspacePath);
+                          }
+                          showToast(`✅ ${withPaths.length} dosya güncellendi.`, 'success');
+                          refreshFileTree();
+                          setPendingGenFiles({ files: withPaths, messageId: aiMsgId });
+                        } else {
+                          // Adım adım modda sadece listeye ekle
+                          setPendingGenFiles({ files: withPaths, messageId: aiMsgId });
+                        }
+                      };
+                      prepareFiles();
+                    }
+                  }
+                }
+
               } catch (err) {
-                console.error(`Dosya yazılamadı: ${file.name}`, err);
+                console.error("SSE parse hatası:", err, line);
               }
             }
-            if (created > 0) {
-              showToast(`✅ ${created} dosya otomatik oluşturuldu.`, 'success');
-              refreshFileTree();
-            }
-          } else {
-            // PLAN veya ADIM ADIM: Onay kartını göster
-            setPendingGenFiles({ files: withPaths, messageId: aiMsgId });
           }
         }
       }
 
-      // Context kullanım barını güncelle
-      if (res.data.context_usage) {
-        setContextUsage(res.data.context_usage);
-      }
-
-      fetchConversations(user.id); // Başlık güncellenmiş olabilir
+      fetchConversations(user.id);
     } catch (err: any) {
-      clearInterval(progressInterval);
-      setCurrentPlan([]);
-      
-      const errorText = err.code === 'ECONNABORTED'
-        ? '⏱️ Yanıt zaman aşımına uğradı. AI Sağlayıcısı kod üretirken veya analiz ederken çok uzun sürdü. Daha basit bir işlem deneyin.'
-        : '❌ Bir hata oluştu. Backend çalışıyor mu kontrol edin.';
       const errorMsg: Message = {
         id: Date.now() + 1,
         role: 'assistant',
-        content: errorText,
+        content: '❌ Bir hata oluştu veya bağlantı koptu. Backend çalışıyor mu kontrol edin.',
         smells: [],
         timestamp: new Date().toISOString()
       };
@@ -1324,7 +1393,7 @@ export default function HomePage() {
             >
               {isSidebarOpen ? <ChevronLeft size={16} /> : <ChevronRight size={16} />}
             </button>
-            
+
             {/* Açık Dosya Göstergesi */}
             <div className="flex items-center gap-2 border-l border-slate-800/50 pl-3 ml-1">
               <Code2 size={14} className="text-blue-500" />
@@ -1381,95 +1450,94 @@ export default function HomePage() {
               <span className="text-[12px] text-red-300 font-medium">{dragRejectMsg}</span>
             </div>
           )}
-          
+
           <div className="flex-1 relative flex flex-col bg-[#000000]">
-              {/* Empty State Overlay */}
-              {!code && !openedFilePath && !isEditorFocused && (
-                <div 
-                  onClick={() => setIsEditorFocused(true)}
-                  className="absolute inset-0 flex flex-col items-center justify-center cursor-text z-20 hover:bg-slate-900/10 transition-colors"
-                >
-                  <div className="w-20 h-20 mb-6 rounded-3xl bg-slate-900/30 border border-slate-800/50 flex items-center justify-center shadow-2xl relative overflow-hidden group">
-                    <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 to-violet-500/5 animate-pulse" />
-                    <Code2 size={32} className="text-slate-600" />
-                  </div>
-                  <h3 className="text-lg font-semibold text-slate-300 tracking-tight">C# Editörü</h3>
-                  <div className="mt-3 text-center space-y-1.5 pointer-events-none">
-                    <p className="text-[13px] text-slate-500 font-medium tracking-wide">
-                      Kodu buraya yapıştır veya sol panelden bir .cs dosyası seç
-                    </p>
-                    <p className="text-[12px] text-slate-600">
-                      ya da sağdaki chat'ten direkt bir şey iste
-                    </p>
-                  </div>
-                  <div className="mt-10 flex gap-6 text-[10px] font-mono text-slate-700 font-semibold uppercase tracking-widest pointer-events-none">
-                    <span className="flex items-center gap-1.5"><Activity size={14}/> Bug Fix</span>
-                    <span className="flex items-center gap-1.5"><Cpu size={14}/> Kod Üretim</span>
-                    <span className="flex items-center gap-1.5"><Sparkles size={14}/> Analiz</span>
-                  </div>
+            {/* Empty State Overlay */}
+            {!code && !openedFilePath && !isEditorFocused && (
+              <div
+                onClick={() => setIsEditorFocused(true)}
+                className="absolute inset-0 flex flex-col items-center justify-center cursor-text z-20 hover:bg-slate-900/10 transition-colors"
+              >
+                <div className="w-20 h-20 mb-6 rounded-3xl bg-slate-900/30 border border-slate-800/50 flex items-center justify-center shadow-2xl relative overflow-hidden group">
+                  <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 to-violet-500/5 animate-pulse" />
+                  <Code2 size={32} className="text-slate-600" />
                 </div>
+                <h3 className="text-lg font-semibold text-slate-300 tracking-tight">C# Editörü</h3>
+                <div className="mt-3 text-center space-y-1.5 pointer-events-none">
+                  <p className="text-[13px] text-slate-500 font-medium tracking-wide">
+                    Kodu buraya yapıştır veya sol panelden bir .cs dosyası seç
+                  </p>
+                  <p className="text-[12px] text-slate-600">
+                    ya da sağdaki chat'ten direkt bir şey iste
+                  </p>
+                </div>
+                <div className="mt-10 flex gap-6 text-[10px] font-mono text-slate-700 font-semibold uppercase tracking-widest pointer-events-none">
+                  <span className="flex items-center gap-1.5"><Activity size={14} /> Bug Fix</span>
+                  <span className="flex items-center gap-1.5"><Cpu size={14} /> Kod Üretim</span>
+                  <span className="flex items-center gap-1.5"><Sparkles size={14} /> Analiz</span>
+                </div>
+              </div>
+            )}
+
+            {/* Monaco Editor wrapper */}
+            <div
+              className={`flex-1 relative z-10 transition-opacity duration-200 ${(code || openedFilePath || isEditorFocused) ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+            >
+              {/* FLOATING ATTACHMENT BUTTON (+) */}
+              {(code || openedFilePath) && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.8, x: -20 }}
+                  animate={{ opacity: 1, scale: 1, x: 0 }}
+                  className="absolute top-4 left-4 z-30 flex items-center gap-2"
+                >
+                  <div className="relative group">
+                    <button
+                      onClick={() => setIncludeEditorCode(!includeEditorCode)}
+                      className={`w-8 h-8 rounded-full flex items-center justify-center transition-all shadow-lg backdrop-blur-md border ${includeEditorCode
+                          ? 'bg-blue-500 border-blue-400 text-white shadow-blue-500/40 rotate-45'
+                          : 'bg-slate-900/80 border-slate-700 text-slate-400 hover:text-white hover:border-blue-500/50 hover:shadow-blue-500/20'
+                        }`}
+                    >
+                      <Plus size={18} />
+                    </button>
+
+                    {/* Tooltip */}
+                    <div className="absolute left-10 top-1/2 -translate-y-1/2 px-3 py-1.5 bg-[#000000] border border-slate-800 rounded-lg text-[11px] text-slate-300 whitespace-nowrap opacity-0 group-hover:opacity-100 translate-x-2 group-hover:translate-x-0 transition-all pointer-events-none shadow-2xl z-50">
+                      {includeEditorCode ? 'Kodu Çıkar' : 'Kodu AI\'ya Ekle'}
+                      <div className="absolute right-full top-1/2 -translate-y-1/2 border-8 border-transparent border-r-slate-800" />
+                    </div>
+                  </div>
+                </motion.div>
               )}
 
-              {/* Monaco Editor wrapper */}
-              <div 
-                className={`flex-1 relative z-10 transition-opacity duration-200 ${(code || openedFilePath || isEditorFocused) ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
-              >
-                {/* FLOATING ATTACHMENT BUTTON (+) */}
-                {(code || openedFilePath) && (
-                  <motion.div 
-                    initial={{ opacity: 0, scale: 0.8, x: -20 }}
-                    animate={{ opacity: 1, scale: 1, x: 0 }}
-                    className="absolute top-4 left-4 z-30 flex items-center gap-2"
-                  >
-                    <div className="relative group">
-                      <button
-                        onClick={() => setIncludeEditorCode(!includeEditorCode)}
-                        className={`w-8 h-8 rounded-full flex items-center justify-center transition-all shadow-lg backdrop-blur-md border ${
-                          includeEditorCode 
-                            ? 'bg-blue-500 border-blue-400 text-white shadow-blue-500/40 rotate-45' 
-                            : 'bg-slate-900/80 border-slate-700 text-slate-400 hover:text-white hover:border-blue-500/50 hover:shadow-blue-500/20'
-                        }`}
-                      >
-                        <Plus size={18} />
-                      </button>
-                      
-                      {/* Tooltip */}
-                      <div className="absolute left-10 top-1/2 -translate-y-1/2 px-3 py-1.5 bg-[#000000] border border-slate-800 rounded-lg text-[11px] text-slate-300 whitespace-nowrap opacity-0 group-hover:opacity-100 translate-x-2 group-hover:translate-x-0 transition-all pointer-events-none shadow-2xl z-50">
-                        {includeEditorCode ? 'Kodu Çıkar' : 'Kodu AI\'ya Ekle'}
-                        <div className="absolute right-full top-1/2 -translate-y-1/2 border-8 border-transparent border-r-slate-800" />
-                      </div>
-                    </div>
-                  </motion.div>
-                )}
-
-                <Editor
-                  height="100%"
-                  defaultLanguage="csharp"
-                  theme={THEME_NAME}
-                  value={code}
-                  onChange={(val) => setCode(val || '')}
-                  onMount={(editor, monaco) => {
-                    defineUnityTheme(monaco);
-                    editor.onDidFocusEditorWidget(() => setIsEditorFocused(true));
-                    editor.onDidBlurEditorWidget(() => setIsEditorFocused(false));
-                  }}
-                  options={{
-                    minimap: { enabled: false },
-                    fontSize: 14,
-                    fontFamily: "'JetBrains Mono', 'Fira Code', 'Consolas', monospace",
-                    scrollBeyondLastLine: false,
-                    smoothScrolling: true,
-                    contextmenu: false,
-                    padding: { top: 24, bottom: 24 },
-                    lineHeight: 1.6,
-                    cursorBlinking: "smooth",
-                    cursorSmoothCaretAnimation: "on",
-                    formatOnPaste: true,
-                    "semanticHighlighting.enabled": true
-                  }}
-                />
-              </div>
+              <Editor
+                height="100%"
+                defaultLanguage="csharp"
+                theme={THEME_NAME}
+                value={code}
+                onChange={(val) => setCode(val || '')}
+                onMount={(editor, monaco) => {
+                  defineUnityTheme(monaco);
+                  editor.onDidFocusEditorWidget(() => setIsEditorFocused(true));
+                  editor.onDidBlurEditorWidget(() => setIsEditorFocused(false));
+                }}
+                options={{
+                  minimap: { enabled: false },
+                  fontSize: 14,
+                  fontFamily: "'JetBrains Mono', 'Fira Code', 'Consolas', monospace",
+                  scrollBeyondLastLine: false,
+                  smoothScrolling: true,
+                  contextmenu: false,
+                  padding: { top: 24, bottom: 24 },
+                  lineHeight: 1.6,
+                  cursorBlinking: "smooth",
+                  cursorSmoothCaretAnimation: "on",
+                  formatOnPaste: true,
+                  "semanticHighlighting.enabled": true
+                }}
+              />
             </div>
+          </div>
         </div>{/* end drag-drop wrapper */}
       </div>
 
@@ -1600,145 +1668,144 @@ export default function HomePage() {
 
                       {/* TEK AJAN İÇERİĞİ */}
                       {!aiConfig.use_multi_agent && (
-                      <div className="max-h-[60vh] overflow-y-auto custom-scrollbar">
-                        {/* YEREL BİLGİ BANKASI (KB) — Varsayılan Sistem */}
-                        <div className="p-1">
-                          <div className="px-2 py-1.5 text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2 mt-1">
-                            <Database size={10} /> Yerleşik Sistem
-                          </div>
-                          <button
-                            onClick={async () => {
-                              const newCfg = { ...aiConfig, provider_type: 'kb', model_name: 'unity-kb-v1', api_key: '' };
-                              setAiConfig(newCfg);
-                              setIsModelDropdownOpen(false);
-                              if (user) await axios.post(`${API}/save-ai-config`, { ...newCfg, user_id: user.id });
-                            }}
-                            className={`w-full text-left px-3 py-2 text-[12px] flex flex-col hover:bg-emerald-600/10 rounded-lg transition-colors
-                              ${aiConfig.provider_type === 'kb' ? 'bg-emerald-600/10 text-emerald-400' : 'text-slate-300'}`}
-                          >
-                            <span className="font-medium flex items-center gap-1.5">Unity Bilgi Bankası
-                              <span className="text-[9px] bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded-full">Ücretsiz</span>
-                            </span>
-                            <span className="text-[10px] text-slate-500">Temel Unity konuları • 0ms • API key gerektirmez</span>
-                          </button>
-                        </div>
-
-                        {/* BULUT MODELLER */}
-                        {availableModels.cloud.length > 0 && (
+                        <div className="max-h-[60vh] overflow-y-auto custom-scrollbar">
+                          {/* YEREL BİLGİ BANKASI (KB) — Varsayılan Sistem */}
                           <div className="p-1">
                             <div className="px-2 py-1.5 text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2 mt-1">
-                              <Sparkles size={10} /> Bulut API Modelleri
+                              <Database size={10} /> Yerleşik Sistem
                             </div>
-                            {availableModels.cloud.map(m => {
-                              // OpenRouter-only model (ör. Kimi): her zaman openrouter kullanır
-                              const isOrOnly = m.provider === 'openrouter' && !m.openrouter_id;
-                              const orToggle = isOrOnly ? true : (modelOrToggles[m.id] ?? false);
-                              const effectiveModelId = (orToggle && m.openrouter_id) ? m.openrouter_id : m.id;
-                              const effectiveProvider = (orToggle && m.openrouter_id) ? 'openrouter' : m.provider;
-                              const hasKey = providersWithKeys.includes(effectiveProvider);
-                              const isActive = aiConfig.model_name === effectiveModelId || aiConfig.model_name === m.id;
-                              return (
-                              <div key={m.id} className={`flex items-center gap-1 rounded-lg transition-colors hover:bg-blue-600/10 ${isActive ? 'bg-blue-600/10' : ''}`}>
-                                {/* Model seçim butonu */}
+                            <button
+                              onClick={async () => {
+                                const newCfg = { ...aiConfig, provider_type: 'kb', model_name: 'unity-kb-v1', api_key: '' };
+                                setAiConfig(newCfg);
+                                setIsModelDropdownOpen(false);
+                                if (user) await axios.post(`${API}/save-ai-config`, { ...newCfg, user_id: user.id });
+                              }}
+                              className={`w-full text-left px-3 py-2 text-[12px] flex flex-col hover:bg-emerald-600/10 rounded-lg transition-colors
+                              ${aiConfig.provider_type === 'kb' ? 'bg-emerald-600/10 text-emerald-400' : 'text-slate-300'}`}
+                            >
+                              <span className="font-medium flex items-center gap-1.5">Unity Bilgi Bankası
+                                <span className="text-[9px] bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded-full">Ücretsiz</span>
+                              </span>
+                              <span className="text-[10px] text-slate-500">Temel Unity konuları • 0ms • API key gerektirmez</span>
+                            </button>
+                          </div>
+
+                          {/* BULUT MODELLER */}
+                          {availableModels.cloud.length > 0 && (
+                            <div className="p-1">
+                              <div className="px-2 py-1.5 text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2 mt-1">
+                                <Sparkles size={10} /> Bulut API Modelleri
+                              </div>
+                              {availableModels.cloud.map(m => {
+                                // OpenRouter-only model (ör. Kimi): her zaman openrouter kullanır
+                                const isOrOnly = m.provider === 'openrouter' && !m.openrouter_id;
+                                const orToggle = isOrOnly ? true : (modelOrToggles[m.id] ?? false);
+                                const effectiveModelId = (orToggle && m.openrouter_id) ? m.openrouter_id : m.id;
+                                const effectiveProvider = (orToggle && m.openrouter_id) ? 'openrouter' : m.provider;
+                                const hasKey = providersWithKeys.includes(effectiveProvider);
+                                const isActive = aiConfig.model_name === effectiveModelId || aiConfig.model_name === m.id;
+                                return (
+                                  <div key={m.id} className={`flex items-center gap-1 rounded-lg transition-colors hover:bg-blue-600/10 ${isActive ? 'bg-blue-600/10' : ''}`}>
+                                    {/* Model seçim butonu */}
+                                    <button
+                                      onClick={async () => {
+                                        if (!hasKey) {
+                                          setAiConfig({ ...aiConfig, provider_type: effectiveProvider, model_name: effectiveModelId });
+                                          setIsModelDropdownOpen(false);
+                                          setShowSettings(true);
+                                          const keyLabel = orToggle ? 'OpenRouter' : m.provider.charAt(0).toUpperCase() + m.provider.slice(1);
+                                          showToast(`${keyLabel} için API key girilmedi. Lütfen Ayarlar'dan API key'inizi girin.`, 'warning');
+                                          return;
+                                        }
+                                        const newCfg = { ...aiConfig, provider_type: effectiveProvider, model_name: effectiveModelId };
+                                        setAiConfig(newCfg);
+                                        setIsModelDropdownOpen(false);
+                                        if (user) await axios.post(`${API}/save-ai-config`, { ...newCfg, user_id: user.id });
+                                      }}
+                                      className={`flex-1 text-left px-3 py-2 text-[12px] flex items-center justify-between ${isActive ? 'text-blue-400' : 'text-slate-300'}`}
+                                    >
+                                      <div className="flex flex-col">
+                                        <span className="font-medium flex items-center gap-1">
+                                          {m.name}
+                                          {m.paid && (
+                                            <span className="text-[8px] font-bold px-1 py-0.5 rounded bg-amber-500/15 text-amber-400 border border-amber-500/30">
+                                              Pro
+                                            </span>
+                                          )}
+                                        </span>
+                                        <span className={`text-[10px] capitalize ${orToggle ? 'text-purple-500' : m.paid && !orToggle ? 'text-amber-600' : 'text-slate-500'}`}>
+                                          {orToggle ? 'via OpenRouter' : m.paid ? 'ücretli — OR önerilir' : m.provider}
+                                        </span>
+                                      </div>
+                                      {hasKey ? (
+                                        <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${orToggle ? 'bg-purple-500/20 text-purple-400' : 'bg-emerald-500/20 text-emerald-400'}`}>
+                                          {orToggle ? 'OR ✓' : 'Key ✓'}
+                                        </span>
+                                      ) : (
+                                        <span className="text-[9px] bg-amber-500/20 text-amber-400 px-1.5 py-0.5 rounded-full">Key Yok</span>
+                                      )}
+                                    </button>
+                                    {/* OR toggle — sadece openrouter_id olan modellerde göster */}
+                                    {m.openrouter_id && (
+                                      <button
+                                        onClick={async e => {
+                                          e.stopPropagation();
+                                          const newOrState = !modelOrToggles[m.id];
+                                          setModelOrToggles(prev => ({ ...prev, [m.id]: newOrState }));
+                                          // Eğer bu model şu an seçiliyse, aiConfig'i de hemen güncelle
+                                          if (isActive && user) {
+                                            const newModelId = (newOrState && m.openrouter_id) ? m.openrouter_id : m.id;
+                                            const newProvider = (newOrState && m.openrouter_id) ? 'openrouter' : m.provider;
+                                            const newCfg = { ...aiConfig, provider_type: newProvider, model_name: newModelId };
+                                            setAiConfig(newCfg);
+                                            await axios.post(`${API}/save-ai-config`, { ...newCfg, user_id: user.id });
+                                          }
+                                        }}
+                                        title={orToggle ? 'Native API\'ye geç' : m.paid ? 'OpenRouter önerilir — free tier\'da mevcut değil' : 'OpenRouter üzerinden kullan'}
+                                        className={`mr-2 shrink-0 text-[8px] font-bold px-1.5 py-0.5 rounded border transition-colors ${orToggle
+                                            ? 'border-purple-500/60 text-purple-400 bg-purple-500/15'
+                                            : m.paid
+                                              ? 'border-amber-600/50 text-amber-600 hover:text-amber-400 hover:border-amber-500/60'
+                                              : 'border-slate-700 text-slate-600 hover:text-slate-400 hover:border-slate-600'
+                                          }`}
+                                      >
+                                        OR
+                                      </button>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+
+                          {/* YEREL MODELLER */}
+                          <div className="p-1 border-t border-slate-800/80">
+                            <div className="px-2 py-1.5 text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2 mt-1">
+                              <Cpu size={10} /> Yerel (Ollama) Modeller
+                            </div>
+                            {availableModels.local.length > 0 ? (
+                              availableModels.local.map(m => (
                                 <button
+                                  key={m.id}
                                   onClick={async () => {
-                                    if (!hasKey) {
-                                      setAiConfig({ ...aiConfig, provider_type: effectiveProvider, model_name: effectiveModelId });
-                                      setIsModelDropdownOpen(false);
-                                      setShowSettings(true);
-                                      const keyLabel = orToggle ? 'OpenRouter' : m.provider.charAt(0).toUpperCase() + m.provider.slice(1);
-                                      showToast(`${keyLabel} için API key girilmedi. Lütfen Ayarlar'dan API key'inizi girin.`, 'warning');
-                                      return;
-                                    }
-                                    const newCfg = { ...aiConfig, provider_type: effectiveProvider, model_name: effectiveModelId };
+                                    const newCfg = { ...aiConfig, provider_type: 'ollama', model_name: m.id, api_key: '' };
                                     setAiConfig(newCfg);
                                     setIsModelDropdownOpen(false);
                                     if (user) await axios.post(`${API}/save-ai-config`, { ...newCfg, user_id: user.id });
                                   }}
-                                  className={`flex-1 text-left px-3 py-2 text-[12px] flex items-center justify-between ${isActive ? 'text-blue-400' : 'text-slate-300'}`}
-                                >
-                                  <div className="flex flex-col">
-                                    <span className="font-medium flex items-center gap-1">
-                                      {m.name}
-                                      {m.paid && (
-                                        <span className="text-[8px] font-bold px-1 py-0.5 rounded bg-amber-500/15 text-amber-400 border border-amber-500/30">
-                                          Pro
-                                        </span>
-                                      )}
-                                    </span>
-                                    <span className={`text-[10px] capitalize ${orToggle ? 'text-purple-500' : m.paid && !orToggle ? 'text-amber-600' : 'text-slate-500'}`}>
-                                      {orToggle ? 'via OpenRouter' : m.paid ? 'ücretli — OR önerilir' : m.provider}
-                                    </span>
-                                  </div>
-                                  {hasKey ? (
-                                    <span className={`text-[9px] px-1.5 py-0.5 rounded-full ${orToggle ? 'bg-purple-500/20 text-purple-400' : 'bg-emerald-500/20 text-emerald-400'}`}>
-                                      {orToggle ? 'OR ✓' : 'Key ✓'}
-                                    </span>
-                                  ) : (
-                                    <span className="text-[9px] bg-amber-500/20 text-amber-400 px-1.5 py-0.5 rounded-full">Key Yok</span>
-                                  )}
-                                </button>
-                                {/* OR toggle — sadece openrouter_id olan modellerde göster */}
-                                {m.openrouter_id && (
-                                  <button
-                                    onClick={async e => {
-                                      e.stopPropagation();
-                                      const newOrState = !modelOrToggles[m.id];
-                                      setModelOrToggles(prev => ({ ...prev, [m.id]: newOrState }));
-                                      // Eğer bu model şu an seçiliyse, aiConfig'i de hemen güncelle
-                                      if (isActive && user) {
-                                        const newModelId = (newOrState && m.openrouter_id) ? m.openrouter_id : m.id;
-                                        const newProvider = (newOrState && m.openrouter_id) ? 'openrouter' : m.provider;
-                                        const newCfg = { ...aiConfig, provider_type: newProvider, model_name: newModelId };
-                                        setAiConfig(newCfg);
-                                        await axios.post(`${API}/save-ai-config`, { ...newCfg, user_id: user.id });
-                                      }
-                                    }}
-                                    title={orToggle ? 'Native API\'ye geç' : m.paid ? 'OpenRouter önerilir — free tier\'da mevcut değil' : 'OpenRouter üzerinden kullan'}
-                                    className={`mr-2 shrink-0 text-[8px] font-bold px-1.5 py-0.5 rounded border transition-colors ${
-                                      orToggle
-                                        ? 'border-purple-500/60 text-purple-400 bg-purple-500/15'
-                                        : m.paid
-                                          ? 'border-amber-600/50 text-amber-600 hover:text-amber-400 hover:border-amber-500/60'
-                                          : 'border-slate-700 text-slate-600 hover:text-slate-400 hover:border-slate-600'
-                                    }`}
-                                  >
-                                    OR
-                                  </button>
-                                )}
-                              </div>
-                              );
-                            })}
-                          </div>
-                        )}
-
-                        {/* YEREL MODELLER */}
-                        <div className="p-1 border-t border-slate-800/80">
-                          <div className="px-2 py-1.5 text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2 mt-1">
-                            <Cpu size={10} /> Yerel (Ollama) Modeller
-                          </div>
-                          {availableModels.local.length > 0 ? (
-                            availableModels.local.map(m => (
-                              <button
-                                key={m.id}
-                                onClick={async () => {
-                                  const newCfg = { ...aiConfig, provider_type: 'ollama', model_name: m.id, api_key: '' };
-                                  setAiConfig(newCfg);
-                                  setIsModelDropdownOpen(false);
-                                  if (user) await axios.post(`${API}/save-ai-config`, { ...newCfg, user_id: user.id });
-                                }}
-                                className={`w-full text-left px-3 py-2 text-[12px] flex flex-col hover:bg-emerald-600/10 rounded-lg transition-colors
+                                  className={`w-full text-left px-3 py-2 text-[12px] flex flex-col hover:bg-emerald-600/10 rounded-lg transition-colors
                                   ${aiConfig.model_name === m.id ? 'bg-emerald-600/10 text-emerald-400' : 'text-slate-300'}`}
-                              >
-                                <span className="font-medium">{m.name}</span>
-                                <span className="text-[10px] text-slate-500">{m.id}</span>
-                              </button>
-                            ))
-                          ) : (
-                            <div className="px-3 py-2 text-[11px] text-slate-500 italic">Ollama modeli bulunamadı.</div>
-                          )}
+                                >
+                                  <span className="font-medium">{m.name}</span>
+                                  <span className="text-[10px] text-slate-500">{m.id}</span>
+                                </button>
+                              ))
+                            ) : (
+                              <div className="px-3 py-2 text-[11px] text-slate-500 italic">Ollama modeli bulunamadı.</div>
+                            )}
+                          </div>
                         </div>
-                      </div>
                       )}
 
                       {/* MULTI-AGENT İÇERİĞİ */}
@@ -1764,11 +1831,10 @@ export default function HomePage() {
                           </div>
 
                           {/* OpenRouter / OpenAI — Opsiyonel */}
-                          <div className={`flex items-center justify-between px-3 py-2.5 rounded-xl border ${
-                            maCoderProvider === 'openrouter' ? 'border-purple-800/50 bg-purple-900/10'
-                            : maCoderProvider === 'openai'   ? 'border-emerald-800/50 bg-emerald-900/10'
-                            : 'border-slate-800/50 bg-slate-900/20'
-                          }`}>
+                          <div className={`flex items-center justify-between px-3 py-2.5 rounded-xl border ${maCoderProvider === 'openrouter' ? 'border-purple-800/50 bg-purple-900/10'
+                              : maCoderProvider === 'openai' ? 'border-emerald-800/50 bg-emerald-900/10'
+                                : 'border-slate-800/50 bg-slate-900/20'
+                            }`}>
                             <div>
                               <p className="text-[11px] font-semibold text-slate-300 flex items-center gap-1.5">
                                 <span>OpenRouter / OpenAI</span>
@@ -1836,345 +1902,313 @@ export default function HomePage() {
               </AnimatePresence>
             </div>
           </div>
+        </div>
+        {/* Chat Alanı */}
+        <div className="flex-1 relative flex flex-col min-h-0 bg-[#000000]">
           <button
             onClick={() => setIsChatOpen(false)}
-            className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-500 transition-all"
+            className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-500 transition-all absolute top-4 right-4 z-10"
           >
             <PanelRightClose size={16} />
           </button>
-        </div>
-
-        {/* Context Usage Bar (Claude Code /compact tarzı) */}
-        {activeConvId && contextUsage.percent > 0 && (
-          <div className="px-4 py-1.5 border-b border-slate-800/30 shrink-0">
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex-1 flex items-center gap-2">
-                <div className="flex-1 h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                  <motion.div
-                    className="h-full rounded-full"
-                    initial={{ width: 0 }}
-                    animate={{ width: `${contextUsage.percent}%` }}
-                    transition={{ duration: 0.5, ease: 'easeOut' }}
-                    style={{
-                      background: contextUsage.percent >= 95 ? '#ef4444'
-                        : contextUsage.percent >= 85 ? '#f59e0b'
-                        : contextUsage.percent >= 60 ? '#3b82f6'
-                        : '#22c55e',
-                    }}
-                  />
-                </div>
-                <span className={`text-[10px] font-mono whitespace-nowrap ${
-                  contextUsage.percent >= 85 ? 'text-amber-400' : 'text-slate-500'
-                }`}>
-                  %{contextUsage.percent}
-                </span>
+          {/* Chat Messages */}
+          <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-4 min-w-[420px]">
+            {!activeConvId ? (
+              <div className="flex flex-col items-center justify-center h-full text-slate-600 gap-3">
+                <Bot size={32} className="opacity-20" />
+                <p className="text-[11px] text-center">
+                  Sohbet başlatmak için soldan<br />bir sohbet seçin veya oluşturun
+                </p>
               </div>
-              {contextUsage.percent >= 50 && (
-                <button
-                  onClick={compactConversation}
-                  disabled={isCompacting}
-                  className={`text-[9px] px-2 py-0.5 rounded-full font-medium transition-all ${
-                    contextUsage.should_compact
-                      ? 'bg-amber-500/20 text-amber-400 hover:bg-amber-500/30 animate-pulse'
-                      : 'bg-slate-700/50 text-slate-400 hover:bg-slate-700'
-                  }`}
-                  title="Sohbeti özetle ve hafızayı temizle"
-                >
-                  {isCompacting ? '⏳ Özetleniyor...' : '📝 Compact'}
-                </button>
-              )}
-            </div>
-            {contextUsage.should_compact && !isCompacting && (
-              <p className="text-[9px] text-amber-500/70 mt-0.5">
-                Hafıza dolmak üzere. Compact ile sohbeti özetleyebilirsin.
-              </p>
-            )}
-          </div>
-        )}
-
-        {/* Chat Messages */}
-        <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-4 min-w-[420px]">
-          {!activeConvId ? (
-            <div className="flex flex-col items-center justify-center h-full text-slate-600 gap-3">
-              <Bot size={32} className="opacity-20" />
-              <p className="text-[11px] text-center">
-                Sohbet başlatmak için soldan<br />bir sohbet seçin veya oluşturun
-              </p>
-            </div>
-          ) : messages.length === 0 && !loading ? (
-            <div className="flex items-center justify-center h-full">
-              <Sparkles size={20} className="opacity-10 text-blue-500" />
-            </div>
-          ) : (
-            <>
-              {messages.map((msg, msgIdx) => (
-                <div key={msg.id} className={`chat-message-enter ${msg.role === 'user' ? 'flex justify-end' : ''}`}>
-                  {msg.role === 'assistant' ? (
-                    // AI Mesajı
-                    <div className="flex gap-2.5 max-w-full">
-                      <ModelAvatar provider={effectiveProvider} size={13} className="mt-0.5" />
-                      <div className="flex-1 min-w-0">
-                        {/* Statik Bulgular */}
-                        {msg.smells && msg.smells.length > 0 && (
-                          <div className="mb-3 bg-[#000000] rounded-lg border border-orange-500/20 p-3">
-                            <div className="flex items-center gap-1.5 mb-2">
-                              <AlertTriangle size={12} className="text-orange-400" />
-                              <span className="text-[10px] font-semibold text-orange-400 uppercase tracking-wider">Static Analysis</span>
+            ) : messages.length === 0 && !loading ? (
+              <div className="flex items-center justify-center h-full">
+                <Sparkles size={20} className="opacity-10 text-blue-500" />
+              </div>
+            ) : (
+              <>
+                {messages.map((msg, msgIdx) => (
+                  <div key={msg.id} className={`chat-message-enter ${msg.role === 'user' ? 'flex justify-end' : ''}`}>
+                    {msg.role === 'assistant' ? (
+                      // AI Mesajı
+                      <div className="flex gap-2.5 max-w-full">
+                        <ModelAvatar provider={effectiveProvider} size={13} className="mt-0.5" />
+                        <div className="flex-1 min-w-0">
+                          {/* Statik Bulgular */}
+                          {msg.smells && msg.smells.length > 0 && (
+                            <div className="mb-3 bg-[#000000] rounded-lg border border-orange-500/20 p-3">
+                              <div className="flex items-center gap-1.5 mb-2">
+                                <AlertTriangle size={12} className="text-orange-400" />
+                                <span className="text-[10px] font-semibold text-orange-400 uppercase tracking-wider">Static Analysis</span>
+                              </div>
+                              <div className="space-y-1.5">
+                                {msg.smells.map((s: any, i: number) => (
+                                  <div key={i} className="text-[11px] text-slate-400 flex items-start gap-2">
+                                    <span className="bg-orange-500/10 text-orange-500 px-1.5 py-0.5 rounded text-[9px] font-bold shrink-0">
+                                      L{s.line || "?"}
+                                    </span>
+                                    <span>{s.msg}</span>
+                                  </div>
+                                ))}
+                              </div>
                             </div>
-                            <div className="space-y-1.5">
-                              {msg.smells.map((s: any, i: number) => (
-                                <div key={i} className="text-[11px] text-slate-400 flex items-start gap-2">
-                                  <span className="bg-orange-500/10 text-orange-500 px-1.5 py-0.5 rounded text-[9px] font-bold shrink-0">
-                                    L{s.line || "?"}
-                                  </span>
-                                  <span>{s.msg}</span>
+                          )}
+                          {/* Pipeline Skor Badge */}
+                          {msg.pipeline && (
+                            <div className="mb-3 space-y-3">
+                              <div className="bg-[#000000] rounded-lg border border-blue-500/20 p-3">
+                                <div className="flex items-center justify-between mb-2">
+                                  <div className="flex items-center gap-2">
+                                    <div className="w-6 h-6 rounded bg-blue-500/20 flex items-center justify-center">
+                                      <Sparkles size={12} className="text-blue-400" />
+                                    </div>
+                                    <span className="text-xs font-bold text-slate-200">AI Kalite Skoru</span>
+                                  </div>
+                                  <div className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-500/20 text-blue-400">
+                                    {msg.pipeline.score.toFixed(1)}/10
+                                  </div>
                                 </div>
+                                <div className="flex items-center gap-2 text-[10px] mb-2">
+                                  {msg.pipeline.severity_counts?.critical > 0 && (
+                                    <span className="text-red-400">🔴 {msg.pipeline.severity_counts.critical}</span>
+                                  )}
+                                  {msg.pipeline.severity_counts?.warning > 0 && (
+                                    <span className="text-yellow-400">🟡 {msg.pipeline.severity_counts.warning}</span>
+                                  )}
+                                  {msg.pipeline.severity_counts?.info > 0 && (
+                                    <span className="text-blue-400">🔵 {msg.pipeline.severity_counts.info}</span>
+                                  )}
+                                </div>
+                                <div className="text-[10px] text-slate-400 leading-relaxed max-h-24 overflow-y-auto custom-scrollbar pr-2">
+                                  {msg.pipeline.summary}
+                                </div>
+                                <div className="text-[9px] text-slate-600 flex items-center gap-1 mt-2 border-t border-slate-800 pt-2">
+                                  <span>⚡ {(msg.pipeline.total_duration_ms / 1000).toFixed(1)}s</span>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                          {/* Thinking Block */}
+                          {msg.thinking && (
+                            <ThinkingBlock
+                              thinking={msg.thinking}
+                              durationMs={msg.thinking_duration_ms}
+                            />
+                          )}
+
+                          {/* Tool Blocks (Agentic) */}
+                          {msg.tool_calls && msg.tool_calls.length > 0 && (
+                            <div className="flex flex-col gap-1 mb-3">
+                              {msg.tool_calls.map((tc, idx) => (
+                                <ToolBlock
+                                  key={idx}
+                                  tool={tc.tool}
+                                  args={tc.args}
+                                  summary={tc.summary}
+                                  success={tc.success}
+                                />
                               ))}
                             </div>
-                          </div>
-                        )}
-                        {/* Pipeline Skor Badge */}
-                        {msg.pipeline && (
-                          <div className="mb-3 space-y-3">
-                            <div className="bg-[#000000] rounded-lg border border-blue-500/20 p-3">
-                              <div className="flex items-center justify-between mb-2">
-                                <div className="flex items-center gap-2">
-                                  <div className="w-6 h-6 rounded bg-blue-500/20 flex items-center justify-center">
-                                    <Sparkles size={12} className="text-blue-400" />
-                                  </div>
-                                  <span className="text-xs font-bold text-slate-200">AI Kalite Skoru</span>
-                                </div>
-                                <div className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-500/20 text-blue-400">
-                                  {msg.pipeline.score.toFixed(1)}/10
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-2 text-[10px] mb-2">
-                                {msg.pipeline.severity_counts?.critical > 0 && (
-                                  <span className="text-red-400">🔴 {msg.pipeline.severity_counts.critical}</span>
-                                )}
-                                {msg.pipeline.severity_counts?.warning > 0 && (
-                                  <span className="text-yellow-400">🟡 {msg.pipeline.severity_counts.warning}</span>
-                                )}
-                                {msg.pipeline.severity_counts?.info > 0 && (
-                                  <span className="text-blue-400">🔵 {msg.pipeline.severity_counts.info}</span>
-                                )}
-                              </div>
-                              <div className="text-[10px] text-slate-400 leading-relaxed max-h-24 overflow-y-auto custom-scrollbar pr-2">
-                                {msg.pipeline.summary}
-                              </div>
-                              <div className="text-[9px] text-slate-600 flex items-center gap-1 mt-2 border-t border-slate-800 pt-2">
-                                <span>⚡ {(msg.pipeline.total_duration_ms / 1000).toFixed(1)}s</span>
-                              </div>
-                            </div>
-                          </div>
-                        )}
-                        {/* Thinking Block */}
-                        {msg.thinking && (
-                          <ThinkingBlock
-                            thinking={msg.thinking}
-                            durationMs={msg.thinking_duration_ms}
-                          />
-                        )}
+                          )}
 
-                        {/* AI Yanıt İçeriği */}
-                        <div className="prose prose-invert max-w-none text-[13px] leading-relaxed prose-p:my-2 prose-headings:my-3 prose-ul:my-2 prose-li:my-0.5">
-                          <MarkdownRenderer content={msg.content.replace('<!-- SCOPE_WARNING_ACTIVE -->', '')} workspacePath={workspacePath} onExportToUnity={handleExportToUnity} />
-                        </div>
-                        {/* Scope Warning Butonları */}
-                        {msg.content.includes('SCOPE_WARNING_ACTIVE') && msgIdx === messages.length - 1 && !loading && (
-                          <div className="flex gap-2 mt-3">
-                            <button
-                              onClick={() => sendMessage('Tam Sistemi Üret')}
-                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600/20 border border-blue-500/30 text-blue-300 text-[12px] font-medium hover:bg-blue-600/35 transition-colors"
-                            >
-                              ✅ Tam Sistemi Üret
-                            </button>
-                            <button
-                              onClick={() => sendMessage('Basit Versiyon')}
-                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-700/40 border border-slate-600/30 text-slate-300 text-[12px] font-medium hover:bg-slate-700/60 transition-colors"
-                            >
-                              ⚡ Basit Versiyon
-                            </button>
+                          <div className="prose prose-invert max-w-none text-[13px] leading-relaxed prose-p:my-2 prose-headings:my-3 prose-ul:my-2 prose-li:my-0.5 prose-pre:bg-slate-900 prose-pre:border prose-pre:border-slate-800 prose-a:text-emerald-400">
+                            <MarkdownRenderer content={msg.content.replace('<!-- SCOPE_WARNING_ACTIVE -->', '')} workspacePath={workspacePath} onExportToUnity={handleExportToUnity} />
                           </div>
-                        )}
-                        {/* Plan Kartı — plan modu onay bekliyor */}
-                        {pendingPlan && msgIdx === messages.length - 1 && msg.role === 'assistant' && (
-                          <motion.div
-                            initial={{ opacity: 0, y: 6 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            className="mt-3 rounded-xl border border-blue-500/20 bg-blue-950/10 overflow-hidden"
-                          >
-                            <div className="flex items-center justify-between px-4 py-2.5 border-b border-blue-500/10">
-                              <span className="text-[11px] font-semibold text-blue-300">Onaylıyor musun?</span>
-                              <span className="text-[10px] text-slate-600">{pendingPlan.mode === 'step' ? 'Adım Adım' : 'Plan Modu'}</span>
-                            </div>
-                            <div className="flex gap-2 px-4 py-3">
+                          {/* Scope Warning Butonları */}
+                          {msg.content.includes('SCOPE_WARNING_ACTIVE') && msgIdx === messages.length - 1 && !loading && (
+                            <div className="flex gap-2 mt-3">
                               <button
-                                onClick={async () => {
-                                  const originalMsg = pendingPlan.originalMessage;
-                                  const mode = pendingPlan.mode;
-                                  setPendingPlan(null);
-                                  setLoading(true);
-                                  try {
-                                  const res = await axios.post(`${API}/chat`, {
-                                    conversation_id: activeConvId,
-                                    message: originalMsg,
-                                    language: lang,
-                                    user_id: user?.id,
-                                    mode: appMode,
-                                    use_kb: aiConfig.provider_type === 'kb',
-                                    use_or_for_coder: gpt54OrToggled,
-                                    editor_code: code || '',
-                                    use_thinking: false,
-                                    generation_mode: mode,
-                                    generation_confirmed: true,
-                                  }, { timeout: 900000 });
-                                  const aiMsgId = Date.now() + 1;
-                                  const aiMsg: Message = {
-                                    id: aiMsgId, role: 'assistant',
-                                    content: res.data.content,
-                                    smells: res.data.static_results?.smells || [],
-                                    timestamp: new Date().toISOString(),
-                                    pipeline: res.data.pipeline || null,
-                                    thinking: res.data.thinking || null,
-                                    thinking_duration_ms: res.data.thinking_duration_ms || null,
-                                  };
-                                  setMessages(prev => [...prev, aiMsg]);
-                                  if (mode === 'step' && res.data.content) {
-                                    const { parseGeneratedFiles } = await import('../components/home/export-utils');
-                                    const genFiles = parseGeneratedFiles(res.data.content);
-                                    if (genFiles.length > 0) {
-                                      setPendingGenFiles({ files: genFiles.map(f => ({ name: f.name, code: f.code, suggestedPath: suggestFilePath(f.name) })), messageId: aiMsgId });
-                                    }
-                                  } else if (mode === 'plan' && res.data.content) {
-                                    const { parseGeneratedFiles } = await import('../components/home/export-utils');
-                                    const genFiles = parseGeneratedFiles(res.data.content);
-                                    for (const f of genFiles) {
-                                      if (ipc && workspacePath) await ipc.invoke('write-file', suggestFilePath(f.name), f.code, workspacePath);
-                                    }
-                                    if (genFiles.length > 0) refreshFileTree();
-                                  }
-                                  } finally {
-                                    setLoading(false);
-                                  }
-                                }}
-                                className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-[12px] font-semibold transition-colors"
+                                onClick={() => sendMessage('Tam Sistemi Üret')}
+                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600/20 border border-blue-500/30 text-blue-300 text-[12px] font-medium hover:bg-blue-600/35 transition-colors"
                               >
-                                Başlat
+                                ✅ Tam Sistemi Üret
                               </button>
                               <button
-                                onClick={() => setPendingPlan(null)}
-                                className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-400 rounded-lg text-[12px] font-semibold transition-colors"
+                                onClick={() => sendMessage('Basit Versiyon')}
+                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-700/40 border border-slate-600/30 text-slate-300 text-[12px] font-medium hover:bg-slate-700/60 transition-colors"
                               >
-                                İptal
+                                ⚡ Basit Versiyon
                               </button>
                             </div>
-                          </motion.div>
-                        )}
+                          )}
+                          {/* Plan Kartı — plan modu onay bekliyor */}
+                          {pendingPlan && msgIdx === messages.length - 1 && msg.role === 'assistant' && (
+                            <motion.div
+                              initial={{ opacity: 0, y: 6 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              className="mt-3 rounded-xl border border-blue-500/20 bg-blue-950/10 overflow-hidden"
+                            >
+                              <div className="flex items-center justify-between px-4 py-2.5 border-b border-blue-500/10">
+                                <span className="text-[11px] font-semibold text-blue-300">Onaylıyor musun?</span>
+                                <span className="text-[10px] text-slate-600">{pendingPlan.mode === 'step' ? 'Adım Adım' : 'Plan Modu'}</span>
+                              </div>
+                              <div className="flex gap-2 px-4 py-3">
+                                <button
+                                  onClick={async () => {
+                                    const originalMsg = pendingPlan.originalMessage;
+                                    const mode = pendingPlan.mode;
+                                    setPendingPlan(null);
+                                    setLoading(true);
+                                    try {
+                                      const res = await axios.post(`${API}/chat`, {
+                                        conversation_id: activeConvId,
+                                        message: originalMsg,
+                                        language: lang,
+                                        user_id: user?.id,
+                                        mode: appMode,
+                                        use_kb: aiConfig.provider_type === 'kb',
+                                        use_or_for_coder: gpt54OrToggled,
+                                        editor_code: code || '',
+                                        use_thinking: false,
+                                        generation_mode: mode,
+                                        generation_confirmed: true,
+                                      }, { timeout: 900000 });
+                                      const aiMsgId = Date.now() + 1;
+                                      const aiMsg: Message = {
+                                        id: aiMsgId, role: 'assistant',
+                                        content: res.data.content,
+                                        smells: res.data.static_results?.smells || [],
+                                        timestamp: new Date().toISOString(),
+                                        pipeline: res.data.pipeline || null,
+                                        thinking: res.data.thinking || null,
+                                        thinking_duration_ms: res.data.thinking_duration_ms || null,
+                                      };
+                                      setMessages(prev => [...prev, aiMsg]);
+                                      if (mode === 'step' && res.data.content) {
+                                        const { parseGeneratedFiles } = await import('../components/home/export-utils');
+                                        const genFiles = parseGeneratedFiles(res.data.content);
+                                        if (genFiles.length > 0) {
+                                          setPendingGenFiles({ files: genFiles.map(f => ({ name: f.name, code: f.code, suggestedPath: suggestFilePath(f.name) })), messageId: aiMsgId });
+                                        }
+                                      } else if (mode === 'plan' && res.data.content) {
+                                        const { parseGeneratedFiles } = await import('../components/home/export-utils');
+                                        const genFiles = parseGeneratedFiles(res.data.content);
+                                        for (const f of genFiles) {
+                                          if (ipc && workspacePath) await ipc.invoke('write-file', suggestFilePath(f.name), f.code, workspacePath);
+                                        }
+                                        if (genFiles.length > 0) refreshFileTree();
+                                      }
+                                    } finally {
+                                      setLoading(false);
+                                    }
+                                  }}
+                                  className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-[12px] font-semibold transition-colors"
+                                >
+                                  Başlat
+                                </button>
+                                <button
+                                  onClick={() => setPendingPlan(null)}
+                                  className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-400 rounded-lg text-[12px] font-semibold transition-colors"
+                                >
+                                  İptal
+                                </button>
+                              </div>
+                            </motion.div>
+                          )}
 
-                        {/* File Creation Approval — kod üretim sonucu */}
-                        {pendingGenFiles && pendingGenFiles.messageId === msg.id && (
-                          <FileCreationApproval
-                            files={pendingGenFiles.files}
-                            onAcceptOne={async (file) => {
-                              if (!ipc || !workspacePath) return;
-                              await ipc.invoke('write-file', file.suggestedPath, file.code, workspacePath);
-                              refreshFileTree();
-                            }}
-                            onSkipOne={() => {}}
-                            onAcceptAll={async (files) => {
-                              if (!ipc || !workspacePath) return;
-                              for (const file of files) {
+                          {/* File Creation Approval — kod üretim sonucu */}
+                          {pendingGenFiles && pendingGenFiles.messageId === msg.id && (
+                            <FileCreationApproval
+                              files={pendingGenFiles.files}
+                              autoAccept={generationMode === 'auto'}
+                              onAcceptOne={async (file) => {
+                                if (!ipc || !workspacePath) return;
                                 await ipc.invoke('write-file', file.suggestedPath, file.code, workspacePath);
-                              }
-                              refreshFileTree();
-                            }}
-                            onDone={() => setPendingGenFiles(null)}
-                            onOpenFile={(path) => openFile(path)}
-                          />
-                        )}
-
-                        {/* Diff Viewer — FIX pipeline sonucu */}
-                        {pendingFix && pendingFix.messageId === msg.id && (
-                          <DiffViewer
-                            diffData={pendingFix.data}
-                            filename={openedFilePath ? openedFilePath.split('/').pop() : undefined}
-                            applied={pendingFix.applied}
-                            onAccept={async (fixedCode) => {
-                              setCode(fixedCode);
-                              setPendingFix(prev => prev ? { ...prev, applied: true } : null);
-                              if (ipc && openedFilePath && workspacePath) {
-                                await ipc.invoke('write-file', openedFilePath, fixedCode, workspacePath);
                                 refreshFileTree();
-                              }
-                              showToast(`✅ ${openedFilePath ? openedFilePath.split('/').pop() : 'Dosya'} güncellendi`, 'success');
-                            }}
-                            onReject={() => setPendingFix(null)}
-                          />
-                        )}
-                      </div>
-                    </div>
-                  ) : (
-                    // Kullanıcı Mesajı
-                    <div className="max-w-[85%]">
-                      <div className="bg-blue-600/15 border border-blue-500/20 rounded-xl rounded-tr-sm px-3.5 py-2.5">
-                        <div className="text-[13px] text-slate-200 whitespace-pre-wrap break-words">
-                          <MarkdownRenderer content={msg.content} />
+                              }}
+                              onSkipOne={() => { }}
+                              onAcceptAll={async (files) => {
+                                if (!ipc || !workspacePath) return;
+                                for (const file of files) {
+                                  await ipc.invoke('write-file', file.suggestedPath, file.code, workspacePath);
+                                }
+                                refreshFileTree();
+                              }}
+                              onDone={() => setPendingGenFiles(null)}
+                              onOpenFile={(path) => openFile(path)}
+                            />
+                          )}
+
+                          {/* Diff Viewer — FIX pipeline sonucu */}
+                          {pendingFix && pendingFix.messageId === msg.id && (
+                            <DiffViewer
+                              diffData={pendingFix.data}
+                              filename={openedFilePath ? openedFilePath.split('/').pop() : undefined}
+                              applied={pendingFix.applied}
+                              onAccept={async (fixedCode) => {
+                                setCode(fixedCode);
+                                setPendingFix(prev => prev ? { ...prev, applied: true } : null);
+                                if (ipc && openedFilePath && workspacePath) {
+                                  await ipc.invoke('write-file', openedFilePath, fixedCode, workspacePath);
+                                  refreshFileTree();
+                                }
+                                showToast(`✅ ${openedFilePath ? openedFilePath.split('/').pop() : 'Dosya'} güncellendi`, 'success');
+                              }}
+                              onReject={() => setPendingFix(null)}
+                            />
+                          )}
                         </div>
                       </div>
-                    </div>
-                  )}
-                </div>
-              ))}
-
-              {/* Typing Indicator */}
-              {loading && (
-                <div className="flex gap-2.5 chat-message-enter mb-6">
-                  <ModelAvatar provider={effectiveProvider} size={13} />
-                  <div className="flex-1 min-w-0">
-                    {currentPlan.length > 0 && (
-                      <div className="mb-4">
-                        <AgentPlan tasks={currentPlan} />
+                    ) : (
+                      // Kullanıcı Mesajı
+                      <div className="max-w-[85%]">
+                        <div className="bg-blue-600/15 border border-blue-500/20 rounded-xl rounded-tr-sm px-3.5 py-2.5">
+                          <div className="text-[13px] text-slate-200 whitespace-pre-wrap break-words">
+                            <MarkdownRenderer content={msg.content} />
+                          </div>
+                        </div>
                       </div>
                     )}
-                    <div className="bg-[#000000] rounded-lg px-4 py-3 border border-slate-800 inline-flex items-center gap-2.5">
-                      <div className="flex items-center gap-1.5">
-                        <div className="typing-dot h-2 w-2 bg-blue-500 rounded-full" />
-                        <div className="typing-dot h-2 w-2 bg-blue-500 rounded-full" />
-                        <div className="typing-dot h-2 w-2 bg-blue-500 rounded-full" />
-                      </div>
-                      {useThinking && (
-                        <span className="text-[11px] text-violet-400 animate-pulse">düşünüyor...</span>
+                  </div>
+                ))}
+
+                {/* Typing Indicator */}
+                {loading && (
+                  <div className="flex gap-2.5 chat-message-enter mb-6">
+                    <ModelAvatar provider={effectiveProvider} size={13} />
+                    <div className="flex-1 min-w-0">
+                      {currentPlan.length > 0 && (
+                        <div className="mb-4">
+                          <AgentPlan tasks={currentPlan} />
+                        </div>
                       )}
+                      <div className="bg-[#000000] rounded-lg px-4 py-3 border border-slate-800 inline-flex items-center gap-2.5">
+                        <div className="flex items-center gap-1.5">
+                          <div className="typing-dot h-2 w-2 bg-blue-500 rounded-full" />
+                          <div className="typing-dot h-2 w-2 bg-blue-500 rounded-full" />
+                          <div className="typing-dot h-2 w-2 bg-blue-500 rounded-full" />
+                        </div>
+                        {useThinking && (
+                          <span className="text-[11px] text-violet-400 animate-pulse">düşünüyor...</span>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
-              )}
-              <div ref={chatEndRef} />
-            </>
-          )}
-        </div>
+                )}
+                <div ref={chatEndRef} />
+              </>
+            )}
+          </div>
 
-        {/* Chat Input - Animated Version */}
-        <div className="p-4 border-t border-slate-800/50 bg-[#000000]/80 backdrop-blur-md">
-           {/* File Chip (sadece dosya yüklüyse ve eklenmişse göster) */}
-           {includeEditorCode && code.trim() && (
+          {/* Chat Input - Animated Version */}
+          <div className="p-4 border-t border-slate-800/50 bg-[#000000]/80 backdrop-blur-md">
+            {/* File Chip (sadece dosya yüklüyse ve eklenmişse göster) */}
+            {includeEditorCode && code.trim() && (
               <div className="mb-3">
-                 <div className="inline-flex items-center gap-2 bg-blue-500/10 border border-blue-500/20 rounded-lg px-2.5 py-1.5 max-w-full group">
-                    <Code2 size={13} className="text-blue-400 shrink-0" />
-                    <span className="text-[11px] text-slate-300 font-medium truncate">
-                       {openedFilePath ? openedFilePath.split('/').pop() : 'kod.cs'}
-                    </span>
-                    <button
-                       onClick={() => setIncludeEditorCode(false)}
-                       className="p-1 hover:bg-slate-800 rounded text-slate-500 hover:text-slate-300 transition-all"
-                    >
-                       <X size={10} />
-                    </button>
-                 </div>
+                <div className="inline-flex items-center gap-2 bg-blue-500/10 border border-blue-500/20 rounded-lg px-2.5 py-1.5 max-w-full group">
+                  <Code2 size={13} className="text-blue-400 shrink-0" />
+                  <span className="text-[11px] text-slate-300 font-medium truncate">
+                    {openedFilePath ? openedFilePath.split('/').pop() : 'kod.cs'}
+                  </span>
+                  <button
+                    onClick={() => setIncludeEditorCode(false)}
+                    className="p-1 hover:bg-slate-800 rounded text-slate-500 hover:text-slate-300 transition-all"
+                  >
+                    <X size={10} />
+                  </button>
+                </div>
               </div>
-           )}
-           <AnimatedChatInput
+            )}
+            <AnimatedChatInput
               value={chatInput}
               setValue={setChatInput}
               onSendMessage={(msg) => sendMessage(msg)}
@@ -2183,27 +2217,70 @@ export default function HomePage() {
               className="border-slate-800/50"
               includeEditorCode={includeEditorCode}
               onToggleIncludeCode={() => setIncludeEditorCode(!includeEditorCode)}
-           />
-           <div className="flex items-center gap-2 px-1 mt-1.5">
-             <GenerationModeSelector value={generationMode} onChange={setGenerationMode} />
-             <div className="w-px h-3 bg-slate-800" />
-             <button
-               onClick={() => setUseThinking(v => !v)}
-               className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium transition-colors ${
-                 useThinking
-                   ? 'bg-violet-500/15 border border-violet-500/30 text-violet-400'
-                   : 'text-slate-600 hover:text-slate-400'
-               }`}
-               title="Modelin düşünce sürecini göster"
-             >
-               <Brain size={11} />
-               Thinking {useThinking ? 'Açık' : 'Kapalı'}
-             </button>
-           </div>
+            />
+            <div className="flex items-center gap-2 px-1 mt-1.5">
+              <GenerationModeSelector value={generationMode} onChange={setGenerationMode} />
+              <div className="w-px h-3 bg-slate-800" />
+              <button
+                onClick={() => setUseThinking(v => !v)}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium transition-colors ${useThinking
+                    ? 'bg-violet-500/15 border border-violet-500/30 text-violet-400'
+                    : 'text-slate-600 hover:text-slate-400'
+                  }`}
+                title="Modelin düşünce sürecini göster"
+              >
+                <Brain size={11} />
+                Thinking {useThinking ? 'Açık' : 'Kapalı'}
+              </button>
+
+              {/* Yeni Dairesel (Circular) Hafıza Butonu */}
+              {activeConvId && contextUsage?.percent > 0 && (
+                <>
+                  <div className="w-px h-3 bg-slate-800" />
+                  <button
+                    onClick={compactConversation}
+                    disabled={isCompacting}
+                    title={`Hafıza Kullanımı: %${contextUsage.percent} (${contextUsage.message_count} mesaj)\nTıkla ve özetle`}
+                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium transition-colors group relative ${contextUsage.percent >= 90 ? 'bg-red-500/10 border border-red-500/30 text-red-400 hover:bg-red-500/20'
+                        : contextUsage.percent >= 75 ? 'bg-amber-500/10 border border-amber-500/30 text-amber-400 hover:bg-amber-500/20'
+                          : 'text-slate-500 hover:text-slate-300 border border-transparent hover:border-slate-800/50 hover:bg-slate-800/30'
+                      }`}
+                  >
+                    <div className="relative w-3.5 h-3.5 flex items-center justify-center">
+                      <svg className="w-full h-full transform -rotate-90" viewBox="0 0 36 36">
+                        <path
+                          className="text-slate-800"
+                          d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="4"
+                        />
+                        <path
+                          className={`${contextUsage.percent >= 90 ? 'text-red-500'
+                              : contextUsage.percent >= 75 ? 'text-amber-500'
+                                : 'text-blue-500'
+                            } transition-all duration-500`}
+                          strokeDasharray={`${contextUsage.percent}, 100`}
+                          d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="4"
+                        />
+                      </svg>
+                      {contextUsage.should_compact && (
+                        <span className="absolute -top-1 -right-1 w-1.5 h-1.5 bg-red-500 rounded-full animate-ping" />
+                      )}
+                    </div>
+                    <span>{isCompacting ? 'Özetleniyor...' : 'Hafıza'}</span>
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
         </div>
 
         <AnimatePresence>
-           {loading && <ThinkingIndicator />}
+          {loading && <ThinkingIndicator />}
         </AnimatePresence>
       </motion.div >
 

@@ -31,6 +31,9 @@ export interface Message {
   smells: any[];
   timestamp: string;
   pipeline?: any;
+  thinking?: string | null;
+  thinking_duration_ms?: number | null;
+  tool_calls?: { tool: string; args: any; summary?: string; success?: boolean }[];
 }
 
 export interface FileEntry {

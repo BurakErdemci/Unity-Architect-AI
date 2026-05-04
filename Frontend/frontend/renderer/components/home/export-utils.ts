@@ -66,29 +66,56 @@ export const parseGeneratedFiles = (response: string): ExportFileEntry[] => {
     /(?:\*\*(?:📄\s*)?([A-Za-z0-9_.]+\.cs)\*\*|#{2,3}\s+([A-Za-z0-9_.]+\.cs))\s*\n```(?:csharp|cs)?\n([\s\S]*?)```/g;
 
   let match: RegExpExecArray | null;
-  let foundHeaders = false;
 
   while ((match = headerPattern.exec(response)) !== null) {
-    foundHeaders = true;
     const name = (match[1] || match[2]).trim();
     const code = match[3].trim();
-    results.set(name, { name, code, path: '' });
+    
+    // Kodun içinde path var mı kontrol et
+    const lines = code.split('\n');
+    let detectedPath = '';
+    for (let i = 0; i < Math.min(lines.length, 5); i++) {
+      const pathMatch = lines[i].match(/\/\/\s*(?:file|path|dosya):\s*([^\n\r]+)/i);
+      if (pathMatch) {
+        detectedPath = pathMatch[1].trim();
+        break;
+      }
+    }
+
+    results.set(name, { name, code, path: detectedPath });
   }
 
-  if (foundHeaders) {
-    return Array.from(results.values());
-  }
-
-  // Fallback: extract all ```csharp blocks and detect class name from inside
+  // Fallback: extract all ```csharp blocks (header olmayanlar için)
   const blockPattern = /```(?:csharp|cs)?\n([\s\S]*?)```/g;
   const classNamePattern = /(?:public|internal|abstract|sealed|static|\s)*class\s+(\w+)/;
 
   while ((match = blockPattern.exec(response)) !== null) {
     const code = match[1].trim();
-    const classMatch = code.match(classNamePattern);
-    const name = classMatch ? `${classMatch[1]}.cs` : 'NewScript.cs';
-    // keep last occurrence — overwrite any previous entry with the same name
-    results.set(name, { name, code, path: '' });
+    
+    // Eğer bu blok zaten headerPattern ile yakalanmışsa atla
+    const alreadyFound = Array.from(results.values()).some(f => f.code === code);
+    if (alreadyFound) continue;
+
+    const lines = code.split('\n');
+    let detectedPath = '';
+    for (let i = 0; i < Math.min(lines.length, 5); i++) {
+      const pathMatch = lines[i].match(/\/\/\s*(?:file|path|dosya):\s*([^\n\r]+)/i);
+      if (pathMatch) {
+        detectedPath = pathMatch[1].trim();
+        break;
+      }
+    }
+
+    if (detectedPath) {
+      const name = detectedPath.split('/').pop() || 'NewScript.cs';
+      results.set(name, { name, code, path: detectedPath });
+    } else {
+      const classMatch = code.match(classNamePattern);
+      const name = classMatch ? `${classMatch[1]}.cs` : 'NewScript.cs';
+      if (!results.has(name)) {
+        results.set(name, { name, code, path: '' });
+      }
+    }
   }
 
   return Array.from(results.values());

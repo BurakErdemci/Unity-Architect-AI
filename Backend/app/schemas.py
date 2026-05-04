@@ -48,7 +48,10 @@ class ChatRequest(BaseModel):
     mode: str = "analysis"
     use_kb: bool = True
     use_or_for_coder: bool = False
-    editor_code: str = ""  # Editörde açık olan dosyanın içeriği (FIX pipeline için)
+    editor_code: str = ""
+    use_thinking: bool = False
+    generation_confirmed: bool = False
+    generation_mode: str = "auto"  # auto | plan | step
 
 
 class WorkspaceRequest(BaseModel):

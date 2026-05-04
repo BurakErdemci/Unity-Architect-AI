@@ -4,6 +4,7 @@ from collections import defaultdict
 from time import time
 
 from fastapi import APIRouter, Header, HTTPException
+from fastapi.responses import StreamingResponse
 
 from ai_providers import AIProviderManager
 from analyzer import UnityAnalyzer
@@ -27,6 +28,7 @@ from prompts import (
 )
 from schemas import ChatRequest, NewConversationRequest, RenameRequest
 
+from agentic.agent_runner import AgentRunner
 
 logger = logging.getLogger(__name__)
 
@@ -104,12 +106,11 @@ def create_conversation_router(db, kb, progress_store):
     @router.post("/conversations/{conv_id}/compact")
     async def compact_conversation(conv_id: int, x_session_token: str = Header(alias="X-Session-Token")):
         """Sohbeti özetle ve hafızaya kaydet (Claude Code /compact gibi)."""
-        user_id, _ = require_user(db, x_session_token)
-        require_conversation_owner(db, x_session_token, conv_id)
+        user_id, _ = require_conversation_owner(db, x_session_token, conv_id)
 
         messages = db.get_conversation_messages(conv_id)
-        if len(messages) < 4:
-            return {"status": "skip", "reason": "Özetlenecek yeterli mesaj yok."}
+        if len(messages) <= 6:
+            return {"status": "success", "message": "Sohbet çok kısa, özetlemeye gerek yok."}
 
         # AI config'i al
         provider_type, model_name, _, _, _ = db.get_ai_config(user_id)
@@ -139,13 +140,107 @@ SOHBET:
 
         try:
             import asyncio
-            summary = await asyncio.to_thread(provider.analyze_code, compact_prompt, 1024)
-            db.compact_conversation(conv_id, summary.strip())
-            logger.info(f"[Compact] Conv {conv_id} özetlendi ({len(messages)} mesaj -> hafıza)")
-            return {"status": "success", "summary": summary.strip()}
+            summary = await asyncio.to_thread(provider.analyze_code, compact_prompt, 800)
+            db.update_memory(conv_id, summary)
+            # Tüm mesajları sil
+            db.clear_messages(conv_id)
+            # Yapay zeka mesajı olarak özeti ekle
+            msg = f"🧠 **Bağlam Temizlendi & Hafızaya Alındı**\n\n_Özet:_ {summary}"
+            db.add_message(conv_id, "assistant", msg)
+            return {"status": "success", "summary": summary}
         except Exception as exc:
-            logger.error(f"[Compact] Hata: {exc}")
-            raise HTTPException(500, "Sohbet özetlenemedi.")
+            logger.error(f"Compact hatası: {exc}")
+            raise HTTPException(500, "Özetleme yapılamadı.")
+
+    @router.post("/chat-stream")
+    async def chat_stream(request: ChatRequest, x_session_token: str = Header(alias="X-Session-Token")):
+        """
+        Agentic Architecture (Phase 3) için SSE tabanlı akış endpoint'i.
+        """
+        user_id, _ = require_user(db, x_session_token, request.user_id)
+        require_conversation_owner(db, x_session_token, request.conversation_id)
+
+        _check_chat_rate_limit(user_id)
+        
+        # Kullanıcı mesajını DB'ye kaydet
+        db.add_message(request.conversation_id, "user", request.message)
+        
+        # Eğer varsa kod düzenleyicisinden gelen kodu ekle
+        if request.editor_code:
+            combined_msg = f"{request.message}\n\n```csharp\n{request.editor_code}\n```"
+        else:
+            combined_msg = request.message
+
+        provider_type, model_name, _, _, _ = db.get_ai_config(user_id)
+        api_key = (db.get_api_key(user_id, provider_type) or "") if provider_type not in ("ollama", "kb") else ""
+        workspace_path = db.get_last_workspace(user_id) or ""
+        
+        # Mevcut hafıza ve önceki konuşmalar (kısaltılmış)
+        memory = db.get_memory(request.conversation_id)
+        history_messages = db.get_conversation_messages(request.conversation_id)
+        
+        context_parts = []
+        if memory:
+            context_parts.append(f"[ÖNCEKİ SOHBET HAFIZASI]\n{memory}")
+            
+        recent_msgs = history_messages[-6:]  # Sadece son 6 mesaj
+        if recent_msgs:
+            recent_text = "\n".join(f"{m['role'].upper()}: {m['content'][:300]}" for m in recent_msgs if m['role'] != 'user')
+            context_parts.append(f"[YAKIN GEÇMİŞ]\n{recent_text}")
+            
+        context_summary = "\n\n".join(context_parts)
+
+        runner = AgentRunner(
+            provider_type=provider_type,
+            api_key=api_key,
+            model_name=model_name,
+            workspace_path=workspace_path,
+            language=request.language,
+            context=context_summary,
+            use_thinking=request.use_thinking,
+        )
+
+        async def event_generator():
+            full_response = ""
+            try:
+                async for event in runner.run(combined_msg):
+                    if event.type == "response" and "content" in event.data:
+                        full_response += event.data["content"]
+                    yield event.to_sse()
+                    
+                # Akış bitince final sonucu DB'ye kaydet
+                if full_response:
+                    db.add_message(request.conversation_id, "assistant", full_response)
+                    
+                    # İlk mesajsa başlığı otomatik değiştir
+                    if len(history_messages) <= 1:
+                        auto_title = request.message[:40].strip()
+                        if len(request.message) > 40:
+                            auto_title += "..."
+                        db.rename_conversation(request.conversation_id, auto_title)
+
+                # Context usage hesapla ve frontend'e ilet
+                all_msgs = db.get_conversation_messages(request.conversation_id)
+                total_chars = sum(len(m.get("content", "")) for m in all_msgs)
+                max_context_chars = 200_000
+                context_pct = min(100, int((total_chars / max_context_chars) * 100))
+                
+                import json
+                context_data = {
+                    "type": "context_usage",
+                    "percent": context_pct,
+                    "total_chars": total_chars,
+                    "max_chars": max_context_chars,
+                    "should_compact": context_pct >= 85,
+                    "message_count": len(all_msgs),
+                }
+                yield f"data: {json.dumps(context_data)}\n\n"
+                
+            except Exception as e:
+                logger.error(f"Streaming hatası: {str(e)}")
+                yield f"data: {{\"type\": \"error\", \"message\": \"{str(e)}\"}}\n\n"
+
+        return StreamingResponse(event_generator(), media_type="text/event-stream")
 
     @router.post("/chat")
     async def chat(request: ChatRequest, x_session_token: str = Header(alias="X-Session-Token")):

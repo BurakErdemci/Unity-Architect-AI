@@ -5,15 +5,57 @@ import { AIConfig } from "./types";
 
 
 const DEFAULT_MODELS: Record<string, string> = {
-  anthropic: "claude-sonnet-4-6",  // Haiku: claude-haiku-4-5, Opus: claude-opus-4-6
+  anthropic: "claude-sonnet-4-6",
   openai: "gpt-5.4",
-  openrouter: "moonshotai/kimi-k2",
-  google: "gemini-2.5-flash",
+  openrouter: "moonshotai/kimi-k2.6",
+  google: "gemini-3-flash-preview",
   groq: "llama-3.3-70b-versatile",
   deepseek: "deepseek-chat",
-  moonshot: "kimi-k2",
+  moonshot: "kimi-k2.6",
   ollama: "qwen2.5-coder:7b",
   kb: "unity-kb-v1",
+};
+
+const MODEL_HINTS: Record<string, { label: string; value: string }[]> = {
+  anthropic: [
+    { label: "Sonnet 4.6 (Önerilen)", value: "claude-sonnet-4-6" },
+    { label: "Opus 4.6 (Güçlü)", value: "claude-opus-4-6" },
+    { label: "Haiku 4.5 (Hızlı)", value: "claude-haiku-4-5" },
+  ],
+  openai: [
+    { label: "GPT-5.5 (En Yeni)", value: "gpt-5.5" },
+    { label: "GPT-5.5 Pro", value: "gpt-5.5-pro" },
+    { label: "GPT-5.4 (Önerilen)", value: "gpt-5.4" },
+    { label: "GPT-5.4 Mini (Hızlı)", value: "gpt-5.4-mini" },
+  ],
+  openrouter: [
+    { label: "Kimi K2.6 (Önerilen)", value: "moonshotai/kimi-k2.6" },
+    { label: "Kimi K2 Thinking", value: "moonshotai/kimi-k2-thinking" },
+    { label: "GPT-5.5", value: "openai/gpt-5.5" },
+    { label: "GPT-5.5 Pro", value: "openai/gpt-5.5-pro" },
+    { label: "GPT-5.4", value: "openai/gpt-5.4" },
+    { label: "Claude Sonnet 4.6", value: "anthropic/claude-sonnet-4-6" },
+    { label: "Gemini 3 Flash", value: "google/gemini-3-flash-preview" },
+  ],
+  google: [
+    { label: "Gemini 3 Flash (Önerilen)", value: "gemini-3-flash-preview" },
+    { label: "Gemini 3.1 Pro", value: "gemini-3.1-pro-preview" },
+    { label: "Gemini 3.1 Flash Lite", value: "gemini-3.1-flash-lite-preview" },
+    { label: "Gemini 2.5 Pro", value: "gemini-2.5-pro" },
+    { label: "Gemini 2.5 Flash", value: "gemini-2.5-flash" },
+  ],
+  moonshot: [
+    { label: "Kimi K2.6 (En Yeni)", value: "kimi-k2.6" },
+    { label: "Kimi K2", value: "kimi-k2" },
+  ],
+  groq: [
+    { label: "Llama 3.3 70B (Önerilen)", value: "llama-3.3-70b-versatile" },
+    { label: "Llama 3.1 8B (Hızlı)", value: "llama-3.1-8b-instant" },
+  ],
+  deepseek: [
+    { label: "DeepSeek Chat", value: "deepseek-chat" },
+    { label: "DeepSeek R1 (Reasoning)", value: "deepseek-reasoner" },
+  ],
 };
 
 
@@ -113,6 +155,24 @@ export const SettingsModal = ({
                   className="w-full bg-[#000000] border border-slate-800 rounded-xl p-3 text-white text-sm outline-none focus:border-blue-500 transition-colors"
                   placeholder={DEFAULT_MODELS[aiConfig.provider_type] || "model-adı-girin"}
                 />
+                {MODEL_HINTS[aiConfig.provider_type] && (
+                  <div className="flex flex-wrap gap-1.5 mt-2">
+                    {MODEL_HINTS[aiConfig.provider_type].map(hint => (
+                      <button
+                        key={hint.value}
+                        type="button"
+                        onClick={() => onChange({ ...aiConfig, model_name: hint.value })}
+                        className={`px-2 py-0.5 rounded-md text-[10px] transition-colors border ${
+                          aiConfig.model_name === hint.value
+                            ? 'bg-blue-500/20 border-blue-500/40 text-blue-300'
+                            : 'bg-slate-900 border-slate-800 text-slate-500 hover:text-slate-300 hover:border-slate-600'
+                        }`}
+                      >
+                        {hint.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
             <div className="flex items-center justify-between p-3 rounded-xl border border-slate-800/80 bg-slate-900/30">

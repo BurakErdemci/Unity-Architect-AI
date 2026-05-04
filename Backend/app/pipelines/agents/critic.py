@@ -18,7 +18,7 @@ class CriticAgent:
     def __init__(self, provider: Any):
         self.provider = provider
 
-    def evaluate(self, original_code: str, fixed_code: str, plan: str, lang_instr: str) -> Dict[str, Any]:
+    def evaluate(self, original_code: str, fixed_code: str, plan: str, lang_instr: str) -> Dict[str, Any]:  # noqa: ARG002
         logger.info("  [Critic Agent] Kod denetleniyor ve puanlanıyor...")
 
         prompt = f"""# GÖREV: KESKİN VE TEKNİK KOD DENETİMİ (STRICT TECHNICAL AUDIT)
@@ -62,7 +62,7 @@ JSON dışında HİÇBİR metin yazma. Sadece aşağıdaki yapıyı döndür:
 
 {{
     "score": 8.5,
-    "review_message": "❌ GetComponent Update içinde.\\n⚠️ Namespace eksik.\\n✅ FixedUpdate doğru.",
+    "review_message": "Update içinde GetComponent var, Awake'e taşıdım. Namespace eksikti, ekledim. FixedUpdate doğru kullanılmış.",
     "fatal_errors_found": false
 }}"""
 
@@ -95,8 +95,6 @@ JSON dışında HİÇBİR metin yazma. Sadece aşağıdaki yapıyı döndür:
 
         except Exception as e:
             logger.error(f"[Critic Agent] Hata: {e}")
-            # Fallback: Ham yanıtı truncate et (UI'da bozuk JSON göstermeyi önle)
-            raw_preview = (response[:200] + "...") if 'response' in dir() and response else "Yok"
             return {
                 "score": 5.0,  # -1 yerine nötr skor (skor tutarsızlığını önler)
                 "review_message": f"⚠️ Denetim sırasında teknik hata oluştu. Kod yeniden değerlendirilecek.",

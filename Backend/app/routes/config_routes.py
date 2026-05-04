@@ -81,11 +81,14 @@ def create_config_router(db):
                 {"id": "gemini-3-flash-preview",        "name": "Gemini 3 Flash",        "provider": "google", "openrouter_id": "google/gemini-3-flash-preview"},
                 {"id": "gemini-3.1-flash-lite-preview", "name": "Gemini 3.1 Flash Lite", "provider": "google", "openrouter_id": "google/gemini-3.1-flash-lite-preview"},
                 {"id": "gemini-3.1-pro-preview",        "name": "Gemini 3.1 Pro",        "provider": "google", "openrouter_id": "google/gemini-3.1-pro-preview", "paid": True},
+                {"id": "gpt-5.5",                  "name": "GPT-5.5",            "provider": "openai",    "openrouter_id": "openai/gpt-5.5"},
+                {"id": "gpt-5.5-pro",              "name": "GPT-5.5 Pro",        "provider": "openai",    "openrouter_id": "openai/gpt-5.5-pro"},
                 {"id": "gpt-5.4-mini",             "name": "GPT-5.4 Mini",       "provider": "openai",    "openrouter_id": "openai/gpt-5.4-mini"},
                 {"id": "gpt-5.4",                  "name": "GPT-5.4",            "provider": "openai",    "openrouter_id": "openai/gpt-5.4"},
                 {"id": "gpt-5.4-nano",             "name": "GPT-5.4 Nano",       "provider": "openai",    "openrouter_id": "openai/gpt-5.4-nano"},
                 {"id": "deepseek-chat",            "name": "DeepSeek V3",        "provider": "deepseek",  "openrouter_id": "deepseek/deepseek-chat"},
-                {"id": "kimi-k2.5",                "name": "Kimi K2.5 (Moonshot)",  "provider": "moonshot",   "openrouter_id": "moonshotai/kimi-k2.5"},
+                {"id": "kimi-k2.6",                "name": "Kimi K2.6",          "provider": "moonshot",  "openrouter_id": "moonshotai/kimi-k2.6"},
+                {"id": "kimi-k2.5",                "name": "Kimi K2.5",          "provider": "moonshot",  "openrouter_id": "moonshotai/kimi-k2.5"},
             ],
         }
 
