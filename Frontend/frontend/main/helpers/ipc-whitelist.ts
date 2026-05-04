@@ -7,9 +7,15 @@ export const ALLOWED_INVOKE_CHANNELS = new Set([
   'write-file',
   'file-exists',
   'write-multiple-files',
+  'create-file',
+  'create-folder',
+  'rename-entry',
+  'delete-entry',
+  'move-entry',
   'session-get',
   'session-set',
   'session-clear',
+  'save-file-dialog',
 ])
 
 export function assertAllowedInvokeChannel(channel: string): void {

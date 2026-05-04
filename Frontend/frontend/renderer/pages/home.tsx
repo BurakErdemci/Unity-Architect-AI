@@ -30,9 +30,12 @@ import {
   Sparkles,
   Trash2,
   Upload,
+  Download,
   X,
   HelpCircle,
   Brain,
+  Pencil,
+  FolderPlus,
 } from "lucide-react";
 import { motion, AnimatePresence } from 'framer-motion';
 import AgentPlan, { Task } from '../components/ui/agent-plan';
@@ -64,6 +67,22 @@ const setSessionTokenHeader = (token: string | null) => {
   }
 };
 
+// =====================================================================
+//                          GLOBAL CSS & ANIMATIONS
+// =====================================================================
+const globalStyles = `
+  @keyframes typing-bounce {
+    0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
+    40% { transform: translateY(-4px); opacity: 1; }
+  }
+  .typing-dot {
+    animation: typing-bounce 1.4s infinite ease-in-out;
+  }
+  .typing-dot:nth-child(1) { animation-delay: 0s; }
+  .typing-dot:nth-child(2) { animation-delay: 0.2s; }
+  .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+`;
+
 export default function HomePage() {
   // --- AUTH ---
   const [user, setUser] = useState<UserData | null>(null);
@@ -75,6 +94,8 @@ export default function HomePage() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConvId, setActiveConvId] = useState<number | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [wisdomSummary, setWisdomSummary] = useState<string | null>(null);
+  const [isWisdomExpanded, setIsWisdomExpanded] = useState(true);
 
   // --- UI STATE ---
   const [code, setCode] = useState('');
@@ -89,6 +110,8 @@ export default function HomePage() {
   const [currentPlan, setCurrentPlan] = useState<Task[]>([]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isChatOpen, setIsChatOpen] = useState(true);
+  const [isAnalyzingProject, setIsAnalyzingProject] = useState(false);
+  const [showMemoryMenu, setShowMemoryMenu] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<'chats' | 'files'>('chats');
   const [isDragging, setIsDragging] = useState(false);
   const [dragRejectMsg, setDragRejectMsg] = useState('');
@@ -106,6 +129,15 @@ export default function HomePage() {
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
   const [dirContents, setDirContents] = useState<Record<string, FileEntry[]>>({});
   const [openedFilePath, setOpenedFilePath] = useState<string | null>(null);
+
+  // --- FILE MANAGER ---
+  const [treeContextMenu, setTreeContextMenu] = useState<{ x: number; y: number; entry: FileEntry } | null>(null);
+  const [renamingPath, setRenamingPath] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const [treeCreating, setTreeCreating] = useState<{ parentPath: string; type: 'file' | 'folder' } | null>(null);
+  const [treeCreateValue, setTreeCreateValue] = useState('');
+  const [treeDragSource, setTreeDragSource] = useState<FileEntry | null>(null);
+  const [treeDragTarget, setTreeDragTarget] = useState<string | null>(null);
 
   // --- SETTINGS ---
   const [showSettings, setShowSettings] = useState(false);
@@ -175,6 +207,7 @@ export default function HomePage() {
   const chatEndRef = useRef<HTMLDivElement>(null);
   const chatInputRef = useRef<HTMLTextAreaElement>(null);
   const userRef = useRef<UserData | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
   const authAlertShownRef = useRef(false);
   const errorAlertShownRef = useRef(false);
 
@@ -267,9 +300,13 @@ export default function HomePage() {
   useEffect(() => {
     const loadBackendBaseUrl = async () => {
       try {
-        const baseUrl = ipc ? await ipc.invoke('get-backend-base-url') : '';
+        let baseUrl = ipc ? await ipc.invoke('get-backend-base-url') : '';
         if (!baseUrl || typeof baseUrl !== 'string') {
           throw new Error('Backend URL alınamadı.')
+        }
+        // Sondaki taksimi temizle
+        if (baseUrl.endsWith('/')) {
+          baseUrl = baseUrl.slice(0, -1);
         }
         API = baseUrl;
         setBackendReady(true);
@@ -322,6 +359,7 @@ export default function HomePage() {
 
   // --- API CALLS ---
   const fetchConversations = async (userId: number) => {
+    if (!API) return;
     try {
       const res = await axios.get(`${API}/conversations/${userId}`);
       setConversations(res.data);
@@ -329,9 +367,31 @@ export default function HomePage() {
   };
 
   const fetchMessages = async (convId: number) => {
+    if (!API) return;
     try {
       const res = await axios.get(`${API}/conversations/${convId}/messages`);
       setMessages(res.data);
+      
+      // Hafıza özetini de çek (Varsa)
+      setWisdomSummary(null); // Reset
+      try {
+        const memRes = await axios.get(`${API}/conversations/${convId}/export-memory`, {
+          headers: { 'X-Session-Token': user?.sessionToken }
+        });
+        if (memRes.data.content) {
+          // Markdown dosyasından özeti ayıkla ([USER_SUMMARY] bloğu)
+          const content = memRes.data.content;
+          const match = content.match(/\[USER_SUMMARY\]\n([\s\S]*?)\n\[TECHNICAL_WISDOM\]/);
+          if (match && match[1]) {
+            setWisdomSummary(match[1].trim());
+          } else {
+            // Eğer bloklar yoksa düz içeriği göster (fallback)
+            setWisdomSummary(content.substring(0, 500) + "...");
+          }
+        }
+      } catch (e) {
+        // Hafıza dosyası olmayabilir (404), sessizce geç
+      }
     } catch (err) { console.error("Mesaj hatası:", err); }
   };
 
@@ -588,25 +648,82 @@ export default function HomePage() {
 
   const renderTree = (entries: FileEntry[], depth = 0): React.ReactNode => {
     return entries.map(entry => (
-      <div key={entry.path}>
-        <div
-          onClick={() => entry.isDirectory ? toggleDir(entry.path) : openFile(entry.path)}
-          className={`flex items-center gap-1.5 px-2 py-1 rounded cursor-pointer text-[12px] hover:bg-slate-800/40 transition-colors ${openedFilePath === entry.path ? 'bg-slate-800/60 text-white' : 'text-slate-400'
-            }`}
-          style={{ paddingLeft: `${8 + depth * 14}px` }}
-        >
-          {entry.isDirectory ? (
-            <>
-              <ChevronR size={11} className={`transition-transform ${expandedDirs.has(entry.path) ? 'rotate-90' : ''}`} />
-              {expandedDirs.has(entry.path)
-                ? <FolderOpen size={13} className="text-blue-400" />
-                : <Folder size={13} className="text-slate-500" />}
-            </>
-          ) : getFileIcon(entry.extension)}
-          <span className="truncate">{entry.name}</span>
-        </div>
-        {entry.isDirectory && expandedDirs.has(entry.path) && dirContents[entry.path] && (
-          renderTree(dirContents[entry.path], depth + 1)
+      <div
+        key={entry.path}
+        onDragOver={(e) => handleTreeDragOver(e, entry)}
+        onDragLeave={(e) => { e.stopPropagation(); setTreeDragTarget(null); }}
+        onDrop={(e) => handleTreeDrop(e, entry)}
+        className={treeDragTarget === entry.path ? 'bg-blue-600/20 rounded' : ''}
+      >
+        {renamingPath === entry.path ? (
+          <div className="flex items-center gap-1.5 py-[3px]" style={{ paddingLeft: `${8 + depth * 14}px`, paddingRight: '4px' }}>
+            {entry.isDirectory
+              ? <Folder size={13} className="text-blue-400 shrink-0" />
+              : getFileIcon(entry.extension)}
+            <input
+              autoFocus
+              value={renameValue}
+              onChange={e => setRenameValue(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') submitRename(); if (e.key === 'Escape') setRenamingPath(null); }}
+              onBlur={() => setRenamingPath(null)}
+              className="flex-1 bg-slate-800 text-white text-[12px] px-1.5 py-0.5 rounded border border-blue-500 outline-none min-w-0"
+            />
+          </div>
+        ) : (
+          <div
+            draggable
+            onDragStart={(e) => handleTreeDragStart(e, entry)}
+            onDragEnd={() => { setTreeDragSource(null); setTreeDragTarget(null); }}
+            onClick={() => entry.isDirectory ? toggleDir(entry.path) : openFile(entry.path)}
+            onContextMenu={(e) => handleTreeContextMenu(e, entry)}
+            className={`flex items-center gap-1.5 py-[3px] rounded cursor-pointer text-[12px] hover:bg-slate-800/40 transition-colors group select-none ${
+              openedFilePath === entry.path ? 'bg-slate-800/60 text-white' : 'text-slate-400'
+            } ${treeDragSource?.path === entry.path ? 'opacity-40' : ''}`}
+            style={{ paddingLeft: `${8 + depth * 14}px`, paddingRight: '4px' }}
+          >
+            {entry.isDirectory ? (
+              <>
+                <ChevronR size={11} className={`transition-transform shrink-0 ${expandedDirs.has(entry.path) ? 'rotate-90' : ''}`} />
+                {expandedDirs.has(entry.path)
+                  ? <FolderOpen size={13} className="text-blue-400 shrink-0" />
+                  : <Folder size={13} className="text-slate-500 shrink-0" />}
+              </>
+            ) : (
+              <span className="w-[11px] shrink-0" />
+            )}
+            {!entry.isDirectory && getFileIcon(entry.extension)}
+            <span className="truncate flex-1">{entry.name}</span>
+            <span className="hidden group-hover:flex items-center gap-0.5 ml-auto shrink-0">
+              {entry.isDirectory && (
+                <>
+                  <button onClick={(e) => { e.stopPropagation(); startTreeCreate(entry.path, 'file'); }} className="p-0.5 hover:text-white text-slate-600 rounded" title="Yeni Dosya"><Plus size={10} /></button>
+                  <button onClick={(e) => { e.stopPropagation(); startTreeCreate(entry.path, 'folder'); }} className="p-0.5 hover:text-white text-slate-600 rounded" title="Yeni Klasör"><FolderPlus size={10} /></button>
+                </>
+              )}
+              <button onClick={(e) => { e.stopPropagation(); startRename(entry); }} className="p-0.5 hover:text-white text-slate-600 rounded" title="Yeniden Adlandır"><Pencil size={10} /></button>
+              <button onClick={(e) => { e.stopPropagation(); handleTreeDelete(entry); }} className="p-0.5 hover:text-red-400 text-slate-600 rounded" title="Sil"><Trash2 size={10} /></button>
+            </span>
+          </div>
+        )}
+        {entry.isDirectory && expandedDirs.has(entry.path) && (
+          <div>
+            {treeCreating?.parentPath === entry.path && (
+              <div className="flex items-center gap-1.5 py-[3px]" style={{ paddingLeft: `${8 + (depth + 1) * 14}px`, paddingRight: '4px' }}>
+                {treeCreating.type === 'file'
+                  ? <FileCode size={13} className="text-blue-400 shrink-0" />
+                  : <Folder size={13} className="text-emerald-400 shrink-0" />}
+                <input
+                  autoFocus
+                  value={treeCreateValue}
+                  onChange={e => setTreeCreateValue(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') submitTreeCreate(); if (e.key === 'Escape') setTreeCreating(null); }}
+                  onBlur={() => setTreeCreating(null)}
+                  className="flex-1 bg-slate-800 text-white text-[12px] px-1.5 py-0.5 rounded border border-emerald-500 outline-none min-w-0"
+                />
+              </div>
+            )}
+            {dirContents[entry.path] && renderTree(dirContents[entry.path], depth + 1)}
+          </div>
         )}
       </div>
     ));
@@ -752,6 +869,90 @@ export default function HomePage() {
     setDirContents(newDirContents);
   };
 
+  // ===================== DOSYA YÖNETİMİ =====================
+
+  const handleTreeContextMenu = (e: React.MouseEvent, entry: FileEntry) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setTreeContextMenu({ x: e.clientX, y: e.clientY, entry });
+  };
+
+  const startRename = (entry: FileEntry) => {
+    setRenamingPath(entry.path);
+    setRenameValue(entry.name);
+    setTreeContextMenu(null);
+  };
+
+  const submitRename = async () => {
+    if (!renamingPath || !renameValue.trim()) { setRenamingPath(null); return; }
+    const pathToRename = renamingPath;
+    const newName = renameValue.trim();
+    setRenamingPath(null);
+    const res = await ipc.invoke('rename-entry', pathToRename, newName, workspacePath);
+    if (res?.success) refreshFileTree();
+  };
+
+  const handleTreeDelete = async (entry: FileEntry) => {
+    setTreeContextMenu(null);
+    if (!window.confirm(`"${entry.name}" silinsin mi? Bu işlem geri alınamaz.`)) return;
+    await ipc.invoke('delete-entry', entry.path, workspacePath);
+    refreshFileTree();
+  };
+
+  const startTreeCreate = (parentPath: string, type: 'file' | 'folder') => {
+    setTreeContextMenu(null);
+    setTreeCreating({ parentPath, type });
+    setTreeCreateValue(type === 'file' ? 'YeniScript.cs' : 'YeniKlasor');
+    if (!expandedDirs.has(parentPath)) {
+      setExpandedDirs(new Set([...expandedDirs, parentPath]));
+    }
+  };
+
+  const submitTreeCreate = async () => {
+    if (!treeCreating || !treeCreateValue.trim()) { setTreeCreating(null); return; }
+    const { parentPath, type } = treeCreating;
+    const newPath = `${parentPath}/${treeCreateValue.trim()}`;
+    setTreeCreating(null);
+    if (type === 'file') {
+      await ipc.invoke('create-file', newPath, workspacePath);
+    } else {
+      await ipc.invoke('create-folder', newPath, workspacePath);
+    }
+    const entries = await ipc.invoke('read-directory', parentPath, workspacePath);
+    if (parentPath === rootFolderPath) {
+      setFileTree(entries || []);
+    } else {
+      setDirContents(prev => ({ ...prev, [parentPath]: entries || [] }));
+    }
+  };
+
+  const handleTreeDragStart = (e: React.DragEvent, entry: FileEntry) => {
+    e.stopPropagation();
+    setTreeDragSource(entry);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleTreeDragOver = (e: React.DragEvent, entry: FileEntry) => {
+    if (!treeDragSource || !entry.isDirectory) return;
+    if (entry.path === treeDragSource.path || entry.path.startsWith(treeDragSource.path + '/')) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setTreeDragTarget(entry.path);
+  };
+
+  const handleTreeDrop = async (e: React.DragEvent, targetEntry: FileEntry) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setTreeDragTarget(null);
+    if (!treeDragSource || !targetEntry.isDirectory) return;
+    if (targetEntry.path === treeDragSource.path || targetEntry.path.startsWith(treeDragSource.path + '/')) return;
+    const sourceParent = treeDragSource.path.substring(0, treeDragSource.path.lastIndexOf('/'));
+    if (sourceParent === targetEntry.path) { setTreeDragSource(null); return; }
+    const res = await ipc.invoke('move-entry', treeDragSource.path, targetEntry.path, workspacePath);
+    setTreeDragSource(null);
+    if (res?.success) refreshFileTree();
+  };
+
   const changeExportDir = async () => {
     if (!ipc || !exportModal) return;
     const folderPath = await ipc.invoke('open-folder-dialog');
@@ -770,8 +971,12 @@ export default function HomePage() {
   };
 
   const sendMessage = async (overrideMessage?: string) => {
+    if (loading) return; // Zaten bir mesaj gönderiliyorsa dur, ikinciyi gönderme!
+    
     const inputToUse = (overrideMessage || chatInput).trim();
     if (!inputToUse || !user) return;
+    
+    setLoading(true); 
 
     // Key kontrolü: cloud provider seçili ama key yoksa gönderme
     const activeProvider = aiConfig.use_multi_agent ? 'anthropic' : aiConfig.provider_type;
@@ -810,7 +1015,6 @@ export default function HomePage() {
     };
     setMessages(prev => [...prev, userMsg]);
     setChatInput('');
-    setLoading(true);
     setCurrentPlan([]);
 
     // SSE Streaming ile mesajı gönder
@@ -829,8 +1033,10 @@ export default function HomePage() {
     setMessages(prev => [...prev, currentAiMsg]);
 
     try {
+      abortControllerRef.current = new AbortController();
       const response = await fetch(`${API}/chat-stream`, {
         method: 'POST',
+        signal: abortControllerRef.current.signal,
         headers: {
           'Content-Type': 'application/json',
           'X-Session-Token': user.sessionToken,
@@ -854,8 +1060,7 @@ export default function HomePage() {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
-      // Bağlantı kuruldu, akış başladı. Geçici yükleme animasyonunu kaldır.
-      setLoading(false);
+      // Bağlantı kuruldu, akış başladı. (Loading devam etmeli, finally bloğunda kapanacak)
 
       const reader = response.body?.getReader();
       const decoder = new TextDecoder('utf-8');
@@ -954,16 +1159,19 @@ export default function HomePage() {
                           });
                         }
 
-                        if (generationMode === 'auto' && ipc) {
-                          // Otomatik modda dosyaları yaz ama özeti göster
+                        // Mevcut dosya değişiyorsa her zaman diff paneli göster
+                        const hasModifiedFiles = withPaths.some(f => f.originalCode !== null && f.originalCode !== undefined && f.originalCode !== "");
+
+                        if (generationMode === 'auto' && ipc && !hasModifiedFiles) {
+                          // Auto mod + sadece YENİ dosyalar: direkt yaz
                           for (const file of withPaths) {
                             await ipc.invoke('write-file', file.suggestedPath, file.code, workspacePath);
                           }
-                          showToast(`✅ ${withPaths.length} dosya güncellendi.`, 'success');
+                          showToast(`✅ ${withPaths.length} dosya oluşturuldu.`, 'success');
                           refreshFileTree();
                           setPendingGenFiles({ files: withPaths, messageId: aiMsgId });
                         } else {
-                          // Adım adım modda sadece listeye ekle
+                          // Mevcut dosya değişiyor veya adım adım mod: diff paneli göster
                           setPendingGenFiles({ files: withPaths, messageId: aiMsgId });
                         }
                       };
@@ -982,16 +1190,142 @@ export default function HomePage() {
 
       fetchConversations(user.id);
     } catch (err: any) {
-      const errorMsg: Message = {
-        id: Date.now() + 1,
-        role: 'assistant',
-        content: '❌ Bir hata oluştu veya bağlantı koptu. Backend çalışıyor mu kontrol edin.',
-        smells: [],
-        timestamp: new Date().toISOString()
-      };
-      setMessages(prev => [...prev, errorMsg]);
+      if (err?.name === 'AbortError') {
+        // Kullanıcı durdurdu
+      } else {
+        const errorMsg: Message = {
+          id: Date.now() + 1,
+          role: 'assistant',
+          content: '❌ Bir hata oluştu veya bağlantı koptu.',
+          smells: [],
+          timestamp: new Date().toISOString()
+        };
+        setMessages(prev => [...prev, errorMsg]);
+      }
+    } finally {
+      // Küçük bir gecikme ekleyelim ki UI state geçişleri "flash" yapmasın
+      setTimeout(() => setLoading(false), 300);
     }
+  };
+
+  const stopMessage = () => {
+    abortControllerRef.current?.abort();
     setLoading(false);
+  };
+
+  const analyzeProject = async () => {
+    if (!activeConvId || isAnalyzingProject) return;
+    setIsAnalyzingProject(true);
+    try {
+      const res = await axios.post(`${API}/conversations/${activeConvId}/analyze-project`, {}, {
+        headers: { 'X-Session-Token': user.sessionToken },
+        timeout: 120000 // 2 dakika limit
+      });
+      
+      if (res.data.status === 'success') {
+        showToast(`🧠 Proje hafızaya alındı! (${res.data.file_count} dosya analiz edildi)`, 'success');
+        const aiMsg: Message = {
+          id: Date.now(),
+          role: 'assistant',
+          content: `🧠 **Proje Analiz Raporu (Hafızaya Alındı)**\n\n${res.data.summary}`,
+          timestamp: new Date().toISOString(),
+          smells: []
+        };
+        setMessages(prev => [...prev, aiMsg]);
+        setWisdomSummary(res.data.summary);
+      }
+    } catch (err: any) {
+      showToast(err.response?.data?.detail || 'Proje analiz edilirken bir hata oluştu.', 'error');
+    } finally {
+      setIsAnalyzingProject(false);
+    }
+  };
+
+  const exportMemory = async () => {
+    if (!activeConvId || !ipc) {
+      console.error("Export Error: No activeConvId or ipc", { activeConvId, ipc: !!ipc });
+      return;
+    }
+    try {
+      console.log("Exporting memory for conversation:", activeConvId);
+      
+      let currentApi = await ipc.invoke('get-backend-base-url');
+      if (currentApi && currentApi.endsWith('/')) {
+        currentApi = currentApi.slice(0, -1);
+      }
+      
+      console.log("Using API URL:", currentApi);
+
+      const res = await axios.get(`${currentApi}/conversations/${activeConvId}/export-memory`, {
+        headers: { 'X-Session-Token': user.sessionToken }
+      });
+      
+      console.log("Export API Response received:", !!res.data.content);
+
+      if (res.data.content) {
+        const filePath = await ipc.invoke('save-file-dialog', {
+          title: 'Hafıza Dosyasını Kaydet',
+          defaultPath: `wisdom_${activeConvId}.md`,
+          filters: [{ name: 'Markdown', extensions: ['md'] }]
+        });
+        
+        console.log("Selected File Path:", filePath);
+
+        if (filePath) {
+          const result = await ipc.invoke('write-file', filePath, res.data.content, ""); 
+          console.log("Write File Result:", result);
+          
+          if (result && result.success) {
+            showToast('Hafıza dosyası başarıyla kaydedildi.', 'success');
+          } else {
+            showToast(`Dosya kaydedilemedi: ${result?.error || 'Bilinmeyen hata'}`, 'error');
+          }
+        }
+      }
+    } catch (err: any) {
+      console.error("Export Trace:", err);
+      if (err.response?.status === 404) {
+        showToast('Henüz bir hafıza kaydı yok. Önce "Projeyi Öğren" butonuna basarak analiz yapmalısın.', 'warning');
+      } else {
+        showToast(`Hata: ${err.message || 'Bağlantı veya sistem hatası'}`, 'error');
+      }
+    } finally {
+      setShowMemoryMenu(false);
+    }
+  };
+
+  const importMemory = async () => {
+    if (!activeConvId || !ipc) return;
+    try {
+      const filePath = await ipc.invoke('open-file-dialog', {
+        title: 'Hafıza Dosyası Seç',
+        filters: [{ name: 'Markdown', extensions: ['md'] }]
+      });
+      if (filePath) {
+        const content = await ipc.invoke('read-file', filePath);
+        if (content) {
+          let currentApi = await ipc.invoke('get-backend-base-url');
+          if (currentApi && currentApi.endsWith('/')) {
+            currentApi = currentApi.slice(0, -1);
+          }
+          API = currentApi;
+          await axios.post(`${API}/conversations/${activeConvId}/import-memory`, { content }, {
+            headers: { 'X-Session-Token': user.sessionToken }
+          });
+          showToast('Hafıza başarıyla içe aktarıldı!', 'success');
+          // AI'ya bildirim mesajı ekle
+          setMessages(prev => [...prev, {
+            id: Date.now(),
+            role: 'assistant',
+            content: `📤 **Hafıza Dosyası İçe Aktarıldı**\n\nDışarıdan gelen mimari bilgileri hafızama aldım. Artık bu bilgiler ışığında projeye devam edebilirim.`,
+            timestamp: new Date().toISOString(),
+            smells: []
+          }]);
+        }
+      }
+    } catch (err: any) {
+      showToast('Import sırasında bir hata oluştu.', 'error');
+    }
   };
 
   const compactConversation = async () => {
@@ -1184,7 +1518,10 @@ export default function HomePage() {
   // =====================================================================
   return (
     <div className="flex h-screen bg-[#000000] text-slate-200 font-sans overflow-hidden">
-      <Head><title>Unity Architect AI | {user.name}</title></Head>
+      <Head>
+        <title>Unity Architect AI | {user.name}</title>
+        <style>{globalStyles}</style>
+      </Head>
 
       <SettingsModal
         open={showSettings}
@@ -1327,7 +1664,7 @@ export default function HomePage() {
             </div>
           ) : (
             /* ====== DOSYA GEZGİNİ ====== */
-            <div className="p-1.5">
+            <div className="p-1.5" onClick={() => treeContextMenu && setTreeContextMenu(null)}>
               <div className="flex gap-1 mb-2">
                 <button
                   onClick={openFolder}
@@ -1344,9 +1681,30 @@ export default function HomePage() {
               </div>
               {rootFolderPath ? (
                 <div>
-                  <div className="px-2 py-1.5 text-[9px] font-bold text-slate-500 uppercase tracking-wider truncate mb-1">
-                    {rootFolderPath.split('/').pop()}
+                  <div className="px-2 py-1.5 flex items-center justify-between mb-1">
+                    <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider truncate flex-1 min-w-0">
+                      {rootFolderPath.split('/').pop()}
+                    </span>
+                    <div className="flex items-center gap-0.5 shrink-0 ml-1">
+                      <button onClick={(e) => { e.stopPropagation(); startTreeCreate(rootFolderPath, 'file'); }} className="p-1 text-slate-600 hover:text-white rounded transition-colors" title="Yeni Dosya"><Plus size={11} /></button>
+                      <button onClick={(e) => { e.stopPropagation(); startTreeCreate(rootFolderPath, 'folder'); }} className="p-1 text-slate-600 hover:text-white rounded transition-colors" title="Yeni Klasör"><FolderPlus size={11} /></button>
+                    </div>
                   </div>
+                  {treeCreating?.parentPath === rootFolderPath && (
+                    <div className="flex items-center gap-1.5 px-2 py-[3px]">
+                      {treeCreating.type === 'file'
+                        ? <FileCode size={13} className="text-blue-400 shrink-0" />
+                        : <Folder size={13} className="text-emerald-400 shrink-0" />}
+                      <input
+                        autoFocus
+                        value={treeCreateValue}
+                        onChange={e => setTreeCreateValue(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') submitTreeCreate(); if (e.key === 'Escape') setTreeCreating(null); }}
+                        onBlur={() => setTreeCreating(null)}
+                        className="flex-1 bg-slate-800 text-white text-[12px] px-1.5 py-0.5 rounded border border-emerald-500 outline-none min-w-0"
+                      />
+                    </div>
+                  )}
                   {renderTree(fileTree)}
                 </div>
               ) : (
@@ -1354,6 +1712,34 @@ export default function HomePage() {
                   <FolderOpen size={24} className="mx-auto mb-2 opacity-20" />
                   <p className="text-[11px]">Bir klasör açarak başlayın</p>
                   <p className="text-[9px] text-slate-700 mt-1">veya editöre dosya sürükleyin</p>
+                </div>
+              )}
+
+              {/* Context Menu */}
+              {treeContextMenu && (
+                <div
+                  className="fixed z-50 bg-[#111111] border border-slate-700 rounded-lg shadow-2xl py-1 min-w-[160px] text-[12px]"
+                  style={{ left: treeContextMenu.x, top: treeContextMenu.y }}
+                  onClick={e => e.stopPropagation()}
+                >
+                  {treeContextMenu.entry.isDirectory && (
+                    <>
+                      <button onClick={() => startTreeCreate(treeContextMenu.entry.path, 'file')} className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-slate-800 text-slate-300 hover:text-white transition-colors">
+                        <Plus size={13} /> Yeni Dosya
+                      </button>
+                      <button onClick={() => startTreeCreate(treeContextMenu.entry.path, 'folder')} className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-slate-800 text-slate-300 hover:text-white transition-colors">
+                        <FolderPlus size={13} /> Yeni Klasör
+                      </button>
+                      <div className="border-t border-slate-700/50 my-1" />
+                    </>
+                  )}
+                  <button onClick={() => startRename(treeContextMenu.entry)} className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-slate-800 text-slate-300 hover:text-white transition-colors">
+                    <Pencil size={13} /> Yeniden Adlandır
+                  </button>
+                  <div className="border-t border-slate-700/50 my-1" />
+                  <button onClick={() => handleTreeDelete(treeContextMenu.entry)} className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-slate-800 text-red-400 hover:text-red-300 transition-colors">
+                    <Trash2 size={13} /> Sil
+                  </button>
                 </div>
               )}
             </div>
@@ -1903,6 +2289,7 @@ export default function HomePage() {
             </div>
           </div>
         </div>
+
         {/* Chat Alanı */}
         <div className="flex-1 relative flex flex-col min-h-0 bg-[#000000]">
           <button
@@ -1926,6 +2313,44 @@ export default function HomePage() {
               </div>
             ) : (
               <>
+                {/* ARCHITECT WISDOM PANEL */}
+                {wisdomSummary && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="mb-8 bg-blue-500/5 border border-blue-500/20 rounded-xl overflow-hidden"
+                  >
+                    <div 
+                      className="px-4 py-2.5 flex items-center justify-between cursor-pointer hover:bg-blue-500/10 transition-colors"
+                      onClick={() => setIsWisdomExpanded(!isWisdomExpanded)}
+                    >
+                      <div className="flex items-center gap-2 text-blue-400 font-medium text-[12px]">
+                        <Brain size={14} />
+                        <span>Architect Wisdom — Proje Özeti</span>
+                      </div>
+                      <ChevronDown 
+                        size={14} 
+                        className={`text-slate-500 transition-transform duration-300 ${isWisdomExpanded ? 'rotate-180' : ''}`} 
+                      />
+                    </div>
+                    
+                    <AnimatePresence>
+                      {isWisdomExpanded && (
+                        <motion.div
+                          initial={{ height: 0, opacity: 0 }}
+                          animate={{ height: 'auto', opacity: 1 }}
+                          exit={{ height: 0, opacity: 0 }}
+                          className="overflow-hidden"
+                        >
+                          <div className="px-5 pb-5 pt-1 text-slate-300 text-[12px] leading-relaxed border-t border-blue-500/10">
+                            <MarkdownRenderer content={wisdomSummary} />
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </motion.div>
+                )}
+
                 {messages.map((msg, msgIdx) => (
                   <div key={msg.id} className={`chat-message-enter ${msg.role === 'user' ? 'flex justify-end' : ''}`}>
                     {msg.role === 'assistant' ? (
@@ -2010,9 +2435,22 @@ export default function HomePage() {
                             </div>
                           )}
 
-                          <div className="prose prose-invert max-w-none text-[13px] leading-relaxed prose-p:my-2 prose-headings:my-3 prose-ul:my-2 prose-li:my-0.5 prose-pre:bg-slate-900 prose-pre:border prose-pre:border-slate-800 prose-a:text-emerald-400">
-                            <MarkdownRenderer content={msg.content.replace('<!-- SCOPE_WARNING_ACTIVE -->', '')} workspacePath={workspacePath} onExportToUnity={handleExportToUnity} />
-                          </div>
+                          {(msg.content === "" || !msg.content) && loading && msgIdx === messages.length - 1 ? (
+                            <div className="bg-[#000000] rounded-lg px-4 py-3 border border-slate-800 inline-flex items-center gap-2.5">
+                              <div className="flex items-center gap-1.5">
+                                <div className="typing-dot h-2 w-2 bg-blue-500 rounded-full" />
+                                <div className="typing-dot h-2 w-2 bg-blue-500 rounded-full" />
+                                <div className="typing-dot h-2 w-2 bg-blue-500 rounded-full" />
+                              </div>
+                              {useThinking && (
+                                <span className="text-[11px] text-violet-400 animate-pulse">düşünüyor...</span>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="prose prose-invert max-w-none text-[13px] leading-relaxed prose-p:my-2 prose-headings:my-3 prose-ul:my-2 prose-li:my-0.5 prose-pre:bg-slate-900 prose-pre:border prose-pre:border-slate-800 prose-a:text-emerald-400">
+                              <MarkdownRenderer content={msg.content.replace('<!-- SCOPE_WARNING_ACTIVE -->', '')} workspacePath={workspacePath} onExportToUnity={handleExportToUnity} />
+                            </div>
+                          )}
                           {/* Scope Warning Butonları */}
                           {msg.content.includes('SCOPE_WARNING_ACTIVE') && msgIdx === messages.length - 1 && !loading && (
                             <div className="flex gap-2 mt-3">
@@ -2109,10 +2547,11 @@ export default function HomePage() {
                           {pendingGenFiles && pendingGenFiles.messageId === msg.id && (
                             <FileCreationApproval
                               files={pendingGenFiles.files}
-                              autoAccept={generationMode === 'auto'}
+                              autoAccept={generationMode === 'auto' && !pendingGenFiles.files.some(f => f.originalCode !== null && f.originalCode !== undefined && f.originalCode !== "")}
                               onAcceptOne={async (file) => {
                                 if (!ipc || !workspacePath) return;
                                 await ipc.invoke('write-file', file.suggestedPath, file.code, workspacePath);
+                                if (file.suggestedPath === openedFilePath) setCode(file.code);
                                 refreshFileTree();
                               }}
                               onSkipOne={() => { }}
@@ -2120,6 +2559,7 @@ export default function HomePage() {
                                 if (!ipc || !workspacePath) return;
                                 for (const file of files) {
                                   await ipc.invoke('write-file', file.suggestedPath, file.code, workspacePath);
+                                  if (file.suggestedPath === openedFilePath) setCode(file.code);
                                 }
                                 refreshFileTree();
                               }}
@@ -2161,26 +2601,12 @@ export default function HomePage() {
                   </div>
                 ))}
 
-                {/* Typing Indicator */}
-                {loading && (
+                {/* AgentPlan — loading sırasında ajanın planı */}
+                {loading && currentPlan.length > 0 && (
                   <div className="flex gap-2.5 chat-message-enter mb-6">
                     <ModelAvatar provider={effectiveProvider} size={13} />
                     <div className="flex-1 min-w-0">
-                      {currentPlan.length > 0 && (
-                        <div className="mb-4">
-                          <AgentPlan tasks={currentPlan} />
-                        </div>
-                      )}
-                      <div className="bg-[#000000] rounded-lg px-4 py-3 border border-slate-800 inline-flex items-center gap-2.5">
-                        <div className="flex items-center gap-1.5">
-                          <div className="typing-dot h-2 w-2 bg-blue-500 rounded-full" />
-                          <div className="typing-dot h-2 w-2 bg-blue-500 rounded-full" />
-                          <div className="typing-dot h-2 w-2 bg-blue-500 rounded-full" />
-                        </div>
-                        {useThinking && (
-                          <span className="text-[11px] text-violet-400 animate-pulse">düşünüyor...</span>
-                        )}
-                      </div>
+                      <AgentPlan tasks={currentPlan} />
                     </div>
                   </div>
                 )}
@@ -2212,6 +2638,7 @@ export default function HomePage() {
               value={chatInput}
               setValue={setChatInput}
               onSendMessage={(msg) => sendMessage(msg)}
+              onStop={stopMessage}
               isLoading={loading}
               placeholder={code.trim() ? "Bu kodu analiz et, düzelt, veya bir şey sor..." : "Kod yaz, analiz et, hata düzelt — ne istersen..."}
               className="border-slate-800/50"
@@ -2232,6 +2659,69 @@ export default function HomePage() {
                 <Brain size={11} />
                 Thinking {useThinking ? 'Açık' : 'Kapalı'}
               </button>
+
+              <div className="w-px h-3 bg-slate-800" />
+              
+              <div className="relative flex items-center">
+                <button
+                  onClick={analyzeProject}
+                  disabled={isAnalyzingProject || !activeConvId}
+                  className={`flex items-center gap-1.5 px-3 py-1 rounded-l-lg text-[11px] font-medium transition-all ${
+                    isAnalyzingProject 
+                      ? 'bg-blue-500/20 text-blue-400 animate-pulse' 
+                      : 'text-slate-500 hover:text-blue-400 hover:bg-blue-500/5'
+                  }`}
+                  title="Tüm projeyi tarar ve AI'nın mimariyi öğrenmesini sağlar"
+                >
+                  {isAnalyzingProject ? (
+                    <div className="flex items-center gap-2">
+                      <div className="w-2.5 h-2.5 border-2 border-blue-500/30 border-t-blue-500 rounded-full animate-spin" />
+                      <span>Öğreniyorum...</span>
+                    </div>
+                  ) : (
+                    <>
+                      <Sparkles size={11} className="text-blue-500" />
+                      <span>Projeyi Öğren</span>
+                    </>
+                  )}
+                </button>
+                <button
+                  onClick={() => setShowMemoryMenu(!showMemoryMenu)}
+                  disabled={isAnalyzingProject || !activeConvId}
+                  className={`px-1.5 py-1 border-l border-slate-800 rounded-r-lg text-slate-500 hover:text-blue-400 hover:bg-blue-500/5 transition-all ${showMemoryMenu ? 'bg-blue-500/10 text-blue-400' : ''}`}
+                >
+                  <ChevronDown size={12} className={`transition-transform duration-200 ${showMemoryMenu ? 'rotate-180' : ''}`} />
+                </button>
+
+                <AnimatePresence>
+                  {showMemoryMenu && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setShowMemoryMenu(false)} />
+                      <motion.div
+                        initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                        className="absolute bottom-10 right-0 w-48 bg-[#0a0a0f] border border-slate-800 rounded-xl shadow-2xl z-50 py-1.5 overflow-hidden"
+                      >
+                        <button
+                          onClick={exportMemory}
+                          className="w-full flex items-center gap-2.5 px-3 py-2 text-[11px] text-slate-300 hover:bg-blue-600/10 hover:text-blue-400 transition-colors"
+                        >
+                          <Download size={13} />
+                          Hafızayı Dışarı Aktar
+                        </button>
+                        <button
+                          onClick={() => { setShowMemoryMenu(false); importMemory(); }}
+                          className="w-full flex items-center gap-2.5 px-3 py-2 text-[11px] text-slate-300 hover:bg-emerald-600/10 hover:text-emerald-400 transition-colors"
+                        >
+                          <Upload size={13} />
+                          Hafıza Dosyası Yükle
+                        </button>
+                      </motion.div>
+                    </>
+                  )}
+                </AnimatePresence>
+              </div>
 
               {/* Yeni Dairesel (Circular) Hafıza Butonu */}
               {activeConvId && contextUsage?.percent > 0 && (

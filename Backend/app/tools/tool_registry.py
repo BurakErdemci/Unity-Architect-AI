@@ -7,6 +7,7 @@ from typing import Any, Dict, Callable
 
 from tools.file_tools import read_file, write_file, list_directory
 from tools.search_tools import search_in_project, find_files
+from tools.memory_tools import save_to_memory, recall_memory
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +101,28 @@ TOOL_DEFINITIONS = [
             "required": ["file_path", "content"]
         }
     },
+    {
+        "name": "save_to_memory",
+        "description": "Önemli proje bilgilerini, mimari kararları veya kullanıcı talimatlarını hafızaya kaydeder. Sadece gerçekten kritik bilgileri kaydet.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string",
+                    "description": "Hafızaya kaydedilecek markdown formatında içerik"
+                }
+            },
+            "required": ["content"]
+        }
+    },
+    {
+        "name": "recall_memory",
+        "description": "Bu sohbet için daha önce kaydedilmiş olan proje hafızasını geri çağırır.",
+        "parameters": {
+            "type": "object",
+            "properties": {}
+        }
+    },
 ]
 
 
@@ -114,13 +137,18 @@ _TOOL_FUNCTIONS: Dict[str, Callable] = {
     "find_files": find_files,
     "list_directory": list_directory,
     "write_file": write_file,
+    "save_to_memory": save_to_memory,
+    "recall_memory": recall_memory,
 }
 
-# Hangi tool'lar workspace_path parametresi alıyor
-_TOOLS_NEEDING_WORKSPACE = {"read_file", "write_file", "list_directory", "search_in_project", "find_files"}
+# Hangi tool'lar conversation_id parametresi alıyor
+_TOOLS_NEEDING_CONV_ID = {"save_to_memory", "recall_memory"}
+
+# Hangi tool'lar doğrudan workspace_path parametresi alıyor
+_TOOLS_NEEDING_WORKSPACE = {"search_in_project", "find_files", "read_file", "write_file", "list_directory"}
 
 
-def execute_tool(tool_name: str, arguments: Dict[str, Any], workspace_path: str) -> Dict[str, Any]:
+def execute_tool(tool_name: str, arguments: Dict[str, Any], workspace_path: str, conversation_id: str = None) -> Dict[str, Any]:
     """Verilen tool'u güvenli şekilde çalıştırır."""
     func = _TOOL_FUNCTIONS.get(tool_name)
     if not func:
@@ -130,6 +158,10 @@ def execute_tool(tool_name: str, arguments: Dict[str, Any], workspace_path: str)
         # workspace_path parametresini otomatik ekle
         if tool_name in _TOOLS_NEEDING_WORKSPACE:
             arguments["workspace_path"] = workspace_path
+            
+        # conversation_id parametresini otomatik ekle
+        if tool_name in _TOOLS_NEEDING_CONV_ID:
+            arguments["conversation_id"] = conversation_id
 
         # Dosya yollarını absolute path'e çevir
         if "file_path" in arguments and not arguments["file_path"].startswith("/"):

@@ -53,6 +53,12 @@ ipcMain.handle('open-folder-dialog', async () => {
   return result.filePaths[0]
 })
 
+ipcMain.handle('save-file-dialog', async (_event, options) => {
+  const result = await dialog.showSaveDialog(options)
+  if (result.canceled) return null
+  return result.filePath
+})
+
 ipcMain.handle('read-directory', async (_event, dirPath: string, workspacePath?: string) => {
   try {
     if (!workspacePath) return [];
@@ -93,10 +99,14 @@ ipcMain.handle('read-file', async (_event, filePath: string, workspacePath?: str
 
 ipcMain.handle('write-file', async (_event, filePath: string, content: string, workspacePath?: string) => {
   try {
-    if (!workspacePath) return { success: false, error: 'Workspace path eksik.' };
-    const fullPath = path.isAbsolute(filePath) ? filePath : path.join(workspacePath, filePath);
+    const isMarkdown = filePath.toLowerCase().endsWith('.md');
+    const isAbsolute = path.isAbsolute(filePath);
+    
+    if (!workspacePath && !isAbsolute) return { success: false, error: 'Workspace path eksik.' };
+    
+    const fullPath = isAbsolute ? filePath : path.join(workspacePath!, filePath);
 
-    if (!isAllowedUnityScriptPath(fullPath, workspacePath)) {
+    if (!isMarkdown && !isAllowedUnityScriptPath(fullPath, workspacePath || "")) {
       return { success: false, error: 'Dosya yalnızca workspace içindeki Assets/Scripts altına yazılabilir.' }
     }
     const dir = path.dirname(fullPath)
@@ -141,6 +151,59 @@ ipcMain.handle('write-multiple-files', async (_event, files: { path: string; con
     }
   }
   return results
+})
+
+// --- IPC: DOSYA YÖNETİMİ ---
+ipcMain.handle('create-file', async (_event, filePath: string, workspacePath?: string) => {
+  if (!workspacePath) return { success: false, error: 'Workspace path eksik.' }
+  const fullPath = path.isAbsolute(filePath) ? filePath : path.join(workspacePath, filePath)
+  if (!isAllowedWorkspacePath(fullPath, workspacePath)) return { success: false, error: 'Dosya workspace dışında.' }
+  if (fs.existsSync(fullPath)) return { success: false, error: 'Dosya zaten var.' }
+  fs.mkdirSync(path.dirname(fullPath), { recursive: true })
+  fs.writeFileSync(fullPath, '', 'utf-8')
+  return { success: true, path: fullPath }
+})
+
+ipcMain.handle('create-folder', async (_event, folderPath: string, workspacePath?: string) => {
+  if (!workspacePath) return { success: false, error: 'Workspace path eksik.' }
+  const fullPath = path.isAbsolute(folderPath) ? folderPath : path.join(workspacePath, folderPath)
+  if (!isAllowedWorkspacePath(fullPath, workspacePath)) return { success: false, error: 'Klasör workspace dışında.' }
+  if (fs.existsSync(fullPath)) return { success: false, error: 'Klasör zaten var.' }
+  fs.mkdirSync(fullPath, { recursive: true })
+  return { success: true, path: fullPath }
+})
+
+ipcMain.handle('rename-entry', async (_event, oldPath: string, newName: string, workspacePath?: string) => {
+  if (!workspacePath) return { success: false, error: 'Workspace path eksik.' }
+  const fullOldPath = path.isAbsolute(oldPath) ? oldPath : path.join(workspacePath, oldPath)
+  if (!isAllowedWorkspacePath(fullOldPath, workspacePath)) return { success: false, error: 'Dosya workspace dışında.' }
+  if (!fs.existsSync(fullOldPath)) return { success: false, error: 'Dosya bulunamadı.' }
+  const newPath = path.join(path.dirname(fullOldPath), newName)
+  if (fs.existsSync(newPath)) return { success: false, error: 'Bu isimde bir dosya zaten var.' }
+  fs.renameSync(fullOldPath, newPath)
+  return { success: true, newPath }
+})
+
+ipcMain.handle('delete-entry', async (_event, entryPath: string, workspacePath?: string) => {
+  if (!workspacePath) return { success: false, error: 'Workspace path eksik.' }
+  const fullPath = path.isAbsolute(entryPath) ? entryPath : path.join(workspacePath, entryPath)
+  if (!isAllowedWorkspacePath(fullPath, workspacePath)) return { success: false, error: 'Dosya workspace dışında.' }
+  if (!fs.existsSync(fullPath)) return { success: false, error: 'Dosya bulunamadı.' }
+  fs.rmSync(fullPath, { recursive: true, force: true })
+  return { success: true }
+})
+
+ipcMain.handle('move-entry', async (_event, sourcePath: string, targetDir: string, workspacePath?: string) => {
+  if (!workspacePath) return { success: false, error: 'Workspace path eksik.' }
+  const fullSource = path.isAbsolute(sourcePath) ? sourcePath : path.join(workspacePath, sourcePath)
+  const fullTarget = path.isAbsolute(targetDir) ? targetDir : path.join(workspacePath, targetDir)
+  if (!isAllowedWorkspacePath(fullSource, workspacePath) || !isAllowedWorkspacePath(fullTarget, workspacePath)) {
+    return { success: false, error: 'Dosya workspace dışında.' }
+  }
+  const newPath = path.join(fullTarget, path.basename(fullSource))
+  if (fs.existsSync(newPath)) return { success: false, error: 'Hedef konumda aynı isimde bir dosya var.' }
+  fs.renameSync(fullSource, newPath)
+  return { success: true, newPath }
 })
 
 // --- IPC: SESSION STORAGE (safeStorage) ---

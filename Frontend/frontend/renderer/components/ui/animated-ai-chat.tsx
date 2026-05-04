@@ -11,7 +11,7 @@ import {
     PlusIcon,
     SendIcon,
     XIcon,
-    LoaderIcon,
+    Square,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import * as React from "react"
@@ -129,10 +129,11 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
 )
 Textarea.displayName = "Textarea"
 
-export function AnimatedChatInput({ 
+export function AnimatedChatInput({
     value,
     setValue,
     onSendMessage,
+    onStop,
     isLoading,
     placeholder = "Ask zap a question...",
     className,
@@ -142,6 +143,7 @@ export function AnimatedChatInput({
     value: string;
     setValue: (val: string) => void;
     onSendMessage: (val: string) => void;
+    onStop?: () => void;
     isLoading: boolean;
     placeholder?: string;
     className?: string;
@@ -312,10 +314,26 @@ export function AnimatedChatInput({
 
                 </div>
                 
-                <button type="button" onClick={handleSendMessage} disabled={isLoading || !internalValue.trim()} className={cn("px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5", internalValue.trim() ? "bg-white text-[#0A0A0B]" : "bg-white/[0.05] text-white/40")}>
-                    {isLoading ? <LoaderIcon className="w-3 h-3 animate-spin" /> : <SendIcon className="w-3 h-3" />}
-                    <span>Send</span>
-                </button>
+                {isLoading ? (
+                    <button 
+                        type="button" 
+                        onClick={onStop} 
+                        className="px-4 py-1.5 rounded-lg text-[10px] font-bold transition-all flex items-center gap-2 bg-red-500 text-white hover:bg-red-600 shadow-[0_0_15px_rgba(239,68,68,0.3)] animate-pulse"
+                    >
+                        <Square className="w-3 h-3 fill-current" />
+                        <span>DURDUR</span>
+                    </button>
+                ) : (
+                    <button 
+                        type="button" 
+                        onClick={handleSendMessage} 
+                        disabled={!internalValue.trim()} 
+                        className={cn("px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5", internalValue.trim() ? "bg-white text-[#0A0A0B]" : "bg-white/[0.05] text-white/40")}
+                    >
+                        <SendIcon className="w-3 h-3" />
+                        <span>Send</span>
+                    </button>
+                )}
             </div>
         </motion.div>
     );
@@ -342,9 +360,11 @@ export function ThinkingIndicator() {
 
 export function AnimatedAIChat({ 
     onSendMessage, 
+    onStop,
     isLoading 
 }: { 
     onSendMessage: (val: string) => void;
+    onStop?: () => void;
     isLoading: boolean;
 }) {
     const [value, setValue] = useState("");
@@ -368,6 +388,7 @@ export function AnimatedAIChat({
                     value={value} 
                     setValue={setValue} 
                     onSendMessage={onSendMessage} 
+                    onStop={onStop}
                     isLoading={isLoading} 
                 />
             </div>

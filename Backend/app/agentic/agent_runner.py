@@ -52,6 +52,7 @@ class AgentRunner:
         language: str = "tr",
         context: str = "",
         use_thinking: bool = False,
+        conversation_id: str = None,
     ):
         self.provider_type = provider_type
         self.api_key = api_key
@@ -60,6 +61,7 @@ class AgentRunner:
         self.language = language
         self.context = context
         self.use_thinking = use_thinking
+        self.conversation_id = conversation_id
 
     async def run(self, user_message: str) -> AsyncGenerator[AgentEvent, None]:
         """
@@ -182,7 +184,7 @@ Kullanıcıyla {'Türkçe' if self.language == 'tr' else 'İngilizce'} konuş.""
 
                 # Aracı çalıştır
                 result = await asyncio.to_thread(
-                    execute_tool, tool_name, tool_args, self.workspace_path
+                    execute_tool, tool_name, tool_args, self.workspace_path, self.conversation_id
                 )
 
                 # Sonucu kısalt (çok büyük olabilir)
@@ -293,7 +295,7 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                 })
                 
                 result = await asyncio.to_thread(
-                    execute_tool, tool_call.name, tool_call.input, self.workspace_path
+                    execute_tool, tool_call.name, tool_call.input, self.workspace_path, self.conversation_id
                 )
                 
                 result_str = json.dumps(result, ensure_ascii=False)
@@ -409,7 +411,7 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                 })
                 
                 result = await asyncio.to_thread(
-                    execute_tool, tool_name, tool_args, self.workspace_path
+                    execute_tool, tool_name, tool_args, self.workspace_path, self.conversation_id
                 )
                 
                 result_str = json.dumps(result, ensure_ascii=False)

@@ -143,12 +143,15 @@ class OpenAICompatibleProvider(AIProvider):
 
     def analyze_code(self, prompt: str, max_tokens: int = 4096) -> str:
         try:
-            response = self.client.chat.completions.create(
+            kwargs = dict(
                 model=self.model_name,
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
-                max_tokens=max_tokens
+                max_tokens=max_tokens,
             )
+            # Reasoning ve Kimi modelleri temperature parametresini desteklemiyor
+            if not self._is_openai_reasoning() and not self._is_kimi():
+                kwargs["temperature"] = 0.3
+            response = self.client.chat.completions.create(**kwargs)
             return self._clean_response(response.choices[0].message.content)
         except Exception as e:
             raise Exception(f"API Hatası: {str(e)}")
@@ -169,7 +172,19 @@ class OpenAICompatibleProvider(AIProvider):
                 text = self._clean_response(response.choices[0].message.content)
                 return text, thinking or None, duration_ms
             except Exception:
-                return self.analyze_code(prompt, max_tokens), None, None
+                # reasoning parametresi desteklenmiyorsa (örn. bazı OpenRouter proxy'leri) standart call
+                try:
+                    start = time.time()
+                    response = self.client.chat.completions.create(
+                        model=self.model_name,
+                        messages=[{"role": "user", "content": prompt}],
+                        max_tokens=max_tokens,
+                    )
+                    duration_ms = int((time.time() - start) * 1000)
+                    text = self._clean_response(response.choices[0].message.content)
+                    return text, None, duration_ms
+                except Exception:
+                    return self.analyze_code(prompt, max_tokens), None, None
 
         # Kimi K2.x thinking
         if self._is_kimi():
@@ -186,7 +201,19 @@ class OpenAICompatibleProvider(AIProvider):
                 text = self._clean_response(response.choices[0].message.content)
                 return text, thinking or None, duration_ms
             except Exception:
-                return self.analyze_code(prompt, max_tokens), None, None
+                # thinking desteklenmiyorsa (K2.6 gibi yeni versiyonlar) standart call
+                try:
+                    start = time.time()
+                    response = self.client.chat.completions.create(
+                        model=self.model_name,
+                        messages=[{"role": "user", "content": prompt}],
+                        max_tokens=max_tokens,
+                    )
+                    duration_ms = int((time.time() - start) * 1000)
+                    text = self._clean_response(response.choices[0].message.content)
+                    return text, None, duration_ms
+                except Exception:
+                    return self.analyze_code(prompt, max_tokens), None, None
 
         return self.analyze_code(prompt, max_tokens), None, None
 
