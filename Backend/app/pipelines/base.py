@@ -50,6 +50,10 @@ class PipelineResult:
     remaining_files: list = field(default_factory=list)   # Kalan dosyalar
     all_planned_files: list = field(default_factory=list) # Architect'in tam dosya listesi
 
+    # Thinking desteği
+    thinking_text: Optional[str] = None
+    thinking_duration_ms: Optional[int] = None
+
     def to_dict(self) -> Dict[str, Any]:
         """Frontend'e gönderilecek pipeline bilgisini döndürür."""
         return {
@@ -89,7 +93,8 @@ class BasePipeline:
     """Tüm pipeline sınıfları için temel arayüz"""
     def __init__(self, prompt: str = "", code: str = "", provider: Any = None,
                  language: str = "tr", context: str = "", learned_rules: str = "",
-                 user_message: str = "", provider_type: str = "", progress_callback=None):
+                 user_message: str = "", provider_type: str = "", progress_callback=None,
+                 use_thinking: bool = False):
         self.prompt = prompt
         self.code = code
         self.provider = provider
@@ -99,6 +104,7 @@ class BasePipeline:
         self.user_message = user_message
         self.provider_type = provider_type
         self.progress_callback = progress_callback
+        self.use_thinking = use_thinking
         
         self._result = PipelineResult()
 

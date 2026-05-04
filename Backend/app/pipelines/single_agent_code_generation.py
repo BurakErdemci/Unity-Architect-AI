@@ -41,9 +41,10 @@ class SingleAgentCodeGenerationPipeline(BasePipeline):
         context: str = "",
         user_message: str = "",
         provider_type: str = "unknown",
-        progress_callback=None
+        progress_callback=None,
+        use_thinking: bool = False
     ):
-        super().__init__("", "", provider, language, context, "", user_message, provider_type, progress_callback)
+        super().__init__("", "", provider, language, context, "", user_message, provider_type, progress_callback, use_thinking)
         self.prompt = prompt
 
     def _get_max_tokens(self) -> int:
@@ -53,6 +54,13 @@ class SingleAgentCodeGenerationPipeline(BasePipeline):
         if self.provider_type == "ollama":
             return await self._call_ollama(prompt)
         max_tokens = self._get_max_tokens()
+        if self.use_thinking and hasattr(self.provider, 'analyze_code_with_thinking'):
+            response_text, thinking_text, thinking_ms = await asyncio.to_thread(
+                self.provider.analyze_code_with_thinking, prompt, max_tokens
+            )
+            self._result.thinking_text = thinking_text
+            self._result.thinking_duration_ms = thinking_ms
+            return response_text
         return await asyncio.to_thread(self.provider.analyze_code, prompt, max_tokens)
 
     async def _call_ollama(self, prompt: str) -> str:

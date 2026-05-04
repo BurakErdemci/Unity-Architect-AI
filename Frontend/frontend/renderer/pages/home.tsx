@@ -32,12 +32,15 @@ import {
   Upload,
   X,
   HelpCircle,
+  Brain,
 } from "lucide-react";
 import { motion, AnimatePresence } from 'framer-motion';
 import AgentPlan, { Task } from '../components/ui/agent-plan';
 import { AuthScreen } from '../components/home/AuthScreen';
 import { DiffViewer, DiffData } from '../components/home/DiffViewer';
 import { FileCreationApproval, PendingFile } from '../components/home/FileCreationApproval';
+import { ThinkingBlock } from '../components/home/ThinkingBlock';
+import { GenerationModeSelector, GenerationMode } from '../components/home/GenerationModeSelector';
 import { ExportModal } from '../components/home/ExportModal';
 import { MarkdownRenderer } from '../components/home/MarkdownRenderer';
 import { ModelAvatar } from '../components/home/ModelAvatar';
@@ -76,6 +79,9 @@ export default function HomePage() {
   const [code, setCode] = useState('');
   const [chatInput, setChatInput] = useState('');
   const [lang, setLang] = useState('tr');
+  const [useThinking, setUseThinking] = useState(false);
+  const [generationMode, setGenerationMode] = useState<GenerationMode>('auto');
+  const [pendingPlan, setPendingPlan] = useState<{ content: string; originalMessage: string; mode: GenerationMode } | null>(null);
   const [loading, setLoading] = useState(false);
   const [backendReady, setBackendReady] = useState(false);
   const [backendError, setBackendError] = useState(false);
@@ -826,6 +832,9 @@ export default function HomePage() {
         use_kb: aiConfig.provider_type === 'kb',
         use_or_for_coder: gpt54OrToggled,
         editor_code: code || '',
+        use_thinking: useThinking,
+        generation_mode: generationMode,
+        generation_confirmed: false,
       }, { timeout: 900000 });
 
       clearInterval(progressInterval);
@@ -838,9 +847,20 @@ export default function HomePage() {
         content: res.data.content,
         smells: res.data.static_results?.smells || [],
         timestamp: new Date().toISOString(),
-        pipeline: res.data.pipeline || null
+        pipeline: res.data.pipeline || null,
+        thinking: res.data.thinking || null,
+        thinking_duration_ms: res.data.thinking_duration_ms || null,
       };
       setMessages(prev => [...prev, aiMsg]);
+
+      // GENERATION_PLAN — plan kartı göster
+      if (res.data.intent === 'GENERATION_PLAN') {
+        setPendingPlan({
+          content: res.data.content,
+          originalMessage: res.data.original_message || messageContent,
+          mode: res.data.generation_mode || generationMode,
+        });
+      }
 
       // FIX intent — diff viewer aç
       if (res.data.intent === 'FIX' && res.data.fix_data) {
@@ -857,7 +877,26 @@ export default function HomePage() {
             code: f.code,
             suggestedPath: suggestFilePath(f.name),
           }));
-          setPendingGenFiles({ files: withPaths, messageId: aiMsgId });
+
+          if (generationMode === 'auto' && ipc) {
+            // OTOMATİK MOD: Dosyaları direkt oluştur, onay sorma
+            let created = 0;
+            for (const file of withPaths) {
+              try {
+                await ipc.invoke('write-file', file.suggestedPath, file.code, workspacePath);
+                created++;
+              } catch (err) {
+                console.error(`Dosya yazılamadı: ${file.name}`, err);
+              }
+            }
+            if (created > 0) {
+              showToast(`✅ ${created} dosya otomatik oluşturuldu.`, 'success');
+              refreshFileTree();
+            }
+          } else {
+            // PLAN veya ADIM ADIM: Onay kartını göster
+            setPendingGenFiles({ files: withPaths, messageId: aiMsgId });
+          }
         }
       }
 
@@ -1929,6 +1968,14 @@ export default function HomePage() {
                             </div>
                           </div>
                         )}
+                        {/* Thinking Block */}
+                        {msg.thinking && (
+                          <ThinkingBlock
+                            thinking={msg.thinking}
+                            durationMs={msg.thinking_duration_ms}
+                          />
+                        )}
+
                         {/* AI Yanıt İçeriği */}
                         <div className="prose prose-invert max-w-none text-[13px] leading-relaxed prose-p:my-2 prose-headings:my-3 prose-ul:my-2 prose-li:my-0.5">
                           <MarkdownRenderer content={msg.content.replace('<!-- SCOPE_WARNING_ACTIVE -->', '')} workspacePath={workspacePath} onExportToUnity={handleExportToUnity} />
@@ -1950,6 +1997,81 @@ export default function HomePage() {
                             </button>
                           </div>
                         )}
+                        {/* Plan Kartı — plan modu onay bekliyor */}
+                        {pendingPlan && msgIdx === messages.length - 1 && msg.role === 'assistant' && (
+                          <motion.div
+                            initial={{ opacity: 0, y: 6 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            className="mt-3 rounded-xl border border-blue-500/20 bg-blue-950/10 overflow-hidden"
+                          >
+                            <div className="flex items-center justify-between px-4 py-2.5 border-b border-blue-500/10">
+                              <span className="text-[11px] font-semibold text-blue-300">Onaylıyor musun?</span>
+                              <span className="text-[10px] text-slate-600">{pendingPlan.mode === 'step' ? 'Adım Adım' : 'Plan Modu'}</span>
+                            </div>
+                            <div className="flex gap-2 px-4 py-3">
+                              <button
+                                onClick={async () => {
+                                  const originalMsg = pendingPlan.originalMessage;
+                                  const mode = pendingPlan.mode;
+                                  setPendingPlan(null);
+                                  setLoading(true);
+                                  try {
+                                  const res = await axios.post(`${API}/chat`, {
+                                    conversation_id: activeConvId,
+                                    message: originalMsg,
+                                    language: lang,
+                                    user_id: user?.id,
+                                    mode: appMode,
+                                    use_kb: aiConfig.provider_type === 'kb',
+                                    use_or_for_coder: gpt54OrToggled,
+                                    editor_code: code || '',
+                                    use_thinking: false,
+                                    generation_mode: mode,
+                                    generation_confirmed: true,
+                                  }, { timeout: 900000 });
+                                  const aiMsgId = Date.now() + 1;
+                                  const aiMsg: Message = {
+                                    id: aiMsgId, role: 'assistant',
+                                    content: res.data.content,
+                                    smells: res.data.static_results?.smells || [],
+                                    timestamp: new Date().toISOString(),
+                                    pipeline: res.data.pipeline || null,
+                                    thinking: res.data.thinking || null,
+                                    thinking_duration_ms: res.data.thinking_duration_ms || null,
+                                  };
+                                  setMessages(prev => [...prev, aiMsg]);
+                                  if (mode === 'step' && res.data.content) {
+                                    const { parseGeneratedFiles } = await import('../components/home/export-utils');
+                                    const genFiles = parseGeneratedFiles(res.data.content);
+                                    if (genFiles.length > 0) {
+                                      setPendingGenFiles({ files: genFiles.map(f => ({ name: f.name, code: f.code, suggestedPath: suggestFilePath(f.name) })), messageId: aiMsgId });
+                                    }
+                                  } else if (mode === 'plan' && res.data.content) {
+                                    const { parseGeneratedFiles } = await import('../components/home/export-utils');
+                                    const genFiles = parseGeneratedFiles(res.data.content);
+                                    for (const f of genFiles) {
+                                      if (ipc && workspacePath) await ipc.invoke('write-file', suggestFilePath(f.name), f.code, workspacePath);
+                                    }
+                                    if (genFiles.length > 0) refreshFileTree();
+                                  }
+                                  } finally {
+                                    setLoading(false);
+                                  }
+                                }}
+                                className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-[12px] font-semibold transition-colors"
+                              >
+                                Başlat
+                              </button>
+                              <button
+                                onClick={() => setPendingPlan(null)}
+                                className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-400 rounded-lg text-[12px] font-semibold transition-colors"
+                              >
+                                İptal
+                              </button>
+                            </div>
+                          </motion.div>
+                        )}
+
                         {/* File Creation Approval — kod üretim sonucu */}
                         {pendingGenFiles && pendingGenFiles.messageId === msg.id && (
                           <FileCreationApproval
@@ -1968,6 +2090,7 @@ export default function HomePage() {
                               refreshFileTree();
                             }}
                             onDone={() => setPendingGenFiles(null)}
+                            onOpenFile={(path) => openFile(path)}
                           />
                         )}
 
@@ -2014,12 +2137,15 @@ export default function HomePage() {
                         <AgentPlan tasks={currentPlan} />
                       </div>
                     )}
-                    <div className="bg-[#000000] rounded-lg px-4 py-3 border border-slate-800 inline-block">
+                    <div className="bg-[#000000] rounded-lg px-4 py-3 border border-slate-800 inline-flex items-center gap-2.5">
                       <div className="flex items-center gap-1.5">
                         <div className="typing-dot h-2 w-2 bg-blue-500 rounded-full" />
                         <div className="typing-dot h-2 w-2 bg-blue-500 rounded-full" />
                         <div className="typing-dot h-2 w-2 bg-blue-500 rounded-full" />
                       </div>
+                      {useThinking && (
+                        <span className="text-[11px] text-violet-400 animate-pulse">düşünüyor...</span>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -2058,6 +2184,22 @@ export default function HomePage() {
               includeEditorCode={includeEditorCode}
               onToggleIncludeCode={() => setIncludeEditorCode(!includeEditorCode)}
            />
+           <div className="flex items-center gap-2 px-1 mt-1.5">
+             <GenerationModeSelector value={generationMode} onChange={setGenerationMode} />
+             <div className="w-px h-3 bg-slate-800" />
+             <button
+               onClick={() => setUseThinking(v => !v)}
+               className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium transition-colors ${
+                 useThinking
+                   ? 'bg-violet-500/15 border border-violet-500/30 text-violet-400'
+                   : 'text-slate-600 hover:text-slate-400'
+               }`}
+               title="Modelin düşünce sürecini göster"
+             >
+               <Brain size={11} />
+               Thinking {useThinking ? 'Açık' : 'Kapalı'}
+             </button>
+           </div>
         </div>
 
         <AnimatePresence>

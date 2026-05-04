@@ -290,24 +290,64 @@ SOHBET:
         # ─── FIX PIPELINE ───
         if intent == "FIX":
             fix_code = request.editor_code or (request.message if is_csharp else "")
+            use_multi_fix = use_multi_agent and provider_type == "anthropic"
             try:
-                fix_pipeline = QuickFixPipeline(
-                    code=fix_code,
-                    provider=provider,
-                    language=request.language,
-                    user_message=request.message,
-                )
-                fix_result = await asyncio.wait_for(fix_pipeline.run(), timeout=120)
-                step = fix_result.step2_analysis
+                if use_multi_fix:
+                    progress_store[request.conversation_id] = [
+                        {"id": "step1", "title": "Mimari Planlama", "status": "pending", "description": "", "subtasks": [], "dependencies": [], "level": 0, "priority": "high"},
+                        {"id": "step2", "title": "Kod Düzeltme", "status": "pending", "description": "", "subtasks": [], "dependencies": [], "level": 0, "priority": "high"},
+                        {"id": "step3", "title": "Denetim", "status": "pending", "description": "", "subtasks": [], "dependencies": [], "level": 0, "priority": "high"},
+                    ]
+                    def _fix_progress(step_id, progress_status, duration_ms=None):
+                        tasks = progress_store.get(request.conversation_id, [])
+                        for task in tasks:
+                            if task["id"] == step_id:
+                                task["status"] = progress_status
+                                if duration_ms is not None:
+                                    task["description"] = f"{duration_ms}ms"
+
+                    fix_pipeline = MultiAgentPipeline(
+                        code=fix_code,
+                        provider=provider,
+                        language=request.language,
+                        context="",
+                        learned_rules="",
+                        user_message=request.message,
+                        provider_type=provider_type,
+                        progress_callback=_fix_progress,
+                        coding_provider=coding_provider,
+                        coding_provider_type=coding_provider_type,
+                    )
+                    fix_timeout = 300
+                else:
+                    fix_pipeline = QuickFixPipeline(
+                        code=fix_code,
+                        provider=provider,
+                        language=request.language,
+                        user_message=request.message,
+                    )
+                    fix_timeout = 120
+
+                fix_result = await asyncio.wait_for(fix_pipeline.run(), timeout=fix_timeout)
 
                 fix_data = None
-                if step and step.output and step.output.get("fixed_code"):
-                    fix_data = {
-                        "original_code": fix_code,
-                        "fixed_code": step.output["fixed_code"],
-                        "explanation": step.output.get("explanation", ""),
-                        "editor_hint": step.output.get("editor_hint"),
-                    }
+                if use_multi_fix:
+                    if fix_result.fixed_code:
+                        fix_data = {
+                            "original_code": fix_code,
+                            "fixed_code": fix_result.fixed_code,
+                            "explanation": fix_result.summary or "",
+                            "editor_hint": None,
+                        }
+                else:
+                    step = fix_result.step2_analysis
+                    if step and step.output and step.output.get("fixed_code"):
+                        fix_data = {
+                            "original_code": fix_code,
+                            "fixed_code": step.output["fixed_code"],
+                            "explanation": step.output.get("explanation", ""),
+                            "editor_hint": step.output.get("editor_hint"),
+                        }
 
                 db.add_message(request.conversation_id, "assistant", fix_result.combined_response)
                 return {
@@ -323,14 +363,17 @@ SOHBET:
                 db.add_message(request.conversation_id, "assistant", msg)
                 return {"role": "assistant", "content": msg, "intent": "FIX", "static_results": {"smells": []}, "pipeline": None, "fix_data": None}
             except Exception as exc:
-                logger.error(f"QuickFix hatası: {exc}")
+                logger.error(f"Fix Pipeline hatası: {exc}")
                 msg = "❌ Hata düzeltme sırasında sorun oluştu. Lütfen tekrar deneyin."
                 db.add_message(request.conversation_id, "assistant", msg)
                 return {"role": "assistant", "content": msg, "intent": "FIX", "static_results": {"smells": []}, "pipeline": None, "fix_data": None}
 
+        thinking_content = None
+        thinking_duration_ms = None
+
         history_messages = db.get_conversation_messages(request.conversation_id)
         context_summary = ""
-        
+
         # Hafıza özeti varsa bağlama ekle
         memory = db.get_memory(request.conversation_id)
         if memory:
@@ -366,6 +409,36 @@ SOHBET:
                 )
 
         if intent == "GENERATION" or request.mode == "generation":
+            # ——— PLAN ADIMI (plan veya step modunda, onay gelmemişse) ———
+            needs_plan = request.generation_mode in ("plan", "step") and not request.generation_confirmed
+            if needs_plan and not _is_batch_continuation_msg(request.message):
+                _last_ai = next((m for m in reversed(history_messages) if m["role"] == "assistant"), None)
+                _already_planned = _last_ai and "GENERATION_PLAN_ACTIVE" in _last_ai.get("content", "")
+                if not _already_planned:
+                    plan_prompt = f"""{SYSTEM_PROMPT}
+
+Kullanıcı şunu istiyor: "{_combined_prompt}"
+
+Kod yazmadan önce ne yapacağını listele:
+- Oluşturulacak dosyaları ve her birinin amacını yaz (max 5 madde)
+- Kısa tut, açıklama yapma
+
+Son satıra tam olarak şunu ekle: GENERATION_PLAN_ACTIVE"""
+                    try:
+                        plan_text = await asyncio.to_thread(provider.analyze_code, plan_prompt, 512)
+                        db.add_message(request.conversation_id, "assistant", plan_text)
+                        return {
+                            "role": "assistant",
+                            "content": plan_text,
+                            "intent": "GENERATION_PLAN",
+                            "static_results": {"smells": [], "stats": {}},
+                            "pipeline": None,
+                            "original_message": _combined_prompt,
+                            "generation_mode": request.generation_mode,
+                        }
+                    except Exception as exc:
+                        logger.error(f"Plan adımı hatası: {exc}")
+
             # ——— BATCH CONTINUATION: Kademeli üretimde sonraki batch'i yaz ———
             batch_state = continuation_store.get(request.conversation_id)
 
@@ -599,6 +672,7 @@ SOHBET:
                         user_message=request.message,
                         provider_type=provider_type,
                         progress_callback=update_progress,
+                        use_thinking=request.use_thinking,
                     )
 
                 gen_timeout = 900 if use_multi_pipeline else 300
@@ -652,6 +726,10 @@ SOHBET:
                 final_suggestion = result.combined_response
                 static_results = {"smells": [], "stats": {}}
                 pipeline_info = None
+                # Pipeline'dan thinking verisini al
+                if result.thinking_text:
+                    thinking_content = result.thinking_text
+                    thinking_duration_ms = result.thinking_duration_ms
             except asyncio.TimeoutError:
                 final_suggestion = "⏱️ Pipeline süresi aşıldı. Lütfen daha basit bir üretim isteği deneyin veya sistemi parçalara bölün."
                 static_results = {"smells": [], "stats": {}}
@@ -727,8 +805,15 @@ SOHBET:
                 smells="Kod gönderilmedi, genel soru.",
             )
 
+            thinking_content = None
+            thinking_duration_ms = None
             try:
-                final_suggestion = await asyncio.to_thread(provider.analyze_code, prompt)
+                if request.use_thinking:
+                    final_suggestion, thinking_content, thinking_duration_ms = await asyncio.to_thread(
+                        provider.analyze_code_with_thinking, prompt
+                    )
+                else:
+                    final_suggestion = await asyncio.to_thread(provider.analyze_code, prompt)
             except Exception as exc:
                 logger.error(f"AI yanıt hatası: {exc}")
                 final_suggestion = "❌ AI yanıt üretemedi. Lütfen tekrar deneyin veya farklı bir model seçin."
@@ -746,11 +831,10 @@ SOHBET:
         # Context doluluk hesapla
         all_msgs = db.get_conversation_messages(request.conversation_id)
         total_chars = sum(len(m["content"]) for m in all_msgs)
-        # ~4 char = 1 token, model context: ~128k token = ~512k char
-        max_context_chars = 200_000  # Güvenli sınır (token limitinin altında)
+        max_context_chars = 200_000
         context_pct = min(100, int((total_chars / max_context_chars) * 100))
 
-        return {
+        response_data = {
             "role": "assistant",
             "content": final_suggestion,
             "intent": intent,
@@ -764,5 +848,11 @@ SOHBET:
                 "message_count": len(all_msgs),
             },
         }
+
+        if thinking_content:
+            response_data["thinking"] = thinking_content
+            response_data["thinking_duration_ms"] = thinking_duration_ms
+
+        return response_data
 
     return router
