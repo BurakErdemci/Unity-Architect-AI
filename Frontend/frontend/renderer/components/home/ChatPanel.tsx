@@ -389,6 +389,19 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
               // Kullanıcı Mesajı
               <div className="max-w-[85%]">
                 <div className="bg-blue-600/15 border border-blue-500/20 rounded-xl rounded-tr-sm px-3.5 py-2.5">
+                  {msg.images && msg.images.length > 0 && (
+                    <div className="flex gap-2 mb-3 flex-wrap">
+                      {msg.images.map((img, i) => (
+                        <img 
+                          key={i} 
+                          src={img} 
+                          alt="user upload" 
+                          className="max-w-[200px] max-h-[200px] rounded-lg border border-white/10 shadow-lg cursor-zoom-in hover:scale-[1.02] transition-transform" 
+                          onClick={() => window.open(img, '_blank')}
+                        />
+                      ))}
+                    </div>
+                  )}
                   <div className="text-[13px] text-slate-200 whitespace-pre-wrap break-words">
                     <MarkdownRenderer content={msg.content} />
                   </div>

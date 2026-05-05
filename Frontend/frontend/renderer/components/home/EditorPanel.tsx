@@ -1,3 +1,4 @@
+import React from 'react';
 import { Editor, DiffEditor } from '@monaco-editor/react';
 import { motion } from 'framer-motion';
 import { Plus, Activity, Cpu, Sparkles } from 'lucide-react';
@@ -9,9 +10,8 @@ interface EditorPanelProps {
   openedFilePath: string | null;
   isEditorFocused: boolean;
   setIsEditorFocused: (focused: boolean) => void;
-  includeEditorCode: boolean;
-  setIncludeEditorCode: (include: boolean) => void;
   workspacePath: string | null;
+  problems?: any[];
   // Diff Mode Props
   diffFile: { name: string; code: string; originalCode?: string; suggestedPath: string } | null;
 }
@@ -22,10 +22,30 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
   openedFilePath,
   isEditorFocused,
   setIsEditorFocused,
-  includeEditorCode,
-  setIncludeEditorCode,
+  workspacePath,
+  problems = [],
   diffFile
 }) => {
+  const monacoRef = React.useRef<any>(null);
+  const editorRef = React.useRef<any>(null);
+
+  React.useEffect(() => {
+    if (monacoRef.current && editorRef.current && problems) {
+      const model = editorRef.current.getModel();
+      if (model) {
+        const markers = problems.map(p => ({
+          startLineNumber: p.line,
+          startColumn: p.column,
+          endLineNumber: p.line,
+          endColumn: p.column + 5, // Approximate
+          message: p.message,
+          severity: p.severity === 'error' ? monacoRef.current.MarkerSeverity.Error : monacoRef.current.MarkerSeverity.Warning
+        }));
+        monacoRef.current.editor.setModelMarkers(model, "owner", markers);
+      }
+    }
+  }, [problems]);
+
   return (
     <div className="flex-1 flex flex-col relative min-w-0 bg-[#000000] border-r border-slate-800/50">
       {/* Diff Mode Overlay */}
@@ -87,30 +107,6 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
           <div
             className={`flex-1 relative z-10 transition-opacity duration-200 ${(code || openedFilePath || isEditorFocused) ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
           >
-            {(code || openedFilePath) && (
-              <motion.div
-                initial={{ opacity: 0, scale: 0.8, x: -20 }}
-                animate={{ opacity: 1, scale: 1, x: 0 }}
-                className="absolute top-4 left-4 z-30 flex items-center gap-2"
-              >
-                <div className="relative group">
-                  <button
-                    onClick={() => setIncludeEditorCode(!includeEditorCode)}
-                    className={`w-8 h-8 rounded-full flex items-center justify-center transition-all shadow-lg backdrop-blur-md border ${includeEditorCode
-                        ? 'bg-blue-500 border-blue-400 text-white shadow-blue-500/40 rotate-45'
-                        : 'bg-slate-900/80 border-slate-700 text-slate-400 hover:text-white hover:border-blue-500/50 hover:shadow-blue-500/20'
-                      }`}
-                  >
-                    <Plus size={18} />
-                  </button>
-
-                  <div className="absolute left-10 top-1/2 -translate-y-1/2 px-3 py-1.5 bg-[#000000] border border-slate-800 rounded-lg text-[11px] text-slate-300 whitespace-nowrap opacity-0 group-hover:opacity-100 translate-x-2 group-hover:translate-x-0 transition-all pointer-events-none shadow-2xl z-50">
-                    {includeEditorCode ? 'Kodu Çıkar' : 'Kodu AI\'ya Ekle'}
-                    <div className="absolute right-full top-1/2 -translate-y-1/2 border-8 border-transparent border-r-slate-800" />
-                  </div>
-                </div>
-              </motion.div>
-            )}
 
             <Editor
               height="100%"
@@ -119,6 +115,8 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
               value={code}
               onChange={(val) => setCode(val || '')}
               onMount={(editor, monaco) => {
+                editorRef.current = editor;
+                monacoRef.current = monaco;
                 defineUnityTheme(monaco);
                 editor.onDidFocusEditorWidget(() => setIsEditorFocused(true));
                 editor.onDidBlurEditorWidget(() => setIsEditorFocused(false));

@@ -107,3 +107,44 @@ def list_directory(dir_path: str, workspace_path: str, extensions: list = None) 
         return {"success": False, "error": str(e)}
     except Exception as e:
         return {"success": False, "error": f"Listeleme hatası: {str(e)}"}
+
+
+def delete_file(file_path: str, workspace_path: str) -> dict:
+    """
+    Unity projesindeki bir dosyayı siler. 
+    GÜVENLİK: Bu işlem kullanıcı onayı gerektirir. 
+    Ajan bu komutu çağırdığında, kullanıcı arayüzünde bir onay paneli belirir.
+    """
+    try:
+        abs_path = _validate_path(file_path, workspace_path)
+        # Dosya var mı kontrol et
+        if not os.path.exists(abs_path):
+            return {"success": False, "error": f"Dosya bulunamadı: {file_path}"}
+        
+        # Gerçek silme işlemi Electron tarafında yapılacağı için 
+        # burada sadece ajana bilgi veriyoruz.
+        return {
+            "success": True, 
+            "summary": f"'{file_path}' dosyası için silme isteği kullanıcıya iletildi. Kullanıcı onayladığında dosya silinecektir. Lütfen kullanıcıdan onay almasını bekle.",
+            "path": file_path
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def run_command(command: str, workspace_path: str) -> dict:
+    """
+    Terminalde bir sistem komutu çalıştırır (örn: npm install, git status, unity build vb.).
+    GÜVENLİK: Bu işlem kullanıcı onayı gerektirir.
+    Komut çalıştırılmadan önce kullanıcı arayüzünde onay paneli belirir.
+    """
+    try:
+        # Güvenlik ve bilgi amaçlı ajana dönüş yapıyoruz.
+        # Gerçek çalıştırma işlemi frontend onayından sonra Terminal üzerinden yapılacak.
+        return {
+            "success": True,
+            "summary": f"'{command}' komutu onay için kullanıcıya iletildi. Lütfen kullanıcının terminal üzerinden onay vermesini bekle.",
+            "command": command
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}

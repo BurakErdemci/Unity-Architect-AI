@@ -52,17 +52,17 @@ export default function HomePage() {
   const auth = useAuth(API, backendReady);
   const ai = useAIConfig(API, auth.user, showToast);
   const fs = useFileSystem(API, auth.user, showToast);
-  
+
   // --- Diff Mode State (Must be before conditional returns) ---
   const [diffFile, setDiffFile] = useState<any | null>(null);
-  
+
   const chat = useChat(
-    API, 
-    auth.user, 
-    ai.aiConfig, 
-    fs.workspacePath, 
-    showToast, 
-    fs.refreshFileTree, 
+    API,
+    auth.user,
+    ai.aiConfig,
+    fs.workspacePath,
+    showToast,
+    fs.refreshFileTree,
     fs.suggestFilePath
   );
 
@@ -96,8 +96,39 @@ export default function HomePage() {
   const [sidebarTab, setSidebarTab] = useState<'chats' | 'files'>('chats');
   const [isEditorFocused, setIsEditorFocused] = useState(false);
   const [isTerminalOpen, setIsTerminalOpen] = useState(false);
-  const [includeEditorCode, setIncludeEditorCode] = useState(false);
+  const [problems, setProblems] = useState<any[]>([]);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const lintTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // --- Real-time Linting ---
+  useEffect(() => {
+    if (!API || !auth.user || !fs.openedFilePath || !fs.code.trim()) {
+      if (!fs.code.trim()) setProblems([]);
+      return;
+    }
+
+    if (lintTimeoutRef.current) clearTimeout(lintTimeoutRef.current);
+
+    lintTimeoutRef.current = setTimeout(async () => {
+      try {
+        const res = await axios.post(`${API}/lint`, {
+          code: fs.code,
+          filename: fs.openedFilePath!.split('/').pop() || 'script.cs'
+        }, {
+          headers: { 'X-Session-Token': auth.user?.sessionToken }
+        });
+        if (res.data && res.data.errors) {
+          setProblems(res.data.errors);
+        }
+      } catch (err) {
+        console.error("Lint hatası:", err);
+      }
+    }, 2000); // 2 saniye debounce
+
+    return () => {
+      if (lintTimeoutRef.current) clearTimeout(lintTimeoutRef.current);
+    };
+  }, [fs.code, fs.openedFilePath, API, auth.user]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -123,10 +154,31 @@ export default function HomePage() {
     fs.closeWorkspace();
   };
 
-  const handleSendMessage = (msg?: string) => {
-    const input = (msg || chat.chatInput).trim();
-    if (!input) return;
-    chat.sendMessage(input, fs.code, lang, chat.generationMode, useThinking, fs.setPendingGenFiles, fs.setPendingDelete);
+  const handleSendMessage = async (msg?: string, images?: string[]) => {
+    let input = (msg || chat.chatInput).trim();
+    if (!input && (!images || images.length === 0)) return;
+
+    // Eklenti dosyalarını kontrol et ( [File Attached: path] formatındakiler )
+    const fileMatches = input.match(/\[File Attached: (.*?)\]/g);
+    if (fileMatches && ipc) {
+      for (const match of fileMatches) {
+        const path = match.match(/\[File Attached: (.*?)\]/)?.[1];
+        if (path) {
+          try {
+            const result = await ipc.invoke('read-file', path, fs.workspacePath);
+            if (result && result.content) {
+              const fileContent = `\n\n--- FILE: ${path} ---\n${result.content}\n--- END FILE ---`;
+              input = input.replace(match, fileContent);
+            }
+          } catch (err) {
+            console.error("Dosya okuma hatası:", err);
+            input = input.replace(match, `(Dosya okunamadı: ${path})`);
+          }
+        }
+      }
+    }
+
+    chat.sendMessage(input, "", lang, chat.generationMode, useThinking, fs.setPendingGenFiles, fs.setPendingDelete, images);
   };
 
   if (backendError) {
@@ -141,25 +193,25 @@ export default function HomePage() {
 
   if (!auth.user) {
     return (
-      <AuthScreen 
-        authMode={auth.authMode} 
-        notice={auth.authNotice} 
-        oauthProviders={auth.oauthProviders} 
-        onSubmit={(e) => auth.handleAuthSubmit(e, true)} 
-        onOAuth={auth.handleOAuth} 
-        onToggleMode={() => auth.setAuthMode(auth.authMode === 'login' ? 'register' : 'login')} 
+      <AuthScreen
+        authMode={auth.authMode}
+        notice={auth.authNotice}
+        oauthProviders={auth.oauthProviders}
+        onSubmit={(e) => auth.handleAuthSubmit(e, true)}
+        onOAuth={auth.handleOAuth}
+        onToggleMode={() => auth.setAuthMode(auth.authMode === 'login' ? 'register' : 'login')}
       />
     );
   }
 
   if (!fs.workspacePath) {
     return (
-      <WorkspaceScreen 
-        userName={auth.user.name} 
-        lastWorkspacePath={fs.lastWorkspacePath} 
-        onOpenWorkspaceDialog={fs.openFolder} 
-        onSelectLastWorkspace={() => fs.selectWorkspace(fs.lastWorkspacePath!)} 
-        onLogout={handleLogout} 
+      <WorkspaceScreen
+        userName={auth.user.name}
+        lastWorkspacePath={fs.lastWorkspacePath}
+        onOpenWorkspaceDialog={fs.openFolder}
+        onSelectLastWorkspace={() => fs.selectWorkspace(fs.lastWorkspacePath!)}
+        onLogout={handleLogout}
       />
     );
   }
@@ -188,7 +240,7 @@ export default function HomePage() {
         workspacePath={fs.workspacePath} closeWorkspace={fs.closeWorkspace} rootFolderPath={fs.rootFolderPath}
         openFolder={fs.openFolder} openFilePicker={fs.openFilePicker} treeCreating={fs.treeCreating}
         setTreeCreating={fs.setTreeCreating} treeCreateValue={fs.treeCreateValue} setTreeCreateValue={fs.setTreeCreateValue}
-        submitTreeCreate={fs.submitTreeCreate} fileTree={fs.fileTree} 
+        submitTreeCreate={fs.submitTreeCreate} fileTree={fs.fileTree}
         openedFilePath={fs.openedFilePath} expandedDirs={fs.expandedDirs} dirContents={fs.dirContents}
         toggleDir={fs.toggleDir} openFile={fs.openFile} treeDragSource={fs.treeDragSource}
         treeDragTarget={fs.treeDragTarget} renamingPath={fs.renamingPath} renameValue={fs.renameValue}
@@ -229,11 +281,11 @@ export default function HomePage() {
         </div>
 
         <div className="flex-1 overflow-hidden relative flex flex-col bg-[#000000]">
-          <EditorPanel 
-            code={fs.code} setCode={fs.setCode} openedFilePath={fs.openedFilePath} 
-            isEditorFocused={isEditorFocused} setIsEditorFocused={setIsEditorFocused} 
-            includeEditorCode={includeEditorCode} setIncludeEditorCode={setIncludeEditorCode} 
+          <EditorPanel
+            code={fs.code} setCode={fs.setCode} openedFilePath={fs.openedFilePath}
+            isEditorFocused={isEditorFocused} setIsEditorFocused={setIsEditorFocused}
             workspacePath={fs.workspacePath}
+            problems={problems}
             diffFile={diffFile}
           />
         </div>
@@ -249,20 +301,20 @@ export default function HomePage() {
             <PanelRightClose size={16} />
           </button>
           <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-4 min-w-[420px]">
-            <ChatPanel 
-              messages={chat.messages} activeConvId={chat.activeConvId} user={auth.user} loading={chat.loading} 
-              clearHistory={chat.clearHistory} lang={lang} wisdomSummary={chat.wisdomSummary} 
-              isWisdomExpanded={chat.isWisdomExpanded} setIsWisdomExpanded={chat.setIsWisdomExpanded} 
-              effectiveProvider={ai.effectiveProvider} useThinking={useThinking} workspacePath={fs.workspacePath} 
-              handleExportToUnity={fs.handleExportToUnity} pendingPlan={chat.pendingPlan} setPendingPlan={chat.setPendingPlan} 
-              pendingGenFiles={fs.pendingGenFiles} setPendingGenFiles={fs.setPendingGenFiles} 
-              pendingFix={chat.pendingFix} setPendingFix={chat.setPendingFix} 
-              openedFilePath={fs.openedFilePath} setCode={fs.setCode} refreshFileTree={fs.refreshFileTree} 
-              analyzeProject={chat.analyzeProject} openFile={fs.openFile} sendMessage={handleSendMessage} 
-              onConfirmPlan={(msg, mode) => chat.confirmPlan(msg, mode, lang, fs.code, ai.gpt54OrToggled, fs.setPendingGenFiles, fs.setPendingDelete)} 
-              currentPlan={chat.currentPlan} messagesEndRef={chatEndRef} generationMode={chat.generationMode} 
-              appMode="auto" aiConfig={ai.aiConfig} gpt54OrToggled={ai.gpt54OrToggled} axios={axios} 
-              API={API} ipc={ipc} suggestFilePath={fs.suggestFilePath} showToast={showToast} 
+            <ChatPanel
+              messages={chat.messages} activeConvId={chat.activeConvId} user={auth.user} loading={chat.loading}
+              clearHistory={chat.clearHistory} lang={lang} wisdomSummary={chat.wisdomSummary}
+              isWisdomExpanded={chat.isWisdomExpanded} setIsWisdomExpanded={chat.setIsWisdomExpanded}
+              effectiveProvider={ai.effectiveProvider} useThinking={useThinking} workspacePath={fs.workspacePath}
+              handleExportToUnity={fs.handleExportToUnity} pendingPlan={chat.pendingPlan} setPendingPlan={chat.setPendingPlan}
+              pendingGenFiles={fs.pendingGenFiles} setPendingGenFiles={fs.setPendingGenFiles}
+              pendingFix={chat.pendingFix} setPendingFix={chat.setPendingFix}
+              openedFilePath={fs.openedFilePath} setCode={fs.setCode} refreshFileTree={fs.refreshFileTree}
+              analyzeProject={chat.analyzeProject} openFile={fs.openFile} sendMessage={handleSendMessage}
+              onConfirmPlan={(msg, mode) => chat.confirmPlan(msg, mode, lang, fs.code, ai.gpt54OrToggled, fs.setPendingGenFiles, fs.setPendingDelete)}
+              currentPlan={chat.currentPlan} messagesEndRef={chatEndRef} generationMode={chat.generationMode}
+              appMode="auto" aiConfig={ai.aiConfig} gpt54OrToggled={ai.gpt54OrToggled} axios={axios}
+              API={API} ipc={ipc} suggestFilePath={fs.suggestFilePath} showToast={showToast}
               diffFile={diffFile} setDiffFile={setDiffFile}
               pendingDelete={fs.pendingDelete} setPendingDelete={fs.setPendingDelete} deleteFile={fs.deleteFile}
               pendingCommand={chat.pendingCommand} setPendingCommand={chat.setPendingCommand}
@@ -271,16 +323,7 @@ export default function HomePage() {
           </div>
 
           <div className="p-4 border-t border-slate-800/50 bg-[#000000]/80 backdrop-blur-md">
-            {includeEditorCode && fs.code.trim() && (
-              <div className="mb-3">
-                <div className="inline-flex items-center gap-2 bg-blue-500/10 border border-blue-500/20 rounded-lg px-2.5 py-1.5 group">
-                  <Code2 size={13} className="text-blue-400 shrink-0" />
-                  <span className="text-[11px] text-slate-300 font-medium truncate">{fs.openedFilePath ? fs.openedFilePath.split('/').pop() : 'kod.cs'}</span>
-                  <button onClick={() => setIncludeEditorCode(false)} className="p-1 hover:bg-slate-800 rounded text-slate-500"><X size={10} /></button>
-                </div>
-              </div>
-            )}
-            <AnimatedChatInput value={chat.chatInput} setValue={chat.setChatInput} onSendMessage={handleSendMessage} onStop={chat.stopMessage} isLoading={chat.loading} placeholder={fs.code.trim() ? "Analiz et..." : "Sor..."} className="border-slate-800/50" includeEditorCode={includeEditorCode} onToggleIncludeCode={() => setIncludeEditorCode(!includeEditorCode)} />
+            <AnimatedChatInput value={chat.chatInput} setValue={chat.setChatInput} onSendMessage={handleSendMessage} onStop={chat.stopMessage} isLoading={chat.loading} placeholder={fs.code.trim() ? "Analiz et..." : "Sor..."} className="border-slate-800/50" />
             <ControlPanel useThinking={useThinking} setUseThinking={setUseThinking} generationMode={chat.generationMode} setGenerationMode={chat.setGenerationMode} isAnalyzingProject={chat.loading} activeConvId={chat.activeConvId} analyzeProject={chat.analyzeProject} wisdomSummary={chat.wisdomSummary} exportMemory={chat.exportMemory} importMemory={chat.importMemory} compactConversation={chat.compactConversation} isCompacting={chat.isCompacting} contextUsage={chat.contextUsage} />
           </div>
         </div>
@@ -288,14 +331,15 @@ export default function HomePage() {
       </motion.div>
 
       {!isChatOpen && <button onClick={() => setIsChatOpen(true)} className="absolute right-3 top-3 p-2 bg-[#000000] border border-slate-800 rounded-lg text-slate-400 hover:text-blue-500 transition-all z-30"><PanelRightOpen size={16} /></button>}
-      
-      <TerminalPanel 
-        id="main-terminal" 
-        isOpen={isTerminalOpen} 
-        onClose={() => setIsTerminalOpen(false)} 
-        workspacePath={fs.workspacePath} 
+
+      <TerminalPanel
+        id="main-terminal"
+        isOpen={isTerminalOpen}
+        onClose={() => setIsTerminalOpen(false)}
+        workspacePath={fs.workspacePath}
+        problems={problems}
       />
-      
+
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </div>
   );

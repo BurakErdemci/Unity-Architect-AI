@@ -1,3 +1,4 @@
+from typing import List, Optional
 from pydantic import BaseModel
 
 
@@ -52,6 +53,7 @@ class ChatRequest(BaseModel):
     use_thinking: bool = False
     generation_confirmed: bool = False
     generation_mode: str = "auto"  # auto | plan | step
+    images: Optional[List[str]] = None
 
 
 class WorkspaceRequest(BaseModel):

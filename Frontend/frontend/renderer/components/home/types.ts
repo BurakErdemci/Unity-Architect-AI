@@ -38,6 +38,7 @@ export interface Message {
   thinking_duration_ms?: number | null;
   tool_calls?: { tool: string; args: any; summary?: string; success?: boolean }[];
   tools?: { tool: string; args: any; summary?: string; success?: boolean }[];
+  images?: string[];
 }
 
 export interface FileEntry {

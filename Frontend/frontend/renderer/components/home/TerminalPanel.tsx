@@ -15,11 +15,12 @@ interface TerminalPanelProps {
   isOpen: boolean;
   onClose: () => void;
   workspacePath: string | null;
+  problems?: any[];
 }
 
 const ipc = typeof window !== 'undefined' ? (window as any).ipc : null;
 
-export const TerminalPanel: React.FC<TerminalPanelProps> = ({ id, isOpen, onClose, workspacePath }) => {
+export const TerminalPanel: React.FC<TerminalPanelProps> = ({ id, isOpen, onClose, workspacePath, problems = [] }) => {
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -189,9 +190,42 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ id, isOpen, onClos
 
       {/* Main Area */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Terminal Area */}
-        <div className="flex-1 relative bg-black p-2 overflow-hidden" onClick={() => xtermRef.current?.focus()}>
-          <div ref={terminalRef} className="w-full h-full" />
+        <div className="flex-1 relative bg-black overflow-hidden flex flex-col">
+          {activeTab === 'Terminal' ? (
+            <div className="flex-1 p-2 overflow-hidden" onClick={() => xtermRef.current?.focus()}>
+              <div ref={terminalRef} className="w-full h-full" />
+            </div>
+          ) : activeTab === 'Problems' ? (
+            <div className="flex-1 overflow-y-auto p-4 custom-scrollbar bg-[#0a0a0a]">
+              {problems.length === 0 ? (
+                <div className="h-full flex flex-col items-center justify-center text-slate-600 gap-2">
+                  <Search size={32} strokeWidth={1.5} opacity={0.5} />
+                  <span className="text-xs uppercase tracking-widest font-medium">No problems detected</span>
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  {problems.map((prob, i) => (
+                    <div key={i} className="flex items-start gap-3 p-2 rounded hover:bg-white/5 group cursor-pointer border border-transparent hover:border-white/5 transition-all">
+                      <AlertCircle size={14} className={prob.severity === 'error' ? 'text-red-500 mt-0.5' : 'text-amber-500 mt-0.5'} />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[11px] font-bold text-slate-200">{prob.message}</span>
+                        </div>
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className="text-[10px] text-slate-500 font-mono">Line {prob.line}, Col {prob.column}</span>
+                          <span className="text-[9px] px-1.5 py-0.5 rounded bg-white/5 text-slate-600 uppercase tracking-tighter font-bold">C# COMPILER</span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="flex-1 flex items-center justify-center text-slate-700 text-xs italic">
+              {activeTab} content coming soon...
+            </div>
+          )}
         </div>
 
         {/* Right Sidebar (Terminal Tabs List) */}

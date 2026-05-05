@@ -5,7 +5,7 @@ import json
 import logging
 from typing import Any, Dict, Callable
 
-from tools.file_tools import read_file, write_file, list_directory
+from tools.file_tools import read_file, write_file, list_directory, delete_file, run_command
 from tools.search_tools import search_in_project, find_files
 from tools.memory_tools import save_to_memory, recall_memory
 
@@ -123,6 +123,34 @@ TOOL_DEFINITIONS = [
             "properties": {}
         }
     },
+    {
+        "name": "delete_file",
+        "description": "Unity projesindeki bir dosyayı siler. DİKKAT: Bu işlem kalıcıdır ve kullanıcı onayı gerektirir.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "Silinecek dosyanın workspace root'a göre yolu (örn: Assets/Scripts/OldScript.cs)"
+                }
+            },
+            "required": ["file_path"]
+        }
+    },
+    {
+        "name": "run_command",
+        "description": "Terminalde bir sistem komutu çalıştırır. Örn: git status, npm install, unity-build. DİKKAT: Bu işlem kullanıcı onayı gerektirir.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "string",
+                    "description": "Çalıştırılacak terminal komutu"
+                }
+            },
+            "required": ["command"]
+        }
+    },
 ]
 
 
@@ -137,6 +165,8 @@ _TOOL_FUNCTIONS: Dict[str, Callable] = {
     "find_files": find_files,
     "list_directory": list_directory,
     "write_file": write_file,
+    "delete_file": delete_file,
+    "run_command": run_command,
     "save_to_memory": save_to_memory,
     "recall_memory": recall_memory,
 }
@@ -145,7 +175,7 @@ _TOOL_FUNCTIONS: Dict[str, Callable] = {
 _TOOLS_NEEDING_CONV_ID = {"save_to_memory", "recall_memory"}
 
 # Hangi tool'lar doğrudan workspace_path parametresi alıyor
-_TOOLS_NEEDING_WORKSPACE = {"search_in_project", "find_files", "read_file", "write_file", "list_directory"}
+_TOOLS_NEEDING_WORKSPACE = {"search_in_project", "find_files", "read_file", "write_file", "list_directory", "delete_file", "run_command"}
 
 
 def execute_tool(tool_name: str, arguments: Dict[str, Any], workspace_path: str, conversation_id: str = None) -> Dict[str, Any]:

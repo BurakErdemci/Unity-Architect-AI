@@ -18,6 +18,7 @@ from routes import (
     create_config_router,
     create_conversation_router,
     create_workspace_router,
+    create_lint_router,
 )
 
 
@@ -65,6 +66,7 @@ app.include_router(create_auth_router(db))
 app.include_router(create_config_router(db))
 app.include_router(create_analysis_router(db))
 app.include_router(create_workspace_router(db))
+app.include_router(create_lint_router(db))
 app.include_router(create_conversation_router(db, kb, PROGRESS_STORE))
 
 

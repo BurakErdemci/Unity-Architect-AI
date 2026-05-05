@@ -134,26 +134,23 @@ export function AnimatedChatInput({
     setValue,
     onSendMessage,
     onStop,
+    onFileDrop,
     isLoading,
     placeholder = "Ask zap a question...",
-    className,
-    includeEditorCode = false,
-    onToggleIncludeCode
+    className
 }: { 
     value: string;
     setValue: (val: string) => void;
-    onSendMessage: (val: string) => void;
+    onSendMessage: (val: string, images?: string[]) => void;
     onStop?: () => void;
+    onFileDrop?: (entry: { path: string, name: string }) => void;
     isLoading: boolean;
     placeholder?: string;
     className?: string;
-    includeEditorCode?: boolean;
-    onToggleIncludeCode?: () => void;
 }) {
     // Typing state is INTERNAL — does not propagate to parent on every keystroke.
-    // This prevents home.tsx (with its large message list) from re-rendering while the user types.
     const [internalValue, setInternalValue] = useState(value);
-    const [attachments, setAttachments] = useState<string[]>([]);
+    const [attachments, setAttachments] = useState<{ name: string, data: string, type: 'image' | 'file', path?: string }[]>([]);
     const [activeSuggestion, setActiveSuggestion] = useState<number>(-1);
     const [showCommandPalette, setShowCommandPalette] = useState(false);
     const { textareaRef, adjustHeight } = useAutoResizeTextarea({
@@ -162,8 +159,66 @@ export function AnimatedChatInput({
     });
     const [inputFocused, setInputFocused] = useState(false);
     const commandPaletteRef = useRef<HTMLDivElement>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
 
-    // Sync internal value when parent resets to '' (after submit) or sets a prefix command
+    const processFile = (file: File) => {
+        if (file.type.startsWith('image/')) {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const base64Data = e.target?.result as string;
+                setAttachments(prev => [...prev, { name: file.name, data: base64Data, type: 'image' }]);
+            };
+            reader.readAsDataURL(file);
+        } else {
+            // Non-image external file (experimental)
+            setAttachments(prev => [...prev, { name: file.name, data: '', type: 'file' }]);
+        }
+    };
+
+    const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const files = Array.from(e.target.files || []);
+        files.forEach(processFile);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+    };
+
+    const handlePaste = (e: React.ClipboardEvent) => {
+        const items = Array.from(e.clipboardData.items);
+        items.forEach(item => {
+            if (item.type.startsWith('image/')) {
+                const file = item.getAsFile();
+                if (file) processFile(file);
+            }
+        });
+    };
+
+    const handleDrop = (e: React.DragEvent) => {
+        e.preventDefault();
+        
+        // 1. Internal File Drop (from Sidebar)
+        const internalData = e.dataTransfer.getData('application/x-unity-architect-file');
+        if (internalData) {
+            try {
+                const entry = JSON.parse(internalData);
+                if (!entry.isDirectory) {
+                    if (onFileDrop) onFileDrop(entry);
+                    // Add as attachment immediately
+                    setAttachments(prev => {
+                        if (prev.some(a => a.path === entry.path)) return prev;
+                        return [...prev, { name: entry.name, data: '', type: 'file', path: entry.path }];
+                    });
+                    return;
+                }
+            } catch (err) { console.error("Internal drop error:", err); }
+        }
+
+        // 2. External File Drop (from OS)
+        const files = Array.from(e.dataTransfer.files);
+        if (files.length > 0) {
+            files.forEach(processFile);
+        }
+    };
+
+    // Sync internal value when parent resets to '' (after submit)
     useEffect(() => {
         if (value === '' || value !== internalValue) {
             setInternalValue(value);
@@ -215,22 +270,40 @@ export function AnimatedChatInput({
             }
         } else if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault();
-            if (internalValue.trim()) handleSendMessage();
+            if (internalValue.trim() || attachments.length > 0) handleSendMessage();
         }
     };
 
-    const handleSendMessage = () => {
-        if (internalValue.trim() && !isLoading) {
-            onSendMessage(internalValue);
+    const handleSendMessage = async () => {
+        if ((internalValue.trim() || attachments.length > 0) && !isLoading) {
+            let finalMsg = internalValue;
+            const images = attachments.filter(a => a.type === 'image').map(a => a.data);
+            const fileAttachments = attachments.filter(a => a.type === 'file');
+
+            if (fileAttachments.length > 0) {
+                // If there are file attachments, we need their content. 
+                // Since AnimatedChatInput doesn't have IPC, home.tsx will handle the content loading 
+                // via onSendMessage or we can pass the paths and let the parent handle it.
+                // For now, let's just pass images and let the parent see the paths if needed.
+                // But wait, the onSendMessage signature only takes (val, images).
+                // I'll update it in home.tsx to handle attachments too or just append paths to finalMsg.
+                const paths = fileAttachments.filter(a => a.path).map(a => `[File Attached: ${a.path}]`).join('\n');
+                if (paths) finalMsg += (finalMsg ? '\n\n' : '') + paths;
+            }
+
+            onSendMessage(finalMsg, images);
             setInternalValue("");
             setValue("");
+            setAttachments([]);
             adjustHeight(true);
         }
     };
 
     return (
         <motion.div 
-            className={cn("relative backdrop-blur-2xl bg-black rounded-2xl border border-white/[0.08] shadow-2xl", className)}
+            className={cn("relative backdrop-blur-2xl bg-black rounded-2xl border border-white/[0.08] shadow-2xl transition-all duration-300", 
+                inputFocused ? "border-white/20 shadow-white/[0.02]" : "",
+                className)}
             initial={{ scale: 0.98 }}
             animate={{ scale: 1 }}
         >
@@ -275,6 +348,12 @@ export function AnimatedChatInput({
                         adjustHeight();
                     }}
                     onKeyDown={handleKeyDown}
+                    onPaste={handlePaste}
+                    onDrop={handleDrop}
+                    onDragOver={(e) => {
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = 'copy';
+                    }}
                     onFocus={() => setInputFocused(true)}
                     onBlur={() => setInputFocused(false)}
                     placeholder={placeholder}
@@ -287,31 +366,53 @@ export function AnimatedChatInput({
 
             <AnimatePresence>
                 {attachments.length > 0 && (
-                    <div className="px-3 pb-3 flex gap-2 flex-wrap">
+                    <div className="px-3 pb-3 flex gap-2 overflow-x-auto custom-scrollbar no-scrollbar py-2 border-t border-white/[0.03]">
                         {attachments.map((file, index) => (
-                            <div key={index} className="flex items-center gap-2 text-[10px] bg-white/[0.03] py-1 px-2 rounded-md text-white/70 border border-white/5">
-                                <span>{file}</span>
-                                <button onClick={() => setAttachments(prev => prev.filter((_, i) => i !== index))} className="text-white/40 hover:text-white transition-colors">
+                            <motion.div 
+                                key={index} 
+                                initial={{ opacity: 0, scale: 0.8, x: -10 }}
+                                animate={{ opacity: 1, scale: 1, x: 0 }}
+                                exit={{ opacity: 0, scale: 0.8 }}
+                                className="relative flex-shrink-0 group"
+                            >
+                                {file.type === 'image' ? (
+                                    <img src={file.data} alt="preview" className="w-14 h-14 object-cover rounded-lg border border-white/10 shadow-md" />
+                                ) : (
+                                    <div className="w-14 h-14 flex flex-col items-center justify-center bg-white/5 rounded-lg border border-white/10 shadow-md px-1 overflow-hidden">
+                                        <FileUp className="w-5 h-5 text-blue-400 mb-0.5" />
+                                        <span className="text-[8px] text-white/50 truncate w-full text-center">{file.name}</span>
+                                    </div>
+                                )}
+                                <button 
+                                    onClick={() => setAttachments(prev => prev.filter((_, i) => i !== index))} 
+                                    className="absolute -top-1.5 -right-1.5 bg-red-500/90 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity z-10 hover:bg-red-600"
+                                >
                                     <XIcon className="w-3 h-3" />
                                 </button>
-                            </div>
+                            </motion.div>
                         ))}
                     </div>
                 )}
             </AnimatePresence>
 
-            <div className="p-2 border-t border-white/[0.05] flex items-center justify-between gap-4">
+            <div className="p-2 border-t border-white/[0.05] flex items-center justify-between gap-4 bg-white/[0.01] rounded-b-2xl">
                 <div className="flex items-center gap-2">
+                    <input 
+                        type="file" 
+                        ref={fileInputRef} 
+                        onChange={handleFileChange} 
+                        accept="image/*" 
+                        className="hidden" 
+                        multiple 
+                    />
                     <button 
-                        type="button" 
-                        onClick={() => onToggleIncludeCode && onToggleIncludeCode()} 
-                        className={cn("p-2 rounded-lg transition-colors flex items-center gap-1.5 border", includeEditorCode ? "bg-blue-600/20 text-blue-400 border-blue-500/30" : "text-white/40 hover:text-white/90 border-transparent hover:bg-white/5")}
-                        title="Kod Editöründeki İçeriği Sohbete Ekle"
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        className="p-2 rounded-lg text-white/40 hover:text-white/90 hover:bg-white/5 transition-colors"
+                        title="Resim Ekle"
                     >
-                        <Paperclip className="w-3.5 h-3.5" />
-                        {includeEditorCode && <span className="text-[10px] font-semibold tracking-wider">KOD EKLENİYOR</span>}
+                        <PlusIcon className="w-3.5 h-3.5" />
                     </button>
-
                 </div>
                 
                 {isLoading ? (
@@ -327,8 +428,8 @@ export function AnimatedChatInput({
                     <button 
                         type="button" 
                         onClick={handleSendMessage} 
-                        disabled={!internalValue.trim()} 
-                        className={cn("px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5", internalValue.trim() ? "bg-white text-[#0A0A0B]" : "bg-white/[0.05] text-white/40")}
+                        disabled={!internalValue.trim() && attachments.length === 0} 
+                        className={cn("px-4 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5", (internalValue.trim() || attachments.length > 0) ? "bg-white text-black hover:bg-white/90 active:scale-95 shadow-lg shadow-white/5" : "bg-white/[0.05] text-white/20")}
                     >
                         <SendIcon className="w-3 h-3" />
                         <span>Send</span>

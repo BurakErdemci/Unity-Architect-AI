@@ -53,6 +53,7 @@ class AgentRunner:
         context: str = "",
         use_thinking: bool = False,
         conversation_id: str = None,
+        images: Optional[List[str]] = None,
     ):
         self.provider_type = provider_type
         self.api_key = api_key
@@ -62,6 +63,7 @@ class AgentRunner:
         self.context = context
         self.use_thinking = use_thinking
         self.conversation_id = conversation_id
+        self.images = images
 
     async def run(self, user_message: str) -> AsyncGenerator[AgentEvent, None]:
         """
@@ -129,7 +131,22 @@ Kullanıcıyla {'Türkçe' if self.language == 'tr' else 'İngilizce'} konuş.""
         )
 
         # İlk mesaj
-        contents = [gtypes.Content(role="user", parts=[gtypes.Part(text=user_message)])]
+        parts = [gtypes.Part(text=user_message)]
+        if self.images:
+            for img_data in self.images:
+                try:
+                    # data:image/png;base64,.... formatını ayıkla
+                    if "," in img_data:
+                        header, base64_str = img_data.split(",", 1)
+                        mime_type = header.split(":")[1].split(";")[0]
+                        parts.append(gtypes.Part(inline_data=gtypes.Blob(mime_type=mime_type, data=base64_str)))
+                    else:
+                        # Fallback
+                        parts.append(gtypes.Part(inline_data=gtypes.Blob(mime_type="image/jpeg", data=img_data)))
+                except Exception as e:
+                    logger.error(f"Gemini image parsing hatası: {e}")
+
+        contents = [gtypes.Content(role="user", parts=parts)]
 
         for iteration in range(MAX_ITERATIONS):
             logger.info(f"  🔄 Agentic Loop iterasyon {iteration + 1}")
@@ -253,7 +270,26 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                 "input_schema": t["parameters"]
             })
 
-        messages = [{"role": "user", "content": user_message}]
+        # İlk mesaj içeriği
+        user_parts = [{"type": "text", "text": user_message}]
+        if self.images:
+            for img_data in self.images:
+                try:
+                    if "," in img_data:
+                        header, base64_str = img_data.split(",", 1)
+                        mime_type = header.split(":")[1].split(";")[0]
+                        user_parts.append({
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": mime_type,
+                                "data": base64_str
+                            }
+                        })
+                except Exception as e:
+                    logger.error(f"Anthropic image parsing hatası: {e}")
+
+        messages = [{"role": "user", "content": user_parts}]
 
         for iteration in range(MAX_ITERATIONS):
             logger.info(f"  🔄 Anthropic Agentic Loop iterasyon {iteration + 1}")
@@ -352,9 +388,18 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
         
         openai_tools = get_openai_tool_declarations()
         
+        # İlk mesaj içeriği
+        user_content = [{"type": "text", "text": user_message}]
+        if self.images:
+            for img_data in self.images:
+                user_content.append({
+                    "type": "image_url",
+                    "image_url": {"url": img_data} # OpenAI direkt data URL kabul eder
+                })
+
         messages = [
             {"role": "system", "content": system_instruction},
-            {"role": "user", "content": user_message}
+            {"role": "user", "content": user_content}
         ]
         
         for iteration in range(MAX_ITERATIONS):

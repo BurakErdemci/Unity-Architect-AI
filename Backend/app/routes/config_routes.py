@@ -72,6 +72,7 @@ def create_config_router(db):
             "local": [],
             "cloud": [
                 {"id": "claude-sonnet-4-6",       "name": "Claude 4.6 Sonnet",  "provider": "anthropic", "openrouter_id": "anthropic/claude-sonnet-4-6"},
+                {"id": "claude-opus-4-7",          "name": "Claude 4.7 Opus",    "provider": "anthropic", "openrouter_id": "anthropic/claude-opus-4-7"},
                 {"id": "claude-opus-4-6",          "name": "Claude 4.6 Opus",    "provider": "anthropic", "openrouter_id": "anthropic/claude-opus-4-6"},
                 {"id": "claude-haiku-4-5",         "name": "Claude 4.5 Haiku",   "provider": "anthropic", "openrouter_id": "anthropic/claude-haiku-4-5"},
                 {"id": "llama-3.3-70b-versatile",  "name": "Llama 3.3 70B",      "provider": "groq",      "openrouter_id": "meta-llama/llama-3.3-70b-instruct"},

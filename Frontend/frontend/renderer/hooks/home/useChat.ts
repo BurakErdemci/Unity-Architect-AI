@@ -107,7 +107,8 @@ export const useChat = (
     genMode: GenerationMode, 
     useThinking: boolean,
     setPendingGenFiles: (val: any) => void,
-    setPendingDelete: (val: any) => void
+    setPendingDelete: (val: any) => void,
+    images?: string[]
   ) => {
     if (loading || !user || !API) return;
     setLoading(true);
@@ -118,7 +119,14 @@ export const useChat = (
       if (!targetConvId) { setLoading(false); return; }
     }
 
-    const userMsg: Message = { id: Date.now(), role: 'user', content: messageContent, smells: [], timestamp: new Date().toISOString() };
+    const userMsg: Message = { 
+      id: Date.now(), 
+      role: 'user', 
+      content: messageContent, 
+      smells: [], 
+      timestamp: new Date().toISOString(),
+      images: images // Frontend tipine eklememiz gerekebilir ama şimdilik tutalım
+    };
     setMessages(prev => [...prev, userMsg]);
     setChatInput('');
 
@@ -136,6 +144,7 @@ export const useChat = (
           conversation_id: targetConvId, message: messageContent, language: lang, user_id: user.id,
           use_kb: aiConfig.provider_type === 'kb', editor_code: code || '', use_thinking: useThinking,
           generation_mode: genMode, generation_confirmed: false,
+          images: images
         }),
       });
 

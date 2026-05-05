@@ -193,7 +193,9 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
   const handleTreeDragStart = useCallback((e: React.DragEvent, entry: FileEntry) => {
     e.stopPropagation();
     setTreeDragSource(entry);
-    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.effectAllowed = 'copyMove';
+    e.dataTransfer.setData('application/x-unity-architect-file', JSON.stringify(entry));
+    e.dataTransfer.setData('text/plain', entry.path);
   }, []);
 
   const handleTreeDragOver = useCallback((e: React.DragEvent, entry: FileEntry) => {
