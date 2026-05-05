@@ -16,6 +16,10 @@ export const ALLOWED_INVOKE_CHANNELS = new Set([
   'session-set',
   'session-clear',
   'save-file-dialog',
+  'delete-file',
+  'terminal-spawn',
+  'terminal-write',
+  'terminal-resize',
 ])
 
 export function assertAllowedInvokeChannel(channel: string): void {

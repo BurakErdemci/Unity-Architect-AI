@@ -30,10 +30,14 @@ export interface Message {
   content: string;
   smells: any[];
   timestamp: string;
+  provider?: string;
   pipeline?: any;
+  pipeline_scores?: Record<string, number>;
+  is_refined?: boolean;
   thinking?: string | null;
   thinking_duration_ms?: number | null;
   tool_calls?: { tool: string; args: any; summary?: string; success?: boolean }[];
+  tools?: { tool: string; args: any; summary?: string; success?: boolean }[];
 }
 
 export interface FileEntry {
@@ -68,3 +72,5 @@ export interface ExportModalState {
   files: ExportFileEntry[];
   exportResult: { success: boolean; message: string } | null;
 }
+
+export type GenerationMode = 'auto' | 'step' | 'plan';

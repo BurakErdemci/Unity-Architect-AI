@@ -12,11 +12,86 @@ import {
   isAllowedWorkspaceReadFile,
 } from './helpers/file-security'
 import { sessionGet, sessionSet, sessionClear } from './helpers/session-storage-handlers'
+import * as pty from 'node-pty'
 
 const isProd = process.env.NODE_ENV === 'production'
 let pyBackendProcess: ChildProcess | null = null
 let backendPort: number | null = null
 const BACKEND_HOST = '127.0.0.1'
+
+// --- TERMINAL YÖNETİMİ ---
+const ptyProcesses: Map<string, pty.IPty> = new Map();
+
+ipcMain.handle('terminal-spawn', (event, { id, cwd }) => {
+  const isWin = process.platform === 'win32';
+  
+  // Profesyonel Shell Tespiti
+  let shell = isWin ? 'powershell.exe' : (process.env.SHELL || '/bin/zsh');
+  
+  if (!isWin && !shell.startsWith('/')) {
+    const commonPaths = ['/bin/zsh', '/usr/bin/zsh', '/bin/bash', '/usr/bin/bash', '/bin/sh'];
+    for (const p of commonPaths) {
+      if (fs.existsSync(p)) { shell = p; break; }
+    }
+  }
+
+  // CWD ve Env Hazırlığı
+  let finalCwd = cwd || process.env.HOME || '.';
+  if (typeof finalCwd === 'string' && finalCwd.startsWith('~')) {
+    finalCwd = path.join(process.env.HOME || '', finalCwd.slice(1));
+  }
+  if (finalCwd && !fs.existsSync(finalCwd)) finalCwd = process.env.HOME || '.';
+
+  console.log(`[Terminal] Profesyonel Başlatma: ${shell} @ ${finalCwd}`);
+
+  try {
+    const ptyProcess = pty.spawn(shell, [], {
+      name: 'xterm-color',
+      cols: 80,
+      rows: 24,
+      cwd: finalCwd,
+      env: {
+        ...process.env,
+        LANG: 'en_US.UTF-8',
+        TERM: 'xterm-256color'
+      }
+    });
+
+    ptyProcesses.set(id, ptyProcess);
+
+    ptyProcess.onData((data) => {
+      event.sender.send(`terminal-data-${id}`, data);
+    });
+
+    ptyProcess.onExit(({ exitCode, signal }) => {
+      event.sender.send(`terminal-exit-${id}`, { exitCode, signal });
+      ptyProcesses.delete(id);
+    });
+
+    return { success: true, shell };
+  } catch (err: any) {
+    console.error(`[Terminal] Başlatma Hatası:`, err);
+    return { success: false, error: err.message, shell };
+  }
+});
+
+ipcMain.handle('terminal-write', (_event, { id, data }) => {
+  const ptyProcess = ptyProcesses.get(id);
+  if (ptyProcess) {
+    ptyProcess.write(data);
+    return { success: true };
+  }
+  return { success: false, error: 'Terminal bulunamadı' };
+});
+
+ipcMain.handle('terminal-resize', (_event, { id, cols, rows }) => {
+  const ptyProcess = ptyProcesses.get(id);
+  if (ptyProcess) {
+    ptyProcess.resize(cols, rows);
+    return { success: true };
+  }
+  return { success: false, error: 'Terminal bulunamadı' };
+});
 
 function getBackendBaseUrl(): string {
   if (!backendPort) {
@@ -36,7 +111,7 @@ ipcMain.handle('open-file-dialog', async () => {
   const result = await dialog.showOpenDialog({
     properties: ['openFile'],
     filters: [
-      { name: 'C# Dosyaları', extensions: ['cs'] }
+      { name: 'Kod ve Metin Dosyaları', extensions: ['cs', 'shader', 'json', 'txt', 'md', 'xml', 'yaml', 'yml', 'compute', 'asmdef', 'cginc', 'hlsl', 'uss', 'uxml'] }
     ]
   })
   if (result.canceled || result.filePaths.length === 0) return null
@@ -66,10 +141,11 @@ ipcMain.handle('read-directory', async (_event, dirPath: string, workspacePath?:
     if (!isAllowedWorkspacePath(fullPath, workspacePath)) {
       return []
     }
+    const allowedExtensions = ['.cs', '.shader', '.json', '.txt', '.md', '.xml', '.yaml', '.yml', '.compute', '.asmdef', '.cginc', '.hlsl', '.uss', '.uxml'];
     const entries = fs.readdirSync(fullPath, { withFileTypes: true })
     const items = entries
       .filter(e => !e.name.startsWith('.'))
-      .filter(e => e.isDirectory() || path.extname(e.name).toLowerCase() === '.cs')
+      .filter(e => e.isDirectory() || allowedExtensions.includes(path.extname(e.name).toLowerCase()))
       .map(e => ({
         name: e.name,
         path: path.join(fullPath, e.name),
@@ -163,6 +239,20 @@ ipcMain.handle('create-file', async (_event, filePath: string, workspacePath?: s
   fs.writeFileSync(fullPath, '', 'utf-8')
   return { success: true, path: fullPath }
 })
+
+ipcMain.handle('delete-file', async (_event, relativePath, workspacePath) => {
+  try {
+    const fullPath = path.join(workspacePath, relativePath);
+    const exists = fs.existsSync(fullPath);
+    if (exists) {
+      fs.unlinkSync(fullPath);
+      return { success: true };
+    }
+    return { success: false, error: 'Dosya bulunamadı' };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
 
 ipcMain.handle('create-folder', async (_event, folderPath: string, workspacePath?: string) => {
   if (!workspacePath) return { success: false, error: 'Workspace path eksik.' }
@@ -405,6 +495,93 @@ if (!gotTheLock) {
           }
         }
       }
+
+      // --- GLOBAL MENÜ TASARIMI ---
+      const { Menu, MenuItem } = require('electron');
+      const template: any[] = [
+        ...(process.platform === 'darwin' ? [{
+          label: app.name,
+          submenu: [
+            { role: 'about' },
+            { type: 'separator' },
+            { role: 'services' },
+            { type: 'separator' },
+            { role: 'hide' },
+            { role: 'hideOthers' },
+            { role: 'unhide' },
+            { type: 'separator' },
+            { role: 'quit' }
+          ]
+        }] : []),
+        {
+          label: 'File',
+          submenu: [
+            isProd ? { role: 'quit' } : { role: 'close' }
+          ]
+        },
+        {
+          label: 'Edit',
+          submenu: [
+            { role: 'undo' },
+            { role: 'redo' },
+            { type: 'separator' },
+            { role: 'cut' },
+            { role: 'copy' },
+            { role: 'paste' },
+            { role: 'selectAll' }
+          ]
+        },
+        {
+          label: 'Terminal',
+          submenu: [
+            {
+              label: 'Toggle Terminal',
+              accelerator: 'Control+`',
+              click: () => {
+                mainWindow.webContents.send('menu-toggle-terminal');
+              }
+            },
+            {
+              label: 'New Terminal',
+              accelerator: 'CmdOrCtrl+Shift+`',
+              click: () => {
+                mainWindow.webContents.send('menu-open-terminal');
+              }
+            },
+            { type: 'separator' },
+            {
+              label: 'Clear Terminal',
+              click: () => {
+                mainWindow.webContents.send('menu-clear-terminal');
+              }
+            }
+          ]
+        },
+        {
+          label: 'View',
+          submenu: [
+            { role: 'reload' },
+            { role: 'forceReload' },
+            { role: 'toggleDevTools' },
+            { type: 'separator' },
+            { role: 'resetZoom' },
+            { role: 'zoomIn' },
+            { role: 'zoomOut' },
+            { type: 'separator' },
+            { role: 'togglefullscreen' }
+          ]
+        },
+        {
+          role: 'window',
+          submenu: [
+            { role: 'minimize' },
+            { role: 'close' }
+          ]
+        }
+      ];
+
+      const menu = Menu.buildFromTemplate(template);
+      Menu.setApplicationMenu(menu);
     })()
 
   app.on('window-all-closed', () => {
