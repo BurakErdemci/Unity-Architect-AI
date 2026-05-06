@@ -150,16 +150,36 @@ Kullanıcıyla {'Türkçe' if self.language == 'tr' else 'İngilizce'} konuş.""
 
         for iteration in range(MAX_ITERATIONS):
             logger.info(f"  🔄 Agentic Loop iterasyon {iteration + 1}")
+            
+            # Rate limit (15 RPM) için güvenli mola (her 4s bir hak doluyor, 5s garantidir)
+            if iteration > 0:
+                await asyncio.sleep(5.0)
 
-            try:
-                response = await asyncio.to_thread(
-                    client.models.generate_content,
-                    model=self.model_name,
-                    contents=contents,
-                    config=config,
-                )
-            except Exception as e:
-                yield AgentEvent("error", {"message": f"AI hatası: {str(e)}"})
+            # Retry mekanizması (429 hataları için daha agresif)
+            response = None
+            for retry in range(3):
+                try:
+                    response = await asyncio.to_thread(
+                        client.models.generate_content,
+                        model=self.model_name,
+                        contents=contents,
+                        config=config,
+                    )
+                    break 
+                except Exception as e:
+                    err_msg = str(e).lower()
+                    # 429 (Hız Sınırı) veya 503 (Servis Kesintisi) durumlarında bekle ve tekrar dene
+                    if any(code in err_msg for code in ["429", "503", "too many requests", "service unavailable"]):
+                        wait_time = (retry + 1) * 10
+                        logger.warning(f"  ⚠️ Google API Hatası ({'429' if '429' in err_msg else '503'}). {wait_time}s bekleniyor... (Deneme {retry+1}/3)")
+                        await asyncio.sleep(wait_time)
+                        continue
+                    else:
+                        yield AgentEvent("error", {"message": f"AI hatası: {str(e)}"})
+                        return
+            
+            if not response:
+                yield AgentEvent("error", {"message": "AI yanıt vermeyi reddetti (Rate Limit)."})
                 return
 
             if not response.candidates:
@@ -229,7 +249,7 @@ Kullanıcıyla {'Türkçe' if self.language == 'tr' else 'İngilizce'} konuş.""
 
             # AI'ın yanıtını ve tool sonuçlarını geçmişe ekle
             contents.append(candidate.content)
-            contents.append(gtypes.Content(role="user", parts=function_response_parts))
+            contents.append(gtypes.Content(role="tool", parts=function_response_parts))
 
         # Max iterasyona ulaşıldı
         yield AgentEvent("response", {
@@ -405,15 +425,34 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
         for iteration in range(MAX_ITERATIONS):
             logger.info(f"  🔄 OpenAI Agentic Loop iterasyon {iteration + 1}")
             
-            try:
-                response = await client.chat.completions.create(
-                    model=self.model_name,
-                    messages=messages,
-                    tools=openai_tools,
-                    tool_choice="auto"
-                )
-            except Exception as e:
-                yield AgentEvent("error", {"message": f"OpenAI/API hatası: {str(e)}"})
+            # Rate limit koruması için kısa mola
+            if iteration > 0:
+                await asyncio.sleep(5.0)
+
+            # Retry mekanizması
+            response = None
+            for retry in range(3):
+                try:
+                    response = await client.chat.completions.create(
+                        model=self.model_name,
+                        messages=messages,
+                        tools=openai_tools,
+                        tool_choice="auto"
+                    )
+                    break
+                except Exception as e:
+                    err_msg = str(e).lower()
+                    if any(code in err_msg for code in ["429", "503", "too many requests", "service unavailable"]):
+                        wait_time = (retry + 1) * 10
+                        logger.warning(f"  ⚠️ OpenAI/OpenRouter Hatası. {wait_time}s bekleniyor... (Deneme {retry+1}/3)")
+                        await asyncio.sleep(wait_time)
+                        continue
+                    else:
+                        yield AgentEvent("error", {"message": f"OpenAI/API hatası: {str(e)}"})
+                        return
+            
+            if not response:
+                yield AgentEvent("error", {"message": "AI yanıt vermeyi reddetti (Rate Limit/API)."})
                 return
 
             message = response.choices[0].message

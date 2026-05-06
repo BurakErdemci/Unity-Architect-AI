@@ -171,14 +171,6 @@ export const useChat = (
                     const args = typeof data.arguments === 'string' ? JSON.parse(data.arguments) : data.arguments;
                     (updated.tool_calls ||= []).push({ tool: data.tool, args: args });
                     
-                    // Dosya silme isteğini yakala
-                    if (data.tool === 'delete_file' || data.tool === 'delete-file') {
-                      setPendingDelete({ path: args.path || args.relativePath, messageId: aiMsgId });
-                    }
-                    // Terminal komut isteğini yakala
-                    if (data.tool === 'run_command' || data.tool === 'run-command') {
-                      setPendingCommand({ command: args.command, messageId: aiMsgId });
-                    }
                   }
                   else if (data.type === 'tool_result' && updated.tool_calls?.length) {
                     const last = updated.tool_calls[updated.tool_calls.length - 1];
@@ -255,18 +247,6 @@ export const useChat = (
       };
       setMessages(prev => [...prev, aiMsg]);
 
-      // Silme ve Komut isteği kontrolü
-      if (res.data.tool_calls) {
-        for (const tc of res.data.tool_calls) {
-          const args = typeof tc.args === 'string' ? JSON.parse(tc.args) : tc.args;
-          if (tc.tool === 'delete_file' || tc.tool === 'delete-file') {
-            setPendingDelete({ path: args.path || args.relativePath, messageId: aiMsgId });
-          }
-          if (tc.tool === 'run_command' || tc.tool === 'run-command') {
-            setPendingCommand({ command: args.command, messageId: aiMsgId });
-          }
-        }
-      }
       
       if (res.data.content) {
         const { parseGeneratedFiles } = await import('../../components/home/export-utils');

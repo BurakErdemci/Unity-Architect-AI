@@ -113,14 +113,14 @@ export default function Home() {
         showToast("Terminal temizlendi", "info");
       };
 
-      ipc.on('menu-toggle-terminal', handleToggleTerminal);
-      ipc.on('menu-open-terminal', handleOpenTerminal);
-      ipc.on('menu-clear-terminal', handleClearTerminal);
+      const off1 = ipc.on('menu-toggle-terminal', handleToggleTerminal);
+      const off2 = ipc.on('menu-open-terminal', handleOpenTerminal);
+      const off3 = ipc.on('menu-clear-terminal', handleClearTerminal);
 
       return () => {
-        ipc.removeListener('menu-toggle-terminal', handleToggleTerminal);
-        ipc.removeListener('menu-open-terminal', handleOpenTerminal);
-        ipc.removeListener('menu-clear-terminal', handleClearTerminal);
+        if (typeof off1 === 'function') off1();
+        if (typeof off2 === 'function') off2();
+        if (typeof off3 === 'function') off3();
       };
     }
   }, [ipc, showToast]);

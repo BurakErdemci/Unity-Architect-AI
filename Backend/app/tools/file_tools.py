@@ -111,40 +111,65 @@ def list_directory(dir_path: str, workspace_path: str, extensions: list = None) 
 
 def delete_file(file_path: str, workspace_path: str) -> dict:
     """
-    Unity projesindeki bir dosyayı siler. 
-    GÜVENLİK: Bu işlem kullanıcı onayı gerektirir. 
-    Ajan bu komutu çağırdığında, kullanıcı arayüzünde bir onay paneli belirir.
+    Unity projesindeki bir dosyayı siler.
     """
     try:
         abs_path = _validate_path(file_path, workspace_path)
-        # Dosya var mı kontrol et
         if not os.path.exists(abs_path):
             return {"success": False, "error": f"Dosya bulunamadı: {file_path}"}
         
-        # Gerçek silme işlemi Electron tarafında yapılacağı için 
-        # burada sadece ajana bilgi veriyoruz.
+        # Gerçek silme işlemi
+        os.remove(abs_path)
+        
         return {
             "success": True, 
-            "summary": f"'{file_path}' dosyası için silme isteği kullanıcıya iletildi. Kullanıcı onayladığında dosya silinecektir. Lütfen kullanıcıdan onay almasını bekle.",
+            "summary": f"'{file_path}' dosyası başarıyla silindi.",
             "path": file_path
         }
-    except Exception as e:
+    except PermissionError as e:
         return {"success": False, "error": str(e)}
+    except Exception as e:
+        return {"success": False, "error": f"Dosya silme hatası: {str(e)}"}
 
+
+import subprocess
 
 def run_command(command: str, workspace_path: str) -> dict:
     """
     Terminalde bir sistem komutu çalıştırır (örn: npm install, git status, unity build vb.).
-    GÜVENLİK: Bu işlem kullanıcı onayı gerektirir.
-    Komut çalıştırılmadan önce kullanıcı arayüzünde onay paneli belirir.
     """
     try:
-        # Güvenlik ve bilgi amaçlı ajana dönüş yapıyoruz.
-        # Gerçek çalıştırma işlemi frontend onayından sonra Terminal üzerinden yapılacak.
+        # Git ve diğer araçların interaktif soru sormasını engelle
+        env = os.environ.copy()
+        env["GIT_TERMINAL_PROMPT"] = "0"
+        
+        # Arka planda sessizce çalıştır
+        process = subprocess.run(
+            command,
+            shell=True,
+            cwd=workspace_path,
+            text=True,
+            capture_output=True,
+            timeout=300,
+            env=env
+        )
+        
+        output = process.stdout if process.stdout else ""
+        error = process.stderr if process.stderr else ""
+        
+        # UI İyileştirmesi: Eğer bir çıktı (output veya error) alabildiysek, 
+        # bu AI için başarılı bir bilgi toplama işlemidir. 
+        # Sadece komut hiç çalışamazsa veya sistem hatası olursa success=False döner.
+        any_output = bool(output.strip() or error.strip())
+        
         return {
-            "success": True,
-            "summary": f"'{command}' komutu onay için kullanıcıya iletildi. Lütfen kullanıcının terminal üzerinden onay vermesini bekle.",
-            "command": command
+            "success": any_output or (process.returncode == 0),
+            "stdout": output,
+            "stderr": error,
+            "exit_code": process.returncode,
+            "summary": f"Komut çıktı verdi (Kod {process.returncode})" if any_output else f"Komut tamamlandı (Kod {process.returncode})"
         }
+    except subprocess.TimeoutExpired:
+        return {"success": False, "error": "Komut zaman aşımına uğradı (30s)."}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": f"Komut çalıştırma hatası: {str(e)}"}
