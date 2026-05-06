@@ -11,7 +11,6 @@ from ai_providers import AIProviderManager
 from analyzer import UnityAnalyzer
 from auth_utils import require_analysis_owner, require_user
 from code_detector import CodeDetector
-from pipelines.agents.intent_classifier import IntentClassifierAgent
 from prompts import PROMPT_GREETING, get_language_instr
 from report_engine import ReportEngine
 from schemas import AnalysisRequest, RenameRequest, UpdateFileRequest
@@ -48,7 +47,7 @@ def create_analysis_router(db):
         logger.info(f"Analiz İsteği - User ID: {user_id}")
 
         is_csharp = CodeDetector.is_csharp(request.code)
-        provider_type, model_name, _, _use_multi_agent, _force_claude = db.get_ai_config(user_id)
+        provider_type, model_name, _, _use_multi_agent = db.get_ai_config(user_id)
         api_key = (db.get_api_key(user_id, provider_type) or "") if provider_type not in ("ollama", "kb") else ""
 
         try:
@@ -58,8 +57,7 @@ def create_analysis_router(db):
         except ValueError as exc:
             return {"intent": "ERROR", "ai_suggestion": str(exc), "static_results": {"smells": []}}
 
-        classifier = IntentClassifierAgent(provider)
-        intent = await classifier.classify_async(request.code)
+        intent = CodeDetector.detect_intent(request.code)
 
         if intent == "GREETING" and not is_csharp:
             return {"intent": "GREETING", "ai_suggestion": PROMPT_GREETING, "static_results": {"smells": []}}

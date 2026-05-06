@@ -16,11 +16,12 @@ interface TerminalPanelProps {
   onClose: () => void;
   workspacePath: string | null;
   problems?: any[];
+  onProblemClick?: (problem: any) => void;
 }
 
 const ipc = typeof window !== 'undefined' ? (window as any).ipc : null;
 
-export const TerminalPanel: React.FC<TerminalPanelProps> = ({ id, isOpen, onClose, workspacePath, problems = [] }) => {
+export const TerminalPanel: React.FC<TerminalPanelProps> = ({ id, isOpen, onClose, workspacePath, problems = [], onProblemClick }) => {
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -197,19 +198,28 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ id, isOpen, onClos
             </div>
           ) : activeTab === 'Problems' ? (
             <div className="flex-1 overflow-y-auto p-4 custom-scrollbar bg-[#0a0a0a]">
-              {problems.length === 0 ? (
+              {(!problems || problems.length === 0) ? (
                 <div className="h-full flex flex-col items-center justify-center text-slate-600 gap-2">
                   <Search size={32} strokeWidth={1.5} opacity={0.5} />
                   <span className="text-xs uppercase tracking-widest font-medium">No problems detected</span>
                 </div>
               ) : (
                 <div className="space-y-1">
-                  {problems.map((prob, i) => (
-                    <div key={i} className="flex items-start gap-3 p-2 rounded hover:bg-white/5 group cursor-pointer border border-transparent hover:border-white/5 transition-all">
+                  {Array.isArray(problems) && problems.map((prob, i) => (
+                    <div 
+                      key={i} 
+                      onClick={() => onProblemClick?.(prob)}
+                      className="flex items-start gap-3 p-2 rounded hover:bg-white/5 group cursor-pointer border border-transparent hover:border-white/5 transition-all"
+                    >
                       <AlertCircle size={14} className={prob.severity === 'error' ? 'text-red-500 mt-0.5' : 'text-amber-500 mt-0.5'} />
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
                           <span className="text-[11px] font-bold text-slate-200">{prob.message}</span>
+                          {prob.file && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 font-mono">
+                              {prob.file}
+                            </span>
+                          )}
                         </div>
                         <div className="flex items-center gap-2 mt-1">
                           <span className="text-[10px] text-slate-500 font-mono">Line {prob.line}, Col {prob.column}</span>

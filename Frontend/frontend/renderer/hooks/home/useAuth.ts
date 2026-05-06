@@ -18,6 +18,7 @@ export const useAuth = (API: string, backendReady: boolean) => {
     userRef.current = user;
   }, [user]);
 
+
   const setSessionTokenHeader = useCallback((token: string | null) => {
     if (token) {
       axios.defaults.headers.common['X-Session-Token'] = token;
@@ -55,6 +56,22 @@ export const useAuth = (API: string, backendReady: boolean) => {
       throw err;
     }
   }, [API, persistSessionToken, setSessionTokenHeader]);
+
+  // --- Auto-Hydrate Session ---
+  useEffect(() => {
+    if (backendReady && API && !user && !authAlertShownRef.current) {
+      ipc?.invoke('session-get').then(async (token: string | null) => {
+        if (token) {
+          try {
+            await hydrateSession(token, true);
+          } catch (err) {
+            console.error("Session restoration failed:", err);
+          }
+        }
+      });
+      authAlertShownRef.current = true;
+    }
+  }, [backendReady, API, user, hydrateSession]);
 
   const performLogout = useCallback(() => {
     if (userRef.current?.sessionToken) {

@@ -30,21 +30,26 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
   const editorRef = React.useRef<any>(null);
 
   React.useEffect(() => {
-    if (monacoRef.current && editorRef.current && problems) {
+    if (monacoRef.current && editorRef.current && problems && openedFilePath) {
       const model = editorRef.current.getModel();
       if (model) {
-        const markers = problems.map(p => ({
-          startLineNumber: p.line,
-          startColumn: p.column,
-          endLineNumber: p.line,
-          endColumn: p.column + 5, // Approximate
-          message: p.message,
-          severity: p.severity === 'error' ? monacoRef.current.MarkerSeverity.Error : monacoRef.current.MarkerSeverity.Warning
-        }));
+        const currentFileName = openedFilePath.split('/').pop();
+        // Filter problems for this specific file
+        const markers = (Array.isArray(problems) ? problems : [])
+          .filter(p => !p.file || p.file === currentFileName)
+          .map(p => ({
+            startLineNumber: p.line,
+            startColumn: p.column,
+            endLineNumber: p.line,
+            endColumn: p.column + 5, // Approximate
+            message: p.message,
+            severity: p.severity === 'error' ? monacoRef.current.MarkerSeverity.Error : monacoRef.current.MarkerSeverity.Warning
+          }));
+        
         monacoRef.current.editor.setModelMarkers(model, "owner", markers);
       }
     }
-  }, [problems]);
+  }, [problems, openedFilePath]);
 
   return (
     <div className="flex-1 flex flex-col relative min-w-0 bg-[#000000] border-r border-slate-800/50">

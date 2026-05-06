@@ -137,7 +137,9 @@ export function AnimatedChatInput({
     onFileDrop,
     isLoading,
     placeholder = "Ask zap a question...",
-    className
+    className,
+    disabled = false,
+    disabledPlaceholder = "Bu bölüm bakımda..."
 }: { 
     value: string;
     setValue: (val: string) => void;
@@ -147,6 +149,8 @@ export function AnimatedChatInput({
     isLoading: boolean;
     placeholder?: string;
     className?: string;
+    disabled?: boolean;
+    disabledPlaceholder?: string;
 }) {
     // Typing state is INTERNAL — does not propagate to parent on every keystroke.
     const [internalValue, setInternalValue] = useState(value);
@@ -356,9 +360,13 @@ export function AnimatedChatInput({
                     }}
                     onFocus={() => setInputFocused(true)}
                     onBlur={() => setInputFocused(false)}
-                    placeholder={placeholder}
+                    placeholder={disabled ? disabledPlaceholder : placeholder}
                     containerClassName="w-full"
-                    className="w-full px-3 py-2 resize-none bg-transparent border-none text-white/90 text-[13px] focus:outline-none placeholder:text-white/20 min-h-[40px]"
+                    disabled={disabled}
+                    className={cn(
+                        "w-full px-3 py-2 resize-none bg-transparent border-none text-[13px] focus:outline-none min-h-[40px]",
+                        disabled ? "text-orange-500/50 cursor-not-allowed italic" : "text-white/90 placeholder:text-white/20"
+                    )}
                     style={{ overflow: "hidden" }}
                     showRing={false}
                 />
@@ -428,8 +436,13 @@ export function AnimatedChatInput({
                     <button 
                         type="button" 
                         onClick={handleSendMessage} 
-                        disabled={!internalValue.trim() && attachments.length === 0} 
-                        className={cn("px-4 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5", (internalValue.trim() || attachments.length > 0) ? "bg-white text-black hover:bg-white/90 active:scale-95 shadow-lg shadow-white/5" : "bg-white/[0.05] text-white/20")}
+                        disabled={disabled || (!internalValue.trim() && attachments.length === 0)} 
+                        className={cn(
+                            "px-4 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5", 
+                            (internalValue.trim() || attachments.length > 0) && !disabled
+                                ? "bg-white text-black hover:bg-white/90 active:scale-95 shadow-lg shadow-white/5" 
+                                : "bg-white/[0.05] text-white/20"
+                        )}
                     >
                         <SendIcon className="w-3 h-3" />
                         <span>Send</span>

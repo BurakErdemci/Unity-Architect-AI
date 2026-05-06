@@ -31,8 +31,6 @@ export interface Message {
   smells: any[];
   timestamp: string;
   provider?: string;
-  pipeline?: any;
-  pipeline_scores?: Record<string, number>;
   is_refined?: boolean;
   thinking?: string | null;
   thinking_duration_ms?: number | null;
@@ -53,7 +51,6 @@ export interface AIConfig {
   api_key: string;
   model_name: string;
   use_multi_agent: boolean;
-  force_claude_coder: boolean;
   has_key?: boolean;
 }
 

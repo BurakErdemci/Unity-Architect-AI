@@ -782,8 +782,8 @@ class KBEngine:
     def fallback_message(intent: str = "chat") -> str:
         """
         KB miss olduğunda kullanıcıya gösterilecek geçiş mesajı.
-        Bu mesaj pipeline response'ının önüne eklenmez —
-        main.py'da ayrı bir log/UI mesajı olarak kullanılabilir.
+        Bu mesaj ana yanıtın önüne eklenmez —
+        ayrı bir log/UI mesajı olarak kullanılabilir.
         """
         if intent == "generation":
             return (

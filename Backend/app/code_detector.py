@@ -6,7 +6,7 @@ Bir metnin Unity C# kodu olup olmadığını ve kullanıcı niyetini
 (intent) belirleyen sınıf.
 
 Bu modül sadece TESPİT yapar — analiz, düzeltme veya üretim
-işleri ilgili modüllere (analyzer.py, pipelines/, knowledge/)
+işleri ilgili modüllere (analyzer.py, knowledge/)
 devredilir.
 
 Kullanım:

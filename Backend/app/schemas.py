@@ -19,7 +19,6 @@ class AIConfigRequest(BaseModel):
     model_name: str
     api_key: str
     use_multi_agent: bool = True
-    force_claude_coder: bool = False
 
 
 class UpdateFileRequest(BaseModel):
@@ -48,7 +47,6 @@ class ChatRequest(BaseModel):
     user_id: int
     mode: str = "analysis"
     use_kb: bool = True
-    use_or_for_coder: bool = False
     editor_code: str = ""
     use_thinking: bool = False
     generation_confirmed: bool = False

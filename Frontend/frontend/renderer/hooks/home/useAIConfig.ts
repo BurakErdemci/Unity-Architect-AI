@@ -4,12 +4,11 @@ import { AIConfig, AvailableModels, UserData } from '../../components/home/types
 
 export const useAIConfig = (API: string, user: UserData | null, showToast: (msg: string, type: any) => void) => {
   const [aiConfig, setAiConfig] = useState<AIConfig>({
-    provider_type: 'kb', api_key: '', model_name: 'unity-kb-v1', use_multi_agent: true, force_claude_coder: false
+    provider_type: 'kb', api_key: '', model_name: 'unity-kb-v1', use_multi_agent: true
   });
   const [availableModels, setAvailableModels] = useState<AvailableModels>({ local: [], cloud: [] });
   const [providersWithKeys, setProvidersWithKeys] = useState<string[]>([]);
   const [modelOrToggles, setModelOrToggles] = useState<Record<string, boolean>>({});
-  const [showMultiAgentInfo, setShowMultiAgentInfo] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
 
@@ -17,9 +16,15 @@ export const useAIConfig = (API: string, user: UserData | null, showToast: (msg:
     if (!API) return;
     try {
       const res = await axios.get(`${API}/get-ai-config/${userId}`);
-      if (res.data) setAiConfig({ ...res.data, api_key: '' });
+      if (res.data) {
+        setAiConfig({ ...res.data, api_key: '' });
+        // Eğer backend'den bir api_key geldiyse (temizlenmeden önce), bu provider'ı listeye ekle
+        if (res.data.api_key && !providersWithKeys.includes(res.data.provider_type)) {
+          setProvidersWithKeys(prev => [...new Set([...prev, res.data.provider_type])]);
+        }
+      }
     } catch (err) { console.error("Config hatası:", err); }
-  }, [API]);
+  }, [API, providersWithKeys]);
 
   const fetchAvailableModels = useCallback(async () => {
     if (!API) return;
@@ -77,27 +82,9 @@ export const useAIConfig = (API: string, user: UserData | null, showToast: (msg:
     }
   }, [API, fetchProvidersWithKeys, showToast, user]);
 
-  const effectiveProvider = useMemo(() => {
-    return aiConfig.use_multi_agent 
-      ? (aiConfig.provider_type === 'openrouter' && aiConfig.model_name.includes('claude') ? 'openrouter' : 'anthropic')
-      : aiConfig.provider_type;
-  }, [aiConfig]);
-
-  const claudeModelForMA = useMemo(() => {
-    return aiConfig.model_name?.includes('claude') ? aiConfig.model_name : 'claude-opus-4-6';
-  }, [aiConfig.model_name]);
-
-  const gpt54OrToggled = modelOrToggles['gpt-5.4'] ?? false;
-  
-  const maCoderProvider = useMemo(() => {
-    return gpt54OrToggled && providersWithKeys.includes('openrouter') ? 'openrouter'
-      : providersWithKeys.includes('openai') ? 'openai'
-        : providersWithKeys.includes('openrouter') ? 'openrouter'
-          : null;
-  }, [gpt54OrToggled, providersWithKeys]);
+  const effectiveProvider = useMemo(() => aiConfig.provider_type, [aiConfig.provider_type]);
 
   const displayModelName = useMemo(() => {
-    if (aiConfig.use_multi_agent) return 'Multi-Agent';
     if (!aiConfig.model_name) return 'Model Seçin';
     const found = availableModels.cloud.find(m =>
       m.id === aiConfig.model_name || m.openrouter_id === aiConfig.model_name
@@ -115,8 +102,6 @@ export const useAIConfig = (API: string, user: UserData | null, showToast: (msg:
     providersWithKeys,
     modelOrToggles,
     setModelOrToggles,
-    showMultiAgentInfo,
-    setShowMultiAgentInfo,
     showSettings,
     setShowSettings,
     isModelDropdownOpen,
@@ -127,9 +112,6 @@ export const useAIConfig = (API: string, user: UserData | null, showToast: (msg:
     saveAIConfig,
     deleteApiKey,
     effectiveProvider,
-    claudeModelForMA,
-    gpt54OrToggled,
-    maCoderProvider,
     displayModelName
   };
 };

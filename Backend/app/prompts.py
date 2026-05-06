@@ -126,7 +126,7 @@ PROMPT_OUT_OF_SCOPE = """Bu konu benim alanımın dışında kalıyor. Ben Unity
 
 
 # ═══════════════════════════════════════════════════════════════
-# PIPELINE PROMPT'LARI — Kademeli analiz için ayrı prompt'lar
+# AŞAMALI ANALİZ PROMPT'LARI — Eski pipeline'dan bağımsız yardımcı prompt'lar
 # ═══════════════════════════════════════════════════════════════
 
 # --- STEP 2: DERİN ANALİZ (Sadece açıklama, KOD YAZMA) ---

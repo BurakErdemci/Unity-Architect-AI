@@ -15,7 +15,28 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
   const [dirContents, setDirContents] = useState<Record<string, FileEntry[]>>({});
   const [openedFilePath, setOpenedFilePath] = useState<string | null>(null);
   const [code, setCode] = useState('');
+  const [originalCode, setOriginalCode] = useState('');
+  const [isDirty, setIsDirty] = useState(false);
   
+  // Track dirty state
+  useEffect(() => {
+    setIsDirty(code !== originalCode);
+  }, [code, originalCode]);
+
+  const saveFile = useCallback(async () => {
+    if (!ipc || !openedFilePath || !workspacePath) return false;
+    const res = await ipc.invoke('write-file', openedFilePath, code, workspacePath);
+    if (res?.success) {
+      setOriginalCode(code);
+      setIsDirty(false);
+      showToast('Dosya kaydedildi', 'success');
+      return true;
+    } else {
+      showToast('Kaydetme hatası: ' + (res?.error || 'Bilinmiyor'), 'error');
+      return false;
+    }
+  }, [code, openedFilePath, workspacePath, showToast]);
+
   const [treeContextMenu, setTreeContextMenu] = useState<{ x: number; y: number; entry: FileEntry } | null>(null);
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
@@ -78,6 +99,7 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
     const result = await ipc.invoke('open-file-dialog');
     if (result) {
       setCode(result.content);
+      setOriginalCode(result.content);
       setOpenedFilePath(result.path);
     }
   }, []);
@@ -97,6 +119,7 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
     const result = await ipc.invoke('read-file', filePath, workspacePath);
     if (result) {
       setCode(result.content);
+      setOriginalCode(result.content);
       setOpenedFilePath(result.path);
     }
   }, [workspacePath]);
@@ -282,6 +305,7 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
 
   return {
     workspacePath, lastWorkspacePath, fileTree, openedFilePath, code, setCode, setOpenedFilePath,
+    isDirty, saveFile,
     fetchLastWorkspace, selectWorkspace, openFolder, closeWorkspace, openFile, refreshFileTree,
     openFilePicker, treeCreating, setTreeCreating, treeCreateValue, setTreeCreateValue,
     submitTreeCreate, expandedDirs, dirContents, toggleDir, treeDragSource, treeDragTarget,

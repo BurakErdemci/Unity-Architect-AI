@@ -176,24 +176,22 @@ export const SettingsModal = ({
                 )}
               </div>
             )}
-            <div className="flex items-center justify-between p-3 rounded-xl border border-slate-800/80 bg-slate-900/30">
-              <div>
-                <p className="text-xs font-semibold text-slate-300">Multi-Agent Sistemi</p>
-                <p className="text-[10px] text-slate-500 mt-0.5">Model seçiciden de açılabilir • Anthropic key zorunlu</p>
+            <div className="flex items-start gap-3 p-3 rounded-xl border border-blue-500/30 bg-blue-500/5">
+              <input
+                id="use_multi_agent"
+                type="checkbox"
+                checked={aiConfig.use_multi_agent}
+                onChange={e => onChange({ ...aiConfig, use_multi_agent: e.target.checked })}
+                className="mt-0.5 h-4 w-4 rounded border-slate-700 bg-slate-950 text-blue-500 focus:ring-blue-500"
+              />
+              <div className="min-w-0">
+                <label htmlFor="use_multi_agent" className="text-xs font-semibold text-blue-300 cursor-pointer">
+                  Gelecekte uzman ajan orkestrasyonunu tercih et
+                </label>
+                <p className="text-[10px] text-blue-400/70 mt-0.5">
+                  Bu seçenek şimdilik yalnızca tercih olarak saklanır. Mevcut chat akışı yine bugünkü agentic runtime ile çalışır.
+                </p>
               </div>
-              <label className="relative inline-flex items-center cursor-pointer">
-                <input
-                  type="checkbox"
-                  className="sr-only peer"
-                  checked={aiConfig.use_multi_agent}
-                  onChange={(e) => onChange({
-                    ...aiConfig,
-                    use_multi_agent: e.target.checked,
-                    ...(e.target.checked ? { provider_type: 'anthropic' } : {})
-                  })}
-                />
-                <div className="w-9 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
-              </label>
             </div>
             <div className="flex gap-3 pt-2 mt-2 border-t border-slate-800/50">
               <button

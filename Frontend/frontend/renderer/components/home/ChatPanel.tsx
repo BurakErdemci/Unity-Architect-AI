@@ -8,7 +8,6 @@ import {
   Brain, 
   ChevronDown, 
   AlertTriangle, 
-  Sparkles,
   X,
   Bot
 } from 'lucide-react';
@@ -52,14 +51,7 @@ interface ChatPanelProps {
   onConfirmPlan: (msg: string, mode: GenerationMode) => void;
   currentPlan: AgentTask[];
   messagesEndRef: React.RefObject<HTMLDivElement>;
-  generationMode: GenerationMode;
-  appMode: string;
-  aiConfig: any;
-  gpt54OrToggled: boolean;
-  axios: any;
-  API: string;
   ipc: any;
-  suggestFilePath: (name: string) => string;
   showToast: (msg: string, type: 'success' | 'error' | 'warning' | 'info') => void;
   diffFile: any | null;
   setDiffFile: (val: any | null) => void;
@@ -77,7 +69,6 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   user,
   loading,
   clearHistory,
-  lang,
   wisdomSummary,
   isWisdomExpanded,
   setIsWisdomExpanded,
@@ -100,14 +91,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   onConfirmPlan,
   currentPlan,
   messagesEndRef,
-  generationMode,
-  appMode,
-  aiConfig,
-  gpt54OrToggled,
-  axios,
-  API,
   ipc,
-  suggestFilePath,
   showToast,
   diffFile,
   setDiffFile,
@@ -132,7 +116,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   if (messages.length === 0 && !loading) {
     return (
       <div className="flex items-center justify-center h-full">
-        <Sparkles size={20} className="opacity-10 text-blue-500" />
+        <Bot size={20} className="opacity-10 text-blue-500" />
       </div>
     );
   }
@@ -200,36 +184,6 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                             <span>{s.msg}</span>
                           </div>
                         ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Pipeline Skor Badge */}
-                  {msg.pipeline && (
-                    <div className="mb-3 space-y-3">
-                      <div className="bg-[#000000] rounded-lg border border-blue-500/20 p-3">
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="flex items-center gap-2">
-                            <div className="w-6 h-6 rounded bg-blue-500/20 flex items-center justify-center">
-                              <Sparkles size={12} className="text-blue-400" />
-                            </div>
-                            <span className="text-xs font-bold text-slate-200">AI Kalite Skoru</span>
-                          </div>
-                          <div className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-500/20 text-blue-400">
-                            {msg.pipeline.score.toFixed(1)}/10
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2 text-[10px] mb-2">
-                          {msg.pipeline.severity_counts?.critical > 0 && <span className="text-red-400">🔴 {msg.pipeline.severity_counts.critical}</span>}
-                          {msg.pipeline.severity_counts?.warning > 0 && <span className="text-yellow-400">🟡 {msg.pipeline.severity_counts.warning}</span>}
-                          {msg.pipeline.severity_counts?.info > 0 && <span className="text-blue-400">🔵 {msg.pipeline.severity_counts.info}</span>}
-                        </div>
-                        <div className="text-[10px] text-slate-400 leading-relaxed max-h-24 overflow-y-auto custom-scrollbar pr-2">
-                          {msg.pipeline.summary}
-                        </div>
-                        <div className="text-[9px] text-slate-600 flex items-center gap-1 mt-2 border-t border-slate-800 pt-2">
-                          <span>⚡ {(msg.pipeline.total_duration_ms / 1000).toFixed(1)}s</span>
-                        </div>
                       </div>
                     </div>
                   )}

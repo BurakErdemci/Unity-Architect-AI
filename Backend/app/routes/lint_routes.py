@@ -12,8 +12,10 @@ router = APIRouter()
 class LintRequest(BaseModel):
     code: str
     filename: str
+    full_project: bool = False
 
 class LintError(BaseModel):
+    file: Optional[str] = None
     line: int
     column: int
     message: str
@@ -36,7 +38,7 @@ def create_lint_router(db: DatabaseManager):
         workspace_path = db.get_last_workspace(user[0])
         if workspace_path:
             try:
-                local_errors = lint_csharp(request.code, workspace_path, request.filename)
+                local_errors = lint_csharp(request.code, workspace_path, request.filename, request.full_project)
                 if local_errors:
                     return LintResponse(errors=[LintError(**e) for e in local_errors])
             except Exception as e:

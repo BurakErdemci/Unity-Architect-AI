@@ -182,8 +182,8 @@ ipcMain.handle('write-file', async (_event, filePath: string, content: string, w
     
     const fullPath = isAbsolute ? filePath : path.join(workspacePath!, filePath);
 
-    if (!isMarkdown && !isAllowedUnityScriptPath(fullPath, workspacePath || "")) {
-      return { success: false, error: 'Dosya yalnızca workspace içindeki Assets/Scripts altına yazılabilir.' }
+    if (!isAllowedUnityScriptPath(fullPath, workspacePath || "")) {
+      return { success: false, error: 'Dosya yalnızca seçili workspace içindeki .cs dosyalarına yazılabilir.' }
     }
     const dir = path.dirname(fullPath)
     if (!fs.existsSync(dir)) {
@@ -213,7 +213,7 @@ ipcMain.handle('write-multiple-files', async (_event, files: { path: string; con
     try {
       const fullPath = path.isAbsolute(file.path) ? file.path : path.join(workspacePath, file.path);
       if (!isAllowedUnityScriptPath(fullPath, workspacePath)) {
-        results.push({ path: fullPath, success: false, error: 'Dosya yalnızca workspace içindeki Assets/Scripts altına yazılabilir.' })
+        results.push({ path: fullPath, success: false, error: 'Dosya yalnızca seçili workspace içindeki .cs dosyalarına yazılabilir.' })
         continue
       }
       const dir = path.dirname(fullPath)

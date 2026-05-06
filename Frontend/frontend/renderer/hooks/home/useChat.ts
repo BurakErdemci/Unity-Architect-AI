@@ -25,6 +25,7 @@ export const useChat = (
   const [currentPlan, setCurrentPlan] = useState<Task[]>([]);
   const [contextUsage, setContextUsage] = useState({ percent: 0, should_compact: false, message_count: 0 });
   const [isCompacting, setIsCompacting] = useState(false);
+  const [isAnalyzingProject, setIsAnalyzingProject] = useState(false);
   const [pendingPlan, setPendingPlan] = useState<{ content: string; originalMessage: string; mode: GenerationMode } | null>(null);
   const [pendingFix, setPendingFix] = useState<{ data: any; messageId?: number; applied?: boolean } | null>(null);
   const [pendingCommand, setPendingCommand] = useState<{ command: string; messageId: number } | null>(null);
@@ -233,7 +234,6 @@ export const useChat = (
     mode: GenerationMode, 
     lang: string, 
     code: string, 
-    gpt54OrToggled: boolean, 
     setPendingGenFiles: (val: any) => void,
     setPendingDelete: (val: any) => void
   ) => {
@@ -242,14 +242,14 @@ export const useChat = (
     try {
       const res = await axios.post(`${API}/chat`, {
         conversation_id: activeConvId, message: originalMsg, language: lang, user_id: user?.id,
-        use_kb: aiConfig.provider_type === 'kb', use_or_for_coder: gpt54OrToggled,
+        use_kb: aiConfig.provider_type === 'kb',
         editor_code: code || '', use_thinking: false, generation_mode: mode, generation_confirmed: true,
       }, { timeout: 900000 });
       
       const aiMsgId = Date.now() + 5;
       const aiMsg: Message = {
         id: aiMsgId, role: 'assistant', content: res.data.content, smells: res.data.static_results?.smells || [],
-        timestamp: new Date().toISOString(), pipeline: res.data.pipeline || null,
+        timestamp: new Date().toISOString(),
         thinking: res.data.thinking || null, thinking_duration_ms: res.data.thinking_duration_ms || null,
         tool_calls: res.data.tool_calls || []
       };
@@ -292,6 +292,7 @@ export const useChat = (
 
   const analyzeProject = useCallback(async (silent = false) => {
     if (!activeConvId || !user || !API) return;
+    setIsAnalyzingProject(true);
     try {
       const res = await axios.post(`${API}/conversations/${activeConvId}/analyze-project`, {}, {
         headers: { 'X-Session-Token': user.sessionToken }, timeout: 120000
@@ -304,6 +305,7 @@ export const useChat = (
         setWisdomSummary(res.data.summary);
       }
     } catch (err: any) { if (!silent) showToast('Analiz hatası.', 'error'); }
+    finally { setIsAnalyzingProject(false); }
   }, [API, activeConvId, showToast, user]);
 
   const exportMemory = useCallback(async () => {
@@ -355,6 +357,7 @@ export const useChat = (
     currentPlan, setCurrentPlan,
     contextUsage, setContextUsage,
     isCompacting, setIsCompacting,
+    isAnalyzingProject, setIsAnalyzingProject,
     pendingPlan, setPendingPlan,
     pendingFix, setPendingFix,
     pendingCommand, setPendingCommand,

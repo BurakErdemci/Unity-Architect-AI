@@ -48,16 +48,13 @@ export function isAllowedUnityScriptPath(filePath: string, workspacePath: string
     const resolvedWorkspace = safeResolve(workspacePath)
     const relativePath = path.relative(resolvedWorkspace, resolvedFile)
 
+    // Workspace dışına çıkış kontrolü
     if (!relativePath || relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
       return false
     }
 
-    const parts = relativePath.split(path.sep)
-    if (parts.length < 3) return false
-    if (parts[0] !== 'Assets' || parts[1] !== 'Scripts') return false
-    if (path.extname(resolvedFile).toLowerCase() !== '.cs') return false
-
-    return true
+    // Sadece .cs dosyalarına yazma izni ver
+    return path.extname(resolvedFile).toLowerCase() === '.cs'
   } catch {
     return false
   }
