@@ -1078,3 +1078,5 @@ Backend çalışırken: [http://localhost:8000/docs](http://localhost:8000/docs)
 ## 📄 Lisans
 
 Bu proje [MIT Lisansı](LICENSE) ile lisanslanmıştır.
+
+<!-- Contribution Graph Test - Wed May  6 17:55:56 +03 2026 -->
