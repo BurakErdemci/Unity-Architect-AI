@@ -127,7 +127,7 @@ export default function Home() {
 
   // --- UI State ---
   const [lang, setLang] = useState('tr');
-  const [useThinking, setUseThinking] = useState(true);
+  const [thinkingLevel, setThinkingLevel] = useState<'off' | 'low' | 'medium' | 'high'>('medium');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isChatOpen, setIsChatOpen] = useState(true);
   const [sidebarTab, setSidebarTab] = useState<'chats' | 'files'>('chats');
@@ -239,7 +239,7 @@ export default function Home() {
         }
       }
     }
-    chat.sendMessage(input, fs.code, lang, chat.generationMode, useThinking, fs.setPendingGenFiles, fs.setPendingDelete, images);
+    chat.sendMessage(input, fs.code, lang, chat.generationMode, thinkingLevel, fs.setPendingGenFiles, fs.setPendingDelete, images);
   };
 
   const handleConfirmPlan = useCallback((originalMsg: string, mode: any) => {
@@ -366,7 +366,7 @@ export default function Home() {
         </div>
 
         <div className="flex-1 overflow-hidden relative flex flex-col bg-[#000000]">
-          {fs.openedFilePath ? (
+          {(fs.openedFilePath || diffFile) ? (
             <EditorPanel
               code={fs.code} setCode={fs.setCode} openedFilePath={fs.openedFilePath} isEditorFocused={isEditorFocused} setIsEditorFocused={setIsEditorFocused}
               workspacePath={fs.workspacePath} problems={flattenedProblems} diffFile={diffFile}
@@ -410,17 +410,17 @@ export default function Home() {
             <ChatPanel 
               messages={chat.messages} activeConvId={chat.activeConvId} user={auth.user} loading={chat.loading} clearHistory={chat.clearHistory} lang={lang}
               wisdomSummary={chat.wisdomSummary} isWisdomExpanded={chat.isWisdomExpanded} setIsWisdomExpanded={chat.setIsWisdomExpanded} effectiveProvider={ai.effectiveProvider}
-              useThinking={useThinking} workspacePath={fs.workspacePath} handleExportToUnity={fs.handleExportToUnity} pendingPlan={chat.pendingPlan} setPendingPlan={chat.setPendingPlan}
+              thinkingLevel={thinkingLevel} workspacePath={fs.workspacePath} handleExportToUnity={fs.handleExportToUnity} pendingPlan={chat.pendingPlan} setPendingPlan={chat.setPendingPlan}
               pendingGenFiles={fs.pendingGenFiles} setPendingGenFiles={fs.setPendingGenFiles} pendingFix={chat.pendingFix} setPendingFix={chat.setPendingFix} openedFilePath={fs.openedFilePath}
               setCode={fs.setCode} refreshFileTree={fs.refreshFileTree} analyzeProject={chat.analyzeProject} openFile={fs.openFile} sendMessage={handleSendMessage} onConfirmPlan={handleConfirmPlan}
               currentPlan={chat.currentPlan} messagesEndRef={chatEndRef} ipc={ipc} showToast={showToast as any} diffFile={diffFile} setDiffFile={setDiffFile}
-              pendingDelete={fs.pendingDelete} setPendingDelete={fs.setPendingDelete} pendingCommand={chat.pendingCommand} setPendingCommand={chat.setPendingCommand} deleteFile={fs.deleteFile} setIsTerminalOpen={setIsTerminalOpen}
+              pendingDelete={fs.pendingDelete} setPendingDelete={fs.setPendingDelete} pendingCommand={chat.pendingCommand} setPendingCommand={chat.setPendingCommand} onApproveCommand={chat.approveCommand} deleteFile={fs.deleteFile} setIsTerminalOpen={setIsTerminalOpen}
             />
           </div>
 
           <div className="p-4 border-t border-slate-800/50 bg-[#000000]">
             <ControlPanel
-              useThinking={useThinking} setUseThinking={setUseThinking} generationMode={chat.generationMode} setGenerationMode={chat.setGenerationMode}
+              thinkingLevel={thinkingLevel} setThinkingLevel={setThinkingLevel} generationMode={chat.generationMode} setGenerationMode={chat.setGenerationMode}
               isAnalyzingProject={chat.isAnalyzingProject} activeConvId={chat.activeConvId} analyzeProject={chat.analyzeProject} wisdomSummary={chat.wisdomSummary}
               exportMemory={chat.exportMemory} importMemory={chat.importMemory} compactConversation={chat.compactConversation} isCompacting={chat.isCompacting} contextUsage={chat.contextUsage}
             />

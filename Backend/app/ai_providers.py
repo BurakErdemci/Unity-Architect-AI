@@ -1,11 +1,17 @@
 import re
 import time
+import subprocess
+import os
+import logging
 import ollama
 import openai
 from google import genai
 from google.genai import types as gtypes
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional, Tuple, List
+import asyncio
+from typing import Dict, Any, Optional, Tuple, List, AsyncGenerator
+
+logger = logging.getLogger(__name__)
 
 # (response_text, thinking_text, thinking_duration_ms)
 ThinkingResult = Tuple[str, Optional[str], Optional[int]]
@@ -13,12 +19,12 @@ ThinkingResult = Tuple[str, Optional[str], Optional[int]]
 
 class AIProvider(ABC):
     @abstractmethod
-    def analyze_code(self, prompt: str, max_tokens: int = 4096, images: Optional[List[str]] = None) -> str:
+    def analyze_code(self, prompt: str, max_tokens: int = 4096, images: Optional[List[str]] = None, cwd: Optional[str] = None) -> str:
         pass
 
-    def analyze_code_with_thinking(self, prompt: str, max_tokens: int = 4096, images: Optional[List[str]] = None) -> ThinkingResult:
+    def analyze_code_with_thinking(self, prompt: str, max_tokens: int = 4096, images: Optional[List[str]] = None, thinking_level: str = "medium", cwd: Optional[str] = None) -> ThinkingResult:
         """Thinking desteklemeyen provider'lar için fallback — thinking None döner."""
-        return self.analyze_code(prompt, max_tokens, images), None, None
+        return self.analyze_code(prompt, max_tokens, images, cwd=cwd), None, None
 
     def _clean_response(self, text: str):
         if not text: return ""
@@ -80,7 +86,7 @@ class GeminiProvider(AIProvider):
                 return f"SİSTEM MESAJI: '{self.model_id}' modeli bulunamadı. Ayarlar'dan farklı bir Gemini modeli seçin."
             raise Exception(f"Gemini API Hatası: {err_str}")
 
-    def analyze_code_with_thinking(self, prompt: str, max_tokens: int = 4096, images: Optional[List[str]] = None) -> ThinkingResult:
+    def analyze_code_with_thinking(self, prompt: str, max_tokens: int = 4096, images: Optional[List[str]] = None, thinking_level: str = "medium") -> ThinkingResult:
         if not self._supports_thinking():
             return self.analyze_code(prompt, max_tokens, images), None, None
 
@@ -96,12 +102,16 @@ class GeminiProvider(AIProvider):
                         parts.append(gtypes.Part(inline_data=gtypes.Blob(mime_type=mime_type, data=base64_str)))
                 contents = [gtypes.Content(role="user", parts=parts)]
 
+            # Düşünme seviyesine göre bütçe belirle
+            budget_map = {"low": 4096, "medium": 16384, "high": 65536}
+            budget = budget_map.get(thinking_level, 16384)
+
             response = self.client.models.generate_content(
                 model=self.model_id,
                 contents=contents,
                 config=gtypes.GenerateContentConfig(
                     max_output_tokens=max_tokens,
-                    thinking_config=gtypes.ThinkingConfig(thinking_budget=8192),
+                    thinking_config=gtypes.ThinkingConfig(thinking_budget=budget),
                 ),
             )
             duration_ms = int((time.time() - start) * 1000)
@@ -348,6 +358,316 @@ class AnthropicProvider(AIProvider):
             return f"❌ Anthropic API Hatası: {str(e)}"
 
 
+class CLIProvider(AIProvider):
+    """
+    Kullanıcının bilgisayarında yüklü olan ve abonelikle çalışan
+    CLI araçlarını (Claude Code, Codex vb.) motor olarak kullanır.
+
+    Step (interactive) modunda "Ephemeral Snapshot" mimarisi kullanılır:
+    1. CLI çalışmadan önce workspace snapshot'ı alınır (dosya içerikleri)
+    2. CLI özgürce çalışır (herhangi bir kısıtlama yok)
+    3. CLI bittikten sonra değişen dosyalar tespit edilir
+    4. Değişiklikler HEMEN geri alınır (workspace temiz kalır)
+    5. Değişiklikler 'ephemeral_changes' event'i ile üst katmana iletilir
+    6. Kullanıcı onaylarsa frontend mevcut write mekanizmasıyla uygular
+    """
+
+    # Snapshot'ta takip edilecek uzantılar
+    _TRACKED_EXTENSIONS = ('.cs', '.shader', '.hlsl', '.glsl', '.json', '.txt', '.asset', '.asmdef')
+    # Snapshot dışı bırakılacak klasörler
+    _SKIP_DIRS = {'Library', 'Temp', '.git', 'Logs', 'UserSettings', 'Packages'}
+
+    def __init__(self, binary_name: str = "claude"):
+        self.binary_name = binary_name
+
+    # ─── Snapshot Helpers ────────────────────────────────────────────────────
+
+    def _snapshot(self, cwd: str) -> dict:
+        """Assets klasörünün takip edilen dosyalarının içeriğini al."""
+        snap = {}
+        assets = os.path.join(cwd, "Assets")
+        if not os.path.exists(assets):
+            return snap
+        for root, dirs, files in os.walk(assets):
+            dirs[:] = [d for d in dirs if d not in self._SKIP_DIRS]
+            for f in files:
+                if f.endswith(self._TRACKED_EXTENSIONS):
+                    full = os.path.join(root, f)
+                    try:
+                        with open(full, 'r', encoding='utf-8', errors='replace') as fp:
+                            snap[full] = fp.read()
+                    except Exception:
+                        pass
+        return snap
+
+    def _get_changes(self, cwd: str, before: dict) -> list:
+        """
+        Snapshot'tan bu yana değişen/eklenen/silinen dosyaları döndür.
+        Silinen dosyalar: code="" ve deleted=True ile işaretlenir.
+        """
+        changes = []
+        seen_files: set = set()
+        assets = os.path.join(cwd, "Assets")
+
+        if os.path.exists(assets):
+            for root, dirs, files in os.walk(assets):
+                dirs[:] = [d for d in dirs if d not in self._SKIP_DIRS]
+                for f in files:
+                    if f.endswith(self._TRACKED_EXTENSIONS):
+                        full = os.path.join(root, f)
+                        seen_files.add(full)
+                        try:
+                            with open(full, 'r', encoding='utf-8', errors='replace') as fp:
+                                current = fp.read()
+                            rel = os.path.relpath(full, cwd)
+                            orig = before.get(full)
+                            if orig is None:
+                                changes.append({"path": rel, "code": current, "originalCode": "", "deleted": False})
+                            elif orig != current:
+                                changes.append({"path": rel, "code": current, "originalCode": orig, "deleted": False})
+                        except Exception:
+                            pass
+
+        # Snapshot'ta olan ama artık olmayan dosyalar = silindi
+        for full, orig_content in before.items():
+            if full not in seen_files:
+                rel = os.path.relpath(full, cwd)
+                changes.append({"path": rel, "code": "", "originalCode": orig_content, "deleted": True})
+
+        return changes
+
+    def _revert(self, changes: list, cwd: str):
+        """Onaylanmamış değişiklikleri geri al — workspace temiz kalır."""
+        for c in changes:
+            full = os.path.join(cwd, c["path"])
+            try:
+                if c.get("deleted"):
+                    # Silinen dosyayı geri yaz
+                    os.makedirs(os.path.dirname(full), exist_ok=True)
+                    with open(full, 'w', encoding='utf-8') as fp:
+                        fp.write(c["originalCode"])
+                elif c["originalCode"] == "":
+                    # Yeni eklenen dosyayı sil
+                    if os.path.exists(full):
+                        os.remove(full)
+                else:
+                    # Değiştirilen dosyayı eski haline getir
+                    with open(full, 'w', encoding='utf-8') as fp:
+                        fp.write(c["originalCode"])
+            except Exception:
+                pass
+
+    # ─── CLI Execution ────────────────────────────────────────────────────────
+
+    # CLI'nın sorduğu onay sorusu pattern'leri (TR + EN)
+    # Geniş TR kalıpları: Claude Code Türkçe yanıt verdiğinde de yakalamalı
+    _APPROVAL_PATTERNS = (
+        # Türkçe soru kalıpları
+        "devam edeyim mi", "devam edelim mi", "emin misiniz",
+        "istiyor musunuz", "ister misiniz", "yapayım mı",
+        "silmemi", "silmek istiyor", "silsin mi",
+        "onaylıyor musunuz", "onaylıyor musun",
+        "kabul ediyor musunuz", "kabul ediyor musun",
+        "yapmamı ister", "yapmamı istiyor",
+        "devam mı", "devam edilsin mi",
+        "değişiklikler kaybolur", "geri alınamaz",
+        # İngilizce soru kalıpları
+        "are you sure", "shall i proceed", "should i proceed",
+        "do you want to", "would you like", "proceed?",
+        "confirm", "allow this command", "continue?",
+        # Evrensel
+        "(y/n)", "[y/n]", "(yes/no)", "y/n",
+    )
+
+    @classmethod
+    def _is_approval_question(cls, text: str) -> bool:
+        lower = text.lower()
+        # Pattern eşleşmesi VEYA soru işareti ile biten ve eylem fiili içeren satır
+        if any(p in lower for p in cls._APPROVAL_PATTERNS):
+            return True
+        # "?" ile biten ve Türkçe/İngilizce eylem içeren satırlar
+        if lower.strip().endswith("?"):
+            action_words = ("sil", "del", "remov", "push", "commit", "reset",
+                           "merge", "install", "run", "execut", "çalıştır")
+            return any(w in lower for w in action_words)
+        return False
+
+    # Claude Code'un "komutu çalıştırıyorum" çıktılarından exact command'ı çıkar
+    # Örn: "⎿ Bash(rm Assets/Scripts/TestScript2.cs)" → "rm Assets/Scripts/TestScript2.cs"
+    import re as _re
+    _CMD_EXTRACT_PATTERNS = [
+        _re.compile(r'Bash\((.+?)\)', _re.IGNORECASE),
+        _re.compile(r'Running:\s*`?(.+?)`?\s*$', _re.IGNORECASE),
+        _re.compile(r'Executing:\s*`?(.+?)`?\s*$', _re.IGNORECASE),
+        _re.compile(r'^\$\s+(.+)$'),
+        _re.compile(r'`(.+?)`\s*$'),
+    ]
+
+    @classmethod
+    def _extract_command_from_line(cls, text: str) -> str | None:
+        """CLI çıktı satırından çalıştırılacak komutu ayıkla."""
+        for pattern in cls._CMD_EXTRACT_PATTERNS:
+            m = pattern.search(text)
+            if m:
+                cmd = m.group(1).strip()
+                if len(cmd) > 2:
+                    return cmd
+        return None
+
+    def _build_cmd(self, prompt: str, thinking_level: str = "medium") -> list:
+        full_id = self.binary_name
+        if full_id.startswith("claude-"):
+            # default mod: CLI her tool çağrısında önce sorar → tam komutu görebilir + onaylayabiliriz
+            return ["claude", "--model", full_id, "--permission-mode", "default", "-p", prompt]
+        elif full_id.startswith("gpt-"):
+            cmd = ["codex", "exec", "-m", full_id, "--sandbox", "workspace-write", prompt]
+            if thinking_level != "off":
+                cmd.extend(["-c", f"reasoning.effort={thinking_level}"])
+            return cmd
+        return [full_id, prompt]
+
+    async def _stream_process(self, cmd: list, cwd: str) -> AsyncGenerator[Dict[str, Any], None]:
+        """
+        CLI'ı çalıştır, satır satır oku.
+
+        İki aşamalı onay mantığı:
+        1. CLI "Bash(rm foo.cs)" gibi bir satır yazar → komutu buffer'a al
+        2. Ardından "(y/n)" / "Allow?" gibi onay sorusu yazar →
+           buffer'daki EXACT KOMUT ile CommandApproval kartını göster
+        3. Kullanıcı karttan onaylarsa stdin'e y, reddederse n yaz
+        """
+        import uuid
+        from agentic.command_gates import APPROVAL_GATES, APPROVAL_RESULTS
+
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            stdin=asyncio.subprocess.PIPE,
+            env={**os.environ, "TERM": "xterm-256color"},
+            cwd=cwd,
+        )
+
+        full_text = ""
+        buffered_command: str | None = None  # Son görülen tool çağrısı komutu
+
+        while True:
+            line = await process.stdout.readline()
+            if not line:
+                break
+            decoded = line.decode('utf-8', errors='ignore')
+            full_text += decoded
+            clean = decoded.strip()
+
+            # ── Adım 1: "Bash(rm foo.cs)" gibi komutu önceden yakala ────────
+            extracted = self._extract_command_from_line(clean)
+            if extracted:
+                buffered_command = extracted
+                # Komutu UI'da ToolBlock olarak göster (henüz çalışmadı, sadece bilgi)
+                yield {"type": "tool_call", "tool": "Terminal",
+                       "summary": f"→ {buffered_command[:120]}"}
+                yield {"type": "delta", "text": decoded}
+                continue
+
+            # ── Adım 2: Onay sorusu geldi — exact komutla kartı göster ──────
+            if self._is_approval_question(clean):
+                # Onay kartında tam komutu göster (sözlü soru değil)
+                display_cmd = buffered_command or clean
+                buffered_command = None
+
+                gate_id = uuid.uuid4().hex[:10]
+                gate_event = asyncio.Event()
+                APPROVAL_GATES[gate_id] = gate_event
+                APPROVAL_RESULTS[gate_id] = False
+
+                yield {
+                    "type": "command_approval_needed",
+                    "command": display_cmd,
+                    "gate_id": gate_id,
+                }
+
+                try:
+                    await asyncio.wait_for(gate_event.wait(), timeout=60.0)
+                    approved = APPROVAL_RESULTS.get(gate_id, False)
+                except asyncio.TimeoutError:
+                    approved = False
+                    logger.warning(f"[CLIProvider] Onay zaman aşımı: {display_cmd[:60]}")
+                finally:
+                    APPROVAL_GATES.pop(gate_id, None)
+                    APPROVAL_RESULTS.pop(gate_id, None)
+
+                if process.stdin:
+                    process.stdin.write(b"y\n" if approved else b"n\n")
+                    await process.stdin.drain()
+
+                continue  # Onay satırını delta olarak gösterme
+
+            # ── Normal satır ─────────────────────────────────────────────────
+            buffered_command = None  # Alakasız satır geldi, buffer'ı temizle
+            if "Thinking" in clean:
+                yield {"type": "thinking", "text": clean}
+            yield {"type": "delta", "text": decoded}
+
+        await process.wait()
+        if process.returncode not in (0, 1):
+            stderr = (await process.stderr.read()).decode('utf-8', errors='ignore')
+            yield {"type": "error", "content": f"❌ CLI Hatası (Kod {process.returncode}): {stderr}"}
+
+        yield {"type": "final", "text": self._clean_response(full_text)}
+
+    # ─── Public API ───────────────────────────────────────────────────────────
+
+    async def analyze_code(self, prompt: str, max_tokens: int = 4096, images: Optional[List[str]] = None,
+                           thinking_level: str = "medium", cwd: Optional[str] = None,
+                           interactive: bool = False) -> AsyncGenerator[Dict[str, Any], None]:
+        try:
+            cmd = self._build_cmd(prompt, thinking_level)
+
+            if not interactive or not cwd:
+                # Direkt mod: kısıtlama yok, değişiklikler direkt uygulanır
+                async for ev in self._stream_process(cmd, cwd or "."):
+                    yield ev
+                return
+
+            # ── Ephemeral Snapshot Modu ──────────────────────────────────────
+            yield {"type": "delta", "text": "🔬 Değişiklikler izleniyor (ephemeral mod)...\n"}
+            before = await asyncio.to_thread(self._snapshot, cwd)
+
+            final_text = ""
+            async for ev in self._stream_process(cmd, cwd):
+                if ev["type"] == "final":
+                    final_text = ev["text"]
+                else:
+                    yield ev
+
+            # Değişiklikleri tespit et
+            changes = await asyncio.to_thread(self._get_changes, cwd, before)
+
+            if changes:
+                # Workspace'i HEMEN temizle — kullanıcı henüz onaylamadı
+                await asyncio.to_thread(self._revert, changes, cwd)
+                yield {"type": "ephemeral_changes", "files": changes}
+                logger.info(f"[CLIProvider] Ephemeral: {len(changes)} değişiklik yakalandı ve geri alındı.")
+            else:
+                logger.info("[CLIProvider] Ephemeral: CLI hiçbir dosyayı değiştirmedi.")
+
+            yield {"type": "final", "text": final_text}
+
+        except Exception as e:
+            yield {"type": "error", "content": f"❌ CLI Bridge Hatası: {str(e)}"}
+
+    async def analyze_code_with_thinking(self, prompt: str, max_tokens: int = 4096,
+                                         images: Optional[List[str]] = None,
+                                         thinking_level: str = "medium", cwd: Optional[str] = None,
+                                         interactive: bool = False) -> AsyncGenerator[Dict[str, Any], None]:
+        async for ev in self.analyze_code(prompt, max_tokens, images, thinking_level, cwd, interactive):
+            yield ev
+
+    async def analyze_code_with_thinking(self, prompt: str, max_tokens: int = 4096, images: Optional[List[str]] = None, thinking_level: str = "medium", cwd: Optional[str] = None, interactive: bool = False) -> AsyncGenerator[Dict[str, Any], None]:
+        async for ev in self.analyze_code(prompt, max_tokens, images, thinking_level=thinking_level, cwd=cwd, interactive=interactive):
+            yield ev
+
+
 class AIProviderManager:
     @staticmethod
     def get_provider(config: Dict[str, Any]) -> AIProvider:
@@ -369,6 +689,9 @@ class AIProviderManager:
             return OpenAICompatibleProvider(api_key=api_key, base_url="https://openrouter.ai/api/v1", model_name=m_name or "openai/gpt-5.5")
         elif p_type == "moonshot" and api_key:
             return OpenAICompatibleProvider(api_key=api_key, base_url="https://api.moonshot.cn/v1", model_name=m_name or "kimi-k3")
+        elif p_type == "subscription":
+            # m_name burada binary adıdır (claude, copilot vb.)
+            return CLIProvider(binary_name=m_name or "claude")
         elif p_type == "ollama":
             return OllamaProvider(model_name=m_name)
 

@@ -49,6 +49,7 @@ class ChatRequest(BaseModel):
     use_kb: bool = True
     editor_code: str = ""
     use_thinking: bool = False
+    thinking_level: str = "medium" # off | low | medium | high
     generation_confirmed: bool = False
     generation_mode: str = "auto"  # auto | plan | step
     images: Optional[List[str]] = None

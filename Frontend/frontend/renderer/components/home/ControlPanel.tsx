@@ -10,8 +10,8 @@ import {
 import { GenerationModeSelector, GenerationMode } from './GenerationModeSelector';
 
 interface ControlPanelProps {
-  useThinking: boolean;
-  setUseThinking: (val: boolean) => void;
+  thinkingLevel: 'low' | 'medium' | 'high' | 'off';
+  setThinkingLevel: (val: 'low' | 'medium' | 'high' | 'off') => void;
   generationMode: GenerationMode;
   setGenerationMode: (mode: GenerationMode) => void;
   isAnalyzingProject: boolean;
@@ -26,8 +26,8 @@ interface ControlPanelProps {
 }
 
 export const ControlPanel: React.FC<ControlPanelProps> = ({
-  useThinking,
-  setUseThinking,
+  thinkingLevel,
+  setThinkingLevel,
   generationMode,
   setGenerationMode,
   isAnalyzingProject,
@@ -41,25 +41,67 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
   contextUsage
 }) => {
   const [showMemoryMenu, setShowMemoryMenu] = useState(false);
+  const [showThinkingMenu, setShowThinkingMenu] = useState(false);
 
   return (
     <div className="flex items-center gap-2 px-1 mt-1.5">
       <GenerationModeSelector value={generationMode} onChange={setGenerationMode} />
       <div className="w-px h-3 bg-slate-800" />
       
-      {/* Thinking Toggle */}
-      <button
-        onClick={() => setUseThinking(!useThinking)}
-        className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium transition-colors ${
-          useThinking
-            ? 'bg-violet-500/15 border border-violet-500/30 text-violet-400'
-            : 'text-slate-600 hover:text-slate-400'
-        }`}
-        title="Modelin düşünce sürecini göster"
-      >
-        <Brain size={11} />
-        Thinking {useThinking ? 'Açık' : 'Kapalı'}
-      </button>
+      {/* Thinking Level Selector */}
+      <div className="relative">
+        <button
+          onClick={() => setShowThinkingMenu(!showThinkingMenu)}
+          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all ${
+            thinkingLevel !== 'off'
+              ? 'bg-violet-500/15 border border-violet-500/30 text-violet-400 shadow-[0_0_15px_rgba(139,92,246,0.1)]'
+              : 'text-slate-600 hover:text-slate-400 hover:bg-slate-800/30'
+          } ${showThinkingMenu ? 'bg-violet-500/20 text-violet-300' : ''}`}
+          title="Düşünme Seviyesini Ayarla"
+        >
+          <Brain size={11} className={thinkingLevel !== 'off' ? 'animate-pulse' : ''} />
+          <span className="capitalize">
+            Thinking {thinkingLevel === 'off' ? 'Kapalı' : thinkingLevel}
+          </span>
+          <ChevronDown size={10} className={`opacity-50 transition-transform duration-200 ${showThinkingMenu ? 'rotate-180' : ''}`} />
+        </button>
+
+        {/* Level Dropdown */}
+        <AnimatePresence>
+          {showThinkingMenu && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setShowThinkingMenu(false)} />
+              <motion.div
+                initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                className="absolute bottom-10 left-0 w-36 bg-[#0a0a0f] border border-slate-800 rounded-xl shadow-2xl z-50 p-1.5 overflow-hidden"
+              >
+                {[
+                  { id: 'off', label: 'Kapalı', color: 'text-slate-500' },
+                  { id: 'low', label: 'Düşük', color: 'text-emerald-400' },
+                  { id: 'medium', label: 'Orta', color: 'text-violet-400' },
+                  { id: 'high', label: 'Yüksek (Deep)', color: 'text-fuchsia-400' }
+                ].map((lvl) => (
+                  <button
+                    key={lvl.id}
+                    onClick={() => {
+                      setThinkingLevel(lvl.id as any);
+                      setShowThinkingMenu(false);
+                    }}
+                    className={`w-full text-left px-3 py-2 rounded-lg text-[10px] transition-all hover:bg-white/5 flex items-center justify-between group ${
+                      thinkingLevel === lvl.id ? lvl.color + ' bg-white/5' : 'text-slate-400'
+                    }`}
+                  >
+                    <span className="font-medium">{lvl.label}</span>
+                    {thinkingLevel === lvl.id && <div className={`w-1.5 h-1.5 rounded-full bg-current shadow-[0_0_8px_currentColor]`} />}
+                  </button>
+                ))}
+              </motion.div>
+            </>
+          )}
+        </AnimatePresence>
+      </div>
 
       <div className="w-px h-3 bg-slate-800" />
       

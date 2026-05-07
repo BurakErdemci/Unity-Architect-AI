@@ -166,6 +166,30 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                   </div>
                 )}
 
+                {(availableModels.subscription?.length ?? 0) > 0 && (
+                  <div className="p-1 border-t border-slate-800/80">
+                    <div className="px-2 py-1.5 text-[10px] font-bold text-slate-500 uppercase flex items-center gap-2 mt-1">
+                      <Key size={10} /> Abonelik (CLI) Modelleri
+                    </div>
+                    {availableModels.subscription.map(m => (
+                      <button
+                        key={m.id}
+                        onClick={async () => {
+                          const newCfg = { ...aiConfig, provider_type: 'subscription', model_name: m.id, api_key: 'CLI_SESSION' };
+                          setAiConfig(newCfg);
+                          setIsModelDropdownOpen(false);
+                          if (user) await axios.post(`${API}/save-ai-config`, { ...newCfg, user_id: user.id });
+                          showToast(`${m.name} seçildi. Terminalde oturum açtığınızdan emin olun.`, 'info');
+                        }}
+                        className={`w-full text-left px-3 py-2 text-[12px] flex flex-col rounded-lg hover:bg-purple-600/10 ${aiConfig.model_name === m.id ? 'text-purple-400' : 'text-slate-300'}`}
+                      >
+                        <span className="font-medium">{m.name}</span>
+                        <span className="text-[10px] text-slate-500">Yerel abonelik kullanılır</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+
                 <div className="p-1 border-t border-slate-800/80">
                   <div className="px-2 py-1.5 text-[10px] font-bold text-slate-500 uppercase flex items-center gap-2 mt-1">
                     <Cpu size={10} /> Yerel (Ollama) Modeller

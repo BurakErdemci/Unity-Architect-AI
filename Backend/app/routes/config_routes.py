@@ -90,6 +90,15 @@ def create_config_router(db):
                 {"id": "kimi-k2.6",                "name": "Kimi K2.6",          "provider": "moonshot",  "openrouter_id": "moonshotai/kimi-k2.6"},
                 {"id": "kimi-k2.5",                "name": "Kimi K2.5",          "provider": "moonshot",  "openrouter_id": "moonshotai/kimi-k2.5"},
             ],
+            "subscription": [
+                {"id": "claude-sonnet-4-6", "name": "Claude 4.6 Sonnet (CLI)", "provider": "subscription"},
+                {"id": "claude-opus-4-7",   "name": "Claude 4.7 Opus (CLI)",   "provider": "subscription"},
+                {"id": "claude-haiku-4-5",  "name": "Claude 4.5 Haiku (CLI)",  "provider": "subscription"},
+                {"id": "gpt-5.5",           "name": "Codex (GPT-5.5)",         "provider": "subscription"},
+                {"id": "gpt-5.4",           "name": "Codex (GPT-5.4)",         "provider": "subscription"},
+                {"id": "gpt-5.4-mini",      "name": "Codex (GPT-5.4 Mini)",    "provider": "subscription"},
+                {"id": "gpt-5.3-codex",     "name": "Codex (GPT-5.3 Codex)",   "provider": "subscription"},
+            ]
         }
 
         try:

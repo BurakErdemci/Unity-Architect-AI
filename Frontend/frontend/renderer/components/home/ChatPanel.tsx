@@ -33,7 +33,7 @@ interface ChatPanelProps {
   isWisdomExpanded: boolean;
   setIsWisdomExpanded: (val: boolean) => void;
   effectiveProvider: string;
-  useThinking: boolean;
+  thinkingLevel: 'low' | 'medium' | 'high' | 'off';
   workspacePath: string | null;
   handleExportToUnity: (code: string) => void;
   pendingPlan: { content: string; originalMessage: string; mode: GenerationMode } | null;
@@ -57,8 +57,9 @@ interface ChatPanelProps {
   setDiffFile: (val: any | null) => void;
   pendingDelete: { path: string; messageId: number } | null;
   setPendingDelete: (val: any | null) => void;
-  pendingCommand: { command: string; messageId: number } | null;
+  pendingCommand: { command: string; gateId: string; messageId: number } | null;
   setPendingCommand: (val: any | null) => void;
+  onApproveCommand: (gateId: string, approved: boolean) => Promise<void>;
   deleteFile: (path: string) => Promise<void>;
   setIsTerminalOpen: (val: boolean) => void;
 }
@@ -73,7 +74,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   isWisdomExpanded,
   setIsWisdomExpanded,
   effectiveProvider,
-  useThinking,
+  thinkingLevel,
   workspacePath,
   handleExportToUnity,
   pendingPlan,
@@ -99,8 +100,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   setPendingDelete,
   pendingCommand,
   setPendingCommand,
+  onApproveCommand,
   deleteFile,
-  setIsTerminalOpen
 }) => {
   if (!activeConvId) {
     return (
@@ -217,7 +218,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                         <div className="typing-dot h-2 w-2 bg-blue-500 rounded-full" />
                         <div className="typing-dot h-2 w-2 bg-blue-500 rounded-full" />
                       </div>
-                      {useThinking && <span className="text-[11px] text-violet-400 animate-pulse">düşünüyor...</span>}
+                      {thinkingLevel !== 'off' && <span className="text-[11px] text-violet-400 animate-pulse">düşünüyor...</span>}
                     </div>
                   ) : (
                     <div className="prose prose-invert max-w-none text-[13px] leading-relaxed prose-p:my-2 prose-headings:my-3 prose-ul:my-2 prose-li:my-0.5 prose-pre:bg-slate-900 prose-pre:border prose-pre:border-slate-800 prose-a:text-emerald-400">
@@ -303,18 +304,15 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                     <CommandApproval
                       command={pendingCommand.command}
                       onConfirm={async () => {
-                        if (ipc) {
-                          setIsTerminalOpen(true);
-                          // Komutu terminale gönder (Enter dahil)
-                          await ipc.invoke('terminal-write', { 
-                            id: 'main-terminal', 
-                            data: pendingCommand.command + '\r' 
-                          });
-                          setPendingCommand(null);
-                          showToast('Komut terminale gönderildi', 'success');
-                        }
+                        await onApproveCommand(pendingCommand.gateId, true);
+                        setPendingCommand(null);
+                        showToast('Komut onaylandı — çalışıyor...', 'success');
                       }}
-                      onCancel={() => setPendingCommand(null)}
+                      onCancel={async () => {
+                        await onApproveCommand(pendingCommand.gateId, false);
+                        setPendingCommand(null);
+                        showToast('Komut iptal edildi', 'info');
+                      }}
                     />
                   )}
 

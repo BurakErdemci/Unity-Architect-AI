@@ -6,11 +6,31 @@ araç sonucunu alır, tekrar AI'a gönderir. İş bitene kadar döngü devam ede
 
 Her adımda bir SSE event callback'i çağırılır (thinking, tool_call, response, done).
 """
+import os
 import json
 import time
+import uuid
 import logging
 import asyncio
 from typing import Any, AsyncGenerator, Callable, Dict, List, Optional
+
+from agentic.command_gates import APPROVAL_GATES as _APPROVAL_GATES, APPROVAL_RESULTS as _APPROVAL_RESULTS
+
+# Sadece bu prefix/keyword'lerle başlayan komutlar otomatik çalışır (güvenli)
+_SAFE_PREFIXES = (
+    "ls", "ll", "la ", "find ", "grep ", "cat ", "head ", "tail ",
+    "echo ", "pwd", "wc ", "diff ", "tree ",
+    "git status", "git log", "git diff", "git show", "git branch",
+    "git remote -v", "git fetch --dry", "git stash list",
+)
+
+def _is_dangerous_command(command: str) -> bool:
+    """Komutun kullanıcı onayı gerektirip gerektirmediğini kontrol eder."""
+    stripped = command.strip().lower()
+    for safe in _SAFE_PREFIXES:
+        if stripped == safe.strip() or stripped.startswith(safe):
+            return False
+    return True  # Whitelist dışı her komut tehlikeli sayılır
 
 from google import genai
 from google.genai import types as gtypes
@@ -51,8 +71,8 @@ class AgentRunner:
         workspace_path: str,
         language: str = "tr",
         context: str = "",
-        use_thinking: bool = False,
-        conversation_id: str = None,
+        thinking_level: str = "medium",
+        conversation_id: Optional[int] = None,
         images: Optional[List[str]] = None,
     ):
         self.provider_type = provider_type
@@ -61,9 +81,87 @@ class AgentRunner:
         self.workspace_path = workspace_path
         self.language = language
         self.context = context
-        self.use_thinking = use_thinking
+        self.thinking_level = thinking_level
         self.conversation_id = conversation_id
         self.images = images
+        self.use_thinking = thinking_level != "off"
+        self._pending_approval_event: "AgentEvent | None" = None
+
+    def _get_architect_wisdom(self) -> str:
+        """
+        Proje kök dizininde ARCHITECT.md veya .claude.md varsa okur.
+        Bu dosya proje kurallarını (naming convention, patterns vb.) içerir.
+        """
+        wisdom_paths = ["ARCHITECT.md", ".claude.md", "CLAUDE.md"]
+        for p in wisdom_paths:
+            full_path = os.path.join(self.workspace_path, p)
+            if os.path.exists(full_path):
+                try:
+                    with open(full_path, "r", encoding="utf-8") as f:
+                        content = f.read()
+                        return f"\n\n[PROJE KURALLARI (ARCHITECT.md)]\n{content}\n"
+                except Exception as e:
+                    logger.warning(f"Wisdom dosyası okunamadı ({p}): {e}")
+        return ""
+
+    async def _execute_tool_with_approval(
+        self, tool_name: str, tool_args: dict
+    ) -> tuple[dict, list]:
+        """
+        Tool'u çalıştırır. run_command ise ve tehlikeli ise önce onay ister.
+        Döndürür: (result_dict, extra_events_to_yield)
+        """
+        extra_events = []
+
+        if tool_name == "run_command":
+            command = tool_args.get("command", "")
+            if _is_dangerous_command(command):
+                # Onay iste
+                approved = await self._request_command_approval(command)
+                if self._pending_approval_event:
+                    extra_events.append(self._pending_approval_event)
+                    self._pending_approval_event = None
+
+                if not approved:
+                    result = {
+                        "success": False,
+                        "stdout": "",
+                        "stderr": "",
+                        "exit_code": -1,
+                        "summary": "❌ Kullanıcı tarafından reddedildi."
+                    }
+                    return result, extra_events
+
+        result = await asyncio.to_thread(
+            execute_tool, tool_name, tool_args, self.workspace_path, self.conversation_id
+        )
+        return result, extra_events
+
+    async def _request_command_approval(self, command: str) -> bool:
+        """
+        Tehlikeli komut için frontend'den onay ister.
+        SSE event gönderir → asyncio.Event ile bekler → sonuç döner.
+        60 saniyede cevap gelmezse otomatik reddeder.
+        """
+        gate_id = uuid.uuid4().hex[:10]
+        event = asyncio.Event()
+        _APPROVAL_GATES[gate_id] = event
+        _APPROVAL_RESULTS[gate_id] = False
+
+        # Frontend'e bildir — bu event SSE stream'e yield edilecek
+        self._pending_approval_event = AgentEvent("command_approval_needed", {
+            "command": command,
+            "gate_id": gate_id,
+        })
+
+        try:
+            await asyncio.wait_for(event.wait(), timeout=60.0)
+            return _APPROVAL_RESULTS.get(gate_id, False)
+        except asyncio.TimeoutError:
+            return False
+        finally:
+            _APPROVAL_GATES.pop(gate_id, None)
+            _APPROVAL_RESULTS.pop(gate_id, None)
 
     async def run(self, user_message: str) -> AsyncGenerator[AgentEvent, None]:
         """
@@ -77,6 +175,9 @@ class AgentRunner:
                 yield event
         elif self.provider_type in ("openai", "openrouter", "deepseek", "groq"):
             async for event in self._run_openai(user_message):
+                yield event
+        elif self.provider_type == "subscription":
+            async for event in self._run_cli(user_message):
                 yield event
         else:
             # Diğer provider'lar için basit fallback (function calling yok)
@@ -219,12 +320,51 @@ Kullanıcıyla {'Türkçe' if self.language == 'tr' else 'İngilizce'} konuş.""
                     "iteration": iteration + 1,
                 })
 
-                # Aracı çalıştır
-                result = await asyncio.to_thread(
-                    execute_tool, tool_name, tool_args, self.workspace_path, self.conversation_id
-                )
+                # Tehlikeli komut kontrolü ve onay yield'ı
+                if tool_name == "run_command":
+                    command = tool_args.get("command", "")
+                    if _is_dangerous_command(command):
+                        # Onay event'ini HEMEN yield et
+                        gate_id = uuid.uuid4().hex[:10]
+                        event = asyncio.Event()
+                        _APPROVAL_GATES[gate_id] = event
+                        _APPROVAL_RESULTS[gate_id] = False
+                        
+                        yield AgentEvent("command_approval_needed", {
+                            "command": command,
+                            "gate_id": gate_id,
+                        })
+                        
+                        # Şimdi onayı bekle
+                        try:
+                            await asyncio.wait_for(event.wait(), timeout=60.0)
+                            approved = _APPROVAL_RESULTS.get(gate_id, False)
+                        except asyncio.TimeoutError:
+                            approved = False
+                        finally:
+                            _APPROVAL_GATES.pop(gate_id, None)
+                            _APPROVAL_RESULTS.pop(gate_id, None)
 
-                # Sonucu kısalt (çok büyük olabilir)
+                        if not approved:
+                            result = {"success": False, "summary": "❌ Kullanıcı reddetti."}
+                            # Tool result olarak ilet
+                            yield AgentEvent("tool_result", {
+                                "tool": tool_name,
+                                "success": False,
+                                "summary": "❌ Kullanıcı tarafından reddedildi.",
+                            })
+                            # AI'a tool sonucunu bildir (döngü devam etsin diye)
+                            function_response_parts.append(
+                                gtypes.Part(function_response=gtypes.FunctionResponse(
+                                    name=tool_name,
+                                    response=result,
+                                ))
+                            )
+                            continue
+
+                # Normal tool execution
+                result, _ = await self._execute_tool_with_approval(tool_name, tool_args)
+
                 result_str = json.dumps(result, ensure_ascii=False)
                 if len(result_str) > 8000:
                     result_str = result_str[:8000] + "... (kısaltıldı)"
@@ -307,12 +447,45 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                             }
                         })
                 except Exception as e:
-                    logger.error(f"Anthropic image parsing hatası: {e}")
+                    logger.warning(f"Görsel işlenemedi: {e}")
 
-        messages = [{"role": "user", "content": user_parts}]
+        # Sistem talimatını oluştur
+        system_msg = f"{SYSTEM_PROMPT}\n{self._get_architect_wisdom()}"
+        
+        messages = [{"role": "system", "content": system_msg}]
 
         for iteration in range(MAX_ITERATIONS):
             logger.info(f"  🔄 Anthropic Agentic Loop iterasyon {iteration + 1}")
+            
+            # Tool formatı
+            anthropic_tools = []
+            for t in TOOL_DEFINITIONS:
+                anthropic_tools.append({
+                    "name": t["name"],
+                    "description": t["description"],
+                    "input_schema": t["parameters"]
+                })
+
+            # İlk mesaj içeriği
+            if iteration == 0:
+                user_parts = [{"type": "text", "text": user_message}]
+                if self.images:
+                    for img_data in self.images:
+                        try:
+                            if "," in img_data:
+                                header, base64_str = img_data.split(",", 1)
+                                mime_type = header.split(":")[1].split(";")[0]
+                                user_parts.append({
+                                    "type": "image",
+                                    "source": {
+                                        "type": "base64",
+                                        "media_type": mime_type,
+                                        "data": base64_str
+                                    }
+                                })
+                        except Exception as e:
+                            logger.error(f"Anthropic image parsing hatası: {e}")
+                messages.append({"role": "user", "content": user_parts})
             
             try:
                 response = await client.messages.create(
@@ -349,21 +522,38 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                     "arguments": tool_call.input,
                     "iteration": iteration + 1,
                 })
-                
-                result = await asyncio.to_thread(
-                    execute_tool, tool_call.name, tool_call.input, self.workspace_path, self.conversation_id
-                )
-                
+
+                # Terminal Onay Katmanı
+                if tool_call.name == "run_command":
+                    command = tool_call.input.get("command", "")
+                    if _is_dangerous_command(command):
+                        gate_id = uuid.uuid4().hex[:10]
+                        event = asyncio.Event()
+                        _APPROVAL_GATES[gate_id] = event
+                        yield AgentEvent("command_approval_needed", {"command": command, "gate_id": gate_id})
+                        try:
+                            await asyncio.wait_for(event.wait(), timeout=60.0)
+                            approved = _APPROVAL_RESULTS.get(gate_id, False)
+                        except: approved = False
+                        finally: _APPROVAL_GATES.pop(gate_id, None)
+                        
+                        if not approved:
+                            result_str = json.dumps({"success": False, "summary": "Reddedildi"})
+                            tool_results.append({"type": "tool_result", "tool_use_id": tool_call.id, "content": result_str})
+                            continue
+
+                result, _ = await self._execute_tool_with_approval(tool_call.name, tool_call.input)
+
                 result_str = json.dumps(result, ensure_ascii=False)
                 if len(result_str) > 8000:
                     result_str = result_str[:8000] + "... (kısaltıldı)"
-                    
+
                 yield AgentEvent("tool_result", {
                     "tool": tool_call.name,
                     "success": result.get("success", False),
                     "summary": self._summarize_result(tool_call.name, result),
                 })
-                
+
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": tool_call.id,
@@ -493,21 +683,37 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                     "arguments": tool_args,
                     "iteration": iteration + 1,
                 })
-                
-                result = await asyncio.to_thread(
-                    execute_tool, tool_name, tool_args, self.workspace_path, self.conversation_id
-                )
-                
+
+                # Terminal Onay Katmanı
+                if tool_name == "run_command":
+                    command = tool_args.get("command", "")
+                    if _is_dangerous_command(command):
+                        gate_id = uuid.uuid4().hex[:10]
+                        event = asyncio.Event()
+                        _APPROVAL_GATES[gate_id] = event
+                        yield AgentEvent("command_approval_needed", {"command": command, "gate_id": gate_id})
+                        try:
+                            await asyncio.wait_for(event.wait(), timeout=60.0)
+                            approved = _APPROVAL_RESULTS.get(gate_id, False)
+                        except: approved = False
+                        finally: _APPROVAL_GATES.pop(gate_id, None)
+                        
+                        if not approved:
+                            messages.append({"role": "tool", "tool_call_id": tool_call.id, "name": tool_name, "content": "Reddedildi"})
+                            continue
+
+                result, _ = await self._execute_tool_with_approval(tool_name, tool_args)
+
                 result_str = json.dumps(result, ensure_ascii=False)
                 if len(result_str) > 8000:
                     result_str = result_str[:8000] + "... (kısaltıldı)"
-                    
+
                 yield AgentEvent("tool_result", {
                     "tool": tool_name,
                     "success": result.get("success", False),
                     "summary": self._summarize_result(tool_name, result),
                 })
-                
+
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tool_call.id,
@@ -528,6 +734,7 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
         yield AgentEvent("thinking", {"text": "Direkt yanıt hazırlıyorum..."})
 
         try:
+            logger.info(f"[AgentRunner] Starting simple run for provider: {self.provider_type}")
             provider = AIProviderManager.get_provider({
                 "provider_type": self.provider_type,
                 "api_key": self.api_key,
@@ -536,20 +743,113 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
 
             prompt = f"{SYSTEM_PROMPT}\n\n[BAĞLAM]\n{self.context}\n\n[KULLANICI]\n{user_message}"
 
-            if self.use_thinking and hasattr(provider, "analyze_code_with_thinking"):
-                text, thinking, duration = await asyncio.to_thread(
-                    provider.analyze_code_with_thinking, prompt
-                )
-                if thinking:
-                    yield AgentEvent("thinking", {"text": thinking, "duration_ms": duration})
+            if self.provider_type == "subscription":
+                # Subscription ajanları için mod bilgisini ilet
+                is_step_mode = (getattr(self, 'generation_mode', 'plan') == 'step')
+                full_text = ""
+                async for event in provider.analyze_code_with_thinking(prompt, thinking_level=self.thinking_level, cwd=self.workspace_path, interactive=is_step_mode):
+                    if event["type"] == "tool_call":
+                        yield AgentEvent("tool_call", {"tool": event["tool"], "summary": event["summary"]})
+                    elif event["type"] == "thinking":
+                        yield AgentEvent("thinking", {"text": event["text"]})
+                    elif event["type"] == "error":
+                        yield AgentEvent("error", {"message": event["content"]})
+                    elif event["type"] == "final":
+                        full_text = event["text"]
+                
+                yield AgentEvent("response", {"content": full_text})
             else:
-                text = await asyncio.to_thread(provider.analyze_code, prompt)
+                if self.thinking_level != "off" and hasattr(provider, "analyze_code_with_thinking"):
+                    logger.info(f"[AgentRunner] Requesting thinking response (Level: {self.thinking_level}) at {self.workspace_path}")
+                    text, thinking, duration = await asyncio.to_thread(
+                        provider.analyze_code_with_thinking, prompt, thinking_level=self.thinking_level, cwd=self.workspace_path
+                    )
+                    if thinking:
+                        yield AgentEvent("thinking", {"text": thinking, "duration_ms": duration})
+                else:
+                    logger.info(f"[AgentRunner] Requesting standard analysis from {self.provider_type} at {self.workspace_path}")
+                    text = await asyncio.to_thread(provider.analyze_code, prompt, thinking_level=self.thinking_level, cwd=self.workspace_path)
 
-            yield AgentEvent("response", {"content": text})
+                logger.info(f"[AgentRunner] Response received ({len(text) if text else 0} chars).")
+                yield AgentEvent("response", {"content": text})
+
             yield AgentEvent("done", {"iterations": 1})
 
         except Exception as e:
+            logger.error(f"[AgentRunner] Error in simple run: {str(e)}", exc_info=True)
             yield AgentEvent("error", {"message": str(e)})
+
+    # ═══════════════════════════════════════════════
+    # CLI PROVIDER (Claude Code, Codex — Ephemeral Snapshot)
+    # ═══════════════════════════════════════════════
+    async def _run_cli(self, user_message: str) -> AsyncGenerator[AgentEvent, None]:
+        """
+        CLIProvider'ı ephemeral snapshot modunda çalıştırır.
+        CLI özgürce yazar → değişiklikler yakalanır → revert → onaya sunulur.
+        Onaylanan dosyalar mevcut frontend write mekanizmasıyla uygulanır.
+        """
+        from ai_providers import CLIProvider
+
+        provider = CLIProvider(binary_name=self.model_name)
+
+        # Bağlamı prompt'a ekle
+        context_block = f"\n\n[PROJE BAĞLAMI]\n{self.context}" if self.context else ""
+        enriched_prompt = user_message + context_block
+
+        final_text = ""
+        ephemeral_files = []
+
+        async for event in provider.analyze_code(
+            enriched_prompt,
+            thinking_level="medium" if self.use_thinking else "off",
+            cwd=self.workspace_path or ".",
+            interactive=True,  # Her zaman ephemeral mod
+        ):
+            etype = event.get("type")
+
+            if etype == "delta":
+                yield AgentEvent("text", {"content": event.get("text", "")})
+            elif etype == "thinking":
+                yield AgentEvent("thinking", {"text": event.get("text", "")})
+            elif etype == "tool_call":
+                yield AgentEvent("tool_call", {
+                    "tool": event.get("tool", "CLI"),
+                    "arguments": {"summary": event.get("summary", "")},
+                    "iteration": 1,
+                })
+            elif etype == "tool_result":
+                yield AgentEvent("tool_result", {
+                    "tool": event.get("tool", "CLI"),
+                    "success": event.get("success", True),
+                    "summary": event.get("summary", ""),
+                })
+            elif etype == "ephemeral_changes":
+                ephemeral_files = event.get("files", [])
+            elif etype == "final":
+                final_text = event.get("text", "")
+            elif etype == "error":
+                yield AgentEvent("error", {"message": event.get("content", "")})
+                return
+
+        # Ephemeral değişiklikleri encode et
+        # Silinen dosyalar → pending_delete event'i olarak ayrıca gönder
+        # Değiştirilen/eklenen dosyalar → // path: code block (parseGeneratedFiles yakalar)
+        modified = [f for f in ephemeral_files if not f.get("deleted")]
+        deleted  = [f for f in ephemeral_files if f.get("deleted")]
+
+        response_parts = [final_text] if final_text else []
+        for f in modified:
+            ext  = f["path"].rsplit(".", 1)[-1] if "." in f["path"] else "cs"
+            lang = "csharp" if ext == "cs" else ext
+            response_parts.append(f"\n```{lang}\n// path: {f['path']}\n{f['code']}\n```")
+
+        yield AgentEvent("response", {"content": "\n".join(response_parts)})
+
+        # Silinen her dosya için ayrı pending_delete event'i
+        for f in deleted:
+            yield AgentEvent("pending_delete", {"path": f["path"]})
+
+        yield AgentEvent("done", {"iterations": 1})
 
     def _summarize_result(self, tool_name: str, result: dict) -> str:
         """Tool sonucunu kısa özetle."""

@@ -9,6 +9,7 @@ export interface ModelInfo {
 export interface AvailableModels {
   local: ModelInfo[];
   cloud: ModelInfo[];
+  subscription: ModelInfo[];
 }
 
 export interface UserData {
@@ -51,6 +52,7 @@ export interface AIConfig {
   api_key: string;
   model_name: string;
   use_multi_agent: boolean;
+  thinking_level: 'low' | 'medium' | 'high' | 'off';
   has_key?: boolean;
 }
 

@@ -28,7 +28,7 @@ export const useChat = (
   const [isAnalyzingProject, setIsAnalyzingProject] = useState(false);
   const [pendingPlan, setPendingPlan] = useState<{ content: string; originalMessage: string; mode: GenerationMode } | null>(null);
   const [pendingFix, setPendingFix] = useState<{ data: any; messageId?: number; applied?: boolean } | null>(null);
-  const [pendingCommand, setPendingCommand] = useState<{ command: string; messageId: number } | null>(null);
+  const [pendingCommand, setPendingCommand] = useState<{ command: string; gateId: string; messageId: number } | null>(null);
   const [generationMode, setGenerationMode] = useState<GenerationMode>('step');
   const [editingId, setEditingId] = useState<number | null>(null);
   const [tempTitle, setTempTitle] = useState('');
@@ -106,7 +106,7 @@ export const useChat = (
     code: string, 
     lang: string, 
     genMode: GenerationMode, 
-    useThinking: boolean,
+    thinkingLevel: 'low' | 'medium' | 'high' | 'off',
     setPendingGenFiles: (val: any) => void,
     setPendingDelete: (val: any) => void,
     images?: string[]
@@ -126,7 +126,7 @@ export const useChat = (
       content: messageContent, 
       smells: [], 
       timestamp: new Date().toISOString(),
-      images: images // Frontend tipine eklememiz gerekebilir ama şimdilik tutalım
+      images: images 
     };
     setMessages(prev => [...prev, userMsg]);
     setChatInput('');
@@ -143,7 +143,8 @@ export const useChat = (
         headers: { 'Content-Type': 'application/json', 'X-Session-Token': user.sessionToken },
         body: JSON.stringify({
           conversation_id: targetConvId, message: messageContent, language: lang, user_id: user.id,
-          use_kb: aiConfig.provider_type === 'kb', editor_code: code || '', use_thinking: useThinking,
+          use_kb: aiConfig.provider_type === 'kb', editor_code: code || '', 
+          thinking_level: thinkingLevel,
           generation_mode: genMode, generation_confirmed: false,
           images: images
         }),
@@ -182,6 +183,8 @@ export const useChat = (
                 return msg;
               }));
               if (data.type === 'context_usage') setContextUsage({ percent: data.percent, should_compact: data.should_compact, message_count: data.message_count });
+              if (data.type === 'command_approval_needed') setPendingCommand({ command: data.command, gateId: data.gate_id, messageId: aiMsgId });
+              if (data.type === 'pending_delete' && data.path) setPendingDelete({ path: data.path, messageId: aiMsgId });
               if (data.type === 'done' || data.type === 'response') {
                 const { parseGeneratedFiles } = await import('../../components/home/export-utils');
                 // currentAiMsg o anki en güncel mesaj içeriğini tutmalı
@@ -347,6 +350,15 @@ export const useChat = (
     fetchConversations, fetchMessages, createNewConversation,
     selectConversation, deleteConversation, saveRename,
     sendMessage, stopMessage: () => abortControllerRef.current?.abort(),
-    clearHistory, confirmPlan, analyzeProject, exportMemory, importMemory, compactConversation
+    clearHistory, confirmPlan, analyzeProject, exportMemory, importMemory, compactConversation,
+    approveCommand: async (gateId: string, approved: boolean) => {
+      try {
+        await fetch(`${API}/command-approval/${gateId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ approved }),
+        });
+      } catch (err) { console.warn('approveCommand fetch failed', err); }
+    },
   };
 };

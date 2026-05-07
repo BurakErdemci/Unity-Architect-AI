@@ -14,6 +14,7 @@ const DEFAULT_MODELS: Record<string, string> = {
   moonshot: "kimi-k2.6",
   ollama: "qwen2.5-coder:7b",
   kb: "unity-kb-v1",
+  subscription: "claude-code",
 };
 
 const MODEL_HINTS: Record<string, { label: string; value: string }[]> = {
@@ -56,6 +57,10 @@ const MODEL_HINTS: Record<string, { label: string; value: string }[]> = {
   deepseek: [
     { label: "DeepSeek Chat", value: "deepseek-chat" },
     { label: "DeepSeek R1 (Reasoning)", value: "deepseek-reasoner" },
+  ],
+  subscription: [
+    { label: "Claude Code", value: "claude-code" },
+    { label: "OpenAI Codex", value: "codex" },
   ],
 };
 
@@ -118,9 +123,10 @@ export const SettingsModal = ({
                 <option value="deepseek">DeepSeek (Reasoning)</option>
                 <option value="moonshot">Moonshot (Kimi)</option>
                 <option value="openrouter">OpenRouter (Çoklu Model)</option>
+                <option value="subscription">Abonelik (Claude Code & Codex)</option>
               </select>
             </div>
-            {aiConfig.provider_type !== 'ollama' && aiConfig.provider_type !== 'kb' && (
+            {aiConfig.provider_type !== 'ollama' && aiConfig.provider_type !== 'kb' && aiConfig.provider_type !== 'subscription' && (
               <div>
                 <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
                   API Key
@@ -144,6 +150,14 @@ export const SettingsModal = ({
                     <Trash2 size={12} /> API Key Sil
                   </button>
                 )}
+              </div>
+            )}
+            {aiConfig.provider_type === 'subscription' && (
+              <div className="p-3 rounded-xl border border-purple-500/30 bg-purple-500/5">
+                <p className="text-[10px] text-purple-300 font-medium">Abonelik Modu Aktif</p>
+                <p className="text-[9px] text-purple-400/70 mt-0.5">
+                  Bu modda API key gerekmez; terminalde (claude/codex) açık olan oturumunuz kullanılır.
+                </p>
               </div>
             )}
             {aiConfig.provider_type !== 'kb' && (

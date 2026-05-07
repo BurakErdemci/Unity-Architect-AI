@@ -4,9 +4,9 @@ import { AIConfig, AvailableModels, UserData } from '../../components/home/types
 
 export const useAIConfig = (API: string, user: UserData | null, showToast: (msg: string, type: any) => void) => {
   const [aiConfig, setAiConfig] = useState<AIConfig>({
-    provider_type: 'kb', api_key: '', model_name: 'unity-kb-v1', use_multi_agent: true
+    provider_type: 'kb', api_key: '', model_name: 'unity-kb-v1', use_multi_agent: true, thinking_level: 'medium'
   });
-  const [availableModels, setAvailableModels] = useState<AvailableModels>({ local: [], cloud: [] });
+  const [availableModels, setAvailableModels] = useState<AvailableModels>({ local: [], cloud: [], subscription: [] });
   const [providersWithKeys, setProvidersWithKeys] = useState<string[]>([]);
   const [modelOrToggles, setModelOrToggles] = useState<Record<string, boolean>>({});
   const [showSettings, setShowSettings] = useState(false);
@@ -86,8 +86,9 @@ export const useAIConfig = (API: string, user: UserData | null, showToast: (msg:
 
   const displayModelName = useMemo(() => {
     if (!aiConfig.model_name) return 'Model Seçin';
-    const found = availableModels.cloud.find(m =>
-      m.id === aiConfig.model_name || m.openrouter_id === aiConfig.model_name
+    const allModels = [...availableModels.cloud, ...(availableModels.subscription || [])];
+    const found = allModels.find(m =>
+      m.id === aiConfig.model_name || (m as any).openrouter_id === aiConfig.model_name
     );
     if (found) return found.name;
     const name = aiConfig.model_name;
