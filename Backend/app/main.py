@@ -25,6 +25,12 @@ from routes import (
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# MCP server subprocess'leri için ANTIGRAVITY_URL'yi şimdiden set et
+# (PORT env var Electron tarafından dinamik olarak geçilir)
+_host = os.environ.get("HOST", "127.0.0.1")
+_port = os.environ.get("PORT", "8000")
+os.environ["ANTIGRAVITY_URL"] = f"http://{_host}:{_port}"  # Her başlatmada güncelle
+
 
 def _resolve_db_path() -> str:
     db_path = os.environ.get("DB_PATH")
@@ -76,9 +82,13 @@ def health_check():
 
 
 if __name__ == "__main__":
+    host = os.environ.get("HOST", "127.0.0.1")
+    port = int(os.environ.get("PORT", "8000"))
+    # MCP server subprocess'leri bu URL'yi kullanır
+    os.environ["ANTIGRAVITY_URL"] = f"http://{host}:{port}"
     uvicorn.run(
         "main:app",
-        host=os.environ.get("HOST", "127.0.0.1"),
-        port=int(os.environ.get("PORT", "8000")),
+        host=host,
+        port=port,
         reload=True
     )

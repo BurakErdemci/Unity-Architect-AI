@@ -417,6 +417,7 @@ async function startPythonBackend() {
   pyBackendProcess = spawn(pythonExec, spawnArgs, {
     stdio: ['ignore', 'pipe', 'pipe'],
     cwd: backendDir,
+    detached: false, // process group ile başlat — kapanırken tüm child'lar ölsün
     env: { ...process.env, PYTHONUNBUFFERED: '1', PORT: String(selectedPort) },
   });
 
@@ -584,10 +585,28 @@ if (!gotTheLock) {
       Menu.setApplicationMenu(menu);
     })()
 
-  app.on('window-all-closed', () => {
+  const killBackend = () => {
     if (pyBackendProcess) {
-      pyBackendProcess.kill();
+      // Tüm process grubunu öldür (uvicorn reload child'ları dahil)
+      try {
+        process.kill(-pyBackendProcess.pid!, 'SIGKILL')
+      } catch {
+        pyBackendProcess.kill('SIGKILL')
+      }
+      pyBackendProcess = null
     }
-    app.quit();
+  }
+
+  app.on('window-all-closed', () => {
+    killBackend()
+    app.quit()
   })
+
+  app.on('before-quit', () => {
+    killBackend()
+  })
+
+  // Beklenmedik çıkışlarda da temizle
+  process.on('exit', killBackend)
+  process.on('SIGTERM', () => { killBackend(); process.exit(0) })
 }

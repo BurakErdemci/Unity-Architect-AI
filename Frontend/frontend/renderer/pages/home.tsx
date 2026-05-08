@@ -25,6 +25,7 @@ import { useAuth } from '../hooks/home/useAuth';
 import { useFileSystem } from '../hooks/home/useFileSystem';
 import { useChat } from '../hooks/home/useChat';
 import { useAIConfig } from '../hooks/home/useAIConfig';
+import { useMCPApproval } from '../hooks/home/useMCPApproval';
 
 const ipc = typeof window !== 'undefined' ? (window as any).ipc : null;
 const globalStyles = `
@@ -52,6 +53,18 @@ export default function Home() {
     fs.refreshFileTree, 
     fs.suggestFilePath
   );
+
+  useMCPApproval({
+    API,
+    enabled: ai.effectiveProvider === 'subscription',
+    setPendingGenFiles: fs.setPendingGenFiles,
+    setPendingDelete: fs.setPendingDelete,
+    setPendingCommand: chat.setPendingCommand,
+    setPendingFix: chat.setPendingFix,
+  });
+
+  // API URL'yi window'a set et — ChatPanel ve diğer bileşenler erişebilsin
+  useEffect(() => { if (API) (window as any).__API__ = API; }, [API]);
 
   // --- Initialization ---
   useEffect(() => {

@@ -40,7 +40,7 @@ interface ChatPanelProps {
   setPendingPlan: (val: any) => void;
   pendingGenFiles: { files: PendingFile[]; messageId: number } | null;
   setPendingGenFiles: (val: any) => void;
-  pendingFix: { data: DiffData; messageId?: number; applied?: boolean } | null;
+  pendingFix: { data: DiffData; messageId?: number; applied?: boolean; gateId?: string } | null;
   setPendingFix: (val: any) => void;
   openedFilePath: string | null;
   setCode: (code: string) => void;
@@ -320,9 +320,24 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                   {pendingFix && pendingFix.messageId === msg.id && (
                     <DiffViewer
                       diffData={pendingFix.data}
-                      filename={openedFilePath ? openedFilePath.split('/').pop() : undefined}
+                      filename={pendingFix.data?.editor_hint?.split('/').pop() || (openedFilePath ? openedFilePath.split('/').pop() : undefined)}
                       applied={pendingFix.applied}
                       onAccept={async (fixedCode) => {
+                        // MCP onayı: gate varsa backend'e bildir, sonra IPC ile yaz
+                        if (pendingFix.gateId) {
+                          const filePath = pendingFix.data?.editor_hint || openedFilePath;
+                          await fetch(`${(window as any).__API__ || ''}/mcp-approval-respond/${pendingFix.gateId}`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ approved: true }),
+                          }).catch(() => {});
+                          // MCP server zaten dosyayı yazar, sadece editörü güncelle
+                          if (filePath) setCode(fixedCode);
+                          setPendingFix(null);
+                          refreshFileTree();
+                          showToast('✅ Değişiklik onaylandı', 'success');
+                          return;
+                        }
+                        // Normal (API) onayı
                         setCode(fixedCode);
                         setPendingFix((prev: any) => prev ? { ...prev, applied: true } : null);
                         if (ipc && openedFilePath && workspacePath) {
@@ -332,7 +347,15 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                         }
                         showToast(`✅ Dosya güncellendi`, 'success');
                       }}
-                      onReject={() => setPendingFix(null)}
+                      onReject={async () => {
+                        if (pendingFix.gateId) {
+                          await fetch(`${(window as any).__API__ || ''}/mcp-approval-respond/${pendingFix.gateId}`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ approved: false }),
+                          }).catch(() => {});
+                        }
+                        setPendingFix(null);
+                      }}
                     />
                   )}
                 </div>
@@ -372,6 +395,84 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             </div>
           </div>
         )}
+        {/* MCP Onay Kartları — mesaj ID'sinden bağımsız, her zaman göster */}
+        {pendingGenFiles?.messageId === -999 && (
+          <div className="px-4 pb-2">
+            <FileCreationApproval
+              files={pendingGenFiles.files}
+              autoAccept={false}
+              setDiffFile={setDiffFile}
+              onOpenFile={openFile}
+              onAcceptOne={async (file) => {
+                const gateId = (window as any).__mcpWriteGate;
+                if (gateId) await fetch(`${(window as any).__API__ || ''}/mcp-approval-respond/${gateId}`, {
+                  method: 'POST', headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ approved: true }),
+                }).catch(() => {});
+                refreshFileTree();
+                showToast(`✅ ${file.name} oluşturuldu`, 'success');
+              }}
+              onSkipOne={() => {}}
+              onAcceptAll={async () => {
+                const gateId = (window as any).__mcpWriteGate;
+                if (gateId) await fetch(`${(window as any).__API__ || ''}/mcp-approval-respond/${gateId}`, {
+                  method: 'POST', headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ approved: true }),
+                }).catch(() => {});
+                refreshFileTree();
+                showToast('✅ Dosya oluşturuldu', 'success');
+              }}
+              onDone={() => setPendingGenFiles(null)}
+            />
+          </div>
+        )}
+        {pendingDelete?.messageId === -999 && (
+          <div className="px-4 pb-2">
+            <FileDeleteApproval
+              path={pendingDelete.path}
+              onConfirm={async () => {
+                const gateId = (window as any).__mcpDeleteGate;
+                if (gateId) {
+                  await fetch(`${(window as any).__API__ || ''}/mcp-approval-respond/${gateId}`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ approved: true }),
+                  }).catch(() => {});
+                }
+                setPendingDelete(null);
+                refreshFileTree();
+                showToast('🗑️ Dosya silindi', 'info');
+              }}
+              onCancel={async () => {
+                const gateId = (window as any).__mcpDeleteGate;
+                if (gateId) {
+                  await fetch(`${(window as any).__API__ || ''}/mcp-approval-respond/${gateId}`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ approved: false }),
+                  }).catch(() => {});
+                }
+                setPendingDelete(null);
+              }}
+            />
+          </div>
+        )}
+        {pendingCommand?.messageId === -999 && (
+          <div className="px-4 pb-2">
+            <CommandApproval
+              command={pendingCommand.command}
+              onConfirm={async () => {
+                await onApproveCommand(pendingCommand.gateId, true);
+                setPendingCommand(null);
+                showToast('Komut onaylandı — çalışıyor...', 'success');
+              }}
+              onCancel={async () => {
+                await onApproveCommand(pendingCommand.gateId, false);
+                setPendingCommand(null);
+                showToast('Komut iptal edildi', 'info');
+              }}
+            />
+          </div>
+        )}
+
         <div ref={messagesEndRef} className="h-4" />
       </div>
     </div>

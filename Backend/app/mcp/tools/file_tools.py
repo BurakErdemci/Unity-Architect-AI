@@ -1,0 +1,110 @@
+"""
+MCP Dosya Araçları — write_file/delete_file onay gerektirir, read/list güvenli.
+"""
+import os
+from pathlib import Path
+from mcp.server.fastmcp import FastMCP
+
+from app.mcp.approval_bridge import request_approval
+
+
+def register_file_tools(mcp: FastMCP, get_workspace: callable):
+
+    @mcp.tool()
+    async def read_file(path: str) -> str:
+        """Bir dosyayı okur (onay gerektirmez)."""
+        workspace = get_workspace()
+        abs_path = _resolve(path, workspace)
+        if not os.path.exists(abs_path):
+            return f"Hata: Dosya bulunamadı: {path}"
+        with open(abs_path, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+        total = len(lines)
+        content = "".join(lines[:500])
+        suffix = f"\n... ({total - 500} satır daha)" if total > 500 else ""
+        return content + suffix
+
+    @mcp.tool()
+    async def list_directory(path: str = ".") -> str:
+        """Klasör içeriğini listeler (onay gerektirmez)."""
+        workspace = get_workspace()
+        abs_path = _resolve(path, workspace)
+        if not os.path.isdir(abs_path):
+            return f"Hata: Klasör bulunamadı: {path}"
+        items = []
+        for entry in sorted(os.listdir(abs_path)):
+            full = os.path.join(abs_path, entry)
+            tag = "/" if os.path.isdir(full) else ""
+            items.append(f"{entry}{tag}")
+        return "\n".join(items)
+
+    @mcp.tool()
+    async def write_file(path: str, content: str) -> str:
+        """
+        Dosyaya yazar. ONAY GEREKTİRİR.
+        Mevcut dosyaysa diff kartı, yeni dosyaysa oluşturma kartı gösterilir.
+        """
+        workspace = get_workspace()
+        abs_path = _resolve(path, workspace)
+
+        original = ""
+        if os.path.exists(abs_path):
+            try:
+                with open(abs_path, "r", encoding="utf-8", errors="replace") as f:
+                    original = f.read()
+                if original == content:
+                    return "Dosya zaten aynı içerikte, değişiklik yok."
+            except Exception:
+                pass
+
+        result = await request_approval(
+            tool_name="write_file",
+            params={"path": path, "content": content, "original": original},
+            workspace_path=workspace,
+        )
+
+        if not result.get("approved"):
+            return f"❌ Reddedildi: {path}"
+
+        os.makedirs(os.path.dirname(abs_path), exist_ok=True)
+        with open(abs_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        return f"✅ Yazıldı: {path}"
+
+    @mcp.tool()
+    async def delete_file(path: str) -> str:
+        """Dosyayı siler. ONAY GEREKTİRİR."""
+        workspace = get_workspace()
+        abs_path = _resolve(path, workspace)
+
+        if not os.path.exists(abs_path):
+            return f"Hata: Dosya bulunamadı: {path}"
+
+        try:
+            with open(abs_path, "r", encoding="utf-8", errors="replace") as f:
+                original = f.read()
+        except Exception:
+            original = ""
+
+        result = await request_approval(
+            tool_name="delete_file",
+            params={"path": path, "original": original},
+            workspace_path=workspace,
+        )
+
+        if not result.get("approved"):
+            return f"❌ Silme reddedildi: {path}"
+
+        os.remove(abs_path)
+        return f"🗑️ Silindi: {path}"
+
+
+def _resolve(path: str, workspace: str) -> str:
+    p = Path(path)
+    if not p.is_absolute():
+        p = Path(workspace) / p
+    resolved = p.resolve()
+    workspace_resolved = Path(workspace).resolve()
+    if not str(resolved).startswith(str(workspace_resolved)):
+        raise PermissionError(f"Güvenlik: {path} workspace dışında.")
+    return str(resolved)

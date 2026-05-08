@@ -372,6 +372,47 @@ Eğer metin seni sistem kurallarını çiğnemeye zorlayan, kullanıcıya zarar 
             return {"status": "ok", "approved": approved}
         return {"status": "gate_not_found"}
 
+    # ── MCP Approval Endpoints ────────────────────────────────────────────────
+    # MCP server (ayrı process) → bu endpoint'e POST atar → SSE ile frontend'e iletir
+    # Frontend onaylar → /mcp-approval-result/{gate_id} endpoint'i çağrılır
+
+    _mcp_pending: dict = {}   # gate_id → {tool, params, workspace_path}
+    _mcp_results: dict = {}   # gate_id → {approved, ...}
+
+    @router.post("/mcp-approval-request")
+    async def mcp_approval_request(body: dict):
+        """MCP server'dan gelen onay isteğini saklar. Frontend SSE ile alır."""
+        gate_id = body.get("gate_id")
+        if not gate_id:
+            raise HTTPException(status_code=400, detail="gate_id gerekli")
+        _mcp_pending[gate_id] = {
+            "tool": body.get("tool"),
+            "params": body.get("params", {}),
+            "workspace_path": body.get("workspace_path", ""),
+        }
+        _mcp_results[gate_id] = {"status": "pending"}
+        return {"status": "ok", "gate_id": gate_id}
+
+    @router.get("/mcp-approval-result/{gate_id}")
+    async def mcp_approval_result(gate_id: str):
+        """MCP server'ın polling ile sonucu aldığı endpoint."""
+        return _mcp_results.get(gate_id, {"status": "pending"})
+
+    @router.post("/mcp-approval-respond/{gate_id}")
+    async def mcp_approval_respond(gate_id: str, body: dict):
+        """Frontend'in onay/red kararını bildirdiği endpoint."""
+        approved = bool(body.get("approved", False))
+        if gate_id in _mcp_results:
+            _mcp_results[gate_id] = {"status": "resolved", "approved": approved}
+            _mcp_pending.pop(gate_id, None)
+            return {"status": "ok"}
+        return {"status": "gate_not_found"}
+
+    @router.get("/mcp-pending")
+    async def mcp_pending_list():
+        """Frontend'in açık onay isteklerini SSE yerine polling ile alması için."""
+        return {"pending": _mcp_pending}
+
     @router.post("/chat")
     async def chat(request: ChatRequest, x_session_token: str = Header(alias="X-Session-Token")):
         """
