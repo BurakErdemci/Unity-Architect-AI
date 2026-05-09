@@ -22,13 +22,7 @@ def _is_safe(command: str) -> bool:
 
 def register_bash_tool(mcp: FastMCP, get_workspace: callable):
 
-    @mcp.tool()
-    async def bash(command: str) -> str:
-        """
-        Terminal komutu çalıştırır.
-        Güvenli komutlar (git status, ls vb.) direkt çalışır.
-        Tehlikeli komutlar (git push, rm, npm install vb.) ONAY GEREKTİRİR.
-        """
+    async def _run_command(command: str) -> str:
         workspace = get_workspace()
 
         if not _is_safe(command):
@@ -58,3 +52,37 @@ def register_bash_tool(mcp: FastMCP, get_workspace: callable):
             return "❌ Zaman aşımı (300s)"
         except Exception as e:
             return f"❌ Hata: {str(e)}"
+
+    @mcp.tool(
+        description=(
+            "Run a terminal/shell command in the workspace. Safe read-only commands may run directly; "
+            "dangerous commands such as rm, mkdir, mv, git push, npm install, chmod, and writes "
+            "request approval in the Antigravity UI before execution."
+        )
+    )
+    async def bash(command: str) -> str:
+        """
+        Terminal komutu çalıştırır.
+        Güvenli komutlar (git status, ls vb.) direkt çalışır.
+        Tehlikeli komutlar (git push, rm, npm install vb.) ONAY GEREKTİRİR.
+        """
+        return await _run_command(command)
+
+    @mcp.tool(
+        name="run_terminal_command",
+        description=(
+            "Execute a terminal command in the workspace through Antigravity's approval bridge."
+        ),
+    )
+    async def run_terminal_command(command: str) -> str:
+        return await _run_command(command)
+
+    @mcp.tool(
+        name="execute_shell_command",
+        description=(
+            "Alias for run_terminal_command. Runs shell commands like git, mkdir, rm, mv, npm, "
+            "python, and ls in the workspace, with approval for dangerous operations."
+        ),
+    )
+    async def execute_shell_command(command: str) -> str:
+        return await _run_command(command)

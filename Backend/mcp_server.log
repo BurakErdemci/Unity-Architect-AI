@@ -1306,3 +1306,756 @@
                              OK"                                                
                     WARNING  [approval_bridge] Zaman aşımı approval_bridge.py:75
                              (gate: dbfdd7c8f5)                                 
+[Sat May  9 13:53:58 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:49777
+[05/09/26 13:53:59] INFO     Processing request of type            server.py:727
+                             ListToolsRequest                                   
+                    INFO     Processing request of type            server.py:727
+                             ListPromptsRequest                                 
+                    INFO     Processing request of type            server.py:727
+                             ListResourcesRequest                               
+[05/09/26 13:54:05] INFO     Processing request of type            server.py:727
+                             CallToolRequest                                    
+                    INFO     [approval_bridge] write_file  approval_bridge.py:31
+                             için onay isteniyor (gate:                         
+                             30efb87dbe)                                        
+                    INFO     HTTP Request: POST                  _client.py:1740
+                             http://127.0.0.1:49777/mcp-approval                
+                             -request "HTTP/1.1 200 OK"                         
+                    INFO     [approval_bridge] POST        approval_bridge.py:49
+                             başarılı (deneme 1)                                
+                    INFO     [approval_bridge] Kullanıcı   approval_bridge.py:60
+                             cevabı bekleniyor (gate:                           
+                             30efb87dbe)                                        
+[05/09/26 13:54:06] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:49777/mcp-approval                
+                             -result/30efb87dbe "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:49777/mcp-approval                
+                             -result/30efb87dbe "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 13:54:07] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:49777/mcp-approval                
+                             -result/30efb87dbe "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:49777/mcp-approval                
+                             -result/30efb87dbe "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 13:54:08] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:49777/mcp-approval                
+                             -result/30efb87dbe "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:49777/mcp-approval                
+                             -result/30efb87dbe "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 13:54:09] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:49777/mcp-approval                
+                             -result/30efb87dbe "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:49777/mcp-approval                
+                             -result/30efb87dbe "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 13:54:10] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:49777/mcp-approval                
+                             -result/30efb87dbe "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:49777/mcp-approval                
+                             -result/30efb87dbe "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 13:54:11] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:49777/mcp-approval                
+                             -result/30efb87dbe "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     [approval_bridge] Cevap       approval_bridge.py:68
+                             alındı: {'status':                                 
+                             'resolved', 'approved': True}                      
+[Sat May  9 13:54:22 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:49777
+[05/09/26 13:54:23] INFO     Processing request of type            server.py:727
+                             ListToolsRequest                                   
+                    INFO     Processing request of type            server.py:727
+                             ListPromptsRequest                                 
+                    INFO     Processing request of type            server.py:727
+                             ListResourcesRequest                               
+[05/09/26 13:54:31] INFO     Processing request of type            server.py:727
+                             CallToolRequest                                    
+                    INFO     [approval_bridge] bash için   approval_bridge.py:31
+                             onay isteniyor (gate:                              
+                             526a49069e)                                        
+                    INFO     HTTP Request: POST                  _client.py:1740
+                             http://127.0.0.1:49777/mcp-approval                
+                             -request "HTTP/1.1 200 OK"                         
+                    INFO     [approval_bridge] POST        approval_bridge.py:49
+                             başarılı (deneme 1)                                
+                    INFO     [approval_bridge] Kullanıcı   approval_bridge.py:60
+                             cevabı bekleniyor (gate:                           
+                             526a49069e)                                        
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:49777/mcp-approval                
+                             -result/526a49069e "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 13:54:32] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:49777/mcp-approval                
+                             -result/526a49069e "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:49777/mcp-approval                
+                             -result/526a49069e "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 13:54:33] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:49777/mcp-approval                
+                             -result/526a49069e "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:49777/mcp-approval                
+                             -result/526a49069e "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 13:54:34] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:49777/mcp-approval                
+                             -result/526a49069e "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:49777/mcp-approval                
+                             -result/526a49069e "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 13:54:35] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:49777/mcp-approval                
+                             -result/526a49069e "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:49777/mcp-approval                
+                             -result/526a49069e "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 13:54:36] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:49777/mcp-approval                
+                             -result/526a49069e "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:49777/mcp-approval                
+                             -result/526a49069e "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 13:54:37] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:49777/mcp-approval                
+                             -result/526a49069e "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:49777/mcp-approval                
+                             -result/526a49069e "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 13:54:38] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:49777/mcp-approval                
+                             -result/526a49069e "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:49777/mcp-approval                
+                             -result/526a49069e "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     [approval_bridge] Cevap       approval_bridge.py:68
+                             alındı: {'status':                                 
+                             'resolved', 'approved': True}                      
+[Sat May  9 14:08:36 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:50082
+[05/09/26 14:08:37] INFO     Processing request of type            server.py:727
+                             ListToolsRequest                                   
+[Sat May  9 14:12:15 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:50162
+[05/09/26 14:12:15] INFO     Processing request of type            server.py:727
+                             ListToolsRequest                                   
+[Sat May  9 14:19:13 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:50258
+[05/09/26 14:19:13] INFO     Processing request of type            server.py:727
+                             ListToolsRequest                                   
+[Sat May  9 14:23:09 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:50258
+[05/09/26 14:23:09] INFO     Processing request of type            server.py:727
+                             ListToolsRequest                                   
+[Sat May  9 14:27:27 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:50392
+[05/09/26 14:27:28] INFO     Processing request of type            server.py:727
+                             ListToolsRequest                                   
+[Sat May  9 14:32:56 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:50484
+[05/09/26 14:32:56] INFO     Processing request of type            server.py:727
+                             ListToolsRequest                                   
+[Sat May  9 14:33:46 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:50484
+[05/09/26 14:33:46] INFO     Processing request of type            server.py:727
+                             ListToolsRequest                                   
+[Sat May  9 14:41:20 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:50484
+[05/09/26 14:41:21] INFO     Processing request of type            server.py:727
+                             ListToolsRequest                                   
+[Sat May  9 14:41:22 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:50484
+[05/09/26 14:41:22] INFO     Processing request of type            server.py:727
+                             ListToolsRequest                                   
+[Sat May  9 14:45:06 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51100
+[05/09/26 14:45:06] INFO     Processing request of type            server.py:727
+                             ListToolsRequest                                   
+[Sat May  9 14:45:52 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51100
+[05/09/26 14:45:52] INFO     Processing request of type            server.py:727
+                             ListToolsRequest                                   
+[Sat May  9 14:51:58 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51246
+[05/09/26 14:51:59] INFO     Processing request of type            server.py:727
+                             ListToolsRequest                                   
+[Sat May  9 14:53:13 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51246
+[05/09/26 14:53:13] INFO     Processing request of type            server.py:727
+                             ListToolsRequest                                   
+[Sat May  9 15:05:04 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51462
+[05/09/26 15:05:04] INFO     Processing request of type            server.py:727
+                             ListToolsRequest                                   
+[Sat May  9 15:10:00 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51462
+[05/09/26 15:10:01] INFO     Processing request of type            server.py:727
+                             ListToolsRequest                                   
+[Sat May  9 15:11:44 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51462
+[05/09/26 15:11:44] INFO     Processing request of type            server.py:727
+                             ListToolsRequest                                   
+[Sat May  9 15:13:04 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51462
+[05/09/26 15:13:04] INFO     Processing request of type            server.py:727
+                             ListToolsRequest                                   
+[Sat May  9 15:13:43 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51462
+[05/09/26 15:13:43] INFO     Processing request of type            server.py:727
+                             ListToolsRequest                                   
+[Sat May  9 15:17:18 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51462
+[05/09/26 15:17:19] INFO     Processing request of type            server.py:727
+                             ListToolsRequest                                   
+[Sat May  9 15:24:22 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51462
+[05/09/26 15:24:23] INFO     Processing request of type            server.py:727
+                             ListToolsRequest                                   
+[05/09/26 15:24:28] INFO     Processing request of type            server.py:727
+                             CallToolRequest                                    
+[Sat May  9 15:25:03 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51462
+[05/09/26 15:25:03] INFO     Processing request of type            server.py:727
+                             ListToolsRequest                                   
+[05/09/26 15:25:19] INFO     Processing request of type            server.py:727
+                             CallToolRequest                                    
+                    INFO     Processing request of type            server.py:727
+                             CallToolRequest                                    
+                    INFO     [approval_bridge] bash için   approval_bridge.py:31
+                             onay isteniyor (gate:                              
+                             3daa163180)                                        
+                    INFO     HTTP Request: POST                  _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -request "HTTP/1.1 200 OK"                         
+                    INFO     [approval_bridge] POST        approval_bridge.py:49
+                             başarılı (deneme 1)                                
+                    INFO     [approval_bridge] Kullanıcı   approval_bridge.py:60
+                             cevabı bekleniyor (gate:                           
+                             3daa163180)                                        
+[05/09/26 15:25:20] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/3daa163180 "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/3daa163180 "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:25:21] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/3daa163180 "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/3daa163180 "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:25:22] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/3daa163180 "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/3daa163180 "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:25:23] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/3daa163180 "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/3daa163180 "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:25:24] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/3daa163180 "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:25:25] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/3daa163180 "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/3daa163180 "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:25:26] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/3daa163180 "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/3daa163180 "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:25:27] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/3daa163180 "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/3daa163180 "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     [approval_bridge] Cevap       approval_bridge.py:68
+                             alındı: {'status':                                 
+                             'resolved', 'approved': True}                      
+                    INFO     Processing request of type            server.py:727
+                             CallToolRequest                                    
+                    INFO     [approval_bridge] bash için   approval_bridge.py:31
+                             onay isteniyor (gate:                              
+                             c3115ef625)                                        
+                    INFO     HTTP Request: POST                  _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -request "HTTP/1.1 200 OK"                         
+                    INFO     [approval_bridge] POST        approval_bridge.py:49
+                             başarılı (deneme 1)                                
+                    INFO     [approval_bridge] Kullanıcı   approval_bridge.py:60
+                             cevabı bekleniyor (gate:                           
+                             c3115ef625)                                        
+[05/09/26 15:25:28] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/c3115ef625 "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/c3115ef625 "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:25:29] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/c3115ef625 "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/c3115ef625 "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:25:30] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/c3115ef625 "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/c3115ef625 "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:25:31] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/c3115ef625 "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/c3115ef625 "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:25:32] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/c3115ef625 "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     [approval_bridge] Cevap       approval_bridge.py:68
+                             alındı: {'status':                                 
+                             'resolved', 'approved': True}                      
+[05/09/26 15:25:39] INFO     Processing request of type            server.py:727
+                             CallToolRequest                                    
+                    INFO     [approval_bridge] bash için   approval_bridge.py:31
+                             onay isteniyor (gate:                              
+                             b28c584281)                                        
+                    INFO     HTTP Request: POST                  _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -request "HTTP/1.1 200 OK"                         
+                    INFO     [approval_bridge] POST        approval_bridge.py:49
+                             başarılı (deneme 1)                                
+                    INFO     [approval_bridge] Kullanıcı   approval_bridge.py:60
+                             cevabı bekleniyor (gate:                           
+                             b28c584281)                                        
+[05/09/26 15:25:40] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/b28c584281 "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/b28c584281 "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:25:41] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/b28c584281 "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/b28c584281 "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:25:42] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/b28c584281 "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/b28c584281 "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:25:43] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/b28c584281 "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/b28c584281 "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:25:44] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/b28c584281 "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     [approval_bridge] Cevap       approval_bridge.py:68
+                             alındı: {'status':                                 
+                             'resolved', 'approved': True}                      
+                    INFO     Processing request of type            server.py:727
+                             CallToolRequest                                    
+                    INFO     [approval_bridge] bash için   approval_bridge.py:31
+                             onay isteniyor (gate:                              
+                             8cb639fede)                                        
+                    INFO     HTTP Request: POST                  _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -request "HTTP/1.1 200 OK"                         
+                    INFO     [approval_bridge] POST        approval_bridge.py:49
+                             başarılı (deneme 1)                                
+                    INFO     [approval_bridge] Kullanıcı   approval_bridge.py:60
+                             cevabı bekleniyor (gate:                           
+                             8cb639fede)                                        
+[05/09/26 15:25:45] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/8cb639fede "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/8cb639fede "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:25:46] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/8cb639fede "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/8cb639fede "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:25:47] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/8cb639fede "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/8cb639fede "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:25:48] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/8cb639fede "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/8cb639fede "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:25:49] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/8cb639fede "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/8cb639fede "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:25:50] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/8cb639fede "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/8cb639fede "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:25:51] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/8cb639fede "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/8cb639fede "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:25:52] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/8cb639fede "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/8cb639fede "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:25:53] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/8cb639fede "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/8cb639fede "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:25:54] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/8cb639fede "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/8cb639fede "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:25:55] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/8cb639fede "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/8cb639fede "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:25:56] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/8cb639fede "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/8cb639fede "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:25:57] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/8cb639fede "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/8cb639fede "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:25:58] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/8cb639fede "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/8cb639fede "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:25:59] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/8cb639fede "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/8cb639fede "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:26:00] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/8cb639fede "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/8cb639fede "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:26:01] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/8cb639fede "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:26:02] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/8cb639fede "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/8cb639fede "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:26:03] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/8cb639fede "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/8cb639fede "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:26:04] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/8cb639fede "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/8cb639fede "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:26:05] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/8cb639fede "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     [approval_bridge] Cevap       approval_bridge.py:68
+                             alındı: {'status':                                 
+                             'resolved', 'approved': True}                      
+[05/09/26 15:26:10] INFO     Processing request of type            server.py:727
+                             CallToolRequest                                    
+                    INFO     [approval_bridge] bash için   approval_bridge.py:31
+                             onay isteniyor (gate:                              
+                             08101ad405)                                        
+                    INFO     HTTP Request: POST                  _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -request "HTTP/1.1 200 OK"                         
+                    INFO     [approval_bridge] POST        approval_bridge.py:49
+                             başarılı (deneme 1)                                
+                    INFO     [approval_bridge] Kullanıcı   approval_bridge.py:60
+                             cevabı bekleniyor (gate:                           
+                             08101ad405)                                        
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/08101ad405 "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:26:11] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/08101ad405 "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/08101ad405 "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:26:12] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/08101ad405 "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/08101ad405 "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:26:13] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/08101ad405 "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/08101ad405 "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:26:14] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/08101ad405 "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/08101ad405 "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:26:15] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/08101ad405 "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/08101ad405 "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:26:16] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/08101ad405 "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/08101ad405 "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:26:17] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/08101ad405 "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/08101ad405 "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     [approval_bridge] Cevap       approval_bridge.py:68
+                             alındı: {'status':                                 
+                             'resolved', 'approved': True}                      
+[05/09/26 15:26:20] INFO     Processing request of type            server.py:727
+                             CallToolRequest                                    
+                    INFO     [approval_bridge] bash için   approval_bridge.py:31
+                             onay isteniyor (gate:                              
+                             3a28d9f2ce)                                        
+                    INFO     HTTP Request: POST                  _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -request "HTTP/1.1 200 OK"                         
+                    INFO     [approval_bridge] POST        approval_bridge.py:49
+                             başarılı (deneme 1)                                
+                    INFO     [approval_bridge] Kullanıcı   approval_bridge.py:60
+                             cevabı bekleniyor (gate:                           
+                             3a28d9f2ce)                                        
+[05/09/26 15:26:21] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/3a28d9f2ce "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/3a28d9f2ce "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:26:22] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/3a28d9f2ce "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/3a28d9f2ce "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:26:23] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/3a28d9f2ce "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/3a28d9f2ce "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:26:24] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/3a28d9f2ce "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/3a28d9f2ce "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:26:25] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/3a28d9f2ce "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/3a28d9f2ce "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:26:26] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/3a28d9f2ce "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/3a28d9f2ce "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:26:27] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/3a28d9f2ce "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:26:28] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/3a28d9f2ce "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/3a28d9f2ce "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:26:29] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/3a28d9f2ce "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/3a28d9f2ce "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:26:30] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/3a28d9f2ce "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/3a28d9f2ce "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:26:31] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/3a28d9f2ce "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/3a28d9f2ce "HTTP/1.1 200                   
+                             OK"                                                
+[05/09/26 15:26:32] INFO     HTTP Request: GET                   _client.py:1740
+                             http://127.0.0.1:51462/mcp-approval                
+                             -result/3a28d9f2ce "HTTP/1.1 200                   
+                             OK"                                                
+                    INFO     [approval_bridge] Cevap       approval_bridge.py:68
+                             alındı: {'status':                                 
+                             'resolved', 'approved': True}                      

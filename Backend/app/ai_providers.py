@@ -371,27 +371,59 @@ class CLIProvider(AIProvider):
 
     def _write_mcp_config(self, workspace: str) -> str:
         """
-        Workspace'e .mcp.json yazar. Claude Code otomatik okur.
-        Döndürür: config dosyasının tam yolu.
+        Claude Code için workspace'e .mcp.json yazar.
+        Codex için ~/.codex/config.toml içindeki antigravity MCP kaydını günceller.
+        Döndürür: Claude config dosyasının tam yolu.
         """
         import json
         backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         launcher = os.path.join(backend_dir, "run_mcp_server.sh")
+        antigravity_url = os.environ.get("ANTIGRAVITY_URL", "http://localhost:8000")
+
+        # Claude Code: workspace/.mcp.json
         config = {
             "mcpServers": {
                 "antigravity": {
                     "command": launcher,
                     "args": ["--workspace", workspace],
-                    "env": {
-                        "ANTIGRAVITY_URL": os.environ.get("ANTIGRAVITY_URL", "http://localhost:8000"),
-                    }
+                    "env": {"ANTIGRAVITY_URL": antigravity_url}
                 }
             }
         }
         config_path = os.path.join(workspace, ".mcp.json")
         with open(config_path, "w") as f:
             json.dump(config, f, indent=2)
+
+        if self.binary_name.startswith("gpt-"):
+            # Codex: ~/.codex/config.toml içine MCP server ekle/güncelle
+            self._register_codex_mcp(launcher, workspace, antigravity_url)
+
         return config_path
+
+    def _register_codex_mcp(self, launcher: str, workspace: str, antigravity_url: str):
+        """
+        Codex'in ~/.codex/config.toml dosyasına antigravity MCP server'ını yazar.
+        Her çağrıda URL güncellenir (backend dinamik port kullanır).
+        """
+        import subprocess as sp
+        try:
+            # Önce var olan kaydı sil (URL güncel olmayabilir)
+            sp.run(
+                ["codex", "mcp", "remove", "antigravity"],
+                capture_output=True, timeout=5,
+            )
+            # Yeni kaydı ekle
+            sp.run(
+                [
+                    "codex", "mcp", "add", "antigravity",
+                    "--env", f"ANTIGRAVITY_URL={antigravity_url}",
+                    "--env", f"WORKSPACE={workspace}",
+                    "--", launcher, "--workspace", workspace,
+                ],
+                capture_output=True, timeout=5, check=True,
+            )
+        except Exception as e:
+            logger.warning(f"[CLIProvider] Codex MCP kaydı yapılamadı: {e}")
 
     def _build_cmd(self, prompt: str, thinking_level: str = "medium") -> list:
         full_id = self.binary_name
@@ -412,11 +444,52 @@ class CLIProvider(AIProvider):
                 "-p", prompt,
             ]
         elif full_id.startswith("gpt-"):
-            cmd = ["codex", "exec", "-m", full_id, prompt]
+            # --disable shell_tool / unified_exec: native shell araçlarını tool listesinden siler
+            # (Claude Code'daki --disallowedTools "Bash" eşdeğeri).
+            # MCP terminal araçları yine var; Codex'e bunları native shell'in yerine konumlandırıyoruz.
+            mcp_hint = (
+                "\n\n[CODEX TOOL ROUTING]\n"
+                "Codex native shell execution is intentionally disabled in this session.\n"
+                "Terminal execution is still available through the Antigravity MCP server.\n"
+                "For ANY command request (git, ls, mkdir, rm, mv, npm, python, etc.), call "
+                "`mcp__antigravity__run_terminal_command` with the exact command string.\n"
+                "If that tool name is unavailable, use `mcp__antigravity__bash` or "
+                "`mcp__antigravity__execute_shell_command`.\n"
+                "Do not answer that you cannot run commands while these MCP tools are listed. "
+                "Tool calls are routed to the Electron approval UI when approval is required.\n"
+            )
+            cmd = [
+                "codex", "exec",
+                "-m", full_id,
+                "-s", "read-only",
+                "--disable", "shell_tool",
+                "--disable", "unified_exec",
+                # MCP tool çağrılarını Codex'in iç onay gate'inde auto-approve et.
+                # Sandbox read-only olarak kalır; bizim approval_bridge UI kartını gösterir.
+                "-c", 'mcp_servers.antigravity.default_tools_approval_mode="approve"',
+            ]
             if thinking_level != "off":
                 cmd.extend(["-c", f"reasoning.effort={thinking_level}"])
+            cmd.append(mcp_hint + "\n" + prompt)
             return cmd
         return [full_id, prompt]
+
+    def _get_file_tree(self, workspace: str, max_files: int = 80) -> str:
+        """Workspace dosya ağacını string olarak döner (Codex context'i için)."""
+        lines = []
+        count = 0
+        skip_dirs = {".git", "node_modules", "__pycache__", ".next", "venv", "obj", "Library", "Temp"}
+        for root, dirs, files in os.walk(workspace):
+            dirs[:] = [d for d in dirs if d not in skip_dirs and not d.startswith(".")]
+            rel = os.path.relpath(root, workspace)
+            prefix = "" if rel == "." else rel + "/"
+            for f in files:
+                if count >= max_files:
+                    lines.append("... (daha fazla dosya var)")
+                    return "\n".join(lines)
+                lines.append(prefix + f)
+                count += 1
+        return "\n".join(lines) if lines else "(boş workspace)"
 
     async def analyze_code(self, prompt: str, max_tokens: int = 4096,
                            images: Optional[List[str]] = None,
@@ -425,7 +498,18 @@ class CLIProvider(AIProvider):
         try:
             workspace = cwd or os.getcwd()
             self._write_mcp_config(workspace)
-            cmd = self._build_cmd(prompt, thinking_level)
+
+            # Codex için prompt'a gerçek dosya ağacını ekle (hallucination'ı önler)
+            enriched_prompt = prompt
+            if self.binary_name.startswith("gpt-"):
+                file_tree = self._get_file_tree(workspace)
+                enriched_prompt = (
+                    f"WORKSPACE: {workspace}\n"
+                    f"CURRENT FILES:\n{file_tree}\n\n"
+                    f"{prompt}"
+                )
+
+            cmd = self._build_cmd(enriched_prompt, thinking_level)
 
             process = await asyncio.create_subprocess_exec(
                 *cmd,

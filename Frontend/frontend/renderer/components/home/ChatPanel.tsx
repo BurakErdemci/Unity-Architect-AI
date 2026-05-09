@@ -460,12 +460,22 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             <CommandApproval
               command={pendingCommand.command}
               onConfirm={async () => {
-                await onApproveCommand(pendingCommand.gateId, true);
+                const gateId = pendingCommand.gateId;
+                await fetch(`${(window as any).__API__ || ''}/mcp-approval-respond/${gateId}`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ approved: true }),
+                }).catch(() => {});
                 setPendingCommand(null);
                 showToast('Komut onaylandı — çalışıyor...', 'success');
               }}
               onCancel={async () => {
-                await onApproveCommand(pendingCommand.gateId, false);
+                const gateId = pendingCommand.gateId;
+                await fetch(`${(window as any).__API__ || ''}/mcp-approval-respond/${gateId}`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ approved: false }),
+                }).catch(() => {});
                 setPendingCommand(null);
                 showToast('Komut iptal edildi', 'info');
               }}

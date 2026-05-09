@@ -167,7 +167,8 @@ export const useChat = (
                 if (msg.id === aiMsgId) {
                   const updated = { ...msg };
                   if (data.type === 'thinking') updated.thinking = (updated.thinking || '') + (data.text || '');
-                  else if (data.type === 'text' || data.type === 'response') updated.content += data.content;
+                  else if (data.type === 'text') updated.content += data.content;
+                  else if (data.type === 'response') updated.content = data.content || updated.content;
                   else if (data.type === 'tool_call') {
                     const args = typeof data.arguments === 'string' ? JSON.parse(data.arguments) : data.arguments;
                     (updated.tool_calls ||= []).push({ tool: data.tool, args: args });

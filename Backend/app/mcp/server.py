@@ -52,8 +52,10 @@ def create_server(workspace: str = "") -> FastMCP:
         instructions=(
             "Unity projesi üzerinde çalışan bir AI asistanısın. "
             "Dosya okuma ve dizin listeleme özgürce yapılabilir. "
-            "Dosya yazma, silme ve terminal komutları kullanıcı onayı gerektirir — "
-            "her tehlikeli operasyon için IDE'de onay kartı gösterilir."
+            "Dosya yazma, silme ve terminal komutları kullanıcı onayı gerektirir; "
+            "her tehlikeli operasyon için IDE'de onay kartı gösterilir. "
+            "Terminal komutları için `bash`, `run_terminal_command` veya "
+            "`execute_shell_command` araçları kullanılabilir."
         ),
     )
 
