@@ -35,135 +35,6 @@ def _is_dangerous_command(command: str) -> bool:
     return True  # Whitelist dışı her komut tehlikeli sayılır
 
 
-_COMMAND_PREFIXES = (
-    "rm", "mkdir", "mv", "cp", "git", "npm", "pnpm", "yarn", "python", "python3",
-    "pip", "pip3", "touch", "chmod", "chown", "rmdir", "cat", "ls", "pwd",
-)
-
-
-def _extract_explicit_command(text: str) -> Optional[str]:
-    """Kullanıcı mesajındaki açık terminal komutunu yakalar."""
-    fenced = re.search(r"```(?:bash|sh|shell)?\s*\n(?P<cmd>.+?)```", text, re.I | re.S)
-    if fenced:
-        return fenced.group("cmd").strip()
-
-    inline = re.search(r"`(?P<cmd>(?:%s)\b[^`]+)`" % "|".join(_COMMAND_PREFIXES), text, re.I)
-    if inline:
-        return inline.group("cmd").strip()
-
-    line_match = re.search(
-        r"(?im)^\s*(?P<cmd>(?:%s)\b[^\n\r]*)" % "|".join(_COMMAND_PREFIXES),
-        text,
-    )
-    if line_match:
-        return line_match.group("cmd").strip()
-
-    embedded = re.search(
-        r"(?i)\b(?P<cmd>rm\s+(?:-[rfvI]+\s+)?(?:[./~][^\s`'\"<>]*|[A-Za-z]:?[\\/][^\s`'\"<>]*|[^\s`'\"<>]+\.cs)\b[^\n\r]*)",
-        text,
-    )
-    if embedded:
-        return embedded.group("cmd").strip(" .!?")
-
-    return None
-
-
-def _infer_terminal_command(text: str, context: str, workspace_path: str) -> Optional[str]:
-    """
-    Doğal dil ifadelerinden terminal komutunu çıkarır.
-    Desteklenen: rm, git push, git pull, git commit, git add, git checkout, npm install, pip install
-    """
-    low = text.lower()
-
-    # --- rm / sil ---
-    if any(w in low for w in ("rm ", "sil ", "delete ", "remove ")) and any(
-        w in low for w in ("dosya", "file", "script", ".cs", "rm")
-    ):
-        combined = f"{text}\n{context}"
-        abs_match = re.search(r"(?<![A-Za-z0-9_])(/[^\s`'\"<>]+?\.cs)\b", combined)
-        if abs_match:
-            return f"rm {abs_match.group(1)}"
-        rel_matches = re.findall(r"(?i)\b((?:Assets/)?Scripts/[^\s`'\"<>]+?\.cs)\b", combined)
-        if rel_matches:
-            return f"rm {os.path.join(workspace_path, rel_matches[-1])}"
-        name_match = re.search(r"(?i)\b([A-Za-z_][\w-]*\.cs)\b", combined)
-        if name_match:
-            filename = name_match.group(1)
-            for candidate in [
-                os.path.join(workspace_path, "Scripts", filename),
-                os.path.join(workspace_path, "Assets", "Scripts", filename),
-            ]:
-                if os.path.exists(candidate):
-                    return f"rm {candidate}"
-            return f"rm {os.path.join(workspace_path, 'Scripts', filename)}"
-
-    # --- git push (+ isteğe bağlı önceki commit/add) ---
-    has_push = "git push" in low or ("push" in low and "git" in low)
-    has_commit = "commit" in low and "git" in low
-    has_add = ("add" in low or "stage" in low) and "git" in low
-
-    if has_push:
-        # Mevcut branch'i dinamik tespit et
-        try:
-            br = subprocess.run(
-                ["git", "branch", "--show-current"],
-                cwd=workspace_path, capture_output=True, text=True, timeout=5
-            )
-            current_branch = br.stdout.strip() or "main"
-        except Exception:
-            current_branch = "main"
-
-        remote_m = re.search(r"\bgit push\s+(\S+)\s+(\S+)", low)
-        remote = remote_m.group(1) if remote_m else "origin"
-        branch = remote_m.group(2) if remote_m else current_branch
-
-        # "commit edip push" → git add + commit + push zinciri
-        if has_commit:
-            msg_match = re.search(r'(?:commit\s+(?:mesajı|mesaj[ıi]|message)?[:\s]+["\']?)(.+?)(?:["\']?\s*$)', text, re.I)
-            msg = msg_match.group(1).strip() if msg_match else "update"
-            return f'git add . && git commit -m "{msg}" && git push {remote} {branch}'
-
-        return f"git push {remote} {branch}"
-
-    # --- git pull ---
-    if "git pull" in low or ("pull" in low and "git" in low):
-        return "git pull"
-
-    # --- git commit (push olmadan) ---
-    if has_commit:
-        msg_match = re.search(r'(?:commit\s+(?:mesajı|mesaj[ıi]|message)?[:\s]+["\']?)(.+?)(?:["\']?\s*$)', text, re.I)
-        msg = msg_match.group(1).strip() if msg_match else "update"
-        if has_add:
-            return f'git add . && git commit -m "{msg}"'
-        return f'git commit -m "{msg}"'
-
-    # --- git add (commit olmadan) ---
-    if has_add:
-        return "git add ."
-
-    # --- git checkout ---
-    if "git checkout" in low or ("checkout" in low and "git" in low):
-        branch_m = re.search(r"(?:checkout|branch)\s+(\S+)", low)
-        branch = branch_m.group(1) if branch_m else "main"
-        return f"git checkout {branch}"
-
-    # --- npm install ---
-    if "npm install" in low or ("npm" in low and "install" in low):
-        pkg_m = re.search(r"npm install\s+(\S+)", low)
-        return f"npm install {pkg_m.group(1)}" if pkg_m else "npm install"
-
-    # --- pip install ---
-    if "pip install" in low or ("pip" in low and "install" in low):
-        pkg_m = re.search(r"pip(?:3)?\s+install\s+(\S+)", low)
-        return f"pip install {pkg_m.group(1)}" if pkg_m else "pip install"
-
-    return None
-
-
-def _infer_rm_command(text: str, context: str, workspace_path: str) -> Optional[str]:
-    """Geriye dönük uyumluluk için — _infer_terminal_command'a yönlendirir."""
-    return _infer_terminal_command(text, context, workspace_path)
-
 from google import genai
 from google.genai import types as gtypes
 import anthropic
@@ -248,7 +119,6 @@ class AgentRunner:
         if tool_name == "run_command":
             command = tool_args.get("command", "")
             if _is_dangerous_command(command):
-                # Onay iste
                 approved = await self._request_command_approval(command)
                 if self._pending_approval_event:
                     extra_events.append(self._pending_approval_event)
@@ -270,22 +140,15 @@ class AgentRunner:
         return result, extra_events
 
     async def _request_command_approval(self, command: str) -> bool:
-        """
-        Tehlikeli komut için frontend'den onay ister.
-        SSE event gönderir → asyncio.Event ile bekler → sonuç döner.
-        60 saniyede cevap gelmezse otomatik reddeder.
-        """
+        """Native tool (run_command) için onay ister — Gemini/Anthropic/OpenAI yolu."""
         gate_id = uuid.uuid4().hex[:10]
         event = asyncio.Event()
         _APPROVAL_GATES[gate_id] = event
         _APPROVAL_RESULTS[gate_id] = False
-
-        # Frontend'e bildir — bu event SSE stream'e yield edilecek
         self._pending_approval_event = AgentEvent("command_approval_needed", {
             "command": command,
             "gate_id": gate_id,
         })
-
         try:
             await asyncio.wait_for(event.wait(), timeout=60.0)
             return _APPROVAL_RESULTS.get(gate_id, False)
@@ -294,83 +157,6 @@ class AgentRunner:
         finally:
             _APPROVAL_GATES.pop(gate_id, None)
             _APPROVAL_RESULTS.pop(gate_id, None)
-
-    async def _run_codex_direct_command(self, command: str) -> AsyncGenerator[AgentEvent, None]:
-        """
-        Codex CLI native shell/MCP seçimi güvenilir olmadığı için açık terminal isteklerini
-        backend'de deterministik çalıştırır. Claude Code bu yola girmez.
-        """
-        command = command.strip()
-        if not command:
-            return
-
-        yield AgentEvent("tool_call", {
-            "tool": "codex_backend_terminal",
-            "arguments": {"command": command},
-            "iteration": 1,
-        })
-
-        approved = True
-        if _is_dangerous_command(command):
-            gate_id = uuid.uuid4().hex[:10]
-            gate_event = asyncio.Event()
-            _APPROVAL_GATES[gate_id] = gate_event
-            _APPROVAL_RESULTS[gate_id] = False
-
-            # Önce frontend'e bildir (SSE'ye yield et), sonra bekle
-            yield AgentEvent("command_approval_needed", {"command": command, "gate_id": gate_id})
-
-            try:
-                await asyncio.wait_for(gate_event.wait(), timeout=60.0)
-                approved = _APPROVAL_RESULTS.get(gate_id, False)
-            except asyncio.TimeoutError:
-                approved = False
-            finally:
-                _APPROVAL_GATES.pop(gate_id, None)
-                _APPROVAL_RESULTS.pop(gate_id, None)
-
-        if not approved:
-            yield AgentEvent("tool_result", {
-                "tool": "codex_backend_terminal",
-                "success": False,
-                "summary": "Kullanıcı komutu reddetti.",
-            })
-            yield AgentEvent("response", {"content": f"`{command}` komutu kullanıcı tarafından reddedildi."})
-            yield AgentEvent("done", {"iterations": 1})
-            return
-
-        try:
-            proc = await asyncio.to_thread(
-                subprocess.run,
-                command,
-                shell=True,
-                cwd=self.workspace_path or ".",
-                capture_output=True,
-                text=True,
-                timeout=300,
-                env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
-            )
-            output = ((proc.stdout or "") + (proc.stderr or "")).strip()
-            if len(output) > 4000:
-                output = output[:4000] + "\n... (kısaltıldı)"
-            success = proc.returncode == 0
-            summary = output or ("Komut başarıyla tamamlandı." if success else f"Komut {proc.returncode} koduyla bitti.")
-        except subprocess.TimeoutExpired:
-            success = False
-            summary = "Komut zaman aşımına uğradı (300s)."
-        except Exception as exc:
-            success = False
-            summary = f"Komut çalıştırılamadı: {exc}"
-
-        yield AgentEvent("tool_result", {
-            "tool": "codex_backend_terminal",
-            "success": success,
-            "summary": summary,
-        })
-
-        status = "çalıştırıldı" if success else "başarısız oldu"
-        yield AgentEvent("response", {"content": f"`{command}` komutu {status}.\n\n{summary}"})
-        yield AgentEvent("done", {"iterations": 1})
 
     async def run(self, user_message: str) -> AsyncGenerator[AgentEvent, None]:
         """
@@ -1000,16 +786,6 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
         from ai_providers import CLIProvider
 
         provider = CLIProvider(binary_name=self.model_name)
-
-        if self.model_name.startswith("gpt-"):
-            direct_command = (
-                _extract_explicit_command(user_message)
-                or _infer_terminal_command(user_message, self.context, self.workspace_path or ".")
-            )
-            if direct_command:
-                async for event in self._run_codex_direct_command(direct_command):
-                    yield event
-                return
 
         # Bağlamı prompt'a ekle
         context_block = f"\n\n[PROJE BAĞLAMI]\n{self.context}" if self.context else ""

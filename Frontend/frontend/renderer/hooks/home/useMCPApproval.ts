@@ -14,6 +14,7 @@ import { PendingFile } from '../../components/home/FileCreationApproval';
 interface MCPApprovalHookParams {
   API: string;
   enabled: boolean;  // Sadece subscription provider'da aktif
+  loading?: boolean; // Sadece AI işlem yaparken poll et — idle'da CPU harcama
   setPendingGenFiles: (val: { files: PendingFile[]; messageId: number } | null) => void;
   setPendingDelete: (val: { path: string; messageId: number } | null) => void;
   setPendingCommand: (val: { command: string; gateId: string; messageId: number } | null) => void;
@@ -26,6 +27,7 @@ const MCP_MSG_ID = -999;
 export const useMCPApproval = ({
   API,
   enabled,
+  loading = false,
   setPendingGenFiles,
   setPendingDelete,
   setPendingCommand,
@@ -98,14 +100,17 @@ export const useMCPApproval = ({
     }
   }, [API, setPendingGenFiles, setPendingDelete, setPendingCommand, setPendingFix]);
 
-  // Polling başlat/durdur — sadece subscription provider'da aktif
+  // Polling başlat/durdur — sadece subscription provider'da VE loading sırasında aktif
   useEffect(() => {
-    if (!API || !enabled) return;
+    if (!API || !enabled || !loading) {
+      if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null; }
+      return;
+    }
     pollingRef.current = setInterval(poll, 1000);
     return () => {
-      if (pollingRef.current) clearInterval(pollingRef.current);
+      if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null; }
     };
-  }, [API, enabled, poll]);
+  }, [API, enabled, loading, poll]);
 
   // Onay/red fonksiyonları — mevcut UI'lardan çağrılır
   const approveMCPFile = useCallback(async (gateId: string) => {

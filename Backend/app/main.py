@@ -25,6 +25,15 @@ from routes import (
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+class _SuppressPollingEndpoints(logging.Filter):
+    """Yüksek frekanslı polling endpoint loglarını filtreler (CPU & log spam azaltma)."""
+    _SUPPRESS = ("/mcp-pending", "/health")
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        return not any(ep in msg for ep in self._SUPPRESS)
+
+logging.getLogger("uvicorn.access").addFilter(_SuppressPollingEndpoints())
+
 # MCP server subprocess'leri için ANTIGRAVITY_URL'yi şimdiden set et
 # (PORT env var Electron tarafından dinamik olarak geçilir)
 _host = os.environ.get("HOST", "127.0.0.1")
@@ -90,5 +99,5 @@ if __name__ == "__main__":
         "main:app",
         host=host,
         port=port,
-        reload=True
+        reload=False
     )

@@ -57,6 +57,7 @@ export default function Home() {
   useMCPApproval({
     API,
     enabled: ai.effectiveProvider === 'subscription',
+    loading: chat.loading,
     setPendingGenFiles: fs.setPendingGenFiles,
     setPendingDelete: fs.setPendingDelete,
     setPendingCommand: chat.setPendingCommand,

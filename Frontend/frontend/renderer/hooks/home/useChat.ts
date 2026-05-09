@@ -186,6 +186,8 @@ export const useChat = (
               if (data.type === 'context_usage') setContextUsage({ percent: data.percent, should_compact: data.should_compact, message_count: data.message_count });
               if (data.type === 'command_approval_needed') setPendingCommand({ command: data.command, gateId: data.gate_id, messageId: aiMsgId });
               if (data.type === 'pending_delete' && data.path) setPendingDelete({ path: data.path, messageId: aiMsgId });
+              if (data.type === 'refresh_file_tree') refreshFileTree();
+              if (data.type === 'done') refreshFileTree();
               if (data.type === 'done' || data.type === 'response') {
                 const { parseGeneratedFiles } = await import('../../components/home/export-utils');
                 // currentAiMsg o anki en güncel mesaj içeriğini tutmalı

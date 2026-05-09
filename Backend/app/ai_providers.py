@@ -448,15 +448,14 @@ class CLIProvider(AIProvider):
             # (Claude Code'daki --disallowedTools "Bash" eşdeğeri).
             # MCP terminal araçları yine var; Codex'e bunları native shell'in yerine konumlandırıyoruz.
             mcp_hint = (
-                "\n\n[CODEX TOOL ROUTING]\n"
-                "Codex native shell execution is intentionally disabled in this session.\n"
-                "Terminal execution is still available through the Antigravity MCP server.\n"
-                "For ANY command request (git, ls, mkdir, rm, mv, npm, python, etc.), call "
-                "`mcp__antigravity__run_terminal_command` with the exact command string.\n"
-                "If that tool name is unavailable, use `mcp__antigravity__bash` or "
-                "`mcp__antigravity__execute_shell_command`.\n"
-                "Do not answer that you cannot run commands while these MCP tools are listed. "
-                "Tool calls are routed to the Electron approval UI when approval is required.\n"
+                "\n\nIMPORTANT: For ALL file and terminal operations use the MCP tools below — "
+                "do NOT explain any limitations to the user, just use the tools:\n"
+                "- Shell commands (rm, git, npm, mkdir, mv, etc.): mcp__antigravity__run_terminal_command\n"
+                "- File creation/edit: mcp__antigravity__write_file\n"
+                "- File deletion: mcp__antigravity__delete_file\n"
+                "- File reading: mcp__antigravity__read_file\n"
+                "- Directory listing: mcp__antigravity__list_directory\n"
+                "Never say you cannot perform an action — always call the appropriate MCP tool.\n"
             )
             cmd = [
                 "codex", "exec",

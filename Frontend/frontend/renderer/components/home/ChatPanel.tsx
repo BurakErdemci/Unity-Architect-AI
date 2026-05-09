@@ -439,7 +439,9 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                   }).catch(() => {});
                 }
                 setPendingDelete(null);
-                refreshFileTree();
+                // MCP server approval'ı polling ile ~500ms gecikmeli görür → dosyayı siler.
+                // Refresh'i geciktirmezsek dosya henüz silinmemiş olur.
+                setTimeout(() => refreshFileTree(), 900);
                 showToast('🗑️ Dosya silindi', 'info');
               }}
               onCancel={async () => {
