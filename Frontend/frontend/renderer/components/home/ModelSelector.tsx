@@ -1,10 +1,10 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { 
-  ChevronDown, 
-  Database, 
-  Sparkles, 
-  Cpu, 
+import {
+  ChevronDown,
+  Database,
+  Sparkles,
+  Cpu,
   ChevronRight,
   Key
 } from 'lucide-react';
@@ -30,6 +30,27 @@ interface ModelSelectorProps {
   showToast: (msg: string, type: 'success' | 'error' | 'warning' | 'info') => void;
 }
 
+const CLI_GROUPS = [
+  {
+    key: 'claude',
+    label: 'Claude',
+    color: 'orange',
+    ids: ['claude-sonnet-4-6', 'claude-opus-4-7', 'claude-haiku-4-5'],
+  },
+  {
+    key: 'codex',
+    label: 'Codex',
+    color: 'green',
+    ids: ['gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini'],
+  },
+  {
+    key: 'gemini',
+    label: 'Gemini CLI',
+    color: 'blue',
+    ids: ['gemini-3.1-pro-preview', 'gemini-3-flash-preview', 'gemini-3.1-flash-lite-preview', 'gemini-2.5-pro', 'gemini-2.5-flash'],
+  },
+];
+
 export const ModelSelector: React.FC<ModelSelectorProps> = ({
   aiConfig,
   setAiConfig,
@@ -48,6 +69,9 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
   axios,
   showToast
 }) => {
+  const activeGroup = CLI_GROUPS.find(g => g.ids.includes(aiConfig.model_name))?.key ?? null;
+  const [expandedCliGroup, setExpandedCliGroup] = useState<string | null>(activeGroup);
+
   return (
     <div className="relative">
       <button
@@ -171,22 +195,38 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                     <div className="px-2 py-1.5 text-[10px] font-bold text-slate-500 uppercase flex items-center gap-2 mt-1">
                       <Key size={10} /> Abonelik (CLI) Modelleri
                     </div>
-                    {availableModels.subscription.map(m => (
-                      <button
-                        key={m.id}
-                        onClick={async () => {
-                          const newCfg = { ...aiConfig, provider_type: 'subscription', model_name: m.id, api_key: 'CLI_SESSION' };
-                          setAiConfig(newCfg);
-                          setIsModelDropdownOpen(false);
-                          if (user) await axios.post(`${API}/save-ai-config`, { ...newCfg, user_id: user.id });
-                          showToast(`${m.name} seçildi. Terminalde oturum açtığınızdan emin olun.`, 'info');
-                        }}
-                        className={`w-full text-left px-3 py-2 text-[12px] flex flex-col rounded-lg hover:bg-purple-600/10 ${aiConfig.model_name === m.id ? 'text-purple-400' : 'text-slate-300'}`}
-                      >
-                        <span className="font-medium">{m.name}</span>
-                        <span className="text-[10px] text-slate-500">Yerel abonelik kullanılır</span>
-                      </button>
-                    ))}
+                    {CLI_GROUPS.map(group => {
+                      const groupModels = availableModels.subscription.filter(m => group.ids.includes(m.id));
+                      if (groupModels.length === 0) return null;
+                      const isOpen = expandedCliGroup === group.key;
+                      const isGroupActive = groupModels.some(m => m.id === aiConfig.model_name);
+                      return (
+                        <div key={group.key}>
+                          <button
+                            onClick={() => setExpandedCliGroup(isOpen ? null : group.key)}
+                            className={`w-full text-left px-3 py-2 text-[12px] flex items-center justify-between rounded-lg hover:bg-slate-800/60 ${isGroupActive ? 'text-purple-400' : 'text-slate-300'}`}
+                          >
+                            <span className="font-semibold">{group.label}</span>
+                            <ChevronDown size={12} className={`text-slate-500 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+                          </button>
+                          {isOpen && groupModels.map(m => (
+                            <button
+                              key={m.id}
+                              onClick={async () => {
+                                const newCfg = { ...aiConfig, provider_type: 'subscription', model_name: m.id, api_key: 'CLI_SESSION' };
+                                setAiConfig(newCfg);
+                                setIsModelDropdownOpen(false);
+                                if (user) await axios.post(`${API}/save-ai-config`, { ...newCfg, user_id: user.id });
+                                showToast(`${m.name} seçildi.`, 'info');
+                              }}
+                              className={`w-full text-left pl-6 pr-3 py-1.5 text-[11px] flex flex-col rounded-lg hover:bg-purple-600/10 ${aiConfig.model_name === m.id ? 'text-purple-400' : 'text-slate-400'}`}
+                            >
+                              <span className="font-medium">{m.name}</span>
+                            </button>
+                          ))}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
 

@@ -38,10 +38,10 @@ def register_file_tools(mcp: FastMCP, get_workspace: callable):
             items.append(f"{entry}{tag}")
         return "\n".join(items)
 
-    @mcp.tool()
+    @mcp.tool(name="save_file")
     async def write_file(path: str, content: str) -> str:
         """
-        Dosyaya yazar. ONAY GEREKTİRİR.
+        Dosya oluşturur veya düzenler. ONAY GEREKTİRİR.
         Mevcut dosyaysa diff kartı, yeni dosyaysa oluşturma kartı gösterilir.
         """
         workspace = get_workspace()
@@ -52,7 +52,7 @@ def register_file_tools(mcp: FastMCP, get_workspace: callable):
             try:
                 with open(abs_path, "r", encoding="utf-8", errors="replace") as f:
                     original = f.read()
-                if original == content:
+                if original.strip() == content.strip():
                     return "Dosya zaten aynı içerikte, değişiklik yok."
             except Exception:
                 pass

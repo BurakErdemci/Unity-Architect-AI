@@ -373,6 +373,7 @@ class CLIProvider(AIProvider):
         """
         Claude Code için workspace'e .mcp.json yazar.
         Codex için ~/.codex/config.toml içindeki antigravity MCP kaydını günceller.
+        Gemini CLI için MCP kaydını günceller.
         Döndürür: Claude config dosyasının tam yolu.
         """
         import json
@@ -397,6 +398,9 @@ class CLIProvider(AIProvider):
         if self.binary_name.startswith("gpt-"):
             # Codex: ~/.codex/config.toml içine MCP server ekle/güncelle
             self._register_codex_mcp(launcher, workspace, antigravity_url)
+        elif self.binary_name.startswith("gemini"):
+            # Gemini CLI: MCP kaydını güncelle
+            self._register_gemini_mcp(launcher, workspace, antigravity_url)
 
         return config_path
 
@@ -425,7 +429,68 @@ class CLIProvider(AIProvider):
         except Exception as e:
             logger.warning(f"[CLIProvider] Codex MCP kaydı yapılamadı: {e}")
 
-    def _build_cmd(self, prompt: str, thinking_level: str = "medium") -> list:
+    def _register_gemini_mcp(self, launcher: str, workspace: str, antigravity_url: str):
+        """
+        Gemini CLI için ~/.gemini/settings.json içine MCP server yazar (global user scope).
+        Project-level .gemini/settings.json headless modda okunmadığından global tercih edilir.
+        Her çağrıda workspace ve URL güncellenir.
+        """
+        import json
+        home = os.path.expanduser("~")
+        gemini_dir = os.path.join(home, ".gemini")
+        os.makedirs(gemini_dir, exist_ok=True)
+        settings_path = os.path.join(gemini_dir, "settings.json")
+
+        try:
+            with open(settings_path) as f:
+                settings = json.load(f)
+        except Exception:
+            settings = {}
+
+        settings.setdefault("mcpServers", {})["antigravity"] = {
+            "command": launcher,
+            "args": ["--workspace", workspace],
+            "env": {
+                "ANTIGRAVITY_URL": antigravity_url,
+                "WORKSPACE": workspace,
+            },
+            "trust": True,
+        }
+
+        try:
+            with open(settings_path, "w") as f:
+                json.dump(settings, f, indent=2)
+            logger.info(f"[CLIProvider] Gemini MCP güncellendi: {antigravity_url} → {workspace}")
+        except Exception as e:
+            logger.warning(f"[CLIProvider] Gemini ~/.gemini/settings.json yazılamadı: {e}")
+
+    def _write_gemini_policy(self, workspace: str) -> str:
+        """
+        Gemini CLI'ın built-in araçlarını deny eden policy dosyasını TOML formatında yazar.
+        --policy flag'i JSON değil TOML bekler; JSON olunca sessizce ignore edilir.
+        """
+        deny_tools = [
+            "run_shell_command",  # Native terminal → MCP run_terminal_command kullanmak zorunda kalır
+            "replace",            # Native text replace → MCP write_file kullanmak zorunda kalır
+        ]
+        # Her araç için ayrı [[rule]] bloğu gerekiyor (TOML array of tables)
+        lines = []
+        for tool in deny_tools:
+            lines.append("[[rule]]")
+            lines.append(f'toolName = "{tool}"')
+            lines.append('decision = "deny"')
+            lines.append("")
+        toml_content = "\n".join(lines)
+
+        policy_path = os.path.join(workspace, ".gemini_antigravity_policy.toml")
+        try:
+            with open(policy_path, "w") as f:
+                f.write(toml_content)
+        except Exception as e:
+            logger.error(f"[CLIProvider] Gemini policy yazılamadı: {e}")
+        return policy_path
+
+    def _build_cmd(self, prompt: str, thinking_level: str = "medium", workspace: str = None) -> list:
         full_id = self.binary_name
         if full_id.startswith("claude-"):
             # Built-in tehlikeli araçları blokla → Claude MCP'lerimizi kullanmak ZORUNDA kalır
@@ -471,6 +536,32 @@ class CLIProvider(AIProvider):
                 cmd.extend(["-c", f"reasoning.effort={thinking_level}"])
             cmd.append(mcp_hint + "\n" + prompt)
             return cmd
+        elif full_id.startswith("gemini"):
+            policy_path = self._write_gemini_policy(workspace or os.getcwd())
+            mcp_hint = (
+                "IMPORTANT: You MUST respond in Turkish (Türkçe) at all times. Never respond in English.\n\n"
+                "CRITICAL RULES — follow exactly:\n"
+                "1. To CREATE or EDIT any file: use mcp__antigravity__save_file — NO exceptions.\n"
+                "   WARNING: There is NO tool called 'write_file' or 'mcp_antigravity_write_file'. Do NOT attempt these — they do not exist. Only 'mcp__antigravity__save_file' works.\n"
+                "   FORBIDDEN for file writing: python3 -c, printf, echo, cat, tee, heredoc, perl, ruby, node, bash -c, or ANY shell redirection (>, >>).\n"
+                "2. To DELETE a file: use mcp__antigravity__delete_file\n"
+                "3. To READ a file: use mcp__antigravity__read_file\n"
+                "4. To LIST a directory: use mcp__antigravity__list_directory\n"
+                "5. For shell commands ONLY (git, npm, mkdir, mv, rm, etc.): use mcp__antigravity__run_terminal_command\n\n"
+                "Never say you cannot perform an action — always call the appropriate MCP tool.\n"
+                "SCOPE: Only perform the exact task the user asked. Do NOT create test files (test.txt etc.), analyze unrelated files, or modify anything beyond what was explicitly requested. Never create empty files to test write access.\n\n"
+            )
+            actual_model = full_id.replace("gemini-cli-", "")
+            if actual_model == "gemini":
+                actual_model = "gemini-2.0-flash"
+            return [
+                "gemini",
+                "--model", actual_model,
+                "--policy", policy_path,
+                "--skip-trust",
+                "-p", mcp_hint + prompt,
+            ]
+            
         return [full_id, prompt]
 
     def _get_file_tree(self, workspace: str, max_files: int = 80) -> str:
@@ -508,7 +599,7 @@ class CLIProvider(AIProvider):
                     f"{prompt}"
                 )
 
-            cmd = self._build_cmd(enriched_prompt, thinking_level)
+            cmd = self._build_cmd(enriched_prompt, thinking_level, workspace)
 
             process = await asyncio.create_subprocess_exec(
                 *cmd,

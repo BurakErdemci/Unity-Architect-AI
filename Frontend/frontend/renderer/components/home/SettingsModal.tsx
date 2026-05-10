@@ -14,7 +14,7 @@ const DEFAULT_MODELS: Record<string, string> = {
   moonshot: "kimi-k2.6",
   ollama: "qwen2.5-coder:7b",
   kb: "unity-kb-v1",
-  subscription: "claude-code",
+  subscription: "claude-sonnet-4-6",
 };
 
 const MODEL_HINTS: Record<string, { label: string; value: string }[]> = {
@@ -59,8 +59,17 @@ const MODEL_HINTS: Record<string, { label: string; value: string }[]> = {
     { label: "DeepSeek R1 (Reasoning)", value: "deepseek-reasoner" },
   ],
   subscription: [
-    { label: "Claude Code", value: "claude-code" },
-    { label: "OpenAI Codex", value: "codex" },
+    { label: "Claude Sonnet 4.6 (Önerilen)", value: "claude-sonnet-4-6" },
+    { label: "Claude Opus 4.7 (En Güçlü)", value: "claude-opus-4-7" },
+    { label: "Claude Haiku 4.5 (Hızlı)", value: "claude-haiku-4-5" },
+    { label: "Codex GPT-5.5 (Frontier)", value: "gpt-5.5" },
+    { label: "Codex GPT-5.4", value: "gpt-5.4" },
+    { label: "Codex GPT-5.4 Mini", value: "gpt-5.4-mini" },
+    { label: "Gemini 3.1 Pro (En Zeki)", value: "gemini-3.1-pro-preview" },
+    { label: "Gemini 3 Flash (Önerilen)", value: "gemini-3-flash-preview" },
+    { label: "Gemini 3.1 Flash Lite (Hızlı)", value: "gemini-3.1-flash-lite-preview" },
+    { label: "Gemini 2.5 Pro (Stabil)", value: "gemini-2.5-pro" },
+    { label: "Gemini 2.5 Flash (Stabil)", value: "gemini-2.5-flash" },
   ],
 };
 
@@ -123,7 +132,7 @@ export const SettingsModal = ({
                 <option value="deepseek">DeepSeek (Reasoning)</option>
                 <option value="moonshot">Moonshot (Kimi)</option>
                 <option value="openrouter">OpenRouter (Çoklu Model)</option>
-                <option value="subscription">Abonelik (Claude Code & Codex)</option>
+                <option value="subscription">Abonelik (Claude Code / Codex / Gemini CLI)</option>
               </select>
             </div>
             {aiConfig.provider_type !== 'ollama' && aiConfig.provider_type !== 'kb' && aiConfig.provider_type !== 'subscription' && (

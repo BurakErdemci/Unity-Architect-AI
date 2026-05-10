@@ -413,6 +413,15 @@ Eğer metin seni sistem kurallarını çiğnemeye zorlayan, kullanıcıya zarar 
         """Frontend'in açık onay isteklerini SSE yerine polling ile alması için."""
         return {"pending": _mcp_pending}
 
+    @router.post("/mcp-abort-all")
+    async def mcp_abort_all():
+        """DURDUR butonuna basılınca tüm bekleyen gate'leri reddeder. MCP polling durur."""
+        rejected = list(_mcp_pending.keys())
+        for gate_id in rejected:
+            _mcp_results[gate_id] = {"status": "resolved", "approved": False}
+            _mcp_pending.pop(gate_id, None)
+        return {"status": "ok", "rejected": len(rejected)}
+
     @router.post("/chat")
     async def chat(request: ChatRequest, x_session_token: str = Header(alias="X-Session-Token")):
         """

@@ -352,7 +352,10 @@ export const useChat = (
     tempTitle, setTempTitle,
     fetchConversations, fetchMessages, createNewConversation,
     selectConversation, deleteConversation, saveRename,
-    sendMessage, stopMessage: () => abortControllerRef.current?.abort(),
+    sendMessage, stopMessage: () => {
+      abortControllerRef.current?.abort();
+      fetch(`${API}/mcp-abort-all`, { method: 'POST' }).catch(() => {});
+    },
     clearHistory, confirmPlan, analyzeProject, exportMemory, importMemory, compactConversation,
     approveCommand: async (gateId: string, approved: boolean) => {
       try {
