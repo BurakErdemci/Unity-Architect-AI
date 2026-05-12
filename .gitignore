@@ -1,6 +1,8 @@
 # Python
 backend/venv/
 Backend/venv/
+Backend/app_data/memories/
+Backend/mcp_server.log
 **/__pycache__/
 *.py[cod]
 *.pyo

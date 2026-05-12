@@ -1,0 +1,205 @@
+{
+  "manifest_version": "0.3",
+  "name": "Unity MCP",
+  "version": "9.6.8",
+  "description": "AI-powered Unity Editor automation via MCP - manage GameObjects, scripts, materials, scenes, prefabs, VFX, and run tests",
+  "author": {
+    "name": "Coplay",
+    "url": "https://www.coplay.dev"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/CoplayDev/unity-mcp"
+  },
+  "homepage": "https://www.coplay.dev",
+  "documentation": "https://github.com/CoplayDev/unity-mcp#readme",
+  "support": "https://github.com/CoplayDev/unity-mcp/issues",
+  "icon": "coplay-logo.png",
+  "server": {
+    "type": "python",
+    "entry_point": "Server/src/main.py",
+    "mcp_config": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "mcpforunityserver",
+        "mcp-for-unity"
+      ],
+      "env": {}
+    }
+  },
+  "tools": [
+    {
+      "name": "apply_text_edits",
+      "description": "Apply text edits to script content"
+    },
+    {
+      "name": "batch_execute",
+      "description": "Execute multiple Unity operations in a single batch"
+    },
+    {
+      "name": "create_script",
+      "description": "Create new C# scripts"
+    },
+    {
+      "name": "debug_request_context",
+      "description": "Debug and inspect MCP request context"
+    },
+    {
+      "name": "delete_script",
+      "description": "Delete C# scripts"
+    },
+    {
+      "name": "execute_custom_tool",
+      "description": "Execute custom Unity Editor tools registered by the project"
+    },
+    {
+      "name": "execute_code",
+      "description": "Execute arbitrary C# code inside the Unity Editor with access to all Unity APIs"
+    },
+    {
+      "name": "execute_menu_item",
+      "description": "Execute Unity Editor menu items"
+    },
+    {
+      "name": "find_gameobjects",
+      "description": "Find GameObjects in the scene by various criteria"
+    },
+    {
+      "name": "find_in_file",
+      "description": "Search for content within Unity project files"
+    },
+    {
+      "name": "get_sha",
+      "description": "Get SHA hash of script content"
+    },
+    {
+      "name": "get_test_job",
+      "description": "Get status of async test job"
+    },
+    {
+      "name": "manage_animation",
+      "description": "Manage Unity animation: Animator control, AnimatorController CRUD, and AnimationClip operations"
+    },
+    {
+      "name": "manage_asset",
+      "description": "Create, modify, search, and organize Unity assets"
+    },
+    {
+      "name": "manage_build",
+      "description": "Manage player builds: trigger builds, switch platforms, configure settings, batch builds"
+    },
+    {
+      "name": "manage_components",
+      "description": "Add, remove, and configure GameObject components"
+    },
+    {
+      "name": "manage_editor",
+      "description": "Control Unity Editor state, play mode, preferences, undo/redo"
+    },
+    {
+      "name": "manage_gameobject",
+      "description": "Create, modify, transform, and delete GameObjects"
+    },
+    {
+      "name": "manage_camera",
+      "description": "Manage cameras (Unity Camera + Cinemachine) with presets, pipelines, and blending"
+    },
+    {
+      "name": "manage_graphics",
+      "description": "Manage rendering graphics: volumes, post-processing, light baking, rendering stats, pipeline settings, and URP renderer features"
+    },
+    {
+      "name": "manage_material",
+      "description": "Create and modify Unity materials and shaders"
+    },
+    {
+      "name": "manage_packages",
+      "description": "Modify Unity packages: install, remove, embed, and configure registries"
+    },
+    {
+      "name": "manage_physics",
+      "description": "Manage 3D and 2D physics: settings, collision matrix, materials, joints, queries (raycast, shapecast, linecast, overlap), forces, rigidbody configuration, validation, and simulation"
+    },
+    {
+      "name": "manage_prefabs",
+      "description": "Create, instantiate, unpack, and modify prefabs"
+    },
+    {
+      "name": "manage_probuilder",
+      "description": "Create and edit ProBuilder meshes, shapes, and geometry operations"
+    },
+    {
+      "name": "manage_profiler",
+      "description": "Unity Profiler session control, counter reads, memory snapshots, and Frame Debugger (group: profiling)"
+    },
+    {
+      "name": "manage_scene",
+      "description": "Load, save, query hierarchy, multi-scene editing, templates, validation, and manage Unity scenes"
+    },
+    {
+      "name": "manage_script",
+      "description": "Create, read, and modify C# scripts"
+    },
+    {
+      "name": "manage_script_capabilities",
+      "description": "Query script management capabilities"
+    },
+    {
+      "name": "manage_scriptable_object",
+      "description": "Create and modify ScriptableObjects"
+    },
+    {
+      "name": "manage_shader",
+      "description": "Work with Unity shaders"
+    },
+    {
+      "name": "manage_texture",
+      "description": "Create and modify textures with patterns, gradients, and noise"
+    },
+    {
+      "name": "manage_tools",
+      "description": "Manage which tool groups are visible in this session"
+    },
+    {
+      "name": "manage_ui",
+      "description": "Manage Unity UI Toolkit elements (UXML documents, USS stylesheets, UIDocument components)"
+    },
+    {
+      "name": "manage_vfx",
+      "description": "Manage Visual Effects, particle systems, and trails"
+    },
+    {
+      "name": "read_console",
+      "description": "Read Unity Editor console output (logs, warnings, errors)"
+    },
+    {
+      "name": "refresh_unity",
+      "description": "Refresh Unity Editor asset database"
+    },
+    {
+      "name": "run_tests",
+      "description": "Run Unity Test Framework tests"
+    },
+    {
+      "name": "script_apply_edits",
+      "description": "Apply code edits to C# scripts with validation"
+    },
+    {
+      "name": "set_active_instance",
+      "description": "Set the active Unity Editor instance for multi-instance workflows"
+    },
+    {
+      "name": "unity_docs",
+      "description": "Fetch Unity documentation (ScriptReference, Manual, package docs)"
+    },
+    {
+      "name": "unity_reflect",
+      "description": "Inspect Unity C# APIs via live reflection"
+    },
+    {
+      "name": "validate_script",
+      "description": "Validate C# script syntax and compilation"
+    }
+  ]
+}

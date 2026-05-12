@@ -49,3 +49,5 @@ numpy>=2.0.0
 faiss-cpu>=1.13.0
 sentence-transformers>=5.4.0
 mcp
+fastmcp
+tomli

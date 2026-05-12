@@ -1,0 +1,557 @@
+name: Release
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_bump:
+        description: "Version bump type (none = release beta version as-is)"
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+          - none
+        default: patch
+        required: true
+
+jobs:
+  unity_tests:
+    name: Unity tests gate
+    uses: ./.github/workflows/unity-tests.yml
+    with:
+      ref: beta
+    secrets: inherit
+
+  python_tests:
+    name: Python tests gate
+    uses: ./.github/workflows/python-tests.yml
+    with:
+      ref: beta
+
+  bump:
+    name: Bump version, tag, and create release
+    runs-on: ubuntu-latest
+    needs: [unity_tests, python_tests]
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      new_version: ${{ steps.compute.outputs.new_version }}
+      tag: ${{ steps.tag.outputs.tag }}
+      bump_branch: ${{ steps.bump_branch.outputs.name }}
+    steps:
+      - name: Ensure workflow is running on main
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF_NAME}" != "main" ]]; then
+            echo "This workflow must be run on the main branch. Current ref: ${GITHUB_REF_NAME}" >&2
+            exit 1
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Show current versions
+        id: preview
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "============================================"
+          echo "CURRENT VERSION STATUS"
+          echo "============================================"
+
+          # Get main version
+          MAIN_VERSION=$(jq -r '.version' "MCPForUnity/package.json")
+          MAIN_PYPI=$(grep -oP '(?<=version = ")[^"]+' Server/pyproject.toml)
+          echo "Main branch:"
+          echo "  Unity package: $MAIN_VERSION"
+          echo "  PyPI server:   $MAIN_PYPI"
+          echo ""
+
+          # Get beta version
+          git fetch origin beta
+          BETA_VERSION=$(git show origin/beta:MCPForUnity/package.json | jq -r '.version')
+          BETA_PYPI=$(git show origin/beta:Server/pyproject.toml | grep -oP '(?<=version = ")[^"]+')
+          echo "Beta branch:"
+          echo "  Unity package: $BETA_VERSION"
+          echo "  PyPI server:   $BETA_PYPI"
+          echo ""
+
+          # Compute stripped version (used for "none" bump option)
+          STRIPPED=$(echo "$BETA_VERSION" | sed -E 's/-[a-zA-Z]+\.[0-9]+$//')
+          echo "stripped_version=$STRIPPED" >> "$GITHUB_OUTPUT"
+
+          # Show what will happen
+          BUMP="${{ inputs.version_bump }}"
+          echo "Selected bump type: $BUMP"
+          echo "After stripping beta suffix: $STRIPPED"
+
+          if [[ "$BUMP" == "none" ]]; then
+            echo "Release version will be: $STRIPPED"
+          else
+            IFS='.' read -r MA MI PA <<< "$STRIPPED"
+            case "$BUMP" in
+              major) ((MA+=1)); MI=0; PA=0 ;;
+              minor) ((MI+=1)); PA=0 ;;
+              patch) ((PA+=1)) ;;
+            esac
+            echo "Release version will be: $MA.$MI.$PA"
+          fi
+          echo "============================================"
+
+      - name: Merge beta into main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+
+          # Fetch beta branch
+          git fetch origin beta
+
+          # Check if beta has changes not in main
+          if git merge-base --is-ancestor origin/beta HEAD; then
+            echo "beta is already merged into main. Nothing to merge."
+          else
+            echo "Merging beta into main..."
+            git merge origin/beta --no-edit -m "chore: merge beta into main for release"
+            echo "Beta merged successfully."
+          fi
+
+      - name: Strip beta suffix from version if present
+        shell: bash
+        run: |
+          set -euo pipefail
+          CURRENT_VERSION=$(jq -r '.version' "MCPForUnity/package.json")
+          echo "Current version: $CURRENT_VERSION"
+
+          # Strip beta/alpha/rc suffix if present (e.g., "9.4.0-beta.1" -> "9.4.0")
+          if [[ "$CURRENT_VERSION" == *"-"* ]]; then
+            STABLE_VERSION=$(echo "$CURRENT_VERSION" | sed -E 's/-[a-zA-Z]+\.[0-9]+$//')
+            # Validate we have a proper X.Y.Z format after stripping
+            if ! [[ "$STABLE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "Error: Could not parse version '$CURRENT_VERSION' -> '$STABLE_VERSION'" >&2
+              exit 1
+            fi
+            echo "Stripping prerelease suffix: $CURRENT_VERSION -> $STABLE_VERSION"
+            jq --arg v "$STABLE_VERSION" '.version = $v' MCPForUnity/package.json > tmp.json
+            mv tmp.json MCPForUnity/package.json
+
+            # Also update pyproject.toml
+            sed -i "s/^version = .*/version = \"${STABLE_VERSION}\"/" Server/pyproject.toml
+          else
+            echo "Version is already stable: $CURRENT_VERSION"
+          fi
+
+      - name: Compute new version
+        id: compute
+        env:
+          PREVIEWED_STRIPPED: ${{ steps.preview.outputs.stripped_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUMP="${{ inputs.version_bump }}"
+          CURRENT_VERSION=$(jq -r '.version' "MCPForUnity/package.json")
+          echo "Current version: $CURRENT_VERSION"
+
+          # Sanity check: ensure current version matches what was previewed
+          if [[ "$CURRENT_VERSION" != "$PREVIEWED_STRIPPED" ]]; then
+            echo "Warning: Current version ($CURRENT_VERSION) differs from previewed ($PREVIEWED_STRIPPED)"
+            echo "This may indicate an unexpected merge result. Proceeding with current version."
+          fi
+
+          if [[ "$BUMP" == "none" ]]; then
+            # Use the previewed stripped version to ensure consistency with what user saw
+            NEW_VERSION="$PREVIEWED_STRIPPED"
+          else
+            IFS='.' read -r MA MI PA <<< "$CURRENT_VERSION"
+            case "$BUMP" in
+              major)
+                ((MA+=1)); MI=0; PA=0
+                ;;
+              minor)
+                ((MI+=1)); PA=0
+                ;;
+              patch)
+                ((PA+=1))
+                ;;
+              *)
+                echo "Unknown version_bump: $BUMP" >&2
+                exit 1
+                ;;
+            esac
+            NEW_VERSION="$MA.$MI.$PA"
+          fi
+
+          echo "New version: $NEW_VERSION"
+          echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+          echo "current_version=$CURRENT_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Compute tag
+        id: tag
+        env:
+          NEW_VERSION: ${{ steps.compute.outputs.new_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "tag=v${NEW_VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Update files to new version
+        env:
+          NEW_VERSION: ${{ steps.compute.outputs.new_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Updating all version references to $NEW_VERSION"
+          python3 tools/update_versions.py --version "$NEW_VERSION"
+
+      - name: Commit version bump to a temporary branch
+        id: bump_branch
+        env:
+          NEW_VERSION: ${{ steps.compute.outputs.new_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          BRANCH="release/v${NEW_VERSION}"
+          echo "name=$BRANCH" >> "$GITHUB_OUTPUT"
+
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git checkout -b "$BRANCH"
+          git add MCPForUnity/package.json manifest.json "Server/pyproject.toml" Server/README.md
+          if git diff --cached --quiet; then
+            echo "No version changes to commit."
+          else
+            git commit -m "chore: bump version to ${NEW_VERSION}"
+          fi
+
+          echo "Pushing bump branch $BRANCH"
+          git push origin "$BRANCH"
+
+      - name: Create PR for version bump into main
+        id: bump_pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEW_VERSION: ${{ steps.compute.outputs.new_version }}
+          BRANCH: ${{ steps.bump_branch.outputs.name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          PR_URL=$(gh pr create \
+            --base main \
+            --head "$BRANCH" \
+            --title "chore: bump version to ${NEW_VERSION}" \
+            --body "Automated version bump to ${NEW_VERSION}.")
+          echo "pr_url=$PR_URL" >> "$GITHUB_OUTPUT"
+          PR_NUMBER=$(echo "$PR_URL" | grep -oE '[0-9]+$')
+          echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+
+      - name: Enable auto-merge and merge PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.bump_pr.outputs.pr_number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Enable auto-merge (requires repo setting "Allow auto-merge")
+          gh pr merge "$PR_NUMBER" --merge --auto || true
+          # Wait for PR to be merged (poll up to 2 minutes)
+          for i in {1..24}; do
+            STATE=$(gh pr view "$PR_NUMBER" --json state -q '.state')
+            if [[ "$STATE" == "MERGED" ]]; then
+              echo "PR merged successfully."
+              exit 0
+            fi
+            echo "Waiting for PR to merge... (state: $STATE)"
+            sleep 5
+          done
+          echo "PR did not merge in time. Attempting direct merge..."
+          gh pr merge "$PR_NUMBER" --merge
+
+      - name: Fetch merged main and create tag
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git checkout main
+          git pull origin main
+
+          echo "Preparing to create tag $TAG"
+
+          if git ls-remote --tags origin | grep -q "refs/tags/$TAG$"; then
+            echo "Tag $TAG already exists on remote. Refusing to release." >&2
+            exit 1
+          fi
+
+          git tag -a "$TAG" -m "Version ${TAG#v}"
+          git push origin "$TAG"
+
+      - name: Clean up release branch
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ steps.bump_branch.outputs.name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git push origin --delete "$BRANCH" || true
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: ${{ steps.tag.outputs.tag }}
+          generate_release_notes: true
+
+  sync_beta:
+    name: Merge main back into beta via PR
+    needs:
+      - bump
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout beta
+        uses: actions/checkout@v6
+        with:
+          ref: beta
+          fetch-depth: 0
+
+      - name: Prepare sync branch from beta with merged main
+        id: sync_branch
+        env:
+          NEW_VERSION: ${{ needs.bump.outputs.new_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+
+          # Fetch both branches so we can build a merge commit in CI.
+          git fetch origin main beta
+          if git merge-base --is-ancestor origin/main origin/beta; then
+            echo "beta is already up to date with main. Skipping sync."
+            echo "skipped=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          SYNC_BRANCH="sync/main-v${NEW_VERSION}-into-beta-${GITHUB_RUN_ID}"
+          echo "name=$SYNC_BRANCH" >> "$GITHUB_OUTPUT"
+          echo "skipped=false" >> "$GITHUB_OUTPUT"
+
+          git checkout -b "$SYNC_BRANCH" origin/beta
+
+          if git merge origin/main --no-ff --no-commit; then
+            echo "main merged cleanly into sync branch."
+          else
+            echo "Merge conflicts detected. Attempting expected conflict resolution for beta version files."
+            CONFLICTS=$(git diff --name-only --diff-filter=U || true)
+            if [[ -n "$CONFLICTS" ]]; then
+              echo "$CONFLICTS"
+            fi
+
+            # Keep beta-side prerelease versions if these files conflict.
+            for file in MCPForUnity/package.json Server/pyproject.toml; do
+              if git ls-files -u -- "$file" | grep -q .; then
+                echo "Keeping beta version for $file"
+                git checkout --ours -- "$file"
+                git add "$file"
+              fi
+            done
+
+            REMAINING=$(git diff --name-only --diff-filter=U || true)
+            if [[ -n "$REMAINING" ]]; then
+              echo "Unexpected unresolved conflicts remain:"
+              echo "$REMAINING"
+              exit 1
+            fi
+          fi
+
+          git commit -m "chore: sync main (v${NEW_VERSION}) into beta"
+
+          # After releasing X.Y.Z on main, beta should move to X.Y.(Z+1)-beta.1.
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$NEW_VERSION"
+          NEXT_PATCH=$((PATCH + 1))
+          NEXT_BETA_VERSION="${MAJOR}.${MINOR}.${NEXT_PATCH}-beta.1"
+          echo "beta_version=$NEXT_BETA_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Setting beta version to $NEXT_BETA_VERSION"
+
+          CURRENT_BETA_VERSION=$(jq -r '.version' MCPForUnity/package.json)
+          if [[ "$CURRENT_BETA_VERSION" != "$NEXT_BETA_VERSION" ]]; then
+            jq --arg v "$NEXT_BETA_VERSION" '.version = $v' MCPForUnity/package.json > tmp.json
+            mv tmp.json MCPForUnity/package.json
+            git add MCPForUnity/package.json
+            git commit -m "chore: set beta version to ${NEXT_BETA_VERSION} after release v${NEW_VERSION}"
+          else
+            echo "Beta version already at target: $NEXT_BETA_VERSION"
+          fi
+
+          echo "Pushing sync branch $SYNC_BRANCH"
+          git push origin "$SYNC_BRANCH"
+
+      - name: Create PR to merge sync branch into beta
+        if: steps.sync_branch.outputs.skipped != 'true'
+        id: sync_pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEW_VERSION: ${{ needs.bump.outputs.new_version }}
+          NEXT_BETA_VERSION: ${{ steps.sync_branch.outputs.beta_version }}
+          SYNC_BRANCH: ${{ steps.sync_branch.outputs.name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          PR_URL=$(gh pr create \
+            --base beta \
+            --head "$SYNC_BRANCH" \
+            --title "chore: sync main (v${NEW_VERSION}) into beta" \
+            --body "Automated sync of main back into beta after release v${NEW_VERSION}, including beta version set to ${NEXT_BETA_VERSION}.")
+          echo "pr_url=$PR_URL" >> "$GITHUB_OUTPUT"
+          PR_NUMBER=$(echo "$PR_URL" | grep -oE '[0-9]+$')
+          echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+
+      - name: Merge sync PR
+        if: steps.sync_branch.outputs.skipped != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.sync_pr.outputs.pr_number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Best effort: auto-merge if repository settings allow it.
+          gh pr merge "$PR_NUMBER" --merge --auto --delete-branch || true
+
+          # Retry direct merge for up to 2 minutes while checks settle.
+          for i in {1..24}; do
+            STATE=$(gh pr view "$PR_NUMBER" --json state -q '.state')
+            if [[ "$STATE" == "MERGED" ]]; then
+              echo "Sync PR merged successfully."
+              exit 0
+            fi
+
+            if gh pr merge "$PR_NUMBER" --merge --delete-branch >/dev/null 2>&1; then
+              echo "Sync PR merged successfully."
+              exit 0
+            fi
+
+            echo "Waiting for sync PR to become mergeable... (state: $STATE)"
+            sleep 5
+          done
+
+          echo "Sync PR did not merge in time."
+          gh pr view "$PR_NUMBER" --json state,mergeStateStatus,isDraft -q '{state: .state, mergeStateStatus: .mergeStateStatus, isDraft: .isDraft}'
+          exit 1
+
+  publish_docker:
+    name: Publish Docker image
+    needs:
+      - bump
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.bump.outputs.tag }}
+          fetch-depth: 0
+
+      - name: Build and push Docker image
+        uses: ./.github/actions/publish-docker
+        with:
+          docker_username: ${{ secrets.DOCKER_USERNAME }}
+          docker_password: ${{ secrets.DOCKER_PASSWORD }}
+          image: ${{ secrets.DOCKER_USERNAME }}/mcp-for-unity-server
+          version: ${{ needs.bump.outputs.new_version }}
+          include_branch_tags: "false"
+          context: .
+          dockerfile: Server/Dockerfile
+          platforms: linux/amd64
+
+  publish_pypi:
+    name: Publish Python distribution to PyPI
+    needs:
+      - bump
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/mcpforunityserver
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.bump.outputs.tag }}
+          fetch-depth: 0
+
+      # Inlined from .github/actions/publish-pypi to avoid nested composite action issue
+      # with pypa/gh-action-pypi-publish (see https://github.com/pypa/gh-action-pypi-publish/issues/338)
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "latest"
+          enable-cache: true
+          cache-dependency-glob: "Server/uv.lock"
+
+      - name: Build a binary wheel and a source tarball
+        shell: bash
+        run: uv build
+        working-directory: ./Server
+
+      - name: Publish distribution to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: Server/dist/
+
+  publish_mcpb:
+    name: Generate and publish MCPB bundle
+    needs:
+      - bump
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.bump.outputs.tag }}
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Generate MCPB bundle
+        env:
+          NEW_VERSION: ${{ needs.bump.outputs.new_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/generate_mcpb.py "$NEW_VERSION" \
+            --output "unity-mcp-${NEW_VERSION}.mcpb" \
+            --icon docs/images/coplay-logo.png
+
+      - name: Upload MCPB to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.bump.outputs.tag }}
+          files: unity-mcp-${{ needs.bump.outputs.new_version }}.mcpb

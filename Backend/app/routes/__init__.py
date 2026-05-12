@@ -4,6 +4,7 @@ from .config_routes import create_config_router
 from .conversation_routes import create_conversation_router
 from .workspace_routes import create_workspace_router
 from .lint_routes import create_lint_router
+from .mcp_routes import create_mcp_router
 
 __all__ = [
     "create_analysis_router",
@@ -12,4 +13,5 @@ __all__ = [
     "create_conversation_router",
     "create_workspace_router",
     "create_lint_router",
+    "create_mcp_router",
 ]
