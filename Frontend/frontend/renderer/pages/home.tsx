@@ -41,7 +41,7 @@ export default function Home() {
   const { API, backendReady, backendError, showToast } = useAppInitialization();
   const auth = useAuth(API, backendReady);
   const fs = useFileSystem(API, auth.user, showToast as any);
-  const ai = useAIConfig(API, auth.user, showToast as any);
+  const ai = useAIConfig(API, auth.user, showToast as any, fs.workspacePath);
   const hasAutoLoadedRef = useRef(false);
   
   const chat = useChat(
@@ -302,6 +302,7 @@ export default function Home() {
         open={ai.showSettings} aiConfig={ai.aiConfig} providersWithKeys={ai.providersWithKeys}
         onChange={ai.setAiConfig} onClose={() => ai.setShowSettings(false)} onSave={ai.saveAIConfig}
         onLogout={handleLogout} onDeleteKey={ai.deleteApiKey}
+        unityMcpStatus={ai.unityMcpStatus} unityMcpToggling={ai.unityMcpToggling} onToggleUnityMcp={ai.toggleUnityMcp}
       />
 
       <ExportModal
@@ -358,12 +359,43 @@ export default function Home() {
               )}
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <ModelSelector 
-              aiConfig={ai.aiConfig} setAiConfig={ai.setAiConfig} availableModels={ai.availableModels} providersWithKeys={ai.providersWithKeys} 
-              effectiveProvider={ai.effectiveProvider} displayModelName={ai.displayModelName} isModelDropdownOpen={ai.isModelDropdownOpen} setIsModelDropdownOpen={ai.setIsModelDropdownOpen} 
-              modelOrToggles={ai.modelOrToggles} setModelOrToggles={ai.setModelOrToggles} user={auth.user} fetchAvailableModels={ai.fetchAvailableModels} setShowSettings={ai.setShowSettings} 
-              API={API} axios={axios} showToast={showToast as any} 
+          <div className="flex items-center gap-2 relative">
+            {/* Unity MCP Hata Banner'ı */}
+            {ai.unityMcpError && (
+              <div className="absolute top-full right-0 mt-2 z-50 px-3 py-2 rounded-lg border border-red-500/40 bg-red-500/10 text-red-300 text-[11px] font-medium shadow-lg whitespace-nowrap flex items-center gap-2 animate-in fade-in slide-in-from-top-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />
+                {ai.unityMcpError}
+              </div>
+            )}
+            {/* Unity MCP Durum Göstergesi */}
+            <button
+              onClick={ai.toggleUnityMcp}
+              disabled={ai.unityMcpToggling || ai.unityMcpStatus === 'starting'}
+              title={
+                ai.unityMcpStatus === 'connected' ? 'Unity bağlı — kapatmak için tıkla' :
+                ai.unityMcpStatus === 'running'   ? "Unity'ye bağlanılıyor..." :
+                ai.unityMcpStatus === 'starting'  ? 'Sunucu başlatılıyor...' :
+                "Unity MCP'yi aç (Unity açık olmalı)"
+              }
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[10px] font-bold uppercase tracking-wider transition-all disabled:opacity-50 ${
+                ai.unityMcpStatus === 'connected' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20' :
+                ai.unityMcpStatus === 'running' ? 'bg-yellow-500/10 border-yellow-500/30 text-yellow-400 hover:bg-yellow-500/20' :
+                ai.unityMcpStatus === 'starting' ? 'bg-yellow-500/10 border-yellow-500/30 text-yellow-400' :
+                'bg-slate-800/50 border-slate-700/50 text-slate-500 hover:bg-slate-700/50 hover:text-slate-300'
+              }`}
+            >
+              <span className={`w-1.5 h-1.5 rounded-full ${
+                ai.unityMcpStatus === 'connected' ? 'bg-emerald-400' :
+                ai.unityMcpStatus === 'running' || ai.unityMcpStatus === 'starting' ? 'bg-yellow-400 animate-pulse' :
+                'bg-slate-600'
+              }`} />
+              Unity MCP
+            </button>
+            <ModelSelector
+              aiConfig={ai.aiConfig} setAiConfig={ai.setAiConfig} availableModels={ai.availableModels} providersWithKeys={ai.providersWithKeys}
+              effectiveProvider={ai.effectiveProvider} displayModelName={ai.displayModelName} isModelDropdownOpen={ai.isModelDropdownOpen} setIsModelDropdownOpen={ai.setIsModelDropdownOpen}
+              modelOrToggles={ai.modelOrToggles} setModelOrToggles={ai.setModelOrToggles} user={auth.user} fetchAvailableModels={ai.fetchAvailableModels} setShowSettings={ai.setShowSettings}
+              API={API} axios={axios} showToast={showToast as any}
             />
             <Activity size={14} className="text-emerald-500 animate-pulse" />
             {!isChatOpen && (

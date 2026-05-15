@@ -219,9 +219,7 @@ Yanıtını mutlaka [USER_SUMMARY] ve [TECHNICAL_WISDOM] başlıklarıyla ayır.
         """Hafıza dosyasını ham metin olarak döndürür."""
         require_conversation_owner(db, x_session_token, conv_id)
         content = memory_manager.load_memory(str(conv_id))
-        if not content:
-            raise HTTPException(404, "Bu sohbet için henüz bir hafıza kaydı bulunmuyor.")
-        return {"content": content}
+        return {"content": content or ""}
 
     @router.post("/conversations/{conv_id}/import-memory")
     async def import_conversation_memory(conv_id: int, req: Dict[str, str], x_session_token: str = Header(alias="X-Session-Token")):

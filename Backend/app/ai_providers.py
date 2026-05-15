@@ -382,6 +382,7 @@ class CLIProvider(AIProvider):
         antigravity_url = os.environ.get("ANTIGRAVITY_URL", "http://localhost:8000")
 
         # Claude Code: workspace/.mcp.json
+        from unity_ai_mcp.unity_mcp_manager import unity_mcp_manager
         config = {
             "mcpServers": {
                 "antigravity": {
@@ -391,6 +392,13 @@ class CLIProvider(AIProvider):
                 }
             }
         }
+        # Unity MCP toggle açıksa ve sunucu çalışıyorsa ekle (HTTP transport)
+        if unity_mcp_manager.is_running():
+            config["mcpServers"]["unityMCP"] = {
+                "url": f"http://localhost:{unity_mcp_manager.mcp_port}/mcp"
+            }
+            logger.info("[CLIProvider] Unity MCP sunucusu aktif, config'e eklendi.")
+
         config_path = os.path.join(workspace, ".mcp.json")
         with open(config_path, "w") as f:
             json.dump(config, f, indent=2)
@@ -457,6 +465,18 @@ class CLIProvider(AIProvider):
             "trust": True,
         }
 
+        # Unity MCP toggle açıksa ekle
+        # Gemini CLI sadece stdio (command/args) destekliyor — mcp-remote ile HTTP→stdio köprüsü kuruyoruz
+        from unity_ai_mcp.unity_mcp_manager import unity_mcp_manager
+        if unity_mcp_manager.is_running():
+            settings["mcpServers"]["unityMCP"] = {
+                "command": "npx",
+                "args": ["-y", "mcp-remote", f"http://localhost:{unity_mcp_manager.mcp_port}/mcp"],
+                "trust": True,
+            }
+        elif "unityMCP" in settings.get("mcpServers", {}):
+            del settings["mcpServers"]["unityMCP"]
+
         try:
             with open(settings_path, "w") as f:
                 json.dump(settings, f, indent=2)
@@ -509,29 +529,50 @@ class CLIProvider(AIProvider):
                 "-p", prompt,
             ]
         elif full_id.startswith("gpt-"):
-            # --disable shell_tool / unified_exec: native shell araçlarını tool listesinden siler
-            # (Claude Code'daki --disallowedTools "Bash" eşdeğeri).
-            # MCP terminal araçları yine var; Codex'e bunları native shell'in yerine konumlandırıyoruz.
+            from unity_ai_mcp.unity_mcp_manager import unity_mcp_manager
+            unity_running = unity_mcp_manager.is_running()
+
+            unity_section = ""
+            if unity_running:
+                unity_section = (
+                    "\n\nUNITY EDITOR CONTROL (unityMCP tools — use these for ALL Unity operations):\n"
+                    "RULE: NEVER read .unity, .prefab or .asset files to answer Unity questions.\n"
+                    "      ALWAYS call the live Unity Editor via unityMCP tools instead.\n"
+                    "- Scene hierarchy & GameObjects: mcp__unityMCP__manage_scene (action='get_hierarchy')\n"
+                    "- Find objects:                  mcp__unityMCP__find_gameobjects\n"
+                    "- Create/modify/delete objects:  mcp__unityMCP__manage_gameobject\n"
+                    "- Components (add/remove/edit):  mcp__unityMCP__manage_components\n"
+                    "- UI elements (Button/Text/etc): mcp__unityMCP__manage_ui\n"
+                    "- Scripts (create/read/update):  mcp__unityMCP__manage_script\n"
+                    "- Console errors/warnings:       mcp__unityMCP__read_console\n"
+                    "- Play/Pause/Save scene:         mcp__unityMCP__manage_editor\n"
+                    "- Materials/shaders:             mcp__unityMCP__manage_material\n"
+                    "- Physics settings:              mcp__unityMCP__manage_physics\n"
+                    "Only use antigravity file tools for C# source files (.cs), NOT for Unity scene data.\n"
+                )
+
             mcp_hint = (
-                "\n\nIMPORTANT: For ALL file and terminal operations use the MCP tools below — "
-                "do NOT explain any limitations to the user, just use the tools:\n"
-                "- Shell commands (rm, git, npm, mkdir, mv, etc.): mcp__antigravity__run_terminal_command\n"
-                "- File creation/edit: mcp__antigravity__write_file\n"
-                "- File deletion: mcp__antigravity__delete_file\n"
-                "- File reading: mcp__antigravity__read_file\n"
-                "- Directory listing: mcp__antigravity__list_directory\n"
-                "Never say you cannot perform an action — always call the appropriate MCP tool.\n"
+                "\n\nIMPORTANT — Tool priority order (follow exactly, no exceptions):\n"
+                + unity_section +
+                "\nFILE & TERMINAL operations (antigravity tools):\n"
+                "- Shell commands (git, npm, mkdir, etc.): mcp__antigravity__run_terminal_command\n"
+                "- Create/edit .cs files:                  mcp__antigravity__save_file\n"
+                "- Delete files:                           mcp__antigravity__delete_file\n"
+                "- Read .cs source files:                  mcp__antigravity__read_file\n"
+                "- List directories:                       mcp__antigravity__list_directory\n"
+                "\nRESPOND IN TURKISH. Be concise. Never say you cannot do something — use the tools.\n"
             )
+
             cmd = [
                 "codex", "exec",
                 "-m", full_id,
                 "-s", "read-only",
                 "--disable", "shell_tool",
                 "--disable", "unified_exec",
-                # MCP tool çağrılarını Codex'in iç onay gate'inde auto-approve et.
-                # Sandbox read-only olarak kalır; bizim approval_bridge UI kartını gösterir.
                 "-c", 'mcp_servers.antigravity.default_tools_approval_mode="approve"',
             ]
+            if unity_running:
+                cmd.extend(["-c", 'mcp_servers.unityMCP.default_tools_approval_mode="approve"'])
             if thinking_level != "off":
                 cmd.extend(["-c", f"reasoning.effort={thinking_level}"])
             cmd.append(mcp_hint + "\n" + prompt)

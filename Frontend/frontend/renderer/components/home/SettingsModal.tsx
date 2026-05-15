@@ -1,7 +1,8 @@
-import { LogOut, Settings, Trash2, X } from "lucide-react";
+import { LogOut, Settings, Trash2, X, Gamepad2, Loader2 } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 
 import { AIConfig } from "./types";
+import { UnityMCPStatus } from "../../hooks/home/useAIConfig";
 
 
 const DEFAULT_MODELS: Record<string, string> = {
@@ -74,6 +75,13 @@ const MODEL_HINTS: Record<string, { label: string; value: string }[]> = {
 };
 
 
+const UNITY_STATUS_CONFIG: Record<UnityMCPStatus, { label: string; dot: string; bg: string; border: string }> = {
+  off:       { label: "Kapalı",                dot: "bg-slate-600",                    bg: "bg-slate-900/50",   border: "border-slate-700/50" },
+  starting:  { label: "Başlatılıyor...",       dot: "bg-yellow-400 animate-pulse",     bg: "bg-yellow-500/5",   border: "border-yellow-500/20" },
+  running:   { label: "Unity'ye bağlanılıyor", dot: "bg-yellow-400 animate-pulse",     bg: "bg-yellow-500/5",   border: "border-yellow-500/20" },
+  connected: { label: "Unity bağlandı ✓",      dot: "bg-emerald-400",                  bg: "bg-emerald-500/5",  border: "border-emerald-500/20" },
+};
+
 interface SettingsModalProps {
   open: boolean;
   aiConfig: AIConfig;
@@ -83,6 +91,9 @@ interface SettingsModalProps {
   onSave: () => Promise<void>;
   onLogout: () => void;
   onDeleteKey: (provider: string) => Promise<void>;
+  unityMcpStatus: UnityMCPStatus;
+  unityMcpToggling: boolean;
+  onToggleUnityMcp: () => void;
 }
 
 
@@ -95,6 +106,9 @@ export const SettingsModal = ({
   onSave,
   onLogout,
   onDeleteKey,
+  unityMcpStatus,
+  unityMcpToggling,
+  onToggleUnityMcp,
 }: SettingsModalProps) => (
   <AnimatePresence>
     {open && (
@@ -216,6 +230,33 @@ export const SettingsModal = ({
                 </p>
               </div>
             </div>
+            {/* Unity MCP Toggle */}
+            <div className={`flex items-center justify-between p-3 rounded-xl border ${UNITY_STATUS_CONFIG[unityMcpStatus].border} ${UNITY_STATUS_CONFIG[unityMcpStatus].bg}`}>
+              <div className="flex items-center gap-2.5">
+                <Gamepad2 size={15} className="text-purple-400 shrink-0" />
+                <div>
+                  <p className="text-xs font-semibold text-slate-200">Unity MCP</p>
+                  <div className="flex items-center gap-1.5 mt-0.5">
+                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${UNITY_STATUS_CONFIG[unityMcpStatus].dot}`} />
+                    <span className="text-[10px] text-slate-400">{UNITY_STATUS_CONFIG[unityMcpStatus].label}</span>
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={onToggleUnityMcp}
+                disabled={unityMcpToggling || unityMcpStatus === 'starting'}
+                className={`relative w-10 h-5 rounded-full transition-colors duration-200 focus:outline-none disabled:opacity-50 ${
+                  unityMcpStatus !== 'off' ? 'bg-purple-600' : 'bg-slate-700'
+                }`}
+              >
+                <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform duration-200 flex items-center justify-center ${
+                  unityMcpStatus !== 'off' ? 'translate-x-5' : 'translate-x-0'
+                }`}>
+                  {unityMcpToggling && <Loader2 size={10} className="text-purple-600 animate-spin" />}
+                </span>
+              </button>
+            </div>
+
             <div className="flex gap-3 pt-2 mt-2 border-t border-slate-800/50">
               <button
                 onClick={onSave}

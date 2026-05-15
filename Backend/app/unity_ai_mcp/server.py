@@ -32,8 +32,8 @@ import asyncio
 
 from mcp.server.fastmcp import FastMCP
 
-from app.mcp.tools.file_tools import register_file_tools
-from app.mcp.tools.bash_tool import register_bash_tool
+from unity_ai_mcp.tools.file_tools import register_file_tools
+from unity_ai_mcp.tools.bash_tool import register_bash_tool
 
 _workspace_path: str = ""
 

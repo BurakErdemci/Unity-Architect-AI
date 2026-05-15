@@ -7,7 +7,7 @@ import re
 import subprocess
 from mcp.server.fastmcp import FastMCP
 
-from app.mcp.approval_bridge import request_approval
+from unity_ai_mcp.approval_bridge import request_approval
 
 _SAFE_PREFIXES = (
     "ls", "ll", "find ", "grep ", "cat ", "head ", "tail ",

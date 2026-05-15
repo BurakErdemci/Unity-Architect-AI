@@ -1,5 +1,6 @@
 import logging
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -54,8 +55,37 @@ def _resolve_db_path() -> str:
     return os.path.join(db_folder, "unity_master_v3.db")
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Backend başlarken: 8080'de orphan süreç varsa temizle (geçen oturumdan kalmış olabilir)
+    try:
+        import subprocess, signal, os as _os
+        result = subprocess.run(["lsof", "-ti", ":8080"], capture_output=True, text=True, timeout=3)
+        pids = result.stdout.strip().split()
+        for pid in pids:
+            try:
+                _os.kill(int(pid), signal.SIGTERM)
+                logger.info(f"[Startup] Orphan MCP süreci temizlendi (PID: {pid})")
+            except ProcessLookupError:
+                pass
+    except Exception as e:
+        logger.debug(f"[Startup] Port temizleme atlandı: {e}")
+
+    yield
+
+    # Backend kapanınca Unity MCP subprocess'i de durdur
+    try:
+        from unity_ai_mcp.unity_mcp_manager import unity_mcp_manager
+        from tools.unity_mcp_tools import unload_unity_tools
+        unity_mcp_manager.stop_server()
+        unload_unity_tools()
+        logger.info("[Shutdown] Unity MCP sunucusu durduruldu.")
+    except Exception as e:
+        logger.warning(f"[Shutdown] Unity MCP durdurulamadı: {e}")
+
+
 db_path = _resolve_db_path()
-app = FastAPI(title="Unity Architect AI")
+app = FastAPI(title="Unity Architect AI", lifespan=lifespan)
 db = DatabaseManager(db_path=db_path)
 kb = KBEngine()
 PROGRESS_STORE = {}

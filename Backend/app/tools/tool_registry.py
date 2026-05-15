@@ -8,6 +8,9 @@ from typing import Any, Dict, Callable
 from tools.file_tools import read_file, write_file, list_directory, delete_file, run_command
 from tools.search_tools import search_in_project, find_files
 from tools.memory_tools import save_to_memory, recall_memory
+from tools.unity_mcp_tools import (
+    get_unity_tool_definitions, get_unity_tool_functions, is_unity_tool
+)
 
 logger = logging.getLogger(__name__)
 
@@ -179,21 +182,33 @@ _TOOLS_NEEDING_WORKSPACE = {"search_in_project", "find_files", "read_file", "wri
 
 
 def execute_tool(tool_name: str, arguments: Dict[str, Any], workspace_path: str, conversation_id: str = None) -> Dict[str, Any]:
-    """Verilen tool'u güvenli şekilde çalıştırır."""
+    """Verilen tool'u güvenli şekilde çalıştırır. Unity MCP tool'larını da destekler."""
+
+    # Unity MCP tool'u mu?
+    if is_unity_tool(tool_name):
+        unity_funcs = get_unity_tool_functions()
+        func = unity_funcs.get(tool_name)
+        if not func:
+            return {"success": False, "error": f"Unity tool bulunamadı: {tool_name}"}
+        try:
+            result = func(**arguments)
+            logger.info(f"  🎮 Unity Tool [{tool_name}] çalıştırıldı: success={result.get('success', '?')}")
+            return result
+        except Exception as e:
+            logger.error(f"  🎮 Unity Tool [{tool_name}] HATA: {e}")
+            return {"success": False, "error": str(e)}
+
+    # Standart araç
     func = _TOOL_FUNCTIONS.get(tool_name)
     if not func:
         return {"success": False, "error": f"Bilinmeyen araç: {tool_name}"}
 
     try:
-        # workspace_path parametresini otomatik ekle
         if tool_name in _TOOLS_NEEDING_WORKSPACE:
             arguments["workspace_path"] = workspace_path
-            
-        # conversation_id parametresini otomatik ekle
         if tool_name in _TOOLS_NEEDING_CONV_ID:
             arguments["conversation_id"] = conversation_id
 
-        # Dosya yollarını absolute path'e çevir
         if "file_path" in arguments and not arguments["file_path"].startswith("/"):
             arguments["file_path"] = f"{workspace_path}/{arguments['file_path']}"
         if "dir_path" in arguments and not arguments["dir_path"].startswith("/"):
@@ -207,6 +222,11 @@ def execute_tool(tool_name: str, arguments: Dict[str, Any], workspace_path: str,
         return {"success": False, "error": str(e)}
 
 
+def _all_tool_definitions() -> list:
+    """Standart + aktif Unity MCP tool'larını birleştirir."""
+    return TOOL_DEFINITIONS + get_unity_tool_definitions()
+
+
 def get_gemini_tool_declarations() -> list:
     """Gemini API formatında tool declarations döndürür."""
     return [
@@ -217,7 +237,7 @@ def get_gemini_tool_declarations() -> list:
                     "description": t["description"],
                     "parameters": t["parameters"],
                 }
-                for t in TOOL_DEFINITIONS
+                for t in _all_tool_definitions()
             ]
         }
     ]
@@ -234,5 +254,5 @@ def get_openai_tool_declarations() -> list:
                 "parameters": t["parameters"],
             }
         }
-        for t in TOOL_DEFINITIONS
+        for t in _all_tool_definitions()
     ]

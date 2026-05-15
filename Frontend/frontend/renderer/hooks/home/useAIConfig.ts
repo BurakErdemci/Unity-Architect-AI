@@ -1,8 +1,10 @@
-import { useState, useCallback, useEffect, useMemo } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import axios from 'axios';
 import { AIConfig, AvailableModels, UserData } from '../../components/home/types';
 
-export const useAIConfig = (API: string, user: UserData | null, showToast: (msg: string, type: any) => void) => {
+export type UnityMCPStatus = 'off' | 'starting' | 'running' | 'connected';
+
+export const useAIConfig = (API: string, user: UserData | null, showToast: (msg: string, type: any) => void, workspacePath?: string) => {
   const [aiConfig, setAiConfig] = useState<AIConfig>({
     provider_type: 'kb', api_key: '', model_name: 'unity-kb-v1', use_multi_agent: true, thinking_level: 'medium'
   });
@@ -11,6 +13,85 @@ export const useAIConfig = (API: string, user: UserData | null, showToast: (msg:
   const [modelOrToggles, setModelOrToggles] = useState<Record<string, boolean>>({});
   const [showSettings, setShowSettings] = useState(false);
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
+
+  // Unity MCP toggle
+  const [unityMcpStatus, setUnityMcpStatus] = useState<UnityMCPStatus>('off');
+  const [unityMcpToggling, setUnityMcpToggling] = useState(false);
+  const [unityMcpError, setUnityMcpError] = useState<string | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const startingUntilRef = useRef<number>(0); // Toggle ON'dan itibaren 30s boyunca 'off' yanıtını yoksay
+  const errorClearRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const stopPolling = useCallback(() => {
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+  }, []);
+
+  const fetchUnityMcpStatus = useCallback(async () => {
+    if (!API) return;
+    try {
+      const res = await axios.get(`${API}/mcp/unity/status`);
+      const status = res.data.status as UnityMCPStatus;
+
+      // Toggle ON sonrası 30s içinde 'off' gelirse yoksay — sunucu henüz başlıyor olabilir
+      if (status === 'off' && Date.now() < startingUntilRef.current) return;
+
+      setUnityMcpStatus(status);
+      if (status === 'connected') {
+        stopPolling();
+        pollRef.current = setInterval(fetchUnityMcpStatus, 15000);
+      } else if (status === 'off') {
+        // Kapalı ama yine de 8s'de bir kontrol et — Unity kendi başlatmış olabilir
+        stopPolling();
+        pollRef.current = setInterval(fetchUnityMcpStatus, 8000);
+      }
+      // 'starting' veya 'running' → mevcut hızlı interval devam eder
+    } catch {
+      // Hata olsa bile durumu 'off' yapma, sadece tekrar dene
+      stopPolling();
+      pollRef.current = setInterval(fetchUnityMcpStatus, 5000);
+    }
+  }, [API, stopPolling]);
+
+  const toggleUnityMcp = useCallback(async () => {
+    if (!API || unityMcpToggling) return;
+    setUnityMcpToggling(true);
+    const turningOn = unityMcpStatus === 'off';
+    try {
+      await axios.post(`${API}/mcp/unity/toggle`, { enabled: turningOn, workspace_path: workspacePath || null });
+      if (turningOn) {
+        setUnityMcpStatus('starting');
+        startingUntilRef.current = Date.now() + 30000; // 30s boyunca 'off' yanıtını yoksay
+        stopPolling();
+        pollRef.current = setInterval(fetchUnityMcpStatus, 3000);
+      } else {
+        stopPolling();
+        startingUntilRef.current = 0;
+        setUnityMcpStatus('off');
+        pollRef.current = setInterval(fetchUnityMcpStatus, 8000);
+      }
+    } catch (err: any) {
+      const msg = err?.response?.status === 409
+        ? (err.response.data?.detail || "Unity Editor açık değil. Lütfen önce Unity'yi açın.")
+        : 'Unity MCP toggle başarısız.';
+      showToast(msg, 'error');
+      setUnityMcpError(msg);
+      // 6 saniye sonra uyarıyı temizle
+      if (errorClearRef.current) clearTimeout(errorClearRef.current);
+      errorClearRef.current = setTimeout(() => setUnityMcpError(null), 6000);
+      setUnityMcpStatus('off');
+    } finally {
+      setUnityMcpToggling(false);
+    }
+  }, [API, unityMcpStatus, unityMcpToggling, fetchUnityMcpStatus, stopPolling, showToast, workspacePath]);
+
+  // Başlangıçta sorgula ve sürekli kontrol et
+  useEffect(() => {
+    if (!API) return;
+    fetchUnityMcpStatus();
+    // 8s'de bir otomatik kontrol — Unity kendi başlatmış olabilir
+    pollRef.current = setInterval(fetchUnityMcpStatus, 8000);
+    return () => stopPolling();
+  }, [API]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchAIConfig = useCallback(async (userId: number) => {
     if (!API) return;
@@ -113,6 +194,10 @@ export const useAIConfig = (API: string, user: UserData | null, showToast: (msg:
     saveAIConfig,
     deleteApiKey,
     effectiveProvider,
-    displayModelName
+    displayModelName,
+    unityMcpStatus,
+    unityMcpToggling,
+    unityMcpError,
+    toggleUnityMcp,
   };
 };

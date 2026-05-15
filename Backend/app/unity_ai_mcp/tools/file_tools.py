@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 
-from app.mcp.approval_bridge import request_approval
+from unity_ai_mcp.approval_bridge import request_approval
 
 
 def register_file_tools(mcp: FastMCP, get_workspace: callable):
