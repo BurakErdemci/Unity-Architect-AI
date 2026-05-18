@@ -128,6 +128,7 @@ async def load_unity_tools_async() -> bool:
         # Bağlantı kurulunca Unity Console'a bilgi logu gönder
         try:
             await _call_tool_on_server("execute_code", {
+                "action": "execute",
                 "code": 'UnityEngine.Debug.Log("<color=#4FC3F7><b>[Unity Architect AI]</b></color> MCP bağlantısı kuruldu ✓ — AI artık Unity Editor\'ı kontrol edebilir.");'
             })
         except Exception:

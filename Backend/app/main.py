@@ -60,8 +60,14 @@ async def lifespan(app: FastAPI):
     # Backend başlarken: 8080'de orphan süreç varsa temizle (geçen oturumdan kalmış olabilir)
     try:
         import subprocess, signal, os as _os
-        result = subprocess.run(["lsof", "-ti", ":8080"], capture_output=True, text=True, timeout=3)
-        pids = result.stdout.strip().split()
+        # Sadece LISTEN state'indeki server process'lerini temizle —
+        # Unity Editor client olarak bağlıysa onun PID'si de listede çıkar
+        # ve öldürmek Unity'yi kapatır.
+        result = subprocess.run(
+            ["lsof", "-ti", ":8080", "-sTCP:LISTEN"],
+            capture_output=True, text=True, timeout=3
+        )
+        pids = [p for p in result.stdout.strip().split() if p]
         for pid in pids:
             try:
                 _os.kill(int(pid), signal.SIGTERM)

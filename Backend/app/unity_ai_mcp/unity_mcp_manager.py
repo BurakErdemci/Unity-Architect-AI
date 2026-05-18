@@ -91,6 +91,7 @@ class UnityMCPManager:
         uvx = self._get_uvx()
         cmd = [
             uvx,
+            "--no-cache",
             "--from", self.server_dir,
             "mcp-for-unity",
             "--transport", "http",
@@ -128,21 +129,24 @@ class UnityMCPManager:
                 self.process.kill()
             self.process = None
 
-        # Port 8080'de hâlâ çalışan süreç varsa onu da öldür (Unity kendi başlatmışsa)
+        # Port 8080'i sadece LISTEN state'inde tutan süreçleri öldür.
+        # -sTCP:LISTEN olmadan Unity Editor gibi CLIENT bağlantıları da listede çıkar
+        # ve onları öldürmek tüm Unity'yi kapatır.
         if self.is_running():
             import signal
             try:
                 result = subprocess.run(
-                    ["lsof", "-ti", f":{self.mcp_port}"],
+                    ["lsof", "-ti", f":{self.mcp_port}", "-sTCP:LISTEN"],
                     capture_output=True, text=True
                 )
-                pids = result.stdout.strip().split()
+                pids = [p for p in result.stdout.strip().split() if p]
                 for pid in pids:
                     try:
                         os.kill(int(pid), signal.SIGTERM)
                     except ProcessLookupError:
                         pass
-                logger.info(f"[UnityMCP] Port {self.mcp_port} temizlendi (PID'ler: {pids})")
+                if pids:
+                    logger.info(f"[UnityMCP] Port {self.mcp_port} LISTEN temizlendi (PID'ler: {pids})")
             except Exception as e:
                 logger.warning(f"[UnityMCP] Port temizlenemedi: {e}")
 

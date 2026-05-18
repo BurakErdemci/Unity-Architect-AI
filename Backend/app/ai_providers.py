@@ -409,8 +409,57 @@ class CLIProvider(AIProvider):
         elif self.binary_name.startswith("gemini"):
             # Gemini CLI: MCP kaydını güncelle
             self._register_gemini_mcp(launcher, workspace, antigravity_url)
+        elif self.binary_name.startswith("claude"):
+            # Claude Code: user-scope config'e ekle ki -p (headless) mode'da
+            # project-level approval prompt'una takılmasın
+            self._register_claude_mcp(launcher, workspace, antigravity_url)
 
         return config_path
+
+    def _register_claude_mcp(self, launcher: str, workspace: str, antigravity_url: str):
+        """
+        Claude Code'un user-scope config'ine antigravity ve unityMCP server'larını yazar.
+        Project-scope .mcp.json -p (headless) modda approval gerektirdiği için kullanılamaz.
+        """
+        import subprocess as sp
+
+        from unity_ai_mcp.unity_mcp_manager import unity_mcp_manager
+
+        # antigravity (stdio)
+        try:
+            sp.run(["claude", "mcp", "remove", "antigravity", "--scope", "user"],
+                   capture_output=True, timeout=5)
+            sp.run(
+                [
+                    "claude", "mcp", "add", "antigravity",
+                    "--scope", "user",
+                    "-e", f"ANTIGRAVITY_URL={antigravity_url}",
+                    "-e", f"WORKSPACE={workspace}",
+                    "--", launcher, "--workspace", workspace,
+                ],
+                capture_output=True, timeout=5, check=True,
+            )
+            logger.info("[CLIProvider] Claude antigravity MCP kaydedildi (user scope).")
+        except Exception as e:
+            logger.warning(f"[CLIProvider] Claude antigravity MCP kaydı yapılamadı: {e}")
+
+        # unityMCP (http) — sadece Unity MCP server çalışıyorsa
+        try:
+            sp.run(["claude", "mcp", "remove", "unityMCP", "--scope", "user"],
+                   capture_output=True, timeout=5)
+            if unity_mcp_manager.is_running():
+                sp.run(
+                    [
+                        "claude", "mcp", "add", "unityMCP",
+                        "--scope", "user",
+                        "--transport", "http",
+                        f"http://localhost:{unity_mcp_manager.mcp_port}/mcp",
+                    ],
+                    capture_output=True, timeout=5, check=True,
+                )
+                logger.info("[CLIProvider] Claude unityMCP kaydedildi (user scope).")
+        except Exception as e:
+            logger.warning(f"[CLIProvider] Claude unityMCP kaydı yapılamadı: {e}")
 
     def _register_codex_mcp(self, launcher: str, workspace: str, antigravity_url: str):
         """
@@ -567,6 +616,7 @@ class CLIProvider(AIProvider):
                 "codex", "exec",
                 "-m", full_id,
                 "-s", "read-only",
+                "--skip-git-repo-check",
                 "--disable", "shell_tool",
                 "--disable", "unified_exec",
                 "-c", 'mcp_servers.antigravity.default_tools_approval_mode="approve"',
@@ -642,6 +692,10 @@ class CLIProvider(AIProvider):
 
             cmd = self._build_cmd(enriched_prompt, thinking_level, workspace)
 
+            # Komut detaylarını logla (prompt hariç) — son arg uzun olabilir
+            cmd_for_log = cmd[:-1] + [f"<prompt:{len(cmd[-1])} chars>"] if cmd else []
+            logger.info(f"[CLIProvider:{self.binary_name}] cmd={cmd_for_log} cwd={workspace}")
+
             process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
@@ -650,11 +704,27 @@ class CLIProvider(AIProvider):
                 cwd=workspace,
             )
 
+            # stderr'i paralel olarak topla — stdout boş gelirse hata buradan çıkar
+            stderr_buffer = []
+
+            async def _drain_stderr():
+                while True:
+                    line = await process.stderr.readline()
+                    if not line:
+                        break
+                    decoded = line.decode("utf-8", errors="ignore")
+                    stderr_buffer.append(decoded)
+                    logger.warning(f"[CLIProvider:{self.binary_name}] stderr: {decoded.rstrip()}")
+
+            stderr_task = asyncio.create_task(_drain_stderr())
+
             full_text = ""
+            line_count = 0
             while True:
                 line = await process.stdout.readline()
                 if not line:
                     break
+                line_count += 1
                 decoded = line.decode("utf-8", errors="ignore")
                 full_text += decoded
                 clean = decoded.strip()
@@ -663,13 +733,29 @@ class CLIProvider(AIProvider):
                 yield {"type": "delta", "text": decoded}
 
             await process.wait()
+            await stderr_task
+
+            logger.info(
+                f"[CLIProvider:{self.binary_name}] returncode={process.returncode} "
+                f"stdout_lines={line_count} stdout_chars={len(full_text)} "
+                f"stderr_chars={sum(len(s) for s in stderr_buffer)}"
+            )
+
             if process.returncode not in (0, 1):
-                stderr = (await process.stderr.read()).decode("utf-8", errors="ignore")
-                yield {"type": "error", "content": f"❌ CLI Hatası: {stderr}"}
+                stderr = "".join(stderr_buffer)
+                logger.error(f"[CLIProvider:{self.binary_name}] FAILED rc={process.returncode}\n{stderr}")
+                yield {"type": "error", "content": f"❌ CLI Hatası (rc={process.returncode}): {stderr or '(no stderr)'}"}
+            elif line_count == 0:
+                # Stdout hiç çıkmadıysa stderr'i kullanıcıya da göster
+                stderr = "".join(stderr_buffer)
+                logger.warning(f"[CLIProvider:{self.binary_name}] No stdout. stderr: {stderr}")
+                if stderr:
+                    yield {"type": "error", "content": f"⚠️ CLI çıktısı boş. stderr: {stderr[:500]}"}
 
             yield {"type": "final", "text": self._clean_response(full_text)}
 
         except Exception as e:
+            logger.exception(f"[CLIProvider:{self.binary_name}] Exception in analyze_code")
             yield {"type": "error", "content": f"❌ CLI Bridge Hatası: {str(e)}"}
 
     async def analyze_code_with_thinking(self, prompt: str, max_tokens: int = 4096,
