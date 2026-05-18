@@ -8,6 +8,7 @@ from typing import Any, Dict, Callable
 from tools.file_tools import read_file, write_file, list_directory, delete_file, run_command
 from tools.search_tools import search_in_project, find_files
 from tools.memory_tools import save_to_memory, recall_memory
+from tools.screenshot_tool import capture_unity_screenshot
 from tools.unity_mcp_tools import (
     get_unity_tool_definitions, get_unity_tool_functions, is_unity_tool
 )
@@ -154,6 +155,19 @@ TOOL_DEFINITIONS = [
             "required": ["command"]
         }
     },
+    {
+        "name": "capture_unity_screenshot",
+        "description": (
+            "Unity Editor'ün ekran görüntüsünü alır ve görsel olarak analiz eder. "
+            "Blend tree, animasyon, sahne veya materyal gibi görsel doğrulama gerektiren "
+            "durumlarda çağır. Her adımda değil, yalnızca görsel kontrol gerektiğinde kullan."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    },
 ]
 
 
@@ -172,6 +186,7 @@ _TOOL_FUNCTIONS: Dict[str, Callable] = {
     "run_command": run_command,
     "save_to_memory": save_to_memory,
     "recall_memory": recall_memory,
+    "capture_unity_screenshot": capture_unity_screenshot,
 }
 
 # Hangi tool'lar conversation_id parametresi alıyor

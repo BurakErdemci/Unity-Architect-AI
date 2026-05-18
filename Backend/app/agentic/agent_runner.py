@@ -360,6 +360,7 @@ Kullanıcıyla {'Türkçe' if self.language == 'tr' else 'İngilizce'} konuş.""
                 # Normal tool execution
                 result, _ = await self._execute_tool_with_approval(tool_name, tool_args)
 
+                screenshot_b64 = result.pop("image_base64", None)
                 result_str = json.dumps(result, ensure_ascii=False)
                 if len(result_str) > 8000:
                     result_str = result_str[:8000] + "... (kısaltıldı)"
@@ -373,9 +374,15 @@ Kullanıcıyla {'Türkçe' if self.language == 'tr' else 'İngilizce'} konuş.""
                 function_response_parts.append(
                     gtypes.Part(function_response=gtypes.FunctionResponse(
                         name=tool_name,
-                        response=result,
+                        response={"result": result_str},
                     ))
                 )
+                if screenshot_b64:
+                    import base64 as _b64
+                    raw_bytes = _b64.b64decode(screenshot_b64.split(",", 1)[1])
+                    function_response_parts.append(
+                        gtypes.Part(inline_data=gtypes.Blob(mime_type="image/jpeg", data=raw_bytes))
+                    )
 
             # Arada metin varsa (AI'ın açıklaması) yield et
             for p in text_parts:
@@ -539,6 +546,7 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
 
                 result, _ = await self._execute_tool_with_approval(tool_call.name, tool_call.input)
 
+                screenshot_b64 = result.pop("image_base64", None)
                 result_str = json.dumps(result, ensure_ascii=False)
                 if len(result_str) > 8000:
                     result_str = result_str[:8000] + "... (kısaltıldı)"
@@ -549,10 +557,22 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                     "summary": self._summarize_result(tool_call.name, result),
                 })
 
+                if screenshot_b64:
+                    content = [
+                        {"type": "text", "text": result_str},
+                        {"type": "image", "source": {
+                            "type": "base64",
+                            "media_type": "image/jpeg",
+                            "data": screenshot_b64.split(",", 1)[1],
+                        }},
+                    ]
+                else:
+                    content = result_str
+
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": tool_call.id,
-                    "content": result_str
+                    "content": content
                 })
                 
             messages.append({"role": "user", "content": tool_results})
@@ -699,6 +719,7 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
 
                 result, _ = await self._execute_tool_with_approval(tool_name, tool_args)
 
+                screenshot_b64 = result.pop("image_base64", None)
                 result_str = json.dumps(result, ensure_ascii=False)
                 if len(result_str) > 8000:
                     result_str = result_str[:8000] + "... (kısaltıldı)"
@@ -715,6 +736,14 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                     "name": tool_name,
                     "content": result_str
                 })
+                if screenshot_b64:
+                    messages.append({
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "[Screenshot — yukarıdaki tool sonucuyla ilgili görsel]"},
+                            {"type": "image_url", "image_url": {"url": screenshot_b64}},
+                        ],
+                    })
                 
         yield AgentEvent("response", {"content": "⚠️ Maksimum araç çağrısına ulaşıldı."})
         yield AgentEvent("done", {"iterations": MAX_ITERATIONS, "max_reached": True})
