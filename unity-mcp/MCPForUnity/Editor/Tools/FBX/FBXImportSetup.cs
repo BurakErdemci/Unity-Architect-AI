@@ -112,11 +112,11 @@ namespace MCPForUnity.Editor.Tools.FBX
                 var missingBones = new List<string>();
                 if (avatar != null)
                 {
-                    var requiredBones    = HumanTrait.RequiredBoneName;
                     var mappedHumanNames = new HashSet<string>(
                         avatar.humanDescription.human.Select(b => b.humanName));
-                    missingBones = requiredBones
-                        .Where(b => !mappedHumanNames.Contains(b))
+                    missingBones = Enumerable.Range(0, HumanTrait.BoneCount)
+                        .Where(i => HumanTrait.RequiredBone(i) && !mappedHumanNames.Contains(HumanTrait.BoneName[i]))
+                        .Select(i => HumanTrait.BoneName[i])
                         .ToList();
                 }
 
