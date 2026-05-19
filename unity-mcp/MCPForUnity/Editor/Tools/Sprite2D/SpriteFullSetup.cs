@@ -39,6 +39,8 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
             // ── Step 1: Slice ──────────────────────────────────────────────────
 
             var sliceResult = SpriteImportSetup.SliceSheet(@params, diagnostics);
+            if (sliceResult is ErrorResponse)
+                return new { success = false, step = "slice_sheet", error = ((ErrorResponse)sliceResult).Error, diagnostics = diagnostics.Build() };
             if (diagnostics.HasErrors)
                 return new { success = false, step = "slice_sheet", diagnostics = diagnostics.Build() };
 
@@ -70,6 +72,8 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                 ["output_dir"] = outputDir,
             };
             var clipResult = SpriteClipBuilder.SetupClips(clipsParams, diagnostics);
+            if (clipResult is ErrorResponse)
+                return new { success = false, step = "setup_clips", error = ((ErrorResponse)clipResult).Error, diagnostics = diagnostics.Build() };
             if (diagnostics.HasErrors)
                 return new { success = false, step = "setup_clips", diagnostics = diagnostics.Build() };
 
@@ -96,7 +100,7 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
             // ErrorResponse dönebilir (örn: "No valid clips loaded") — açık kontrol
             if (ctrlResult is ErrorResponse)
                 return new { success = false, step = "setup_controller",
-                    error = ((ErrorResponse)ctrlResult).message, diagnostics = diagnostics.Build() };
+                    error = ((ErrorResponse)ctrlResult).Error, diagnostics = diagnostics.Build() };
 
             // ── Step 4: Add to scene ───────────────────────────────────────────
 

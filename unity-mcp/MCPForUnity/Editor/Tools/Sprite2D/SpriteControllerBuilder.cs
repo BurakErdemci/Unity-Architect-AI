@@ -130,6 +130,7 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                         blendTree.AddChild(pair.clip, pair.entry.BlendValue);
 
                     blendState.motion = blendTree;
+                    if (rootSM.defaultState == null) rootSM.defaultState = blendState;
 
                     if (idleState != null)
                     {
