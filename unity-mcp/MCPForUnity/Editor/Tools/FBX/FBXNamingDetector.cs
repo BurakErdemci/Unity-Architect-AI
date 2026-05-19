@@ -35,11 +35,18 @@ namespace MCPForUnity.Editor.Tools.FBX
             return entry;
         }
 
-        public static bool HasDirectionalWalks(IEnumerable<AnimationEntry> entries) =>
-            entries.Any(e => e.Category == AnimCategory.LocomotionWalk);
+        public static bool HasDirectionalWalks(IEnumerable<AnimationEntry> entries)
+        {
+            var walks = entries.Where(e => e.Category == AnimCategory.LocomotionWalk).ToList();
+            // Directional = birden fazla yön varyantı VEYA herhangi biri sol/sağ (BlendX != 0)
+            return walks.Count > 1 || walks.Any(e => e.BlendX != 0f);
+        }
 
-        public static bool HasDirectionalRuns(IEnumerable<AnimationEntry> entries) =>
-            entries.Any(e => e.Category == AnimCategory.LocomotionRun);
+        public static bool HasDirectionalRuns(IEnumerable<AnimationEntry> entries)
+        {
+            var runs = entries.Where(e => e.Category == AnimCategory.LocomotionRun).ToList();
+            return runs.Count > 1 || runs.Any(e => e.BlendX != 0f);
+        }
 
         // ── Private ───────────────────────────────────────────────────────────
 

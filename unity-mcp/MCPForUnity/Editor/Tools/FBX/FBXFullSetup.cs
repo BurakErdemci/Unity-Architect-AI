@@ -6,6 +6,7 @@ using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
 using MCPForUnity.Editor.Helpers;
+using Newtonsoft.Json;
 
 namespace MCPForUnity.Editor.Tools.FBX
 {
@@ -50,6 +51,9 @@ namespace MCPForUnity.Editor.Tools.FBX
             var rigResult = FBXImportSetup.ConfigureRig(rigParams);
             if (rigResult is ErrorResponse)
                 return rigResult;
+
+            // Bug fix: ConfigureRig diagnostics'lerini (AVATAR_BONE_MISMATCH vb.) propagate et
+            MergeDiagnostics(rigResult, diagnostics);
 
             var charAvatar  = FBXImportSetup.GetAvatarFromFBX(characterFbx);
             bool charHumanoidOk = charAvatar != null && charAvatar.isHuman && charAvatar.isValid;
@@ -117,9 +121,30 @@ namespace MCPForUnity.Editor.Tools.FBX
                 };
                 FBXImportSetup.ConfigureRig(animRigParams);
 
+                // Bug fix: gerçek frame aralığını FBX'ten oku (default 0→60 truncation'ı önler)
+                float firstFrame = 0f, lastFrame = 60f;
+                var animImporter = AssetImporter.GetAtPath(animPath) as ModelImporter;
+                if (animImporter != null)
+                {
+                    var defaults = animImporter.defaultClipAnimations;
+                    var customs  = animImporter.clipAnimations;
+                    var source   = (customs != null && customs.Length > 0) ? customs : defaults;
+                    if (source != null && source.Length > 0)
+                    {
+                        firstFrame = source[0].firstFrame;
+                        lastFrame  = source[0].lastFrame;
+                    }
+                }
+
                 var clipDefs = new JArray
                 {
-                    new JObject { ["name"] = entry.ClipName, ["loop"] = entry.Loop }
+                    new JObject
+                    {
+                        ["name"]        = entry.ClipName,
+                        ["loop"]        = entry.Loop,
+                        ["start_frame"] = (int)firstFrame,
+                        ["end_frame"]   = (int)lastFrame,
+                    }
                 };
                 FBXImportSetup.SetupClips(new JObject { ["path"] = animPath, ["clips"] = clipDefs });
 
@@ -171,6 +196,29 @@ namespace MCPForUnity.Editor.Tools.FBX
         }
 
         // ── Helpers ───────────────────────────────────────────────────────────
+
+        private static void MergeDiagnostics(object result, FBXDiagnosticBuilder target)
+        {
+            try
+            {
+                var json  = JsonConvert.SerializeObject(result);
+                var obj   = JObject.Parse(json);
+                var diags = obj["diagnostics"] as JArray;
+                if (diags == null) return;
+                foreach (JObject d in diags)
+                {
+                    string code = d["code"]?.ToString()     ?? "";
+                    string msg  = d["message"]?.ToString()  ?? "";
+                    string sev  = d["severity"]?.ToString() ?? "info";
+                    var fixes   = (d["fix_options"] as JArray)
+                        ?.Select(f => f.ToString()).ToArray() ?? new string[0];
+                    if (sev == "error")        target.AddError(code, msg, null, fixes);
+                    else if (sev == "warning") target.AddWarning(code, msg, null, fixes);
+                    else                       target.AddInfo(code, msg, null);
+                }
+            }
+            catch { /* non-critical — diagnostics kaybedilse de flow durmamalı */ }
+        }
 
         private static string DefaultControllerPath(string characterFbxPath)
         {
