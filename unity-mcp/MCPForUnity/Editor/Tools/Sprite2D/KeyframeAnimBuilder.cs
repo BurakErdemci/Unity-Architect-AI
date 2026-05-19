@@ -203,7 +203,7 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
         private static GameObject FindGameObject(string name)
         {
             // Önce tam hiyerarşi path dene, sonra ada göre bul
-            var all = GameObject.FindObjectsOfType<GameObject>(includeInactive: true);
+            var all = GameObject.FindObjectsByType<GameObject>(FindObjectsInactive.Include, FindObjectsSortMode.None);
             foreach (var go in all)
             {
                 if (GetHierarchyPath(go) == name || go.name == name)

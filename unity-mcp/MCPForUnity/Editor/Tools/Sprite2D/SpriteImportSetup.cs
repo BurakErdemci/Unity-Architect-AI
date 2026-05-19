@@ -5,6 +5,7 @@ using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
 using MCPForUnity.Editor.Helpers;
+#pragma warning disable CS0618 // TextureImporter.spritesheet — Unity 6'da obsolete ama ISpriteEditorDataProvider alternatifsiz karmaşık; Unity 7'ye kadar kabul edilebilir
 
 namespace MCPForUnity.Editor.Tools.Sprite2D
 {

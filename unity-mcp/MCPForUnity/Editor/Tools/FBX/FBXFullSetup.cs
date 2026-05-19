@@ -123,7 +123,6 @@ namespace MCPForUnity.Editor.Tools.FBX
 
                 // Bug fix: gerçek frame aralığını FBX'ten oku (default 0→60 truncation'ı önler)
                 float firstFrame = 0f, lastFrame = 60f;
-                var animImporter = AssetImporter.GetAtPath(animPath) as ModelImporter;
                 if (animImporter != null)
                 {
                     var defaults = animImporter.defaultClipAnimations;
