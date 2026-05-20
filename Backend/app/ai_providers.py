@@ -1,5 +1,11 @@
 import re
 import time
+
+# ANSI/VT100 escape code temizleyici — bubbletea TUI çıktısını temizler
+_ANSI_RE = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x07]*\x07)')
+
+def _strip_ansi(text: str) -> str:
+    return _ANSI_RE.sub('', text)
 import subprocess
 import os
 import logging
@@ -544,10 +550,11 @@ class CLIProvider(AIProvider):
         ]
         # Her araç için ayrı [[rule]] bloğu gerekiyor (TOML array of tables)
         lines = []
-        for tool in deny_tools:
+        for i, tool in enumerate(deny_tools, start=1):
             lines.append("[[rule]]")
             lines.append(f'toolName = "{tool}"')
             lines.append('decision = "deny"')
+            lines.append(f'priority = {i}')
             lines.append("")
         toml_content = "\n".join(lines)
 
@@ -571,11 +578,37 @@ class CLIProvider(AIProvider):
                 "MultiEdit",     # → mcp__antigravity__write_file
                 "NotebookEdit",
             ])
+            from unity_ai_mcp.unity_mcp_manager import unity_mcp_manager
+            unity_running = unity_mcp_manager.is_running()
+            unity_section = ""
+            if unity_running:
+                unity_section = (
+                    "\nUNITY EDITOR — unityMCP tools (use these for ALL Unity scene/UI operations):\n"
+                    "- Scene hierarchy:               mcp__unityMCP__manage_scene action=get_hierarchy\n"
+                    "- Create/modify GameObjects:     mcp__unityMCP__manage_gameobject\n"
+                    "- Add/remove/edit components:    mcp__unityMCP__manage_components\n"
+                    "- UI elements (Canvas/Button):   mcp__unityMCP__manage_ui\n"
+                    "- Scripts (create/attach):       mcp__unityMCP__manage_script\n"
+                    "- Materials/shaders:             mcp__unityMCP__manage_material\n"
+                    "- Console logs:                  mcp__unityMCP__read_console\n"
+                    "RULE: Never write Editor scripts to create scene objects — use unityMCP tools directly.\n"
+                    "Only use mcp__antigravity__save_file for runtime C# scripts (.cs), NOT for scene setup.\n"
+                )
+            subagent_prefix = (
+                "SUBAGENT EXECUTION MODE: You are a subagent dispatched to execute a specific task. "
+                "Do NOT invoke any skills, do NOT brainstorm, do NOT offer visual companions or mockups, "
+                "do NOT ask clarifying questions. Execute the task IMMEDIATELY using available MCP tools. "
+                "Respond in Turkish (Türkçe).\n"
+                + unity_section + "\n"
+            )
             return [
                 "claude", "--model", full_id,
                 "--permission-mode", "bypassPermissions",
                 "--disallowedTools", disallowed,
-                "-p", prompt,
+                "--output-format", "stream-json",
+                "--include-partial-messages",
+                "--verbose",
+                "-p", subagent_prefix + prompt,
             ]
         elif full_id.startswith("gpt-"):
             from unity_ai_mcp.unity_mcp_manager import unity_mcp_manager
@@ -587,16 +620,16 @@ class CLIProvider(AIProvider):
                     "\n\nUNITY EDITOR CONTROL (unityMCP tools — use these for ALL Unity operations):\n"
                     "RULE: NEVER read .unity, .prefab or .asset files to answer Unity questions.\n"
                     "      ALWAYS call the live Unity Editor via unityMCP tools instead.\n"
-                    "- Scene hierarchy & GameObjects: mcp__unityMCP__manage_scene (action='get_hierarchy')\n"
-                    "- Find objects:                  mcp__unityMCP__find_gameobjects\n"
-                    "- Create/modify/delete objects:  mcp__unityMCP__manage_gameobject\n"
-                    "- Components (add/remove/edit):  mcp__unityMCP__manage_components\n"
-                    "- UI elements (Button/Text/etc): mcp__unityMCP__manage_ui\n"
-                    "- Scripts (create/read/update):  mcp__unityMCP__manage_script\n"
-                    "- Console errors/warnings:       mcp__unityMCP__read_console\n"
-                    "- Play/Pause/Save scene:         mcp__unityMCP__manage_editor\n"
-                    "- Materials/shaders:             mcp__unityMCP__manage_material\n"
-                    "- Physics settings:              mcp__unityMCP__manage_physics\n"
+                    "- Scene hierarchy & GameObjects: unityMCP/manage_scene (action='get_hierarchy')\n"
+                    "- Find objects:                  unityMCP/find_gameobjects\n"
+                    "- Create/modify/delete objects:  unityMCP/manage_gameobject\n"
+                    "- Components (add/remove/edit):  unityMCP/manage_components\n"
+                    "- UI elements (Button/Text/etc): unityMCP/manage_ui\n"
+                    "- Scripts (create/read/update):  unityMCP/manage_script\n"
+                    "- Console errors/warnings:       unityMCP/read_console\n"
+                    "- Play/Pause/Save scene:         unityMCP/manage_editor\n"
+                    "- Materials/shaders:             unityMCP/manage_material\n"
+                    "- Physics settings:              unityMCP/manage_physics\n"
                     "Only use antigravity file tools for C# source files (.cs), NOT for Unity scene data.\n"
                 )
 
@@ -691,20 +724,19 @@ class CLIProvider(AIProvider):
                 )
 
             cmd = self._build_cmd(enriched_prompt, thinking_level, workspace)
-
-            # Komut detaylarını logla (prompt hariç) — son arg uzun olabilir
-            cmd_for_log = cmd[:-1] + [f"<prompt:{len(cmd[-1])} chars>"] if cmd else []
-            logger.info(f"[CLIProvider:{self.binary_name}] cmd={cmd_for_log} cwd={workspace}")
+            _env = {**os.environ, "NO_COLOR": "1", "TERM": "xterm-256color",
+                    "COLUMNS": "220", "LINES": "50"}
 
             process = await asyncio.create_subprocess_exec(
                 *cmd,
+                stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                env={**os.environ, "TERM": "xterm-256color"},
+                env=_env,
                 cwd=workspace,
             )
+            logger.info(f"[CLIProvider:{self.binary_name}] PID={process.pid} başlatıldı")
 
-            # stderr'i paralel olarak topla — stdout boş gelirse hata buradan çıkar
             stderr_buffer = []
 
             async def _drain_stderr():
@@ -712,45 +744,144 @@ class CLIProvider(AIProvider):
                     line = await process.stderr.readline()
                     if not line:
                         break
-                    decoded = line.decode("utf-8", errors="ignore")
+                    decoded = line.decode("utf-8", errors="ignore").rstrip()
                     stderr_buffer.append(decoded)
-                    logger.warning(f"[CLIProvider:{self.binary_name}] stderr: {decoded.rstrip()}")
+                    logger.warning(f"[CLIProvider:{self.binary_name}][STDERR] {decoded}")
 
             stderr_task = asyncio.create_task(_drain_stderr())
 
             full_text = ""
             line_count = 0
+            _start = asyncio.get_event_loop().time()
+
             while True:
-                line = await process.stdout.readline()
+                try:
+                    line = await asyncio.wait_for(process.stdout.readline(), timeout=15.0)
+                except asyncio.TimeoutError:
+                    _now = asyncio.get_event_loop().time()
+                    logger.warning(
+                        f"[CLIProvider:{self.binary_name}][TIMEOUT] "
+                        f"15s'de stdout yok | toplam={_now-_start:.0f}s | "
+                        f"pid={process.pid} | rc={process.returncode} | stderr={len(stderr_buffer)}"
+                    )
+                    # lsof: process'in hangi dosyaları/soketleri açtığını göster
+                    try:
+                        import subprocess as _sp
+                        lsof = _sp.run(
+                            ["lsof", "-p", str(process.pid), "-F", "n"],
+                            capture_output=True, text=True, timeout=3
+                        )
+                        open_files = [
+                            l[1:] for l in lsof.stdout.splitlines()
+                            if l.startswith("n") and l[1:] not in ("/dev/null", "")
+                        ]
+                        logger.warning(f"[DIAG][LSOF pid={process.pid}] {open_files[:20]}")
+                    except Exception as _le:
+                        logger.warning(f"[DIAG][LSOF] çalıştırılamadı: {_le}")
+                    # Claude CLI kendi log dosyasını ~/.claude/logs/'a yazar — son satırları oku
+                    if self.binary_name.startswith("claude"):
+                        try:
+                            import glob as _glob
+                            claude_logs = sorted(
+                                _glob.glob(os.path.expanduser("~/.claude/logs/*.log")),
+                                key=os.path.getmtime, reverse=True
+                            )
+                            if claude_logs:
+                                with open(claude_logs[0], "r", errors="ignore") as _lf:
+                                    tail = _lf.readlines()[-30:]
+                                logger.warning(f"[DIAG][CLAUDE_LOG] {claude_logs[0]}:\n{''.join(tail)}")
+                        except Exception as _cle:
+                            logger.warning(f"[DIAG][CLAUDE_LOG] okunamadı: {_cle}")
+                    if process.returncode is not None:
+                        logger.error(f"[CLIProvider:{self.binary_name}] Process bitti rc={process.returncode}")
+                        break
+                    if _now - _start > 120:
+                        logger.error(f"[CLIProvider:{self.binary_name}] 120s timeout — kill")
+                        process.kill()
+                        break
+                    continue
+
                 if not line:
+                    logger.info(f"[CLIProvider:{self.binary_name}] stdout EOF (toplam {line_count} satır)")
                     break
+
+                raw = _strip_ansi(line.decode("utf-8", errors="ignore")).strip()
+                if not raw:
+                    continue
                 line_count += 1
-                decoded = line.decode("utf-8", errors="ignore")
-                full_text += decoded
-                clean = decoded.strip()
-                if "Thinking" in clean:
-                    yield {"type": "thinking", "text": clean}
-                yield {"type": "delta", "text": decoded}
+
+                # stream-json format: her satır bir JSON event (claude-* için)
+                if self.binary_name.startswith("claude"):
+                    import json as _json
+                    try:
+                        ev = _json.loads(raw)
+                        ev_type = ev.get("type", "")
+
+                        if ev_type == "assistant":
+                            for block in ev.get("message", {}).get("content", []):
+                                btype = block.get("type", "")
+                                if btype == "thinking":
+                                    t = block.get("thinking", "").strip()
+                                    if t:
+                                        yield {"type": "thinking", "text": t}
+                                elif btype == "tool_use":
+                                    name = block.get("name", "")
+                                    inp = block.get("input", {})
+                                    hint = f"🔧 `{name}`"
+                                    if "path" in inp:
+                                        hint += f" → `{inp['path']}`"
+                                    elif "action" in inp:
+                                        hint += f" → `{inp['action']}`"
+                                    yield {"type": "thinking", "text": hint}
+                                elif btype == "text":
+                                    t = block.get("text", "")
+                                    if t:
+                                        full_text += t
+                                        yield {"type": "delta", "text": t}
+
+                        elif ev_type == "tool":
+                            result_text = ""
+                            content = ev.get("content", "")
+                            if isinstance(content, str):
+                                result_text = content[:200]
+                            elif isinstance(content, list):
+                                for c in content:
+                                    if isinstance(c, dict) and c.get("type") == "tool_result":
+                                        result_text = str(c.get("content", ""))[:200]
+                            if result_text:
+                                yield {"type": "thinking", "text": f"↩ {result_text}"}
+
+                        elif ev_type == "result":
+                            result = ev.get("result", "")
+                            if result and not full_text:
+                                full_text = result
+                            logger.info(f"[CLIProvider:{self.binary_name}] result subtype={ev.get('subtype')} cost={ev.get('cost_usd')}")
+
+                        continue
+                    except _json.JSONDecodeError:
+                        pass  # JSON değilse plain text olarak işle
+
+                # Diğer provider'lar için plain text
+                full_text += raw + "\n"
+                yield {"type": "delta", "text": raw + "\n"}
 
             await process.wait()
             await stderr_task
 
             logger.info(
-                f"[CLIProvider:{self.binary_name}] returncode={process.returncode} "
-                f"stdout_lines={line_count} stdout_chars={len(full_text)} "
-                f"stderr_chars={sum(len(s) for s in stderr_buffer)}"
+                f"[CLIProvider:{self.binary_name}][DONE] "
+                f"rc={process.returncode} | lines={line_count} | chars={len(full_text)} | "
+                f"stderr={len(stderr_buffer)} | süre={asyncio.get_event_loop().time()-_start:.1f}s"
             )
 
-            if process.returncode not in (0, 1):
-                stderr = "".join(stderr_buffer)
-                logger.error(f"[CLIProvider:{self.binary_name}] FAILED rc={process.returncode}\n{stderr}")
-                yield {"type": "error", "content": f"❌ CLI Hatası (rc={process.returncode}): {stderr or '(no stderr)'}"}
+            if process.returncode not in (0, 1, None):
+                stderr_full = "\n".join(stderr_buffer)
+                logger.error(f"[CLIProvider:{self.binary_name}][FAILED] rc={process.returncode}\nSTDERR:\n{stderr_full}")
+                yield {"type": "error", "content": f"❌ CLI hata (rc={process.returncode}): {stderr_full[:500] or '(boş)'}"}
             elif line_count == 0:
-                # Stdout hiç çıkmadıysa stderr'i kullanıcıya da göster
-                stderr = "".join(stderr_buffer)
-                logger.warning(f"[CLIProvider:{self.binary_name}] No stdout. stderr: {stderr}")
-                if stderr:
-                    yield {"type": "error", "content": f"⚠️ CLI çıktısı boş. stderr: {stderr[:500]}"}
+                stderr_full = "\n".join(stderr_buffer)
+                logger.error(f"[CLIProvider:{self.binary_name}][NO_OUTPUT] Stdout boş!\nSTDERR:\n{stderr_full}")
+                yield {"type": "error", "content": f"⚠️ Çıktı yok. Hata: {stderr_full[:500]}"}
 
             yield {"type": "final", "text": self._clean_response(full_text)}
 

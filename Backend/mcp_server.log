@@ -16488,3 +16488,1561 @@
                              ListToolsRequest                                   
                     INFO     Processing request of type            server.py:727
                              ListResourcesRequest                               
+[Wed May 13 17:19:26 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:49755
+[05/13/26 17:19:26] INFO     Processing request of type            server.py:727
+                             ListPromptsRequest                                 
+                    INFO     Processing request of type            server.py:727
+                             ListToolsRequest                                   
+                    INFO     Processing request of type            server.py:727
+                             ListResourcesRequest                               
+[Wed May 13 17:30:59 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:49755
+[05/13/26 17:30:59] INFO     Processing request of type            server.py:727
+                             ListPromptsRequest                                 
+                    INFO     Processing request of type            server.py:727
+                             ListToolsRequest                                   
+                    INFO     Processing request of type            server.py:727
+                             ListResourcesRequest                               
+[Wed May 13 17:31:37 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:49755
+[05/13/26 17:31:37] INFO     Processing request of type            server.py:727
+                             ListPromptsRequest                                 
+                    INFO     Processing request of type            server.py:727
+                             ListToolsRequest                                   
+                    INFO     Processing request of type            server.py:727
+                             ListResourcesRequest                               
+[Wed May 13 17:32:34 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:49755
+[05/13/26 17:32:35] INFO     Processing request of type            server.py:727
+                             ListPromptsRequest                                 
+                    INFO     Processing request of type            server.py:727
+                             ListToolsRequest                                   
+                    INFO     Processing request of type            server.py:727
+                             ListResourcesRequest                               
+[Wed May 13 17:35:34 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:49755
+[05/13/26 17:35:35] INFO     Processing request of type            server.py:727
+                             ListPromptsRequest                                 
+                    INFO     Processing request of type            server.py:727
+                             ListToolsRequest                                   
+                    INFO     Processing request of type            server.py:727
+                             ListResourcesRequest                               
+[Wed May 13 17:39:58 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:49755
+[05/13/26 17:39:58] INFO     Processing request of type            server.py:727
+                             ListPromptsRequest                                 
+                    INFO     Processing request of type            server.py:727
+                             ListToolsRequest                                   
+                    INFO     Processing request of type            server.py:727
+                             ListResourcesRequest                               
+[Wed May 13 17:48:15 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:52175
+[05/13/26 17:48:15] INFO     Processing request of type            server.py:727
+                             ListToolsRequest                                   
+[Wed May 13 17:49:06 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:52175
+[05/13/26 17:49:06] INFO     Processing request of type            server.py:727
+                             ListToolsRequest                                   
+[Wed May 13 23:23:06 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:49755
+[05/13/26 23:23:07] INFO     Processing request of type            server.py:727
+                             ListPromptsRequest                                 
+                    INFO     Processing request of type            server.py:727
+                             ListToolsRequest                                   
+                    INFO     Processing request of type            server.py:727
+                             ListResourcesRequest                               
+[05/13/26 23:23:13] INFO     Processing request of type            server.py:727
+                             CallToolRequest                                    
+[05/13/26 23:23:15] INFO     Processing request of type            server.py:727
+                             CallToolRequest                                    
+[05/13/26 23:23:17] INFO     Processing request of type            server.py:727
+                             CallToolRequest                                    
+[05/13/26 23:23:22] INFO     Processing request of type            server.py:727
+                             CallToolRequest                                    
+[05/13/26 23:23:24] INFO     Processing request of type            server.py:727
+                             CallToolRequest                                    
+[05/13/26 23:23:26] INFO     Processing request of type            server.py:727
+                             CallToolRequest                                    
+[05/13/26 23:24:33] INFO     Processing request of type            server.py:727
+                             CallToolRequest                                    
+[05/13/26 23:24:36] INFO     Processing request of type            server.py:727
+                             CallToolRequest                                    
+                    INFO     [approval_bridge] bash için   approval_bridge.py:31
+                             onay isteniyor (gate:                              
+                             b3d5546bc1)                                        
+                    WARNING  [approval_bridge] POST        approval_bridge.py:52
+                             denemesi 1 başarısız: All                          
+                             connection attempts failed                         
+[05/13/26 23:24:37] WARNING  [approval_bridge] POST        approval_bridge.py:52
+                             denemesi 2 başarısız: All                          
+                             connection attempts failed                         
+[05/13/26 23:24:38] WARNING  [approval_bridge] POST        approval_bridge.py:52
+                             denemesi 3 başarısız: All                          
+                             connection attempts failed                         
+[05/13/26 23:24:39] WARNING  [approval_bridge] POST        approval_bridge.py:52
+                             denemesi 4 başarısız: All                          
+                             connection attempts failed                         
+[Wed May 13 23:27:07 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:49755
+[05/13/26 23:27:08] INFO     Processing request of type            server.py:727
+                             ListPromptsRequest                                 
+                    INFO     Processing request of type            server.py:727
+                             ListToolsRequest                                   
+                    INFO     Processing request of type            server.py:727
+                             ListResourcesRequest                               
+[Wed May 13 23:32:01 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:49755
+[05/13/26 23:32:02] INFO     Processing request of type            server.py:727
+                             ListPromptsRequest                                 
+                    INFO     Processing request of type            server.py:727
+                             ListToolsRequest                                   
+                    INFO     Processing request of type            server.py:727
+                             ListResourcesRequest                               
+[05/13/26 23:32:07] INFO     Processing request of type            server.py:727
+                             CallToolRequest                                    
+                    INFO     [approval_bridge] write_file  approval_bridge.py:31
+                             için onay isteniyor (gate:                         
+                             947b4ba493)                                        
+                    WARNING  [approval_bridge] POST        approval_bridge.py:52
+                             denemesi 1 başarısız: All                          
+                             connection attempts failed                         
+[05/13/26 23:32:08] WARNING  [approval_bridge] POST        approval_bridge.py:52
+                             denemesi 2 başarısız: All                          
+                             connection attempts failed                         
+[05/13/26 23:32:09] WARNING  [approval_bridge] POST        approval_bridge.py:52
+                             denemesi 3 başarısız: All                          
+                             connection attempts failed                         
+[05/13/26 23:32:10] WARNING  [approval_bridge] POST        approval_bridge.py:52
+                             denemesi 4 başarısız: All                          
+                             connection attempts failed                         
+[05/13/26 23:32:11] WARNING  [approval_bridge] POST        approval_bridge.py:52
+                             denemesi 5 başarısız: All                          
+                             connection attempts failed                         
+[05/13/26 23:32:12] WARNING  [approval_bridge] POST        approval_bridge.py:52
+                             denemesi 6 başarısız: All                          
+                             connection attempts failed                         
+[05/13/26 23:32:13] WARNING  [approval_bridge] POST        approval_bridge.py:52
+                             denemesi 7 başarısız: All                          
+                             connection attempts failed                         
+[05/13/26 23:32:14] WARNING  [approval_bridge] POST        approval_bridge.py:52
+                             denemesi 8 başarısız: All                          
+                             connection attempts failed                         
+[05/13/26 23:32:15] WARNING  [approval_bridge] POST        approval_bridge.py:52
+                             denemesi 9 başarısız: All                          
+                             connection attempts failed                         
+[05/13/26 23:32:16] WARNING  [approval_bridge] POST        approval_bridge.py:52
+                             denemesi 10 başarısız: All                         
+                             connection attempts failed                         
+[05/13/26 23:32:17] ERROR    [approval_bridge] Backend'e   approval_bridge.py:56
+                             ulaşılamadı — reddetme                             
+[Wed May 13 23:34:13 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:49755
+[05/13/26 23:34:13] INFO     Processing request of type            server.py:727
+                             ListPromptsRequest                                 
+                    INFO     Processing request of type            server.py:727
+                             ListToolsRequest                                   
+                    INFO     Processing request of type            server.py:727
+                             ListResourcesRequest                               
+[Thu May 14 00:01:58 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:49755
+[05/14/26 00:01:58] INFO     Processing request of type            server.py:727
+                             ListPromptsRequest                                 
+                    INFO     Processing request of type            server.py:727
+                             ListToolsRequest                                   
+                    INFO     Processing request of type            server.py:727
+                             ListResourcesRequest                               
+[Thu May 14 00:06:48 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:49755
+[05/14/26 00:06:48] INFO     Processing request of type            server.py:727
+                             ListPromptsRequest                                 
+                    INFO     Processing request of type            server.py:727
+                             ListToolsRequest                                   
+                    INFO     Processing request of type            server.py:727
+                             ListResourcesRequest                               
+[Thu May 14 00:08:59 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:49755
+[05/14/26 00:08:59] INFO     Processing request of type            server.py:727
+                             ListPromptsRequest                                 
+                    INFO     Processing request of type            server.py:727
+                             ListToolsRequest                                   
+                    INFO     Processing request of type            server.py:727
+                             ListResourcesRequest                               
+[Thu May 14 00:38:30 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:49755
+[05/14/26 00:38:31] INFO     Processing request of type            server.py:727
+                             ListPromptsRequest                                 
+                    INFO     Processing request of type            server.py:727
+                             ListToolsRequest                                   
+                    INFO     Processing request of type            server.py:727
+                             ListResourcesRequest                               
+[Thu May 14 00:52:51 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:49755
+[05/14/26 00:52:52] INFO     Processing request of type            server.py:727
+                             ListPromptsRequest                                 
+                    INFO     Processing request of type            server.py:727
+                             ListToolsRequest                                   
+                    INFO     Processing request of type            server.py:727
+                             ListResourcesRequest                               
+[Thu May 14 00:55:30 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:49755
+[05/14/26 00:55:30] INFO     Processing request of type            server.py:727
+                             ListPromptsRequest                                 
+                    INFO     Processing request of type            server.py:727
+                             ListToolsRequest                                   
+                    INFO     Processing request of type            server.py:727
+                             ListResourcesRequest                               
+[Thu May 14 01:04:39 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:49755
+[05/14/26 01:04:39] INFO     Processing request of type            server.py:727
+                             ListPromptsRequest                                 
+                    INFO     Processing request of type            server.py:727
+                             ListToolsRequest                                   
+                    INFO     Processing request of type            server.py:727
+                             ListResourcesRequest                               
+[Fri May 15 15:40:23 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:52165
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Fri May 15 15:41:52 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:52165
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Fri May 15 15:43:02 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:52165
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Fri May 15 15:44:26 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:52165
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Fri May 15 15:46:47 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:52165
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Fri May 15 15:47:38 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:52165
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Fri May 15 15:54:41 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:52165
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Fri May 15 15:55:41 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:52165
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Fri May 15 16:15:25 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:53621
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Fri May 15 16:16:39 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:53621
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Fri May 15 16:18:08 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:53621
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Fri May 15 16:21:29 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:54011
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Fri May 15 16:22:17 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:54011
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Fri May 15 16:23:26 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:54011
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Fri May 15 16:26:35 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:54011
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Fri May 15 16:29:12 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:54011
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Fri May 15 16:30:40 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:54011
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Fri May 15 22:58:00 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:54011
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Fri May 15 23:00:39 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:54011
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Sat May 16 12:04:35 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:54011
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Sat May 16 12:05:54 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:54011
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Sat May 16 12:16:00 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:54011
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Sat May 16 12:16:17 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:54011
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Sat May 16 12:25:26 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:54011
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Sat May 16 12:26:56 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:54011
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Sat May 16 12:32:38 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:54011
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Sat May 16 18:16:35 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:54011
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[17 May 2026 Paz +03 16:19:42] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:54011
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Mon May 18 18:45:33 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:50259
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Mon May 18 18:46:53 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:50259
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Mon May 18 18:50:55 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51193
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Mon May 18 18:51:29 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51193
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Mon May 18 18:59:25 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51976
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Mon May 18 19:00:07 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51976
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Mon May 18 19:01:17 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51976
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Mon May 18 19:12:27 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:52423
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Mon May 18 19:13:27 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:52423
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Mon May 18 19:14:43 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:52423
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Mon May 18 19:16:47 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:52423
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Mon May 18 19:17:13 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:52423
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Mon May 18 19:27:28 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:53609
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Mon May 18 19:27:56 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:53609
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Mon May 18 19:28:53 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:53609
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Mon May 18 19:30:32 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:53609
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Mon May 18 19:33:03 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:53609
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Mon May 18 19:35:23 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:53609
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Mon May 18 19:36:02 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:53609
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Mon May 18 19:38:31 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:53609
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Mon May 18 19:39:07 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:53609
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Mon May 18 19:40:28 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:53609
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Mon May 18 19:49:13 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:53609
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Mon May 18 20:01:05 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:53609
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 15:36:30 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:53609
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 16:48:10 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:53609
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 16:48:23 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:53609
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 17:07:37 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:52423
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 17:07:54 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:52423
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 18:04:08 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51974
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 18:05:49 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51974
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 18:06:56 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51974
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 18:07:56 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51974
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 20:08:50 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:58546
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 20:09:28 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:58546
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 20:10:03 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:58546
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 20:12:09 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:58546
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 20:12:29 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:58546
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 20:13:46 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:58546
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 20:33:50 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:59400
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 20:39:08 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:59400
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 20:40:30 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:59400
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 20:45:52 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:59400
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[19 May 2026 Sal +03 20:48:30] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:59400
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 20:50:13 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:59400
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 20:51:34 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:59400
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 20:54:35 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:59400
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 20:58:49 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:59400
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 21:00:16 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:59400
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 21:02:32 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:59400
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 21:07:13 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:59400
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 21:56:14 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:59400
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 21:56:16 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:59400
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 21:56:19 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:59400
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 22:06:46 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:59400
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 22:07:40 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:65209
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 22:09:38 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:65209
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 22:15:07 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:59400
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 22:22:30 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:59400
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[19 May 2026 Sal +03 22:22:59] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:59400
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 22:26:51 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:65209
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 22:31:23 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:59400
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 22:36:37 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:59400
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 23:25:23 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:50705
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 23:25:38 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:50705
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 23:25:39 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:50705
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 23:26:41 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:50705
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 23:27:11 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:50705
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 23:27:20 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:50705
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 23:27:26 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:50705
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 23:27:43 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:50705
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 23:27:51 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:50705
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 23:28:07 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:50705
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 23:28:08 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:50705
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 23:28:09 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:50705
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 23:30:59 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51031
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 23:31:03 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51031
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 23:31:17 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51031
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Tue May 19 23:33:17 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51031
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 00:08:27 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51425
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 00:14:40 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51613
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 00:14:44 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51613
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 00:15:12 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51613
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 00:15:12 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51613
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 00:15:13 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51613
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 00:16:37 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51613
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 00:16:39 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51613
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 00:17:14 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51425
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 00:17:18 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:59400
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 00:22:30 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:59400
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 00:25:33 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51425
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 00:25:35 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51425
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 00:26:21 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51425
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 00:26:28 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:52090
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 00:26:29 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51425
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 00:26:39 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:52090
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 00:28:58 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:59400
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 00:29:00 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:59400
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 00:29:54 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:52249
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 00:30:14 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:52249
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 00:31:39 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:52316
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 00:31:56 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:52316
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 00:32:52 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:52316
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 00:34:16 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:52413
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 00:34:22 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:52413
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 00:34:28 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:59400
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 00:36:29 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:52531
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 00:37:38 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:52587
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 00:37:44 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:52587
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 00:40:41 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:59400
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 15:29:08 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:52587
+[Wed May 20 15:29:09 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51425
+[Wed May 20 15:29:09 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51425
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 15:29:09 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:52587
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 15:29:11 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:52587
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 15:29:25 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:49656
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 15:30:01 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:49656
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 15:31:53 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:49753
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 15:31:58 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:49753
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 15:38:16 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:49900
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 15:38:21 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:49900
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 15:40:23 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:49900
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 15:43:09 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:49900
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 15:44:34 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:49900
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 15:44:48 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:49900
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 15:47:53 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:50192
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 15:47:54 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:50192
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 15:50:51 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:50192
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 15:56:23 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:50192
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 15:59:30 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:50463
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 16:00:13 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:50463
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 16:01:24 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:50463
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 16:11:15 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:50652
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 16:11:37 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:50652
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 16:16:44 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:50825
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 16:17:09 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:50825
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 16:24:41 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51033
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 16:24:49 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51033
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 16:31:19 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51033
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 16:45:31 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51456
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 16:45:53 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51456
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 16:51:55 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51456
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 16:52:04 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51456
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 16:57:26 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51456
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 16:57:29 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51456
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 17:02:33 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51456
+[Wed May 20 17:02:33 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51456
+Traceback (most recent call last):
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 17:05:51 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51456
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 17:05:55 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51456
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 17:06:05 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51456
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 17:06:36 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:51456
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 17:12:52 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:52093
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 17:15:37 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:52093
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 17:17:31 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:52093
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 17:20:59 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:52093
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 17:25:03 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:52917
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 17:25:09 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:52917
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 17:25:40 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:52917
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 17:29:41 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:53305
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 17:35:51 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:53305
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 17:37:40 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:53456
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 17:38:25 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:53456
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 17:39:07 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:53691
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 17:39:34 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:53691
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 17:50:15 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:53691
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 17:51:35 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:53691
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'
+[Wed May 20 17:53:14 +03 2026] MCP Server başlatılıyor... ANTIGRAVITY_URL=http://127.0.0.1:53691
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/Users/burakemreerdemci/Documents/unityaıPython/Backend/app/unity_ai_mcp/server.py", line 35, in <module>
+    from unity_ai_mcp.tools.file_tools import register_file_tools
+ModuleNotFoundError: No module named 'unity_ai_mcp'

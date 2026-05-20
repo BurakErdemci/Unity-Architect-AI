@@ -37,6 +37,18 @@ const globalStyles = `
   .no-scrollbar::-webkit-scrollbar { display: none; }
 `;
 
+const getRelativePath = (absolutePath: string, workspacePath: string | null): string => {
+  if (!workspacePath) return absolutePath.split('/').pop() || '';
+  if (absolutePath.startsWith(workspacePath)) {
+    let rel = absolutePath.substring(workspacePath.length);
+    if (rel.startsWith('/') || rel.startsWith('\\')) {
+      rel = rel.substring(1);
+    }
+    return rel;
+  }
+  return absolutePath.split('/').pop() || '';
+};
+
 export default function Home() {
   const { API, backendReady, backendError, showToast } = useAppInitialization();
   const auth = useAuth(API, backendReady);
@@ -86,6 +98,16 @@ export default function Home() {
     }
   }, [fs.lastWorkspacePath, fs.workspacePath, backendReady]);
 
+  // --- Ensure Active Workspace Is Saved In Backend ---
+  useEffect(() => {
+    if (API && auth.user?.sessionToken && fs.workspacePath) {
+      axios.post(`${API}/save-workspace`, 
+        { user_id: auth.user.id, path: fs.workspacePath },
+        { headers: { 'X-Session-Token': auth.user.sessionToken } }
+      ).catch(() => {});
+    }
+  }, [fs.workspacePath, API, auth.user]);
+
   // --- Startup Full Project Lint (The "Rider" Experience) ---
   useEffect(() => {
     if (API && auth.user && fs.workspacePath && backendReady) {
@@ -106,7 +128,16 @@ export default function Home() {
               if (!grouped[err.file]) grouped[err.file] = [];
               grouped[err.file].push(err);
             });
-            setProjectProblems(grouped);
+            setProjectProblems(prev => {
+              const next = { ...grouped };
+              if (openedFileRef.current) {
+                const relativeFile = getRelativePath(openedFileRef.current, fs.workspacePath);
+                if (relativeFile && prev[relativeFile]) {
+                  next[relativeFile] = prev[relativeFile];
+                }
+              }
+              return next;
+            });
           }
         } catch (err) {
           // Sessizce devam et
@@ -150,6 +181,11 @@ export default function Home() {
   const [projectProblems, setProjectProblems] = useState<Record<string, any[]>>({});
   const chatEndRef = useRef<HTMLDivElement>(null);
   const lintTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const openedFileRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    openedFileRef.current = fs.openedFilePath;
+  }, [fs.openedFilePath]);
 
   // --- Real-time Linting (Single File) ---
   useEffect(() => {
@@ -160,18 +196,18 @@ export default function Home() {
 
     lintTimeoutRef.current = setTimeout(async () => {
       try {
-        const currentFile = fs.openedFilePath!.split('/').pop() || 'script.cs';
-        console.log("[Linter Debug] Sending POST to /lint", { filename: currentFile });
+        const relativeFile = getRelativePath(fs.openedFilePath!, fs.workspacePath);
+        console.log("[Linter Debug] Sending POST to /lint", { filename: relativeFile });
         const res = await axios.post(`${API}/lint`, {
           code: fs.code,
-          filename: currentFile,
+          filename: relativeFile,
           full_project: false
         }, {
           headers: { 'X-Session-Token': auth.user?.sessionToken }
         });
         console.log("[Linter Debug] Response received", res.data);
         if (res.data && res.data.errors) {
-          setProjectProblems(prev => ({ ...prev, [currentFile]: res.data.errors }));
+          setProjectProblems(prev => ({ ...prev, [relativeFile]: res.data.errors }));
         }
       } catch (err) { console.error("[Linter] Request failed:", err); }
     }, 1000);
@@ -183,9 +219,10 @@ export default function Home() {
   const runFullProjectLint = async () => {
     if (!API || !auth.user || !fs.workspacePath) return;
     try {
+      const relativeFile = getRelativePath(fs.openedFilePath || '', fs.workspacePath);
       const res = await axios.post(`${API}/lint`, {
         code: fs.code,
-        filename: fs.openedFilePath?.split('/').pop() || 'dummy.cs',
+        filename: relativeFile || 'dummy.cs',
         full_project: true
       }, { headers: { 'X-Session-Token': auth.user?.sessionToken } });
       
@@ -196,7 +233,16 @@ export default function Home() {
           if (!grouped[fname]) grouped[fname] = [];
           grouped[fname].push(err);
         });
-        setProjectProblems(grouped);
+        setProjectProblems(prev => {
+          const next = { ...grouped };
+          if (openedFileRef.current) {
+            const relativeFile = getRelativePath(openedFileRef.current, fs.workspacePath);
+            if (relativeFile && prev[relativeFile]) {
+              next[relativeFile] = prev[relativeFile];
+            }
+          }
+          return next;
+        });
       }
     } catch (err) { console.error("Full project lint failed:", err); }
   };
@@ -435,13 +481,16 @@ export default function Home() {
             </div>
           )}
         </div>
-        <TerminalPanel 
-          id="main-terminal" 
-          isOpen={isTerminalOpen} 
-          onClose={() => setIsTerminalOpen(false)} 
-          workspacePath={fs.workspacePath} 
-          problems={flattenedProblems} 
+        <TerminalPanel
+          id="main-terminal"
+          isOpen={isTerminalOpen}
+          onClose={() => setIsTerminalOpen(false)}
+          workspacePath={fs.workspacePath}
+          problems={flattenedProblems}
           onProblemClick={handleProblemClick}
+          apiUrl={API}
+          sessionToken={auth.user?.sessionToken}
+          unityConnected={ai.unityMcpStatus === 'connected'}
         />
       </div>
 

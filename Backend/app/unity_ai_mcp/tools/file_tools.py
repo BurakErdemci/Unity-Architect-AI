@@ -1,18 +1,21 @@
 """
-MCP Dosya Araçları — write_file/delete_file onay gerektirir, read/list güvenli.
+MCP Dosya Araçları — save_file/delete_file direkt yazar, bash onay gerektirir.
 """
+import logging
 import os
 from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 
 from unity_ai_mcp.approval_bridge import request_approval
 
+logger = logging.getLogger(__name__)
+
 
 def register_file_tools(mcp: FastMCP, get_workspace: callable):
 
     @mcp.tool()
     async def read_file(path: str) -> str:
-        """Bir dosyayı okur (onay gerektirmez)."""
+        """Bir dosyayı okur."""
         workspace = get_workspace()
         abs_path = _resolve(path, workspace)
         if not os.path.exists(abs_path):
@@ -26,7 +29,7 @@ def register_file_tools(mcp: FastMCP, get_workspace: callable):
 
     @mcp.tool()
     async def list_directory(path: str = ".") -> str:
-        """Klasör içeriğini listeler (onay gerektirmez)."""
+        """Klasör içeriğini listeler."""
         workspace = get_workspace()
         abs_path = _resolve(path, workspace)
         if not os.path.isdir(abs_path):
@@ -40,35 +43,22 @@ def register_file_tools(mcp: FastMCP, get_workspace: callable):
 
     @mcp.tool(name="save_file")
     async def write_file(path: str, content: str) -> str:
-        """
-        Dosya oluşturur veya düzenler. ONAY GEREKTİRİR.
-        Mevcut dosyaysa diff kartı, yeni dosyaysa oluşturma kartı gösterilir.
-        """
+        """Dosya oluşturur veya düzenler (onay gerektirmez)."""
         workspace = get_workspace()
         abs_path = _resolve(path, workspace)
 
-        original = ""
         if os.path.exists(abs_path):
             try:
                 with open(abs_path, "r", encoding="utf-8", errors="replace") as f:
-                    original = f.read()
-                if original.strip() == content.strip():
-                    return "Dosya zaten aynı içerikte, değişiklik yok."
+                    if f.read().strip() == content.strip():
+                        return "Dosya zaten aynı içerikte, değişiklik yok."
             except Exception:
                 pass
-
-        result = await request_approval(
-            tool_name="write_file",
-            params={"path": path, "content": content, "original": original},
-            workspace_path=workspace,
-        )
-
-        if not result.get("approved"):
-            return f"❌ Reddedildi: {path}"
 
         os.makedirs(os.path.dirname(abs_path), exist_ok=True)
         with open(abs_path, "w", encoding="utf-8") as f:
             f.write(content)
+        logger.info(f"[file_tools] Yazıldı: {path}")
         return f"✅ Yazıldı: {path}"
 
     @mcp.tool()

@@ -53,12 +53,14 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
   const [pendingDelete, setPendingDelete] = useState<{ path: string; messageId: number } | null>(null);
 
   const fetchLastWorkspace = useCallback(async (userId: number) => {
-    if (!API) return;
+    if (!API || !user?.sessionToken) return;
     try {
-      const res = await axios.get(`${API}/last-workspace/${userId}`);
+      const res = await axios.get(`${API}/last-workspace/${userId}`, {
+        headers: { 'X-Session-Token': user.sessionToken }
+      });
       if (res.data?.path) setLastWorkspacePath(res.data.path);
     } catch (err) { console.error("Last workspace hatası:", err); }
-  }, [API]);
+  }, [API, user]);
 
   const selectWorkspace = useCallback(async (path: string) => {
     setWorkspacePath(path);
@@ -69,8 +71,13 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
     }
     setExpandedDirs(new Set());
     setDirContents({});
-    if (user && API) {
-      try { await axios.post(`${API}/save-workspace`, { user_id: user.id, path }); } catch { }
+    if (user?.sessionToken && API) {
+      try {
+        await axios.post(`${API}/save-workspace`, 
+          { user_id: user.id, path },
+          { headers: { 'X-Session-Token': user.sessionToken } }
+        );
+      } catch (err) { console.error("Workspace kaydetme hatası:", err); }
     }
   }, [API, user]);
 

@@ -20,7 +20,7 @@ interface AuthScreenProps {
 
 export const AuthScreen = ({ authMode, notice, onSubmit, onOAuth, onToggleMode, oauthProviders }: AuthScreenProps) => (
   <div className="bg-[#000000] text-foreground">
-    <Head><title>Unity Architect AI | {authMode === "login" ? "Giriş" : "Kayıt"}</title></Head>
+    <Head><title>{`Unity Architect AI | ${authMode === "login" ? "Giriş" : "Kayıt"}`}</title></Head>
     <SignInPage
       authMode={authMode}
       notice={notice}

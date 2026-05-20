@@ -655,7 +655,34 @@ namespace MCPForUnity.Runtime.Helpers
             string normalizedFullPath = fullPath.Replace('\\', '/');
             string projectRelativePath = ToProjectRelativePath(normalizedFullPath);
 
+            PruneFolder(folderAbsolute);
+
             return new ScreenshotCaptureResult(normalizedFullPath, projectRelativePath, size, isAsync);
+        }
+
+        /// <summary>
+        /// Keeps the <paramref name="keepCount"/> most-recently-modified image files in
+        /// <paramref name="folderAbsolute"/> and deletes the rest (including their .meta files).
+        /// </summary>
+        private static void PruneFolder(string folderAbsolute, int keepCount = 5)
+        {
+            try
+            {
+                string[] extensions = { ".png", ".jpg", ".jpeg" };
+                var files = Directory.GetFiles(folderAbsolute)
+                    .Where(f => extensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
+                    .OrderByDescending(File.GetLastWriteTimeUtc)
+                    .ToList();
+
+                foreach (string old in files.Skip(keepCount))
+                {
+                    try { File.Delete(old); } catch { }
+                    string meta = old + ".meta";
+                    if (File.Exists(meta))
+                        try { File.Delete(meta); } catch { }
+                }
+            }
+            catch { }
         }
 
         /// <summary>

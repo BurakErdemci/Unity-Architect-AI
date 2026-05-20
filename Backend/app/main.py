@@ -24,6 +24,29 @@ from routes import (
 )
 
 
+from collections import deque
+
+# In-memory log buffer — son 200 satır tutulur, /logs endpoint'i okur
+_LOG_BUFFER: deque = deque(maxlen=200)
+
+class _BufferHandler(logging.Handler):
+    """Her log kaydını _LOG_BUFFER'a yazar."""
+    _SUPPRESS = ("/mcp/unity/status", "/health", "GET /mcp-pending")
+    def emit(self, record: logging.LogRecord):
+        msg = self.format(record)
+        if any(s in msg for s in self._SUPPRESS):
+            return
+        _LOG_BUFFER.append({
+            "ts":      record.created,
+            "level":   record.levelname,
+            "logger":  record.name,
+            "message": msg,
+        })
+
+_buf_handler = _BufferHandler()
+_buf_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s", "%H:%M:%S"))
+logging.root.addHandler(_buf_handler)
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -126,6 +149,13 @@ app.include_router(create_mcp_router())
 @app.get("/health")
 def health_check():
     return {"status": "ok", "service": "unity-architect-ai"}
+
+
+@app.get("/logs")
+def get_logs(since: float = 0):
+    """Son backend loglarını döner. since: Unix timestamp — sadece sonrasını getir."""
+    entries = [e for e in _LOG_BUFFER if e["ts"] > since]
+    return {"logs": entries}
 
 
 if __name__ == "__main__":

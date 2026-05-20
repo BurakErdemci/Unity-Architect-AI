@@ -215,9 +215,11 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
 [DİL]
 Kullanıcıyla {'Türkçe' if self.language == 'tr' else 'İngilizce'} konuş."""
 
-        # Thinking config
+        # Thinking config — sadece bilinen thinking destekleyen modeller için
+        _THINKING_MODELS = ("gemini-2.5", "gemini-3.", "gemini-3.0", "gemini-3.1")
+        _supports_thinking = any(t in self.model_name for t in _THINKING_MODELS)
         thinking_config = None
-        if self.use_thinking:
+        if self.use_thinking and _supports_thinking:
             thinking_config = gtypes.ThinkingConfig(thinking_budget=4096)
 
         config = gtypes.GenerateContentConfig(
@@ -271,6 +273,8 @@ Kullanıcıyla {'Türkçe' if self.language == 'tr' else 'İngilizce'} konuş.""
                         await asyncio.sleep(wait_time)
                         continue
                     else:
+                        # 400 / diğer hatalar — tam hata mesajını logla
+                        logger.error(f"  ❌ Gemini API hatası [{self.model_name}]: {str(e)}", exc_info=True)
                         yield AgentEvent("error", {"message": f"AI hatası: {str(e)}"})
                         return
             
@@ -647,6 +651,7 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                     break
                 except Exception as e:
                     err_msg = str(e).lower()
+                    logger.error(f"  ❌ OpenAI/OpenRouter API hatası [{self.provider_type} / {self.model_name}]: {str(e)}", exc_info=True)
                     if any(code in err_msg for code in ["429", "503", "too many requests", "service unavailable"]):
                         wait_time = (retry + 1) * 10
                         logger.warning(f"  ⚠️ OpenAI/OpenRouter Hatası. {wait_time}s bekleniyor... (Deneme {retry+1}/3)")

@@ -76,6 +76,21 @@ async def get_unity_mcp_status():
     return status
 
 
+@router.get("/unity/console")
+async def get_unity_console():
+    """Unity Editor Console loglarını döner (read_console MCP tool)."""
+    from tools.unity_mcp_tools import is_unity_tool, get_unity_tool_functions
+    if not is_unity_tool("read_console"):
+        return {"logs": [], "connected": False}
+    try:
+        fn = get_unity_tool_functions().get("read_console")
+        result = fn(count=50) if fn else {}
+        logs = result.get("logs") or result.get("result") or []
+        return {"logs": logs, "connected": True}
+    except Exception as e:
+        return {"logs": [], "connected": False, "error": str(e)}
+
+
 @router.post("/unity/install")
 async def install_unity_mcp(request: MCPInstallRequest):
     """Belirtilen Unity projesine manifest.json üzerinden MCP paketini kurar."""

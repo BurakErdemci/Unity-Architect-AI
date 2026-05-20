@@ -115,6 +115,8 @@ def capture_unity_screenshot() -> dict:
             raw = _capture_mac()
 
         img = Image.open(io.BytesIO(raw))
+        if img.mode != "RGB":
+            img = img.convert("RGB")
         img.thumbnail((1280, 1280), Image.LANCZOS)
         buf = io.BytesIO()
         img.save(buf, format="JPEG", quality=82)

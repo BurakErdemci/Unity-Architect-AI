@@ -28,28 +28,68 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
 }) => {
   const monacoRef = React.useRef<any>(null);
   const editorRef = React.useRef<any>(null);
+  const [modelChangedTrigger, setModelChangedTrigger] = React.useState(0);
+
+  // Dosya değişince stale marker'ları temizle
+  React.useEffect(() => {
+    if (monacoRef.current && editorRef.current) {
+      const model = editorRef.current.getModel();
+      if (model) monacoRef.current.editor.setModelMarkers(model, "owner", []);
+    }
+  }, [openedFilePath, modelChangedTrigger]);
 
   React.useEffect(() => {
-    if (monacoRef.current && editorRef.current && problems && openedFilePath) {
-      const model = editorRef.current.getModel();
-      if (model) {
-        const currentFileName = openedFilePath.split('/').pop();
-        // Filter problems for this specific file
-        const markers = (Array.isArray(problems) ? problems : [])
-          .filter(p => !p.file || p.file === currentFileName)
-          .map(p => ({
-            startLineNumber: p.line,
-            startColumn: p.column,
-            endLineNumber: p.line,
-            endColumn: p.column + 5, // Approximate
-            message: p.message,
-            severity: p.severity === 'error' ? monacoRef.current.MarkerSeverity.Error : monacoRef.current.MarkerSeverity.Warning
-          }));
-        
-        monacoRef.current.editor.setModelMarkers(model, "owner", markers);
-      }
+    if (!monacoRef.current || !editorRef.current) return;
+    const model = editorRef.current.getModel();
+    if (!model) return;
+
+    if (!problems?.length || !openedFilePath) {
+      monacoRef.current.editor.setModelMarkers(model, "owner", []);
+      return;
     }
-  }, [problems, openedFilePath]);
+
+    // Relative path karşılaştırması — hem basename hem relative path eşleştir
+    const markers = problems
+      .filter(p => {
+        if (!p.file) return true;
+        const pNorm = p.file.replace(/\\/g, '/');
+        const oNorm = openedFilePath.replace(/\\/g, '/');
+        return oNorm.endsWith(pNorm) || oNorm.endsWith('/' + pNorm.split('/').pop());
+      })
+      .map(p => {
+        // Hatanın satır içeriğini alarak sınırları belirle (Out-of-bounds koruması)
+        const lineCount = model.getLineCount();
+        const safeLine = Math.min(Math.max(1, p.line), lineCount);
+        const lineContent = model.getLineContent(safeLine) || '';
+        const maxCol = lineContent.length + 1; // Monaco'da kolonlar 1 tabanlıdır
+
+        let startCol = p.column;
+        if (startCol > maxCol) {
+          startCol = Math.max(1, maxCol - 1);
+        }
+
+        let endCol = p.endColumn ?? maxCol;
+        if (endCol > maxCol) {
+          endCol = maxCol;
+        }
+        if (endCol <= startCol) {
+          endCol = startCol + 1;
+        }
+
+        return {
+          startLineNumber: safeLine,
+          startColumn: startCol,
+          endLineNumber: safeLine,
+          endColumn: endCol,
+          message: p.message,
+          severity: p.severity?.toLowerCase() === 'error'
+            ? monacoRef.current.MarkerSeverity.Error
+            : monacoRef.current.MarkerSeverity.Warning
+        };
+      });
+
+    monacoRef.current.editor.setModelMarkers(model, "owner", markers);
+  }, [problems, openedFilePath, modelChangedTrigger]);
 
   return (
     <div className="flex-1 flex flex-col relative min-w-0 bg-[#000000] border-r border-slate-800/50">
@@ -123,6 +163,15 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
                 editorRef.current = editor;
                 monacoRef.current = monaco;
                 defineUnityTheme(monaco);
+
+                // İlk açılışta marker'ları tetikle
+                setModelChangedTrigger(prev => prev + 1);
+
+                // Model değiştiğinde (yeni dosya açıldığında vb.) marker'ları tetikle
+                editor.onDidChangeModel(() => {
+                  setModelChangedTrigger(prev => prev + 1);
+                });
+
                 editor.onDidFocusEditorWidget(() => setIsEditorFocused(true));
                 editor.onDidBlurEditorWidget(() => setIsEditorFocused(false));
               }}

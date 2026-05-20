@@ -377,6 +377,7 @@ class DatabaseManager:
     # ===================== API KEY KASASI =====================
     def save_api_key(self, user_id: int, provider_type: str, api_key: str) -> None:
         """Provider için API key'i kaydet/güncelle."""
+        api_key = api_key.strip() if api_key else api_key
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         encrypted_key = self._encrypt_api_key(api_key)
         with closing(sqlite3.connect(self.db_path)) as conn, conn:

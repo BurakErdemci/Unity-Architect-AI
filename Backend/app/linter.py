@@ -4,7 +4,71 @@ import tempfile
 import re
 import platform
 import glob
+import json
 from typing import List, Dict, Any
+
+def get_editors_from_hub() -> List[tuple]:
+    """
+    Parses Unity Hub configuration files to auto-detect all registered Unity editor installations.
+    This provides generic, zero-config editor path resolution across different users' machines.
+    """
+    os_name = platform.system()
+    hub_paths = []
+    
+    if os_name == "Darwin": # macOS
+        hub_paths = [os.path.expanduser("~/Library/Application Support/UnityHub")]
+    elif os_name == "Windows":
+        appdata = os.environ.get("APPDATA")
+        if appdata:
+            hub_paths = [os.path.join(appdata, "UnityHub")]
+    else: # Linux
+        hub_paths = [os.path.expanduser("~/.config/UnityHub")]
+        
+    discovered_editors = []
+    for hub_path in hub_paths:
+        for json_file in ["editors-v2.json", "editors.json"]:
+            full_json_path = os.path.join(hub_path, json_file)
+            if os.path.exists(full_json_path):
+                try:
+                    with open(full_json_path, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                        # editors-v2.json format: {"data": [{"version": "6000.2.9f1", "location": ["/Applications/Unity/..."]}]}
+                        editors_list = data.get("data", []) if isinstance(data, dict) else data
+                        if isinstance(editors_list, list):
+                            for item in editors_list:
+                                if isinstance(item, dict):
+                                    locs = item.get("location", [])
+                                    version = item.get("version")
+                                    if isinstance(locs, list):
+                                        for loc in locs:
+                                            discovered_editors.append((version, loc))
+                                    elif isinstance(locs, str):
+                                        discovered_editors.append((version, locs))
+                except Exception as e:
+                    print(f"[UNITYHUB_PARSER_ERROR] Failed parsing {json_file}: {e}", flush=True)
+                    
+    return discovered_editors
+
+def resolve_base_unity(loc: str) -> str:
+    """
+    Normalizes different installation path configurations (e.g. pointing directly to the app or binary)
+    to a standard 'base_unity' path containing the internal compiler/dependency files.
+    """
+    os_name = platform.system()
+    if os_name == "Darwin":
+        if loc.endswith(".app"):
+            return os.path.join(loc, "Contents")
+        elif "Unity.app" in loc:
+            parts = loc.split("Unity.app")
+            return os.path.join(parts[0], "Unity.app", "Contents")
+    elif os_name == "Windows":
+        if loc.endswith("Unity.exe"):
+            editor_dir = os.path.dirname(loc)
+            return os.path.join(editor_dir, "Data")
+        elif "Editor" in loc:
+            parts = loc.split("Editor")
+            return os.path.join(parts[0], "Editor", "Data")
+    return loc
 
 def get_unity_paths(workspace_path: str = None):
     os_name = platform.system()
@@ -23,18 +87,40 @@ def get_unity_paths(workspace_path: str = None):
                         target_version = match.group(1).strip()
             except: pass
 
-    # 2. Common install roots
+    # 2. Common install roots to search in case they are not in Unity Hub config
     search_roots = []
     if os_name == "Darwin": # macOS
-        search_roots = ["/Applications/Unity/Hub/Editor", "/Applications/Unity"]
+        search_roots = [
+            "/Applications/Unity/Hub/Editor", 
+            "/Applications/Unity",
+            os.path.expanduser("~/Applications/Unity/Hub/Editor"),
+            os.path.expanduser("~/Applications/Unity")
+        ]
     elif os_name == "Windows":
-        search_roots = [r"C:\Program Files\Unity\Hub\Editor", r"C:\Program Files\Unity"]
+        search_roots = [
+            r"C:\Program Files\Unity\Hub\Editor", 
+            r"C:\Program Files\Unity",
+            r"D:\Program Files\Unity\Hub\Editor",
+            r"D:\Unity\Hub\Editor",
+            r"E:\Unity\Hub\Editor",
+            r"C:\Unity\Hub\Editor"
+        ]
 
-    # 3. Search for the specific version or best match
+    # 3. Discover registered installations from Unity Hub config
+    discovered = get_editors_from_hub()
     base_unity = None
     
-    # Try specific version folder first
+    # Priority A: Find exact matching version from Hub
     if target_version:
+        for ver, loc in discovered:
+            if ver == target_version:
+                resolved = resolve_base_unity(loc)
+                if os.path.exists(resolved):
+                    base_unity = resolved
+                    break
+
+    # Priority B: Search in common roots for the exact target version
+    if not base_unity and target_version:
         for root in search_roots:
             ver_path = os.path.join(root, target_version)
             if os_name == "Darwin":
@@ -46,29 +132,54 @@ def get_unity_paths(workspace_path: str = None):
                 base_unity = ver_path
                 break
 
-    # If not found or no version, fallback to generic search
+    # Priority C: Find any Hub editor matching the major version (e.g. Unity 6 series '6000')
+    if not base_unity and target_version:
+        major = target_version.split('.')[0] if '.' in target_version else target_version
+        for ver, loc in discovered:
+            if ver and ver.startswith(major):
+                resolved = resolve_base_unity(loc)
+                if os.path.exists(resolved):
+                    base_unity = resolved
+                    break
+
+    # Priority D: Fall back to the highest version available in Hub
+    if not base_unity and discovered:
+        try:
+            discovered.sort(key=lambda x: x[0] or "", reverse=True)
+        except: pass
+        for ver, loc in discovered:
+            resolved = resolve_base_unity(loc)
+            if os.path.exists(resolved):
+                base_unity = resolved
+                break
+
+    # Priority E: Generic deep search in roots
     if not base_unity:
-        # Check current hardcoded fallback for development
-        dev_fallback = "/Applications/Unity/Unity-6000.2.9f1/Unity.app/Contents" if os_name == "Darwin" else None
-        if dev_fallback and os.path.exists(dev_fallback):
-            base_unity = dev_fallback
-        else:
-            # Deep search in roots
-            for root in search_roots:
-                # Look for any folder that contains Unity.app or Editor/Data
-                pattern = os.path.join(root, "*")
-                for folder in glob.glob(pattern):
-                    potential = os.path.join(folder, "Unity.app/Contents") if os_name == "Darwin" else os.path.join(folder, "Editor", "Data")
-                    if os.path.exists(potential):
-                        base_unity = potential
-                        break
-                if base_unity: break
+        for root in search_roots:
+            pattern = os.path.join(root, "*")
+            for folder in glob.glob(pattern):
+                potential = os.path.join(folder, "Unity.app/Contents") if os_name == "Darwin" else os.path.join(folder, "Editor", "Data")
+                if os.path.exists(potential):
+                    base_unity = potential
+                    break
+            if base_unity: break
 
     # 4. Final Paths
     if base_unity:
+        # Check if we are in Unity 6 layout (nested under Resources/Scripting)
+        unity6_mono = os.path.join(base_unity, "Resources", "Scripting", "MonoBleedingEdge")
+        unity6_managed = os.path.join(base_unity, "Resources", "Scripting", "Managed")
+        
+        if os.path.exists(unity6_mono) and os.path.exists(unity6_managed):
+            mbe_path = unity6_mono
+            managed_path = unity6_managed
+        else:
+            mbe_path = os.path.join(base_unity, "MonoBleedingEdge")
+            managed_path = os.path.join(base_unity, "Managed")
+            
         return {
-            "csc": os.path.join(base_unity, "MonoBleedingEdge", "bin", "csc" + (".exe" if os_name == "Windows" else "")),
-            "managed": os.path.join(base_unity, "Managed"),
+            "csc": os.path.join(mbe_path, "bin", "csc" + (".exe" if os_name == "Windows" else "")),
+            "managed": managed_path,
             "fallback_csc": "csc.exe" if os_name == "Windows" else "/Library/Frameworks/Mono.framework/Versions/Current/Commands/csc"
         }
             
@@ -111,12 +222,16 @@ def lint_csharp(code: str, workspace_path: str, filename: str, full_project: boo
         refs = []
         # ... (Referans toplama mantığı aynı kalıyor, ancak projenin kendi DLL'ini (Assembly-CSharp) tam projede EKLEMIYORUZ)
         
-        netcorerun_path = os.path.join(os.path.dirname(unity_managed_path), "Tools", "netcorerun")
-        shims_path = os.path.join(os.path.dirname(unity_managed_path), "NetStandard", "compat", "2.1.0", "shims", "netstandard")
+        scripting_path = os.path.dirname(unity_managed_path)
+        netcorerun_path = os.path.join(scripting_path, "netcorerun")
+        if not os.path.exists(netcorerun_path):
+            netcorerun_path = os.path.join(scripting_path, "Tools", "netcorerun")
+            
+        shims_path = os.path.join(scripting_path, "NetStandard", "compat", "2.1.0", "shims", "netstandard")
         
         potential_dll_paths = [
-            unity_managed_path,
             os.path.join(unity_managed_path, "UnityEngine"),
+            unity_managed_path,
             netcorerun_path,
             shims_path,
         ]
@@ -183,14 +298,16 @@ def lint_csharp(code: str, workspace_path: str, filename: str, full_project: boo
         with tempfile.NamedTemporaryFile(suffix=".dll", delete=False) as out_tmp:
             out_tmp_path = out_tmp.name
             
-        # Mac fix: Use mono directly if csc is a broken script
+        # Mac fix: Use mono directly if csc is a broken script (only if csc is in a standard /bin/csc folder)
         mono_path = csc_path.replace("/bin/csc", "/bin/mono")
         csc_exe = csc_path.replace("/bin/csc", "/lib/mono/msbuild/Current/bin/Roslyn/csc.exe")
         
-        if os.name == 'posix' and os.path.exists(mono_path) and os.path.exists(csc_exe):
+        if os.name == 'posix' and "/bin/csc" in csc_path and os.path.exists(mono_path) and os.path.exists(csc_exe):
             cmd = [mono_path, csc_exe, "-target:library", "-noconfig", "-nologo", f"-out:{out_tmp_path}"] + refs + sources
         else:
             cmd = [csc_path, "-target:library", "-noconfig", "-nologo", f"-out:{out_tmp_path}"] + refs + sources
+        
+        print(f"[LINTER_CMD] Executing C# compiler command: {' '.join(cmd[:10])}... (total args: {len(cmd)})", flush=True)
         
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         stdout, stderr = process.communicate()
@@ -200,6 +317,8 @@ def lint_csharp(code: str, workspace_path: str, filename: str, full_project: boo
         # 4. Parse
         errors = []
         combined_output = stdout + stderr
+        if combined_output.strip():
+            print(f"[LINTER_RAW_OUTPUT] Compiler output:\n{combined_output.strip()}", flush=True)
         # Pattern to match filename.cs(line,col) or just (line,col)
         pattern = re.compile(r'(?:.*[\\/])?([^\\/]+\.cs)\((\d+),(\d+)\):\s+(error|warning)\s+CS\d+:\s+(.*)')
         
@@ -218,12 +337,19 @@ def lint_csharp(code: str, workspace_path: str, filename: str, full_project: boo
                 if tmp_path and file_found in tmp_path:
                     file_found = filename
 
+                msg = match.group(5).strip()
+                col = int(match.group(3))
+                # CSC hata mesajından identifier uzunluğunu çıkar (örn: 'Rigidbody2D' → 11)
+                id_match = re.search(r"'([^']+)'", msg)
+                end_col = col + len(id_match.group(1)) if id_match else col + 1
+
                 errors.append({
                     "file": os.path.relpath(file_found, workspace_path) if os.path.isabs(file_found) else file_found,
                     "line": int(match.group(2)),
-                    "column": int(match.group(3)),
+                    "column": col,
+                    "endColumn": end_col,
                     "severity": match.group(4).strip(),
-                    "message": match.group(5).strip()
+                    "message": msg
                 })
         
         return errors

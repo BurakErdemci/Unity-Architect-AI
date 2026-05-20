@@ -45,15 +45,22 @@ ipcMain.handle('terminal-spawn', (event, { id, cwd }) => {
   console.log(`[Terminal] Profesyonel Başlatma: ${shell} @ ${finalCwd}`);
 
   try {
+    const os = require('os');
     const ptyProcess = pty.spawn(shell, [], {
-      name: 'xterm-color',
+      name: 'xterm-256color',
       cols: 80,
       rows: 24,
       cwd: finalCwd,
       env: {
         ...process.env,
-        LANG: 'en_US.UTF-8',
-        TERM: 'xterm-256color'
+        HOME:      process.env.HOME      || os.homedir(),
+        USER:      process.env.USER      || os.userInfo().username,
+        LOGNAME:   process.env.LOGNAME   || os.userInfo().username,
+        SHELL:     shell,
+        PATH:      process.env.PATH      || '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin',
+        LANG:      'en_US.UTF-8',
+        TERM:      'xterm-256color',
+        COLORTERM: 'truecolor',
       }
     });
 
@@ -421,17 +428,20 @@ async function startPythonBackend() {
     env: { ...process.env, PYTHONUNBUFFERED: '1', PORT: String(selectedPort) },
   });
 
+  const safeLog = (...args: any[]) => { try { console.log(...args) } catch { /* EIO — socket kapandı */ } }
+  const safeErr = (...args: any[]) => { try { console.error(...args) } catch { /* EIO — socket kapandı */ } }
+
   pyBackendProcess.stdout?.on('data', (data) => {
-    console.log(`[Backend] ${data.toString().trim()}`)
+    safeLog(`[Backend] ${data.toString().trim()}`)
   })
   pyBackendProcess.stderr?.on('data', (data) => {
-    console.error(`[Backend] ${data.toString().trim()}`)
+    safeErr(`[Backend] ${data.toString().trim()}`)
   })
   pyBackendProcess.on('error', (err) => {
-    console.error('Backend başlatılamadı:', err)
+    safeErr('Backend başlatılamadı:', err)
   })
   pyBackendProcess.on('exit', (code) => {
-    console.log(`--- BACKEND KAPANDI (exit code: ${code}) ---`)
+    safeLog(`--- BACKEND KAPANDI (exit code: ${code}) ---`)
   })
 
   try {
