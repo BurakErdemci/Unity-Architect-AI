@@ -1,9 +1,8 @@
 import sqlite3
 import json
 import os
-import secrets
 from contextlib import closing
-from datetime import datetime, timedelta
+from datetime import datetime
 import bcrypt
 from typing import List, Dict, Any, Optional, Tuple
 from cryptography.fernet import Fernet, InvalidToken
@@ -14,6 +13,12 @@ class DatabaseManager:
         self.session_ttl_minutes = int(os.environ.get("SESSION_TTL_MINUTES", "1440"))
         self._fernet = self._build_fernet()
         self._create_tables()
+        # Drop legacy auth tables from existing DBs
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
+            conn.execute("DROP TABLE IF EXISTS sessions")
+            conn.execute("DROP TABLE IF EXISTS oauth_states")
+            conn.execute("DROP TABLE IF EXISTS oauth_completions")
+        self._seed_local_user()
 
     def _build_fernet(self) -> Fernet:
         # 1. Explicit env var — CI veya ileri kullanıcı override'ı
@@ -133,32 +138,12 @@ class DatabaseManager:
                 updated_at TEXT NOT NULL,
                 PRIMARY KEY (user_id, provider_type),
                 FOREIGN KEY (user_id) REFERENCES users (id))''')
-            cursor.execute('''CREATE TABLE IF NOT EXISTS sessions (
-                token TEXT PRIMARY KEY,
-                user_id INTEGER NOT NULL,
-                created_at TEXT NOT NULL,
-                FOREIGN KEY (user_id) REFERENCES users (id))''')
-            try:
-                cursor.execute("ALTER TABLE sessions ADD COLUMN expires_at TEXT")
-            except sqlite3.OperationalError:
-                pass
-            cursor.execute('''CREATE TABLE IF NOT EXISTS oauth_states (
-                state TEXT PRIMARY KEY,
-                provider TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            )''')
-            cursor.execute('''CREATE TABLE IF NOT EXISTS oauth_completions (
-                code TEXT PRIMARY KEY,
-                session_token TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            )''')
             # Migration: conversations tablosuna memory_summary sütunu ekle
             try:
                 cursor.execute("ALTER TABLE conversations ADD COLUMN memory_summary TEXT DEFAULT ''")
             except sqlite3.OperationalError:
                 pass  # Sütun zaten var
             conn.commit()
-        self._backfill_session_expiry()
 
     def _migrate_ai_configs_table(self, conn: sqlite3.Connection):
         """Legacy multi-agent kolonlarını temizleyip güncel ai_configs şemasını korur."""
@@ -194,20 +179,6 @@ class DatabaseManager:
         conn.execute("DROP TABLE ai_configs")
         conn.execute("ALTER TABLE ai_configs_v2 RENAME TO ai_configs")
 
-    def _backfill_session_expiry(self):
-        with closing(sqlite3.connect(self.db_path)) as conn, conn:
-            rows = conn.execute(
-                "SELECT token, created_at FROM sessions WHERE expires_at IS NULL OR expires_at = ''"
-            ).fetchall()
-            for token, created_at in rows:
-                try:
-                    created_dt = datetime.strptime(created_at, "%Y-%m-%d %H:%M:%S")
-                except ValueError:
-                    created_dt = datetime.now()
-                expires_at = (created_dt + timedelta(minutes=self.session_ttl_minutes)).strftime("%Y-%m-%d %H:%M:%S")
-                conn.execute("UPDATE sessions SET expires_at = ? WHERE token = ?", (expires_at, token))
-            conn.commit()
-
     # ===================== AUTH =====================
     def create_user(self, username: str, password: str) -> bool:
         hashed = bcrypt.hashpw(password[:72].encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
@@ -240,125 +211,12 @@ class DatabaseManager:
                 "avatar": row[3] or "",
             }
 
-    # ===================== SESSION =====================
-    def create_session(self, user_id: int) -> str:
-        token = secrets.token_urlsafe(32)
-        now_dt = datetime.now()
-        now = now_dt.strftime("%Y-%m-%d %H:%M:%S")
-        expires_at = (now_dt + timedelta(minutes=self.session_ttl_minutes)).strftime("%Y-%m-%d %H:%M:%S")
+    def _seed_local_user(self) -> None:
         with closing(sqlite3.connect(self.db_path)) as conn, conn:
-            conn.execute('DELETE FROM sessions WHERE expires_at < ?', (now,))
             conn.execute(
-                'INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)',
-                (token, user_id, now, expires_at)
+                "INSERT OR IGNORE INTO users (id, username, password_hash, email) "
+                "VALUES (1, 'local', '', 'local@localhost')"
             )
-            conn.commit()
-        return token
-
-    def get_user_by_session(self, token: str) -> Optional[Tuple[int, str]]:
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with closing(sqlite3.connect(self.db_path)) as conn, conn:
-            row = conn.execute(
-                '''SELECT users.id, users.username
-                   FROM sessions
-                   JOIN users ON users.id = sessions.user_id
-                   WHERE sessions.token = ? AND sessions.expires_at >= ?''',
-                (token, now)
-            ).fetchone()
-            conn.execute('DELETE FROM sessions WHERE expires_at < ?', (now,))
-            conn.commit()
-            return (row[0], row[1]) if row else None
-
-    def delete_session(self, token: str) -> None:
-        with closing(sqlite3.connect(self.db_path)) as conn, conn:
-            conn.execute('DELETE FROM sessions WHERE token = ?', (token,))
-            conn.commit()
-
-    # ===================== OAUTH STATE =====================
-    def create_oauth_state(self, provider: str) -> str:
-        state = secrets.token_urlsafe(32)
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with closing(sqlite3.connect(self.db_path)) as conn, conn:
-            conn.execute('DELETE FROM oauth_states WHERE created_at < ?', ((datetime.now() - timedelta(minutes=15)).strftime("%Y-%m-%d %H:%M:%S"),))
-            conn.execute(
-                'INSERT INTO oauth_states (state, provider, created_at) VALUES (?, ?, ?)',
-                (state, provider, now)
-            )
-            conn.commit()
-        return state
-
-    def consume_oauth_state(self, provider: str, state: str) -> bool:
-        if not state:
-            return False
-        cutoff = (datetime.now() - timedelta(minutes=15)).strftime("%Y-%m-%d %H:%M:%S")
-        with closing(sqlite3.connect(self.db_path)) as conn, conn:
-            row = conn.execute(
-                'SELECT state FROM oauth_states WHERE state = ? AND provider = ? AND created_at >= ?',
-                (state, provider, cutoff)
-            ).fetchone()
-            if not row:
-                return False
-            conn.execute('DELETE FROM oauth_states WHERE state = ?', (state,))
-            conn.commit()
-            return True
-
-    def create_oauth_completion(self, session_token: str) -> str:
-        code = secrets.token_urlsafe(24)
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        cutoff = (datetime.now() - timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S")
-        with closing(sqlite3.connect(self.db_path)) as conn, conn:
-            conn.execute('DELETE FROM oauth_completions WHERE created_at < ?', (cutoff,))
-            conn.execute(
-                'INSERT INTO oauth_completions (code, session_token, created_at) VALUES (?, ?, ?)',
-                (code, session_token, now)
-            )
-            conn.commit()
-        return code
-
-    def consume_oauth_completion(self, code: str) -> Optional[str]:
-        if not code:
-            return None
-        cutoff = (datetime.now() - timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S")
-        with closing(sqlite3.connect(self.db_path)) as conn, conn:
-            row = conn.execute(
-                'SELECT session_token FROM oauth_completions WHERE code = ? AND created_at >= ?',
-                (code, cutoff)
-            ).fetchone()
-            if not row:
-                return None
-            conn.execute('DELETE FROM oauth_completions WHERE code = ?', (code,))
-            conn.commit()
-            return row[0]
-
-    # ===================== OAUTH =====================
-    def find_or_create_oauth_user(self, oauth_provider: str, oauth_id: str, username: str, email: str = None, avatar_url: str = None) -> Tuple[int, str]:
-        """OAuth ile giriş yapan kullanıcıyı bul veya oluştur. (user_id, username) döner."""
-        with closing(sqlite3.connect(self.db_path)) as conn, conn:
-            # Mevcut OAuth kullanıcısı var mı?
-            user = conn.execute(
-                'SELECT id, username FROM users WHERE oauth_provider = ? AND oauth_id = ?',
-                (oauth_provider, oauth_id)
-            ).fetchone()
-            if user:
-                return (user[0], user[1])
-
-            # Yeni kullanıcı oluştur — username çakışmasını önle
-            base_username = username
-            suffix = 0
-            while True:
-                existing = conn.execute('SELECT id FROM users WHERE username = ?', (base_username,)).fetchone()
-                if not existing:
-                    break
-                suffix += 1
-                base_username = f"{username}_{suffix}"
-
-            conn.execute(
-                'INSERT INTO users (username, password_hash, email, avatar_url, oauth_provider, oauth_id) VALUES (?, ?, ?, ?, ?, ?)',
-                (base_username, "", email, avatar_url, oauth_provider, oauth_id)
-            )
-            conn.commit()
-            new_user = conn.execute('SELECT id, username FROM users WHERE oauth_provider = ? AND oauth_id = ?', (oauth_provider, oauth_id)).fetchone()
-            return (new_user[0], new_user[1])
 
     # ===================== AI CONFIG =====================
     def save_ai_config(self, user_id: int, p_type: str, m_name: str, key: str, use_multi_agent: bool = True) -> None:
