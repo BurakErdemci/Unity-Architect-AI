@@ -1,7 +1,8 @@
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Header, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 from unity_ai_mcp.unity_mcp_manager import unity_mcp_manager
+from auth_utils import _check_token
 
 router = APIRouter(prefix="/mcp", tags=["mcp"])
 
@@ -16,11 +17,12 @@ class MCPToggleRequest(BaseModel):
 
 
 @router.post("/unity/toggle")
-async def toggle_unity_mcp(req: MCPToggleRequest, background_tasks: BackgroundTasks):
+async def toggle_unity_mcp(req: MCPToggleRequest, background_tasks: BackgroundTasks, x_session_token: str = Header(alias="X-Session-Token", default="")):
     """
     Unity MCP sunucusunu başlatır veya durdurur.
     Toggle ON için Unity Editor'ün açık olması ZORUNLUDUR.
     """
+    _check_token(x_session_token)
     if req.enabled:
         # Unity açık değilse hemen hata dön
         if not unity_mcp_manager.is_unity_running():
@@ -63,8 +65,9 @@ async def toggle_unity_mcp(req: MCPToggleRequest, background_tasks: BackgroundTa
 
 
 @router.get("/unity/status")
-async def get_unity_mcp_status():
+async def get_unity_mcp_status(x_session_token: str = Header(alias="X-Session-Token", default="")):
     """Unity MCP sunucusunun ve Unity Editor bağlantısının durumunu döner."""
+    _check_token(x_session_token)
     from tools.unity_mcp_tools import get_unity_tool_definitions, load_unity_tools_async
     status = await unity_mcp_manager.get_status()
 
@@ -77,8 +80,9 @@ async def get_unity_mcp_status():
 
 
 @router.get("/unity/console")
-async def get_unity_console():
+async def get_unity_console(x_session_token: str = Header(alias="X-Session-Token", default="")):
     """Unity Editor Console loglarını döner (read_console MCP tool)."""
+    _check_token(x_session_token)
     from tools.unity_mcp_tools import is_unity_tool, get_unity_tool_functions
     if not is_unity_tool("read_console"):
         return {"logs": [], "connected": False}
@@ -92,8 +96,9 @@ async def get_unity_console():
 
 
 @router.post("/unity/install")
-async def install_unity_mcp(request: MCPInstallRequest):
+async def install_unity_mcp(request: MCPInstallRequest, x_session_token: str = Header(alias="X-Session-Token", default="")):
     """Belirtilen Unity projesine manifest.json üzerinden MCP paketini kurar."""
+    _check_token(x_session_token)
     success = unity_mcp_manager.install_package(request.workspace_path)
     if not success:
         raise HTTPException(status_code=400, detail="Paket kurulumu başarısız.")
