@@ -398,12 +398,13 @@ class CLIProvider(AIProvider):
                 }
             }
         }
-        # Unity MCP toggle açıksa ve sunucu çalışıyorsa ekle (HTTP transport)
+        # Unity MCP: sadece aktifse ekle, kapalıysa kesinlikle ekleme
+        # (Codex/Claude CLI başlarken bağlanamadığı MCP'de crash yapar)
         if unity_mcp_manager.is_running():
             config["mcpServers"]["unityMCP"] = {
                 "url": f"http://localhost:{unity_mcp_manager.mcp_port}/mcp"
             }
-            logger.info("[CLIProvider] Unity MCP sunucusu aktif, config'e eklendi.")
+            logger.info("[CLIProvider] Unity MCP aktif, .mcp.json'a eklendi.")
 
         config_path = os.path.join(workspace, ".mcp.json")
         with open(config_path, "w") as f:
@@ -520,17 +521,10 @@ class CLIProvider(AIProvider):
             "trust": True,
         }
 
-        # Unity MCP toggle açıksa ekle
-        # Gemini CLI sadece stdio (command/args) destekliyor — mcp-remote ile HTTP→stdio köprüsü kuruyoruz
-        from unity_ai_mcp.unity_mcp_manager import unity_mcp_manager
-        if unity_mcp_manager.is_running():
-            settings["mcpServers"]["unityMCP"] = {
-                "command": "npx",
-                "args": ["-y", "mcp-remote", f"http://localhost:{unity_mcp_manager.mcp_port}/mcp"],
-                "trust": True,
-            }
-        elif "unityMCP" in settings.get("mcpServers", {}):
-            del settings["mcpServers"]["unityMCP"]
+        # ⚠️ ÖNEMLI: unityMCP kaydına KESİNLİKLE DOKUNMUYORUZ.
+        # ~/.gemini/settings.json'daki unityMCP, Antigravity IDE'nin CoplayDev/unity-mcp
+        # reposundan bağımsız olarak kurduğu kendi konfigürasyonudur.
+        # Bizim uygulamamız sadece 'antigravity' sunucusunu yönetir, başka hiçbir şeye dokunmaz.
 
         try:
             with open(settings_path, "w") as f:
@@ -652,6 +646,7 @@ class CLIProvider(AIProvider):
                 "--skip-git-repo-check",
                 "--disable", "shell_tool",
                 "--disable", "unified_exec",
+                "--json",
                 "-c", 'mcp_servers.antigravity.default_tools_approval_mode="approve"',
             ]
             if unity_running:
@@ -681,6 +676,7 @@ class CLIProvider(AIProvider):
             return [
                 "gemini",
                 "--model", actual_model,
+                "--output-format", "stream-json",
                 "--policy", policy_path,
                 "--skip-trust",
                 "-p", mcp_hint + prompt,
@@ -810,13 +806,18 @@ class CLIProvider(AIProvider):
                     continue
                 line_count += 1
 
-                # stream-json format: her satır bir JSON event (claude-* için)
-                if self.binary_name.startswith("claude"):
-                    import json as _json
+                import json as _json
+                _is_json_provider = (
+                    self.binary_name.startswith("claude") or
+                    self.binary_name.startswith("gemini") or
+                    self.binary_name.startswith("gpt-")
+                )
+                if _is_json_provider:
                     try:
                         ev = _json.loads(raw)
                         ev_type = ev.get("type", "")
 
+                        # ── Claude stream-json ──────────────────────────────
                         if ev_type == "assistant":
                             for block in ev.get("message", {}).get("content", []):
                                 btype = block.get("type", "")
@@ -838,30 +839,77 @@ class CLIProvider(AIProvider):
                                     if t:
                                         full_text += t
                                         yield {"type": "delta", "text": t}
-
                         elif ev_type == "tool":
-                            result_text = ""
                             content = ev.get("content", "")
-                            if isinstance(content, str):
-                                result_text = content[:200]
-                            elif isinstance(content, list):
-                                for c in content:
-                                    if isinstance(c, dict) and c.get("type") == "tool_result":
-                                        result_text = str(c.get("content", ""))[:200]
+                            result_text = content[:200] if isinstance(content, str) else ""
                             if result_text:
                                 yield {"type": "thinking", "text": f"↩ {result_text}"}
-
                         elif ev_type == "result":
                             result = ev.get("result", "")
                             if result and not full_text:
                                 full_text = result
-                            logger.info(f"[CLIProvider:{self.binary_name}] result subtype={ev.get('subtype')} cost={ev.get('cost_usd')}")
+
+                        # ── Gemini CLI stream-json ──────────────────────────
+                        elif ev_type == "content":
+                            t = ev.get("content", ev.get("text", ""))
+                            if t:
+                                full_text += t
+                                yield {"type": "delta", "text": t}
+                        elif ev_type == "tool_call":
+                            name = ev.get("tool", ev.get("name", ""))
+                            inp = ev.get("input", ev.get("args", {}))
+                            hint = f"🔧 `{name}`"
+                            if isinstance(inp, dict):
+                                if "path" in inp:
+                                    hint += f" → `{inp['path']}`"
+                                elif "action" in inp:
+                                    hint += f" → `{inp['action']}`"
+                            yield {"type": "thinking", "text": hint}
+                        elif ev_type == "tool_result":
+                            res = str(ev.get("result", ev.get("content", "")))[:200]
+                            if res:
+                                yield {"type": "thinking", "text": f"↩ {res}"}
+
+                        # ── Codex --json ────────────────────────────────────
+                        elif ev_type == "function_call":
+                            name = ev.get("name", "")
+                            args = ev.get("arguments", {})
+                            hint = f"🔧 `{name}`"
+                            if isinstance(args, dict):
+                                if "path" in args:
+                                    hint += f" → `{args['path']}`"
+                                elif "action" in args:
+                                    hint += f" → `{args['action']}`"
+                            yield {"type": "thinking", "text": hint}
+                        elif ev_type == "function_call_output":
+                            out = str(ev.get("output", ""))[:200]
+                            if out:
+                                yield {"type": "thinking", "text": f"↩ {out}"}
+                        elif ev_type == "reasoning":
+                            t = ev.get("content", ev.get("text", "")).strip()
+                            if t:
+                                yield {"type": "thinking", "text": t}
+                        elif ev_type == "message":
+                            # Codex final message veya Gemini user/assistant message
+                            role = ev.get("role", "")
+                            if role == "assistant":
+                                content = ev.get("content", "")
+                                if isinstance(content, str) and content:
+                                    full_text += content
+                                    yield {"type": "delta", "text": content}
+                                elif isinstance(content, list):
+                                    for block in content:
+                                        if isinstance(block, dict) and block.get("type") == "text":
+                                            t = block.get("text", "")
+                                            if t:
+                                                full_text += t
+                                                yield {"type": "delta", "text": t}
 
                         continue
                     except _json.JSONDecodeError:
                         pass  # JSON değilse plain text olarak işle
 
-                # Diğer provider'lar için plain text
+                # Plain text fallback
                 full_text += raw + "\n"
                 yield {"type": "delta", "text": raw + "\n"}
 

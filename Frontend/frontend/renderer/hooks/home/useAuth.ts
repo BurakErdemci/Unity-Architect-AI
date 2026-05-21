@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import axios from 'axios'
 
 export interface User {
@@ -12,6 +12,15 @@ export interface User {
 const BASE_LOCAL: Omit<User, 'sessionToken'> = {
   id: 1, email: 'local@localhost', username: 'local', name: 'local',
 }
+
+// Stable references for objects/functions that never change
+const STABLE_AUTH_FORM = { username: '', password: '', email: '' }
+const STABLE_OAUTH_PROVIDERS = { google: false, github: false }
+const noop = () => {}
+const noopAsync = async () => {}
+const noopAuthSubmit = async (_e: React.FormEvent<HTMLFormElement>, _rememberMe: boolean) => {}
+const noopOAuth = async (_provider: 'google' | 'github') => {}
+const noopSetAuthMode = (_mode: 'login' | 'register') => {}
 
 export function useAuth(_API: string, backendReady: boolean) {
   const [sessionToken, setSessionToken] = useState<string>('local')
@@ -32,21 +41,24 @@ export function useAuth(_API: string, backendReady: boolean) {
     init()
   }, [backendReady])
 
+  // Memoize user object so it's only recreated when sessionToken changes
+  const user = useMemo(() => ({ ...BASE_LOCAL, sessionToken }), [sessionToken])
+
   return {
-    user: { ...BASE_LOCAL, sessionToken },
+    user,
     isAuthenticated: true,
     isLoading: !ready,
     authMode: 'login' as const,
-    setAuthMode: (_mode: 'login' | 'register') => {},
-    authForm: { username: '', password: '', email: '' },
+    setAuthMode: noopSetAuthMode,
+    authForm: STABLE_AUTH_FORM,
     authNotice: null as string | null,
-    setAuthNotice: () => {},
-    oauthProviders: { google: false, github: false },
-    performLogout: () => {},
-    hydrateSession: async () => {},
-    handleAuthSubmit: async (_e: React.FormEvent<HTMLFormElement>, _rememberMe: boolean) => {},
-    handleOAuth: async (_provider: 'google' | 'github') => {},
-    fetchAuthProviders: async () => {},
+    setAuthNotice: noop,
+    oauthProviders: STABLE_OAUTH_PROVIDERS,
+    performLogout: noop,
+    hydrateSession: noopAsync,
+    handleAuthSubmit: noopAuthSubmit,
+    handleOAuth: noopOAuth,
+    fetchAuthProviders: noopAsync,
     authAlertShownRef,
   }
 }
