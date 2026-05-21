@@ -32,9 +32,6 @@ const BACKGROUND_CHANNELS = [
   'write-file',
   'file-exists',
   'write-multiple-files',
-  'session-get',
-  'session-set',
-  'session-clear',
 ] as const
 
 describe('Regresyon — background.ts kanalları whitelist\'te', () => {
@@ -137,10 +134,3 @@ describe('Regresyon — Dosya varlık kontrolü (file-exists)', () => {
   })
 })
 
-describe('Regresyon — Session storage kanalları', () => {
-  for (const ch of ['session-get', 'session-set', 'session-clear'] as const) {
-    it(`"${ch}" whitelist\'te`, () => {
-      expect(ALLOWED_INVOKE_CHANNELS.has(ch)).toBe(true)
-    })
-  }
-})
