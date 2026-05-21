@@ -15,7 +15,6 @@ import { ChatPanel } from '../components/home/ChatPanel';
 import { SettingsModal } from '../components/home/SettingsModal';
 import { ExportModal } from '../components/home/ExportModal';
 import { ModelSelector } from '../components/home/ModelSelector';
-import { AuthScreen } from '../components/home/AuthScreen';
 import { WorkspaceScreen } from '../components/home/WorkspaceScreen';
 import { ControlPanel } from '../components/home/ControlPanel';
 import { AnimatedChatInput } from '../components/ui/animated-ai-chat';
@@ -81,6 +80,7 @@ export default function Home() {
 
   // --- Initialization ---
   useEffect(() => {
+    if (auth.isLoading) return;
     if (auth.user && API) {
       ai.fetchAIConfig(auth.user.id);
       ai.fetchAvailableModels();
@@ -88,7 +88,7 @@ export default function Home() {
       fs.fetchLastWorkspace(auth.user.id);
       chat.fetchConversations(auth.user.id); // Eksik parça buydu!
     }
-  }, [auth.user, API]);
+  }, [auth.isLoading, auth.user, API]);
 
   // --- Auto-Load Last Workspace ---
   useEffect(() => {
@@ -272,7 +272,7 @@ export default function Home() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [fs.saveFile, fs.workspacePath, auth.user]);
 
-  const handleLogout = () => { auth.performLogout(); fs.closeWorkspace(); };
+  const handleLogout = () => { fs.closeWorkspace(); };
 
   const handleProblemClick = (problem: any) => {
     if (problem.file && fs.workspacePath) {
@@ -313,16 +313,6 @@ export default function Home() {
         <h2 className="text-white text-xl font-bold mb-2">Backend Bağlantısı Başarısız</h2>
         <p className="text-slate-400 max-w-md">Backend erişilemez durumda. Lütfen uygulamayı yeniden başlatın.</p>
       </div>
-    );
-  }
-
-  if (!auth.user) {
-    return (
-      <AuthScreen
-        authMode={auth.authMode} notice={auth.authNotice} oauthProviders={auth.oauthProviders}
-        onSubmit={(e) => auth.handleAuthSubmit(e, true)} onOAuth={auth.handleOAuth}
-        onToggleMode={() => auth.setAuthMode(auth.authMode === 'login' ? 'register' : 'login')}
-      />
     );
   }
 
