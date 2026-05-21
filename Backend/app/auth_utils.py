@@ -1,47 +1,40 @@
+import os
 from pathlib import Path, PurePath
-from typing import Any, Optional
+from typing import Any
 
-from fastapi import Header, HTTPException, status
+from fastapi import HTTPException
 
-
-def session_token_from_header(x_session_token: Optional[str] = Header(default=None)) -> str:
-    if not x_session_token:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Oturum bulunamadı.")
-    return x_session_token
+_LOCAL_USER = (1, "local", "local@localhost", None, None)
 
 
-def get_current_user(db: Any, token: str) -> tuple[int, str]:
-    user = db.get_user_by_session(token)
-    if not user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Oturum geçersiz.")
-    return user
+def _check_token(token) -> None:
+    """LOCAL_APP_TOKEN her çağrıda env'den okunur (import-time değil — test güvenliği).
+    Token set değilse (dev mode) atlanır."""
+    app_token = os.environ.get("LOCAL_APP_TOKEN", "")
+    if app_token and token != app_token:
+        raise HTTPException(status_code=401, detail="Geçersiz uygulama token'ı")
 
 
-def require_user(db: Any, token: str, expected_user_id: Optional[int] = None) -> tuple[int, str]:
-    user_id, username = get_current_user(db, token)
-    if expected_user_id is not None and user_id != expected_user_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Bu kaynağa erişim izniniz yok.")
-    return user_id, username
+def require_user(db: Any, token: str, expected_user_id: int = None) -> tuple[int, str]:
+    """Local mode: her zaman user_id=1 döner. expected_user_id ignore edilir."""
+    _check_token(token)
+    return (1, "local")
 
 
-def require_conversation_owner(db: Any, token: str, conv_id: int) -> tuple[int, str]:
-    user_id, username = get_current_user(db, token)
-    owner_id = db.get_conversation_owner(conv_id)
-    if owner_id is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sohbet bulunamadı.")
-    if owner_id != user_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Bu sohbete erişim izniniz yok.")
-    return user_id, username
+def get_current_user(db: Any, token: str) -> tuple[int, str, str, None, None]:
+    _check_token(token)
+    return _LOCAL_USER
 
 
-def require_analysis_owner(db: Any, token: str, item_id: int) -> tuple[int, str]:
-    user_id, username = get_current_user(db, token)
-    owner_id = db.get_analysis_owner(item_id)
-    if owner_id is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Kayıt bulunamadı.")
-    if owner_id != user_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Bu kayda erişim izniniz yok.")
-    return user_id, username
+# Local mode: tüm kayıtlar user_id=1'e aittir, gerçek ownership kontrolü yok.
+def require_conversation_owner(db: Any, token: str, conv_id: int) -> tuple[int, int]:
+    _check_token(token)
+    return (1, 1)
+
+
+def require_analysis_owner(db: Any, token: str, item_id: int) -> tuple[int, int]:
+    _check_token(token)
+    return (1, 1)
 
 
 def is_path_within_workspace(file_path: str, workspace_path: str) -> bool:
