@@ -327,7 +327,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                         if (pendingFix.gateId) {
                           const filePath = pendingFix.data?.editor_hint || openedFilePath;
                           await fetch(`${(window as any).__API__ || ''}/mcp-approval-respond/${pendingFix.gateId}`, {
-                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Session-Token': user?.sessionToken ?? '' },
                             body: JSON.stringify({ approved: true }),
                           }).catch(() => {});
                           // MCP server zaten dosyayı yazar, sadece editörü güncelle
@@ -350,7 +350,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                       onReject={async () => {
                         if (pendingFix.gateId) {
                           await fetch(`${(window as any).__API__ || ''}/mcp-approval-respond/${pendingFix.gateId}`, {
-                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Session-Token': user?.sessionToken ?? '' },
                             body: JSON.stringify({ approved: false }),
                           }).catch(() => {});
                         }
@@ -406,7 +406,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
               onAcceptOne={async (file) => {
                 const gateId = (window as any).__mcpWriteGate;
                 if (gateId) await fetch(`${(window as any).__API__ || ''}/mcp-approval-respond/${gateId}`, {
-                  method: 'POST', headers: { 'Content-Type': 'application/json' },
+                  method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Session-Token': user?.sessionToken ?? '' },
                   body: JSON.stringify({ approved: true }),
                 }).catch(() => {});
                 refreshFileTree();
@@ -416,7 +416,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
               onAcceptAll={async () => {
                 const gateId = (window as any).__mcpWriteGate;
                 if (gateId) await fetch(`${(window as any).__API__ || ''}/mcp-approval-respond/${gateId}`, {
-                  method: 'POST', headers: { 'Content-Type': 'application/json' },
+                  method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Session-Token': user?.sessionToken ?? '' },
                   body: JSON.stringify({ approved: true }),
                 }).catch(() => {});
                 refreshFileTree();
@@ -434,7 +434,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                 const gateId = (window as any).__mcpDeleteGate;
                 if (gateId) {
                   await fetch(`${(window as any).__API__ || ''}/mcp-approval-respond/${gateId}`, {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Session-Token': user?.sessionToken ?? '' },
                     body: JSON.stringify({ approved: true }),
                   }).catch(() => {});
                 }
@@ -448,7 +448,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                 const gateId = (window as any).__mcpDeleteGate;
                 if (gateId) {
                   await fetch(`${(window as any).__API__ || ''}/mcp-approval-respond/${gateId}`, {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Session-Token': user?.sessionToken ?? '' },
                     body: JSON.stringify({ approved: false }),
                   }).catch(() => {});
                 }
@@ -465,7 +465,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                 const gateId = pendingCommand.gateId;
                 await fetch(`${(window as any).__API__ || ''}/mcp-approval-respond/${gateId}`, {
                   method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
+                  headers: { 'Content-Type': 'application/json', 'X-Session-Token': user?.sessionToken ?? '' },
                   body: JSON.stringify({ approved: true }),
                 }).catch(() => {});
                 setPendingCommand(null);
@@ -475,7 +475,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                 const gateId = pendingCommand.gateId;
                 await fetch(`${(window as any).__API__ || ''}/mcp-approval-respond/${gateId}`, {
                   method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
+                  headers: { 'Content-Type': 'application/json', 'X-Session-Token': user?.sessionToken ?? '' },
                   body: JSON.stringify({ approved: false }),
                 }).catch(() => {});
                 setPendingCommand(null);
