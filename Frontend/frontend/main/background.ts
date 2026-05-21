@@ -1,7 +1,8 @@
 import path from 'path'
 import fs from 'fs'
 import net from 'net'
-import { app, ipcMain, dialog, safeStorage } from 'electron'
+import { randomUUID } from 'crypto'
+import { app, ipcMain, dialog } from 'electron'
 import serve from 'electron-serve'
 import { createWindow } from './helpers'
 import { spawn, ChildProcess } from 'child_process'
@@ -11,8 +12,9 @@ import {
   isAllowedWorkspacePath,
   isAllowedWorkspaceReadFile,
 } from './helpers/file-security'
-import { sessionGet, sessionSet, sessionClear } from './helpers/session-storage-handlers'
 import * as pty from 'node-pty'
+
+const localAppToken = randomUUID()
 
 const isProd = process.env.NODE_ENV === 'production'
 let pyBackendProcess: ChildProcess | null = null
@@ -303,15 +305,7 @@ ipcMain.handle('move-entry', async (_event, sourcePath: string, targetDir: strin
   return { success: true, newPath }
 })
 
-// --- IPC: SESSION STORAGE (safeStorage) ---
-const makeSessionDeps = () => ({
-  userDataPath: app.getPath('userData'),
-  safeStorage,
-})
-
-ipcMain.handle('session-get', () => sessionGet(makeSessionDeps()))
-ipcMain.handle('session-set', (_event, token: string) => sessionSet(makeSessionDeps(), token))
-ipcMain.handle('session-clear', () => sessionClear(makeSessionDeps()))
+ipcMain.handle('app-token-get', () => localAppToken)
 ipcMain.handle('get-backend-base-url', () => getBackendBaseUrl())
 
 function findAvailablePort(): Promise<number> {
@@ -425,7 +419,7 @@ async function startPythonBackend() {
     stdio: ['ignore', 'pipe', 'pipe'],
     cwd: backendDir,
     detached: false, // process group ile başlat — kapanırken tüm child'lar ölsün
-    env: { ...process.env, PYTHONUNBUFFERED: '1', PORT: String(selectedPort) },
+    env: { ...process.env, PYTHONUNBUFFERED: '1', PORT: String(selectedPort), LOCAL_APP_TOKEN: localAppToken },
   });
 
   const safeLog = (...args: any[]) => { try { console.log(...args) } catch { /* EIO — socket kapandı */ } }

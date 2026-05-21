@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import {
   ALLOWED_INVOKE_CHANNELS,
   assertAllowedInvokeChannel,
@@ -16,23 +16,15 @@ describe('IPC Whitelist — izinli kanallar', () => {
     'write-multiple-files',
   ]
 
-  const sessionChannels = [
-    'session-get',
-    'session-set',
-    'session-clear',
-  ]
-
   for (const ch of fileChannels) {
     it(`dosya kanalı geçer: ${ch}`, () => {
       expect(() => assertAllowedInvokeChannel(ch)).not.toThrow()
     })
   }
 
-  for (const ch of sessionChannels) {
-    it(`session kanalı geçer: ${ch}`, () => {
-      expect(() => assertAllowedInvokeChannel(ch)).not.toThrow()
-    })
-  }
+  it('app-token-get kanalı geçer', () => {
+    expect(() => assertAllowedInvokeChannel('app-token-get')).not.toThrow()
+  })
 })
 
 describe('IPC Whitelist — izinsiz kanallar engellenir', () => {
@@ -48,6 +40,9 @@ describe('IPC Whitelist — izinsiz kanallar engellenir', () => {
     'open_file_dialog',          // alt çizgi
     'write-file-extra',          // prefix match değil, tam eşleşme
     'session',
+    'session-get',
+    'session-set',
+    'session-clear',
     'get',
     'node:fs',
   ]
@@ -60,8 +55,8 @@ describe('IPC Whitelist — izinsiz kanallar engellenir', () => {
 })
 
 describe('IPC Whitelist — Set doğruluğu', () => {
-  it('tam olarak 10 kanal içerir', () => {
-    expect(ALLOWED_INVOKE_CHANNELS.size).toBe(11)
+  it('tam olarak 19 kanal içerir', () => {
+    expect(ALLOWED_INVOKE_CHANNELS.size).toBe(19)
   })
 
   it('her kanal benzersiz', () => {
@@ -77,10 +72,7 @@ describe('IPC Whitelist — Set doğruluğu', () => {
     }
   })
 
-  it('session kanallarının hepsi whitelist\'te', () => {
-    const expected = ['session-get', 'session-set', 'session-clear']
-    for (const ch of expected) {
-      expect(ALLOWED_INVOKE_CHANNELS.has(ch)).toBe(true)
-    }
+  it('app-token-get kanalı whitelist\'te', () => {
+    expect(ALLOWED_INVOKE_CHANNELS.has('app-token-get')).toBe(true)
   })
 })
