@@ -221,7 +221,7 @@ export const useChat = (
   const clearHistory = useCallback(async () => {
     if (!activeConvId) return;
     try {
-      await ipc?.invoke('session-clear').catch(() => undefined);
+      // session-clear IPC channel removed; session management now handled by auth layer
       setMessages([]);
       showToast('Sohbet geçmişi temizlendi', 'info');
     } catch (err) { showToast('Geçmiş temizlenemedi', 'error'); }
