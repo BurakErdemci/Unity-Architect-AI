@@ -21,9 +21,9 @@ def require_user(db: Any, token: str, expected_user_id: int = None) -> tuple[int
     return (1, "local")
 
 
-def get_current_user(db: Any, token: str) -> tuple[int, str, str, None, None]:
+def get_current_user(db: Any, token: str) -> tuple[int, str]:
     _check_token(token)
-    return _LOCAL_USER
+    return (1, "local")
 
 
 # Local mode: tüm kayıtlar user_id=1'e aittir, gerçek ownership kontrolü yok.
