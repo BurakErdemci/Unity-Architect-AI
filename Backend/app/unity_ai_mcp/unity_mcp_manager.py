@@ -102,10 +102,12 @@ class UnityMCPManager:
         log_path = os.path.join(self.project_root, "Backend", "unity_mcp_server.log")
         try:
             log_file = open(log_path, "a", encoding="utf-8")
+            mcp_env = {**os.environ, "LOCAL_APP_TOKEN": os.environ.get("LOCAL_APP_TOKEN", "")}
             self.process = subprocess.Popen(
                 cmd,
                 stdout=log_file,
                 stderr=log_file,
+                env=mcp_env,
             )
             logger.info(f"[UnityMCP] Sunucu başlatıldı (PID: {self.process.pid}, port: {self.mcp_port})")
             self._starting = False
