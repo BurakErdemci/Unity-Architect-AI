@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from database import DatabaseManager
 from ai_providers import AIProviderManager
 from linter import lint_csharp
+from auth_utils import _check_token
 import json
 import re
 import logging
@@ -30,19 +31,15 @@ class LintResponse(BaseModel):
 
 def create_lint_router(db: DatabaseManager):
     @router.post("/lint", response_model=LintResponse)
-    async def lint_code(request: LintRequest, x_session_token: Optional[str] = Header(None)):
-        if not x_session_token:
-            raise HTTPException(status_code=401, detail="Session token missing")
-        
-        user = db.get_user_by_session(x_session_token)
-        if not user:
-            raise HTTPException(status_code=401, detail="Invalid session")
-        
+    async def lint_code(request: LintRequest, x_session_token: str = Header(alias="X-Session-Token", default="")):
+        _check_token(x_session_token)
+        user_id = 1
+
         print(f"--- LINTER RUNNING FOR: {request.filename} (full_project: {request.full_project}) ---", flush=True)
         logger.info(f"--- LINTER RUNNING FOR: {request.filename} (full_project: {request.full_project}) ---")
-        
+
         # 1. Try Local Compiler Linting (Zero Cost, High Accuracy)
-        workspace_path = db.get_last_workspace(user[0])
+        workspace_path = db.get_last_workspace(user_id)
         print(f"Resolved workspace path from DB: {workspace_path}", flush=True)
         logger.info(f"Resolved workspace path from DB: {workspace_path}")
         
@@ -65,7 +62,7 @@ def create_lint_router(db: DatabaseManager):
                 logger.error(f"Local Roslyn csc linting failed: {e}", exc_info=True)
 
         # 2. Fallback to AI (Smart Logic Check)
-        config = db.get_ai_config(user[0])
+        config = db.get_ai_config(user_id)
         if not config:
             logger.info("AI fallback skipped (no AI config defined). Returning 0 errors.")
             return LintResponse(errors=[])
