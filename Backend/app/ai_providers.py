@@ -386,6 +386,10 @@ class CLIProvider(AIProvider):
         backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         launcher = os.path.join(backend_dir, "run_mcp_server.sh")
         antigravity_url = os.environ.get("ANTIGRAVITY_URL", "http://localhost:8000")
+        local_app_token = os.environ.get("LOCAL_APP_TOKEN", "")
+        antigravity_env = {"ANTIGRAVITY_URL": antigravity_url}
+        if local_app_token:
+            antigravity_env["LOCAL_APP_TOKEN"] = local_app_token
 
         # Claude Code: workspace/.mcp.json
         from unity_ai_mcp.unity_mcp_manager import unity_mcp_manager
@@ -394,7 +398,7 @@ class CLIProvider(AIProvider):
                 "antigravity": {
                     "command": launcher,
                     "args": ["--workspace", workspace],
-                    "env": {"ANTIGRAVITY_URL": antigravity_url}
+                    "env": antigravity_env,
                 }
             }
         }
@@ -441,6 +445,7 @@ class CLIProvider(AIProvider):
                     "claude", "mcp", "add", "antigravity",
                     "--scope", "user",
                     "-e", f"ANTIGRAVITY_URL={antigravity_url}",
+                    *(["-e", f"LOCAL_APP_TOKEN={os.environ.get('LOCAL_APP_TOKEN', '')}"] if os.environ.get("LOCAL_APP_TOKEN") else []),
                     "-e", f"WORKSPACE={workspace}",
                     "--", launcher, "--workspace", workspace,
                 ],
@@ -475,21 +480,45 @@ class CLIProvider(AIProvider):
         """
         import subprocess as sp
         try:
+            from unity_ai_mcp.unity_mcp_manager import unity_mcp_manager
+
             # Önce var olan kaydı sil (URL güncel olmayabilir)
             sp.run(
                 ["codex", "mcp", "remove", "antigravity"],
                 capture_output=True, timeout=5,
             )
+            # unityMCP global config'te stale kalırsa Codex kapalı 8080'e bağlanmaya
+            # çalışıp tüm run'ı "Transport channel closed" ile düşürebiliyor.
+            sp.run(
+                ["codex", "mcp", "remove", "unityMCP"],
+                capture_output=True, timeout=5,
+            )
+
+            local_app_token = os.environ.get("LOCAL_APP_TOKEN", "")
+            env_args = [
+                "--env", f"ANTIGRAVITY_URL={antigravity_url}",
+                "--env", f"WORKSPACE={workspace}",
+            ]
+            if local_app_token:
+                env_args.extend(["--env", f"LOCAL_APP_TOKEN={local_app_token}"])
+
             # Yeni kaydı ekle
             sp.run(
                 [
                     "codex", "mcp", "add", "antigravity",
-                    "--env", f"ANTIGRAVITY_URL={antigravity_url}",
-                    "--env", f"WORKSPACE={workspace}",
+                    *env_args,
                     "--", launcher, "--workspace", workspace,
                 ],
                 capture_output=True, timeout=5, check=True,
             )
+            if unity_mcp_manager.is_running():
+                sp.run(
+                    [
+                        "codex", "mcp", "add", "unityMCP",
+                        "--url", f"http://127.0.0.1:{unity_mcp_manager.mcp_port}/mcp",
+                    ],
+                    capture_output=True, timeout=5, check=True,
+                )
         except Exception as e:
             logger.warning(f"[CLIProvider] Codex MCP kaydı yapılamadı: {e}")
 
@@ -520,6 +549,9 @@ class CLIProvider(AIProvider):
             },
             "trust": True,
         }
+        local_app_token = os.environ.get("LOCAL_APP_TOKEN", "")
+        if local_app_token:
+            settings["mcpServers"]["antigravity"]["env"]["LOCAL_APP_TOKEN"] = local_app_token
 
         # ⚠️ ÖNEMLI: unityMCP kaydına KESİNLİKLE DOKUNMUYORUZ.
         # ~/.gemini/settings.json'daki unityMCP, Antigravity IDE'nin CoplayDev/unity-mcp
@@ -723,6 +755,14 @@ class CLIProvider(AIProvider):
             _env = {**os.environ, "NO_COLOR": "1", "TERM": "xterm-256color",
                     "COLUMNS": "220", "LINES": "50"}
 
+            # CMD'yi prompt'tan ayır ki log okunabilir olsun
+            _cmd_flags = cmd[:-1] if cmd else cmd
+            _prompt_preview = (cmd[-1][:200] + "...") if cmd and len(cmd[-1]) > 200 else (cmd[-1] if cmd else "")
+            logger.info(f"[CLIProvider:{self.binary_name}][CMD] {' '.join(_cmd_flags)}")
+            logger.info(f"[CLIProvider:{self.binary_name}][PROMPT] {_prompt_preview!r}")
+            logger.info(f"[CLIProvider:{self.binary_name}][CWD] {workspace}")
+            logger.info(f"[CLIProvider:{self.binary_name}][ENV] LOCAL_APP_TOKEN={'set' if _env.get('LOCAL_APP_TOKEN') else 'unset'} ANTIGRAVITY_URL={_env.get('ANTIGRAVITY_URL', 'unset')}")
+
             process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdin=asyncio.subprocess.DEVNULL,
@@ -774,6 +814,22 @@ class CLIProvider(AIProvider):
                         logger.warning(f"[DIAG][LSOF pid={process.pid}] {open_files[:20]}")
                     except Exception as _le:
                         logger.warning(f"[DIAG][LSOF] çalıştırılamadı: {_le}")
+                    # Codex CLI ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl yazar
+                    if self.binary_name.startswith("gpt-"):
+                        try:
+                            import glob as _glob
+                            codex_sessions = sorted(
+                                _glob.glob(os.path.expanduser("~/.codex/sessions/*/*/*/rollout-*.jsonl")),
+                                key=os.path.getmtime, reverse=True
+                            )
+                            if codex_sessions:
+                                with open(codex_sessions[0], "r", errors="ignore") as _cf:
+                                    tail = _cf.readlines()[-20:]
+                                logger.warning(f"[DIAG][CODEX_SESSION] {codex_sessions[0]}:\n{''.join(tail)}")
+                            else:
+                                logger.warning("[DIAG][CODEX_SESSION] hiç session dosyası bulunamadı")
+                        except Exception as _ce:
+                            logger.warning(f"[DIAG][CODEX_SESSION] okunamadı: {_ce}")
                     # Claude CLI kendi log dosyasını ~/.claude/logs/'a yazar — son satırları oku
                     if self.binary_name.startswith("claude"):
                         try:
@@ -805,6 +861,10 @@ class CLIProvider(AIProvider):
                 if not raw:
                     continue
                 line_count += 1
+                # Ham stdout — Codex için her satırı logla (debug)
+                if self.binary_name.startswith("gpt-"):
+                    _preview = raw[:300] + ("..." if len(raw) > 300 else "")
+                    logger.info(f"[CLIProvider:{self.binary_name}][RAW#{line_count}] {_preview}")
 
                 import json as _json
                 _is_json_provider = (
@@ -870,7 +930,35 @@ class CLIProvider(AIProvider):
                             if res:
                                 yield {"type": "thinking", "text": f"↩ {res}"}
 
-                        # ── Codex --json ────────────────────────────────────
+                        # ── Codex --json (yeni format: item.completed) ──────
+                        elif ev_type == "item.completed":
+                            item = ev.get("item", {})
+                            it_type = item.get("type", "")
+                            if it_type == "agent_message":
+                                t = item.get("text", "")
+                                if t:
+                                    full_text += t
+                                    yield {"type": "delta", "text": t}
+                            elif it_type == "reasoning":
+                                t = item.get("text", item.get("content", "")).strip()
+                                if t:
+                                    yield {"type": "thinking", "text": t}
+                            elif it_type == "function_call":
+                                name = item.get("name", "")
+                                args = item.get("arguments", {})
+                                hint = f"🔧 `{name}`"
+                                if isinstance(args, dict):
+                                    if "path" in args:
+                                        hint += f" → `{args['path']}`"
+                                    elif "action" in args:
+                                        hint += f" → `{args['action']}`"
+                                yield {"type": "thinking", "text": hint}
+                            elif it_type == "function_call_output":
+                                out = str(item.get("output", ""))[:200]
+                                if out:
+                                    yield {"type": "thinking", "text": f"↩ {out}"}
+
+                        # ── Codex --json (eski format) ──────────────────────
                         elif ev_type == "function_call":
                             name = ev.get("name", "")
                             args = ev.get("arguments", {})

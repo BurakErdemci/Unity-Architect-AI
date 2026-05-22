@@ -143,7 +143,7 @@ export const useChat = (
         headers: { 'Content-Type': 'application/json', 'X-Session-Token': user.sessionToken },
         body: JSON.stringify({
           conversation_id: targetConvId, message: messageContent, language: lang, user_id: user.id,
-          use_kb: aiConfig.provider_type === 'kb', editor_code: code || '', 
+          editor_code: code || '',
           thinking_level: thinkingLevel,
           generation_mode: genMode, generation_confirmed: false,
           images: images
@@ -240,7 +240,6 @@ export const useChat = (
     try {
       const res = await axios.post(`${API}/chat`, {
         conversation_id: activeConvId, message: originalMsg, language: lang, user_id: user?.id,
-        use_kb: aiConfig.provider_type === 'kb',
         editor_code: code || '', use_thinking: false, generation_mode: mode, generation_confirmed: true,
       }, { timeout: 900000 });
       

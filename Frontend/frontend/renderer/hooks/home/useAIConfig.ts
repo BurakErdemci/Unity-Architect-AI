@@ -6,7 +6,7 @@ export type UnityMCPStatus = 'off' | 'starting' | 'running' | 'connected';
 
 export const useAIConfig = (API: string, user: UserData | null, showToast: (msg: string, type: any) => void, workspacePath?: string) => {
   const [aiConfig, setAiConfig] = useState<AIConfig>({
-    provider_type: 'kb', api_key: '', model_name: 'unity-kb-v1', use_multi_agent: true, thinking_level: 'medium'
+    provider_type: 'subscription', api_key: '', model_name: 'claude-sonnet-4-6', thinking_level: 'medium'
   });
   const [availableModels, setAvailableModels] = useState<AvailableModels>({ local: [], cloud: [], subscription: [] });
   const [providersWithKeys, setProvidersWithKeys] = useState<string[]>([]);

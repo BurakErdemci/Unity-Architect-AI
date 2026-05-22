@@ -632,11 +632,13 @@ def create_mcp_server(project_scoped_tools: bool) -> FastMCP:
     # objects and is still present in FastMCP 3.x.
     existing_routes = [
         route for route in mcp._get_additional_http_routes()
-        if isinstance(route, WebSocketRoute) and route.path == "/hub/plugin"
+        if isinstance(route, WebSocketRoute) and route.path in ("/hub/plugin", "/mcp/hub/plugin")
     ]
     if not existing_routes:
         mcp._additional_http_routes.append(
             WebSocketRoute("/hub/plugin", PluginHub))
+        mcp._additional_http_routes.append(
+            WebSocketRoute("/mcp/hub/plugin", PluginHub))
 
     # Register all tools
     register_all_tools(mcp, project_scoped_tools=project_scoped_tools)

@@ -12,7 +12,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from database import DatabaseManager
-from knowledge import KBEngine
 from routes import (
     create_analysis_router,
     create_auth_router,
@@ -44,10 +43,14 @@ class _BufferHandler(logging.Handler):
         })
 
 _buf_handler = _BufferHandler()
+_buf_handler.setLevel(logging.INFO)
 _buf_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s", "%H:%M:%S"))
+
+# Root logger seviyesini explicit INFO yap — basicConfig() handler zaten varsa no-op olur
+logging.basicConfig(level=logging.INFO)
+logging.root.setLevel(logging.INFO)
 logging.root.addHandler(_buf_handler)
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class _SuppressPollingEndpoints(logging.Filter):
@@ -116,7 +119,6 @@ async def lifespan(app: FastAPI):
 db_path = _resolve_db_path()
 app = FastAPI(title="Unity Architect AI", lifespan=lifespan)
 db = DatabaseManager(db_path=db_path)
-kb = KBEngine()
 PROGRESS_STORE = {}
 
 _ALLOWED_ORIGINS = [
@@ -142,7 +144,7 @@ app.include_router(create_config_router(db))
 app.include_router(create_analysis_router(db))
 app.include_router(create_workspace_router(db))
 app.include_router(create_lint_router(db))
-app.include_router(create_conversation_router(db, kb, PROGRESS_STORE))
+app.include_router(create_conversation_router(db, PROGRESS_STORE))
 app.include_router(create_mcp_router())
 
 

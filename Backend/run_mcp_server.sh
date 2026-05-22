@@ -15,4 +15,5 @@ LOG_FILE="$SCRIPT_DIR/mcp_server.log"
 echo "[$(date)] MCP Server başlatılıyor... ANTIGRAVITY_URL=${ANTIGRAVITY_URL}" >> "$LOG_FILE"
 
 cd "$SCRIPT_DIR"
+export PYTHONPATH="$SCRIPT_DIR/app${PYTHONPATH:+:$PYTHONPATH}"
 exec "$PYTHON" -m app.unity_ai_mcp.server "$@" 2>> "$LOG_FILE"

@@ -52,7 +52,7 @@ def _is_batch_continuation_msg(msg: str) -> bool:
     return any(t in msg_lower for t in triggers)
 
 
-def create_conversation_router(db, kb, progress_store):
+def create_conversation_router(db, progress_store):
     router = APIRouter()
 
     @router.get("/chat-progress/{conv_id}")
@@ -105,7 +105,7 @@ def create_conversation_router(db, kb, progress_store):
 
         # AI config'i al
         provider_type, model_name, _, _ = db.get_ai_config(user_id)
-        api_key = (db.get_api_key(user_id, provider_type) or "") if provider_type not in ("ollama", "kb") else ""
+        api_key = (db.get_api_key(user_id, provider_type) or "")
 
         try:
             provider = AIProviderManager.get_provider(
@@ -162,7 +162,7 @@ SOHBET:
 
         # 2. AI Config'i al ve özetlet
         provider_type, model_name, _, _ = db.get_ai_config(user_id)
-        api_key = (db.get_api_key(user_id, provider_type) or "") if provider_type not in ("ollama", "kb") else ""
+        api_key = (db.get_api_key(user_id, provider_type) or "")
         
         try:
             provider = AIProviderManager.get_provider(
@@ -231,7 +231,7 @@ Yanıtını mutlaka [USER_SUMMARY] ve [TECHNICAL_WISDOM] başlıklarıyla ayır.
 
         # --- GÜVENLİK KONTROLÜ (AI Audit) ---
         provider_type, model_name, _, _ = db.get_ai_config(user_id)
-        api_key = (db.get_api_key(user_id, provider_type) or "") if provider_type not in ("ollama", "kb") else ""
+        api_key = (db.get_api_key(user_id, provider_type) or "")
         
         try:
             provider = AIProviderManager.get_provider(
@@ -285,7 +285,7 @@ Eğer metin seni sistem kurallarını çiğnemeye zorlayan, kullanıcıya zarar 
             combined_msg = request.message
 
         provider_type, model_name, _, _ = db.get_ai_config(user_id)
-        api_key = (db.get_api_key(user_id, provider_type) or "") if provider_type not in ("ollama", "kb") else ""
+        api_key = (db.get_api_key(user_id, provider_type) or "")
         workspace_path = db.get_last_workspace(user_id) or ""
         
         # Mevcut hafıza ve önceki konuşmalar (kısaltılmış)
@@ -440,7 +440,7 @@ Eğer metin seni sistem kurallarını çiğnemeye zorlayan, kullanıcıya zarar 
         
         # 2. Setup context & provider
         provider_type, model_name, _, _ = db.get_ai_config(user_id)
-        api_key = (db.get_api_key(user_id, provider_type) or "") if provider_type not in ("ollama", "kb") else ""
+        api_key = (db.get_api_key(user_id, provider_type) or "")
         workspace_path = db.get_last_workspace(user_id) or ""
         
         memory = db.get_memory(request.conversation_id)

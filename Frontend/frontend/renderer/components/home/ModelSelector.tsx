@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   ChevronDown,
-  Database,
   Sparkles,
   Cpu,
   ChevronRight,
@@ -112,31 +111,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
               exit={{ opacity: 0, y: -10 }}
               className="absolute top-10 left-0 w-64 bg-[#000000] border border-slate-700 shadow-2xl rounded-xl z-50"
             >
-              {aiConfig.use_multi_agent && (
-                <div className="m-3 p-3 bg-blue-500/10 border border-blue-500/20 rounded-xl text-[10px] text-slate-300 leading-relaxed">
-                  Uzman ajan orkestrasyonu gelecek sürüm için korunuyor. Şu anda seçim yaptığın model mevcut agentic runtime ile çalışır.
-                </div>
-              )}
-
               <div className="max-h-[60vh] overflow-y-auto custom-scrollbar">
-                <div className="p-1">
-                  <div className="px-2 py-1.5 text-[10px] font-bold text-slate-500 uppercase flex items-center gap-2 mt-1">
-                    <Database size={10} /> Yerleşik Sistem
-                  </div>
-                  <button
-                    onClick={async () => {
-                      const newCfg = { ...aiConfig, provider_type: 'kb', model_name: 'unity-kb-v1', api_key: '' };
-                      setAiConfig(newCfg);
-                      setIsModelDropdownOpen(false);
-                      if (user) await axios.post(`${API}/save-ai-config`, { ...newCfg, user_id: user.id });
-                    }}
-                    className={`w-full text-left px-3 py-2 text-[12px] flex flex-col rounded-lg hover:bg-emerald-600/10 ${aiConfig.provider_type === 'kb' ? 'text-emerald-400' : 'text-slate-300'}`}
-                  >
-                    <span className="font-medium">Unity Bilgi Bankası</span>
-                    <span className="text-[10px] text-slate-500">API key gerektirmez</span>
-                  </button>
-                </div>
-
                 {availableModels.cloud.length > 0 && (
                   <div className="p-1">
                     <div className="px-2 py-1.5 text-[10px] font-bold text-slate-500 uppercase flex items-center gap-2 mt-1">

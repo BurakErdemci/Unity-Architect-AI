@@ -139,7 +139,6 @@ export const SettingsModal = ({
               >
                 <option value="groq">Groq (Bulut)</option>
                 <option value="ollama">Ollama (Yerel)</option>
-                <option value="kb">Unity Architect KB (Hızlı & Yerel)</option>
                 <option value="anthropic">Anthropic (Claude)</option>
                 <option value="google">Google Gemini (Bulut)</option>
                 <option value="openai">OpenAI (Bulut)</option>
@@ -149,7 +148,7 @@ export const SettingsModal = ({
                 <option value="subscription">Abonelik (Claude Code / Codex / Gemini CLI)</option>
               </select>
             </div>
-            {aiConfig.provider_type !== 'ollama' && aiConfig.provider_type !== 'kb' && aiConfig.provider_type !== 'subscription' && (
+            {aiConfig.provider_type !== 'ollama' && aiConfig.provider_type !== 'subscription' && (
               <div>
                 <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
                   API Key
@@ -183,52 +182,33 @@ export const SettingsModal = ({
                 </p>
               </div>
             )}
-            {aiConfig.provider_type !== 'kb' && (
-              <div>
-                <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Model İsmi</label>
-                <input
-                  style={{ backgroundColor: '#000000', color: 'white' }}
-                  value={aiConfig.model_name}
-                  onChange={e => onChange({ ...aiConfig, model_name: e.target.value })}
-                  className="w-full bg-[#000000] border border-slate-800 rounded-xl p-3 text-white text-sm outline-none focus:border-blue-500 transition-colors"
-                  placeholder={DEFAULT_MODELS[aiConfig.provider_type] || "model-adı-girin"}
-                />
-                {MODEL_HINTS[aiConfig.provider_type] && (
-                  <div className="flex flex-wrap gap-1.5 mt-2">
-                    {MODEL_HINTS[aiConfig.provider_type].map(hint => (
-                      <button
-                        key={hint.value}
-                        type="button"
-                        onClick={() => onChange({ ...aiConfig, model_name: hint.value })}
-                        className={`px-2 py-0.5 rounded-md text-[10px] transition-colors border ${
-                          aiConfig.model_name === hint.value
-                            ? 'bg-blue-500/20 border-blue-500/40 text-blue-300'
-                            : 'bg-slate-900 border-slate-800 text-slate-500 hover:text-slate-300 hover:border-slate-600'
-                        }`}
-                      >
-                        {hint.label}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-            <div className="flex items-start gap-3 p-3 rounded-xl border border-blue-500/30 bg-blue-500/5">
+            <div>
+              <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Model İsmi</label>
               <input
-                id="use_multi_agent"
-                type="checkbox"
-                checked={aiConfig.use_multi_agent}
-                onChange={e => onChange({ ...aiConfig, use_multi_agent: e.target.checked })}
-                className="mt-0.5 h-4 w-4 rounded border-slate-700 bg-slate-950 text-blue-500 focus:ring-blue-500"
+                style={{ backgroundColor: '#000000', color: 'white' }}
+                value={aiConfig.model_name}
+                onChange={e => onChange({ ...aiConfig, model_name: e.target.value })}
+                className="w-full bg-[#000000] border border-slate-800 rounded-xl p-3 text-white text-sm outline-none focus:border-blue-500 transition-colors"
+                placeholder={DEFAULT_MODELS[aiConfig.provider_type] || "model-adı-girin"}
               />
-              <div className="min-w-0">
-                <label htmlFor="use_multi_agent" className="text-xs font-semibold text-blue-300 cursor-pointer">
-                  Gelecekte uzman ajan orkestrasyonunu tercih et
-                </label>
-                <p className="text-[10px] text-blue-400/70 mt-0.5">
-                  Bu seçenek şimdilik yalnızca tercih olarak saklanır. Mevcut chat akışı yine bugünkü agentic runtime ile çalışır.
-                </p>
-              </div>
+              {MODEL_HINTS[aiConfig.provider_type] && (
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {MODEL_HINTS[aiConfig.provider_type].map(hint => (
+                    <button
+                      key={hint.value}
+                      type="button"
+                      onClick={() => onChange({ ...aiConfig, model_name: hint.value })}
+                      className={`px-2 py-0.5 rounded-md text-[10px] transition-colors border ${
+                        aiConfig.model_name === hint.value
+                          ? 'bg-blue-500/20 border-blue-500/40 text-blue-300'
+                          : 'bg-slate-900 border-slate-800 text-slate-500 hover:text-slate-300 hover:border-slate-600'
+                      }`}
+                    >
+                      {hint.label}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
             {/* Unity MCP Toggle */}
             <div className={`flex items-center justify-between p-3 rounded-xl border ${UNITY_STATUS_CONFIG[unityMcpStatus].border} ${UNITY_STATUS_CONFIG[unityMcpStatus].bg}`}>

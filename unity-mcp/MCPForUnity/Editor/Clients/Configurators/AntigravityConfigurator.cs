@@ -20,6 +20,7 @@ namespace MCPForUnity.Editor.Clients.Configurators
             StripEnvWhenNotRequired = true
         })
         { }
+        
 
         public override IList<string> GetInstallationSteps() => new List<string>
         {

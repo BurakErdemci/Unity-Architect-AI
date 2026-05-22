@@ -18,7 +18,6 @@ class AIConfigRequest(BaseModel):
     provider_type: str
     model_name: str
     api_key: str
-    use_multi_agent: bool = True
 
 
 class UpdateFileRequest(BaseModel):
@@ -46,7 +45,6 @@ class ChatRequest(BaseModel):
     language: str = "tr"
     user_id: int
     mode: str = "analysis"
-    use_kb: bool = True
     editor_code: str = ""
     use_thinking: bool = False
     thinking_level: str = "medium" # off | low | medium | high

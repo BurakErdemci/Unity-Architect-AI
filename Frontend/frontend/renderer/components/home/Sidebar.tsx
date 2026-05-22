@@ -180,18 +180,8 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
         )}
       </div>
 
-      <div className="p-3 border-t border-slate-800/50 flex items-center justify-between min-w-[260px]">
-        <div className="flex items-center gap-2.5">
-          <div className="h-8 w-8 bg-gradient-to-br from-blue-600 to-violet-600 rounded-lg flex items-center justify-center font-bold text-xs text-white shadow">{user.name[0].toUpperCase()}</div>
-          <div className="flex flex-col">
-            <span className="text-[12px] font-semibold text-slate-300">{user.name}</span>
-            <span className="text-[9px] text-emerald-500 font-medium">Online</span>
-          </div>
-        </div>
-        <div className="flex gap-0.5">
-          <button onClick={() => setShowSettings(true)} className="p-2 hover:bg-slate-800 text-slate-500 hover:text-white rounded-lg transition-all"><Settings size={14} /> </button>
-          <button onClick={handleLogout} className="p-2 hover:bg-red-950/30 text-slate-500 hover:text-red-400 rounded-lg transition-all"><LogOut size={14} /></button>
-        </div>
+      <div className="p-3 border-t border-slate-800/50 flex items-center justify-end min-w-[260px]">
+        <button onClick={() => setShowSettings(true)} className="p-2 hover:bg-slate-800 text-slate-500 hover:text-white rounded-lg transition-all"><Settings size={14} /></button>
       </div>
     </motion.aside>
   );

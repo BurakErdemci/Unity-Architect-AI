@@ -219,10 +219,10 @@ class DatabaseManager:
             )
 
     # ===================== AI CONFIG =====================
-    def save_ai_config(self, user_id: int, p_type: str, m_name: str, key: str, use_multi_agent: bool = True) -> None:
+    def save_ai_config(self, user_id: int, p_type: str, m_name: str, key: str) -> None:
         with closing(sqlite3.connect(self.db_path)) as conn, conn:
-            conn.execute('INSERT OR REPLACE INTO ai_configs (user_id, provider_type, model_name, api_key, use_multi_agent) VALUES (?, ?, ?, ?, ?)',
-                         (user_id, p_type, m_name, key, 1 if use_multi_agent else 0))
+            conn.execute('INSERT OR REPLACE INTO ai_configs (user_id, provider_type, model_name, api_key, use_multi_agent) VALUES (?, ?, ?, ?, 1)',
+                         (user_id, p_type, m_name, key))
             conn.commit()
 
     def get_ai_config(self, user_id: int) -> Tuple[str, str, str, bool]:
@@ -230,7 +230,7 @@ class DatabaseManager:
             res = conn.execute('SELECT provider_type, model_name, api_key, use_multi_agent FROM ai_configs WHERE user_id = ?', (user_id,)).fetchone()
             if res:
                 return (res[0], res[1], res[2], bool(res[3]))
-            return ("kb", "unity-kb-v1", "", False)
+            return ("subscription", "claude-sonnet-4-6", "", False)
 
     # ===================== API KEY KASASI =====================
     def save_api_key(self, user_id: int, provider_type: str, api_key: str) -> None:
