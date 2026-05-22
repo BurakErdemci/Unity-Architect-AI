@@ -44,9 +44,9 @@ const CLI_GROUPS = [
   },
   {
     key: 'gemini',
-    label: 'Gemini CLI',
+    label: 'Antigravity CLI',
     color: 'blue',
-    ids: ['gemini-3.1-pro-preview', 'gemini-3-flash-preview', 'gemini-3.1-flash-lite-preview', 'gemini-2.5-pro', 'gemini-2.5-flash'],
+    ids: ['gemini-3.5-flash', 'gemini-3.5-flash-medium', 'gemini-3.1-pro-preview', 'gemini-3.1-pro-low', 'gemini-3-flash-preview', 'gemini-3.1-flash-lite-preview', 'gemini-2.5-pro', 'gemini-2.5-flash', 'agy-claude-sonnet-4-6', 'agy-claude-opus-4-6', 'agy-gpt-oss-120b'],
   },
 ];
 

@@ -366,14 +366,176 @@ class AnthropicProvider(AIProvider):
 
 class CLIProvider(AIProvider):
     """
-    Claude Code ve Codex CLI'larını Antigravity MCP Server üzerinden çalıştırır.
-
-    Tüm onay mantığı MCP server'da — bu sınıf sadece CLI'ı başlatır ve
-    stdout'u SSE event'lerine dönüştürür.
+    Claude Code, Codex ve agy CLI'larını Antigravity MCP Server üzerinden çalıştırır.
+    gemini-cli-* modelleri şeffaf olarak agy'ye yönlendirilir (hot-swap).
     """
+
+    # Race condition önlemi: settings.json yazma + subprocess spawn atomik olmalı
+    _AGY_LOCK = asyncio.Lock()
+
+    # model ID → agy settings.json "model" değeri eşlemesi
+    _AGY_MODEL_MAP = {
+        # Gemini modelleri
+        "gemini-3.5-flash":              "Gemini 3.5 Flash (High)",
+        "gemini-3.5-flash-medium":       "Gemini 3.5 Flash (Medium)",
+        "gemini-3.1-pro-preview":        "Gemini 3.1 Pro (High)",
+        "gemini-3.1-pro-low":            "Gemini 3.1 Pro (Low)",
+        "gemini-3-flash-preview":        "Gemini 3 Flash (High)",
+        "gemini-2.5-pro":                "Gemini 2.5 Pro (High)",
+        "gemini-2.5-flash":              "Gemini 2.5 Flash (High)",
+        "gemini-3.1-flash-lite-preview": "Gemini 3.1 Flash Lite (High)",
+        # Antigravity CLI üzerinden Claude ve GPT modelleri
+        "agy-claude-sonnet-4-6":         "Claude Sonnet 4.6 (Thinking)",
+        "agy-claude-opus-4-6":           "Claude Opus 4.6 (Thinking)",
+        "agy-gpt-oss-120b":              "GPT-OSS 120B (Medium)",
+    }
 
     def __init__(self, binary_name: str = "claude"):
         self.binary_name = binary_name
+        self._pending_agy_model = "Gemini 3.5 Flash (High)"
+
+    # agy CLI'ın kendi yerleşik araçlarının isimleri (onaysız çalışmayı engellemek amacıyla devre dışı bırakılır)
+    _AGY_DISABLED_TOOLS = [
+        "write_file", "modify_file", "run_terminal_command",
+        "list_directory", "read_file", "grep_search", "view_image"
+    ]
+
+    def _set_agy_model(self, agy_model_name: str, workspace: str = ""):
+        """~/.gemini/antigravity-cli/settings.json ve global ~/.gemini/settings.json içindeki modeli, trustedWorkspaces ve disabledTools'u günceller."""
+        import json as _json
+        
+        # 1. Lokal antigravity-cli settings.json
+        settings_path = os.path.expanduser("~/.gemini/antigravity-cli/settings.json")
+        try:
+            with open(settings_path) as f:
+                settings = _json.load(f)
+        except Exception:
+            settings = {"colorScheme": "dark", "trustedWorkspaces": []}
+        settings["model"] = agy_model_name
+        settings["disabledTools"] = self._AGY_DISABLED_TOOLS
+        if workspace:
+            trusted = settings.get("trustedWorkspaces", [])
+            if workspace not in trusted:
+                trusted.append(workspace)
+            settings["trustedWorkspaces"] = trusted
+        try:
+            with open(settings_path, "w") as f:
+                _json.dump(settings, f, indent=2)
+        except Exception as e:
+            logger.warning(f"[CLIProvider] Lokal agy settings.json model güncellenemedi: {e}")
+
+        # 2. Global ~/.gemini/settings.json
+        global_settings_path = os.path.expanduser("~/.gemini/settings.json")
+        try:
+            with open(global_settings_path) as f:
+                global_settings = _json.load(f)
+        except Exception:
+            global_settings = {}
+        global_settings["model"] = agy_model_name
+        global_settings["disabledTools"] = self._AGY_DISABLED_TOOLS
+        if workspace:
+            global_trusted = global_settings.get("trustedWorkspaces", [])
+            if workspace not in global_trusted:
+                global_trusted.append(workspace)
+            global_settings["trustedWorkspaces"] = global_trusted
+        try:
+            with open(global_settings_path, "w") as f:
+                _json.dump(global_settings, f, indent=2)
+        except Exception as e:
+            logger.warning(f"[CLIProvider] Global settings.json model güncellenemedi: {e}")
+            
+        logger.info(f"[CLIProvider] agy model → {agy_model_name}, trusted → {workspace}")
+
+    def _register_agy_mcp(self, launcher: str, workspace: str, antigravity_url: str):
+        """~/.gemini/antigravity-cli/mcp_config.json, settings.json ve global ~/.gemini/settings.json içindeki antigravity kaydını ve disabledTools'u günceller."""
+        import json as _json
+        local_app_token = os.environ.get("LOCAL_APP_TOKEN", "")
+        env = {"ANTIGRAVITY_URL": antigravity_url, "WORKSPACE": workspace}
+        if local_app_token:
+            env["LOCAL_APP_TOKEN"] = local_app_token
+
+        # 1. ~/.gemini/antigravity-cli/mcp_config.json güncelle
+        config_path = os.path.expanduser("~/.gemini/antigravity-cli/mcp_config.json")
+        try:
+            with open(config_path) as f:
+                config = _json.load(f)
+        except Exception:
+            config = {}
+        config.setdefault("mcpServers", {})["antigravity"] = {
+            "command": launcher, "args": ["--workspace", workspace],
+            "env": env, "trust": True,
+        }
+        config["disabledTools"] = self._AGY_DISABLED_TOOLS
+        
+        from unity_ai_mcp.unity_mcp_manager import unity_mcp_manager
+        if unity_mcp_manager.is_running():
+            config["mcpServers"]["unityMCP"] = {
+                "serverUrl": f"http://127.0.0.1:{unity_mcp_manager.mcp_port}/mcp",
+                "type": "http", "trust": True,
+            }
+        else:
+            config["mcpServers"].pop("unityMCP", None)
+            
+        try:
+            with open(config_path, "w") as f:
+                _json.dump(config, f, indent=2)
+            logger.info(f"[CLIProvider] agy mcp_config.json güncellendi: {antigravity_url} → {workspace}")
+        except Exception as e:
+            logger.warning(f"[CLIProvider] agy mcp_config.json yazılamadı: {e}")
+
+        # 2. ~/.gemini/antigravity-cli/settings.json güncelle
+        settings_path = os.path.expanduser("~/.gemini/antigravity-cli/settings.json")
+        try:
+            with open(settings_path) as f:
+                settings = _json.load(f)
+        except Exception:
+            settings = {"colorScheme": "dark", "trustedWorkspaces": []}
+        settings.setdefault("mcpServers", {})["antigravity"] = {
+            "command": launcher, "args": ["--workspace", workspace],
+            "env": env, "trust": True,
+        }
+        settings["disabledTools"] = self._AGY_DISABLED_TOOLS
+        if unity_mcp_manager.is_running():
+            settings["mcpServers"]["unityMCP"] = {
+                "serverUrl": f"http://127.0.0.1:{unity_mcp_manager.mcp_port}/mcp",
+                "type": "http", "trust": True,
+            }
+        else:
+            settings["mcpServers"].pop("unityMCP", None)
+            
+        try:
+            with open(settings_path, "w") as f:
+                _json.dump(settings, f, indent=2)
+            logger.info(f"[CLIProvider] agy settings.json güncellendi: {antigravity_url} → {workspace}")
+        except Exception as e:
+            logger.warning(f"[CLIProvider] agy settings.json yazılamadı: {e}")
+
+        # 3. Global ~/.gemini/settings.json güncelle
+        global_settings_path = os.path.expanduser("~/.gemini/settings.json")
+        try:
+            with open(global_settings_path) as f:
+                global_settings = _json.load(f)
+        except Exception:
+            global_settings = {}
+        global_settings.setdefault("mcpServers", {})["antigravity"] = {
+            "command": launcher, "args": ["--workspace", workspace],
+            "env": env, "trust": True,
+        }
+        global_settings["disabledTools"] = self._AGY_DISABLED_TOOLS
+        if unity_mcp_manager.is_running():
+            global_settings["mcpServers"]["unityMCP"] = {
+                "serverUrl": f"http://127.0.0.1:{unity_mcp_manager.mcp_port}/mcp",
+                "type": "http", "trust": True,
+            }
+        else:
+            global_settings["mcpServers"].pop("unityMCP", None)
+            
+        try:
+            with open(global_settings_path, "w") as f:
+                _json.dump(global_settings, f, indent=2)
+            logger.info(f"[CLIProvider] Global settings.json güncellendi: {antigravity_url} → {workspace}")
+        except Exception as e:
+            logger.warning(f"[CLIProvider] Global settings.json yazılamadı: {e}")
 
     def _write_mcp_config(self, workspace: str) -> str:
         """
@@ -417,9 +579,9 @@ class CLIProvider(AIProvider):
         if self.binary_name.startswith("gpt-"):
             # Codex: ~/.codex/config.toml içine MCP server ekle/güncelle
             self._register_codex_mcp(launcher, workspace, antigravity_url)
-        elif self.binary_name.startswith("gemini"):
-            # Gemini CLI: MCP kaydını güncelle
-            self._register_gemini_mcp(launcher, workspace, antigravity_url)
+        elif self.binary_name.startswith("gemini") or self.binary_name.startswith("agy-"):
+            # Hot-swap: gemini CLI → agy mcp_config.json
+            self._register_agy_mcp(launcher, workspace, antigravity_url)
         elif self.binary_name.startswith("claude"):
             # Claude Code: user-scope config'e ekle ki -p (headless) mode'da
             # project-level approval prompt'una takılmasın
@@ -687,33 +849,21 @@ class CLIProvider(AIProvider):
                 cmd.extend(["-c", f"reasoning.effort={thinking_level}"])
             cmd.append(mcp_hint + "\n" + prompt)
             return cmd
-        elif full_id.startswith("gemini"):
-            policy_path = self._write_gemini_policy(workspace or os.getcwd())
-            mcp_hint = (
-                "IMPORTANT: You MUST respond in Turkish (Türkçe) at all times. Never respond in English.\n\n"
-                "CRITICAL RULES — follow exactly:\n"
-                "1. To CREATE or EDIT any file: use mcp__antigravity__save_file — NO exceptions.\n"
-                "   WARNING: There is NO tool called 'write_file' or 'mcp_antigravity_write_file'. Do NOT attempt these — they do not exist. Only 'mcp__antigravity__save_file' works.\n"
-                "   FORBIDDEN for file writing: python3 -c, printf, echo, cat, tee, heredoc, perl, ruby, node, bash -c, or ANY shell redirection (>, >>).\n"
-                "2. To DELETE a file: use mcp__antigravity__delete_file\n"
-                "3. To READ a file: use mcp__antigravity__read_file\n"
-                "4. To LIST a directory: use mcp__antigravity__list_directory\n"
-                "5. For shell commands ONLY (git, npm, mkdir, mv, rm, etc.): use mcp__antigravity__run_terminal_command\n\n"
-                "Never say you cannot perform an action — always call the appropriate MCP tool.\n"
-                "SCOPE: Only perform the exact task the user asked. Do NOT create test files (test.txt etc.), analyze unrelated files, or modify anything beyond what was explicitly requested. Never create empty files to test write access.\n\n"
-            )
+        elif full_id.startswith("gemini") or full_id.startswith("agy-"):
+            # Tüm agy modelleri: Gemini, Claude Sonnet/Opus, GPT-OSS
+            # Prompt stdin'den geçecek (ARG_MAX güvenliği) — cmd'ye dahil edilmez
             actual_model = full_id.replace("gemini-cli-", "")
-            if actual_model == "gemini":
-                actual_model = "gemini-2.0-flash"
-            return [
-                "gemini",
-                "--model", actual_model,
-                "--output-format", "stream-json",
-                "--policy", policy_path,
-                "--skip-trust",
-                "-p", mcp_hint + prompt,
+            self._pending_agy_model = self._AGY_MODEL_MAP.get(actual_model, "Gemini 3.5 Flash (High)")
+            cmd = [
+                "/Users/burakemreerdemci/.local/bin/agy",
+                "--print",
+                "--dangerously-skip-permissions",
+                "--print-timeout", "180s",
             ]
-            
+            if workspace:
+                cmd = [cmd[0], "--add-dir", workspace] + cmd[1:]
+            return cmd
+
         return [full_id, prompt]
 
     def _get_file_tree(self, workspace: str, max_files: int = 80) -> str:
@@ -755,22 +905,50 @@ class CLIProvider(AIProvider):
             _env = {**os.environ, "NO_COLOR": "1", "TERM": "xterm-256color",
                     "COLUMNS": "220", "LINES": "50"}
 
-            # CMD'yi prompt'tan ayır ki log okunabilir olsun
-            _cmd_flags = cmd[:-1] if cmd else cmd
-            _prompt_preview = (cmd[-1][:200] + "...") if cmd and len(cmd[-1]) > 200 else (cmd[-1] if cmd else "")
-            logger.info(f"[CLIProvider:{self.binary_name}][CMD] {' '.join(_cmd_flags)}")
-            logger.info(f"[CLIProvider:{self.binary_name}][PROMPT] {_prompt_preview!r}")
+            logger.info(f"[CLIProvider:{self.binary_name}][CMD] {' '.join(cmd)}")
             logger.info(f"[CLIProvider:{self.binary_name}][CWD] {workspace}")
             logger.info(f"[CLIProvider:{self.binary_name}][ENV] LOCAL_APP_TOKEN={'set' if _env.get('LOCAL_APP_TOKEN') else 'unset'} ANTIGRAVITY_URL={_env.get('ANTIGRAVITY_URL', 'unset')}")
 
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdin=asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=_env,
-                cwd=workspace,
-            )
+            _is_agy = self.binary_name.startswith("gemini") or self.binary_name.startswith("agy-")  # hot-swap: gemini+agy → agy binary
+
+            if _is_agy:
+                async with CLIProvider._AGY_LOCK:
+                    # 1. Lock altında model yaz + workspace'i trusted olarak işaretle
+                    self._set_agy_model(self._pending_agy_model, workspace)
+                    # 2. Hemen subprocess başlat
+                    process = await asyncio.create_subprocess_exec(
+                        *cmd,
+                        stdin=asyncio.subprocess.PIPE,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                        env=_env,
+                        cwd=workspace,
+                    )
+                    # 3. Prompt stdin'e yaz ve kapat
+                    mcp_hint = (
+                        "IMPORTANT: You MUST respond in Turkish (Türkçe) at all times.\n\n"
+                        "CRITICAL RULES — follow exactly:\n"
+                        "1. To CREATE or EDIT any file: use mcp__antigravity__save_file\n"
+                        "   FORBIDDEN: python3 -c, printf, echo, cat, tee, heredoc, shell redirection\n"
+                        "2. To DELETE a file: use mcp__antigravity__delete_file\n"
+                        "3. To READ a file: use mcp__antigravity__read_file\n"
+                        "4. To LIST a directory: use mcp__antigravity__list_directory\n"
+                        "5. For shell commands (git, npm, etc.): use mcp__antigravity__run_terminal_command\n\n"
+                        "SCOPE: Only work in the current workspace. Never create test files unprompted.\n\n"
+                    )
+                    stdin_payload = (mcp_hint + enriched_prompt).encode("utf-8")
+                    process.stdin.write(stdin_payload)
+                    await process.stdin.drain()
+                    process.stdin.close()
+            else:
+                process = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdin=asyncio.subprocess.DEVNULL,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    env=_env,
+                    cwd=workspace,
+                )
             logger.info(f"[CLIProvider:{self.binary_name}] PID={process.pid} başlatıldı")
 
             stderr_buffer = []
@@ -909,12 +1087,15 @@ class CLIProvider(AIProvider):
                             if result and not full_text:
                                 full_text = result
 
-                        # ── Gemini CLI stream-json ──────────────────────────
-                        elif ev_type == "content":
-                            t = ev.get("content", ev.get("text", ""))
+                        # ── agy / Gemini CLI JSONL (hot-swap) ───────────────
+                        elif ev_type in ("content", "error"):
+                            t = ev.get("content", ev.get("text", ev.get("error", "")))
                             if t:
-                                full_text += t
-                                yield {"type": "delta", "text": t}
+                                if self.binary_name.startswith(("gemini", "agy-")) and "timed out" in t.lower():
+                                    yield {"type": "error", "text": "agy zaman aşımına uğradı."}
+                                else:
+                                    full_text += t
+                                    yield {"type": "delta", "text": t}
                         elif ev_type == "tool_call":
                             name = ev.get("tool", ev.get("name", ""))
                             inp = ev.get("input", ev.get("args", {}))

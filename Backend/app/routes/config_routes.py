@@ -94,11 +94,17 @@ def create_config_router(db):
                 {"id": "gpt-5.5",              "name": "Codex (GPT-5.5)",               "provider": "subscription"},
                 {"id": "gpt-5.4",              "name": "Codex (GPT-5.4)",               "provider": "subscription"},
                 {"id": "gpt-5.4-mini",         "name": "Codex (GPT-5.4 Mini)",          "provider": "subscription"},
-                {"id": "gemini-3.1-pro-preview",       "name": "Gemini CLI 3.1 Pro",        "provider": "subscription"},
-                {"id": "gemini-3-flash-preview",       "name": "Gemini CLI 3 Flash",        "provider": "subscription"},
-                {"id": "gemini-3.1-flash-lite-preview","name": "Gemini CLI 3.1 Flash Lite", "provider": "subscription"},
-                {"id": "gemini-2.5-pro",               "name": "Gemini CLI 2.5 Pro",        "provider": "subscription"},
-                {"id": "gemini-2.5-flash",             "name": "Gemini CLI 2.5 Flash",      "provider": "subscription"},
+                {"id": "gemini-3.5-flash",             "name": "Gemini 3.5 Flash (Önerilen)", "provider": "subscription"},
+                {"id": "gemini-3.5-flash-medium",      "name": "Gemini 3.5 Flash (Medium)",   "provider": "subscription"},
+                {"id": "gemini-3.1-pro-preview",       "name": "Gemini 3.1 Pro (High)",       "provider": "subscription"},
+                {"id": "gemini-3.1-pro-low",           "name": "Gemini 3.1 Pro (Low)",        "provider": "subscription"},
+                {"id": "gemini-3-flash-preview",       "name": "Gemini 3 Flash",              "provider": "subscription"},
+                {"id": "gemini-3.1-flash-lite-preview","name": "Gemini 3.1 Flash Lite",       "provider": "subscription"},
+                {"id": "gemini-2.5-pro",               "name": "Gemini 2.5 Pro",              "provider": "subscription"},
+                {"id": "gemini-2.5-flash",             "name": "Gemini 2.5 Flash",            "provider": "subscription"},
+                {"id": "agy-claude-sonnet-4-6",        "name": "Claude Sonnet 4.6 (Thinking)", "provider": "subscription"},
+                {"id": "agy-claude-opus-4-6",          "name": "Claude Opus 4.6 (Thinking)",  "provider": "subscription"},
+                {"id": "agy-gpt-oss-120b",             "name": "GPT-OSS 120B (Medium)",       "provider": "subscription"},
             ]
         }
 
