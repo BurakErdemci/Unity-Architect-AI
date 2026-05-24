@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from 'framer-motion';
 import { ChevronDown, Cpu, Hand, ListChecks } from 'lucide-react';
 import { useRef, useState, useEffect } from 'react';
+import { useLang } from '../../lib/i18n';
 
 export type GenerationMode = 'auto' | 'plan' | 'step';
 
@@ -11,36 +12,21 @@ interface Mode {
   description: string;
 }
 
-const MODES: Mode[] = [
-  {
-    id: 'auto',
-    icon: <Cpu size={14} />,
-    label: 'Otomatik',
-    description: 'AI direkt üretir, dosyalar otomatik oluşturulur',
-  },
-  {
-    id: 'plan',
-    icon: <ListChecks size={14} />,
-    label: 'Plan Modu',
-    description: 'Önce plan gösterir, onaylayınca üretir',
-  },
-  {
-    id: 'step',
-    icon: <Hand size={14} />,
-    label: 'Adım Adım',
-    description: 'Her dosya için ayrı onay ister',
-  },
-];
-
 interface GenerationModeSelectorProps {
   value: GenerationMode;
   onChange: (mode: GenerationMode) => void;
 }
 
 export const GenerationModeSelector = ({ value, onChange }: GenerationModeSelectorProps) => {
+  const { t } = useLang();
+  const MODES: Mode[] = [
+    { id: 'auto', icon: <Cpu size={14} />, label: t('mode.auto'), description: t('mode.autoDesc') },
+    { id: 'plan', icon: <ListChecks size={14} />, label: t('mode.plan'), description: t('mode.planDesc') },
+    { id: 'step', icon: <Hand size={14} />, label: t('mode.step'), description: t('mode.stepDesc') },
+  ];
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  const current = MODES.find(m => m.id === value) ?? MODES[0];
+  const current = MODES.find((m: Mode) => m.id === value) ?? MODES[0];
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {

@@ -1,6 +1,7 @@
 import React from 'react';
 import { motion } from 'framer-motion';
 import { Terminal, X, Check, AlertTriangle } from 'lucide-react';
+import { useLang } from '../../lib/i18n';
 
 interface CommandApprovalProps {
   command: string;
@@ -9,6 +10,7 @@ interface CommandApprovalProps {
 }
 
 export const CommandApproval: React.FC<CommandApprovalProps> = ({ command, onConfirm, onCancel }) => {
+  const { t } = useLang();
   return (
     <motion.div
       initial={{ opacity: 0, y: 10, scale: 0.95 }}
@@ -18,7 +20,7 @@ export const CommandApproval: React.FC<CommandApprovalProps> = ({ command, onCon
       <div className="flex items-center justify-between px-4 py-2.5 bg-amber-500/10 border-b border-amber-500/20">
         <div className="flex items-center gap-2 text-amber-400 font-bold text-[11px] uppercase tracking-wider">
           <AlertTriangle size={14} />
-          Terminal Komutu Onayı
+          {t('cmdApproval.title')}
         </div>
         <button onClick={onCancel} className="text-slate-500 hover:text-white transition-colors">
           <X size={14} />
@@ -32,7 +34,7 @@ export const CommandApproval: React.FC<CommandApprovalProps> = ({ command, onCon
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-[13px] text-white font-medium leading-tight mb-2">
-              Bu komutu çalıştırmak istediğine emin misin?
+              {t('cmdApproval.confirm')}
             </p>
             <div className="bg-black/50 rounded-lg px-3 py-2 border border-white/5">
               <code className="text-[11px] text-emerald-400 font-mono break-all leading-relaxed">
@@ -49,20 +51,20 @@ export const CommandApproval: React.FC<CommandApprovalProps> = ({ command, onCon
             className="flex-1 flex items-center justify-center gap-2 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-[12px] font-bold transition-all shadow-lg shadow-amber-900/20 active:scale-[0.98]"
           >
             <Check size={14} className="stroke-[3px]" />
-            Komutu Çalıştır
+            {t('cmdApproval.run')}
           </button>
           <button
             onClick={onCancel}
             className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-[12px] font-bold transition-all"
           >
-            İptal
+            {t('cmdApproval.cancel')}
           </button>
         </div>
       </div>
 
       <div className="px-4 py-2 bg-black/40 border-t border-amber-500/10">
         <p className="text-[10px] text-slate-600 italic">
-          * Bu komut sisteminizde doğrudan çalıştırılacaktır.
+          * {t('cmdApproval.warning')}
         </p>
       </div>
     </motion.div>

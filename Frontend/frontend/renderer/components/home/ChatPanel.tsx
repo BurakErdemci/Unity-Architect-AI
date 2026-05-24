@@ -1,5 +1,6 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useLang } from '../../lib/i18n';
 import { 
   User, 
   Cpu, 
@@ -103,12 +104,13 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   onApproveCommand,
   deleteFile,
 }) => {
+  const { t } = useLang();
   if (!activeConvId) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-slate-600 gap-3">
         <Bot size={32} className="opacity-20" />
         <p className="text-[11px] text-center">
-          Sohbet başlatmak için soldan<br />bir sohbet seçin veya oluşturun
+          {t('chat.empty').split('\n').map((line, i) => <span key={i}>{line}{i === 0 && <br />}</span>)}
         </p>
       </div>
     );
@@ -138,7 +140,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             >
               <div className="flex items-center gap-2 text-blue-400 font-medium text-[12px]">
                 <Brain size={14} />
-                <span>Architect Wisdom — Proje Özeti</span>
+                <span>{t('chat.wisdom')}</span>
               </div>
               <ChevronDown 
                 size={14} 
@@ -218,7 +220,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                         <div className="typing-dot h-2 w-2 bg-blue-500 rounded-full" />
                         <div className="typing-dot h-2 w-2 bg-blue-500 rounded-full" />
                       </div>
-                      {thinkingLevel !== 'off' && <span className="text-[11px] text-violet-400 animate-pulse">düşünüyor...</span>}
+                      {thinkingLevel !== 'off' && <span className="text-[11px] text-violet-400 animate-pulse">{t('chat.thinking')}</span>}
                     </div>
                   ) : (
                     <div className="prose prose-invert max-w-none text-[13px] leading-relaxed prose-p:my-2 prose-headings:my-3 prose-ul:my-2 prose-li:my-0.5 prose-pre:bg-slate-900 prose-pre:border prose-pre:border-slate-800 prose-a:text-emerald-400">
@@ -233,8 +235,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                   {/* Scope Warning Buttons */}
                   {msg.content.includes('SCOPE_WARNING_ACTIVE') && msgIdx === messages.length - 1 && !loading && (
                     <div className="flex gap-2 mt-3">
-                      <button onClick={() => sendMessage('Tam Sistemi Üret')} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600/20 border border-blue-500/30 text-blue-300 text-[12px] font-medium hover:bg-blue-600/35 transition-colors"> ✅ Tam Sistemi Üret </button>
-                      <button onClick={() => sendMessage('Basit Versiyon')} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-700/40 border border-slate-600/30 text-slate-300 text-[12px] font-medium hover:bg-slate-700/60 transition-colors"> ⚡ Basit Versiyon </button>
+                      <button onClick={() => sendMessage('Tam Sistemi Üret')} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600/20 border border-blue-500/30 text-blue-300 text-[12px] font-medium hover:bg-blue-600/35 transition-colors"> ✅ {t('chat.generateFull')} </button>
+                      <button onClick={() => sendMessage('Basit Versiyon')} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-700/40 border border-slate-600/30 text-slate-300 text-[12px] font-medium hover:bg-slate-700/60 transition-colors"> ⚡ {t('chat.simpleVersion')} </button>
                     </div>
                   )}
 
@@ -242,8 +244,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                   {pendingPlan && msgIdx === messages.length - 1 && msg.role === 'assistant' && (
                     <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className="mt-3 rounded-xl border border-blue-500/20 bg-blue-950/10 overflow-hidden">
                       <div className="flex items-center justify-between px-4 py-2.5 border-b border-blue-500/10">
-                        <span className="text-[11px] font-semibold text-blue-300">Onaylıyor musun?</span>
-                        <span className="text-[10px] text-slate-600">{pendingPlan.mode === 'step' ? 'Adım Adım' : 'Plan Modu'}</span>
+                        <span className="text-[11px] font-semibold text-blue-300">{t('chat.approve')}</span>
+                        <span className="text-[10px] text-slate-600">{pendingPlan.mode === 'step' ? t('chat.stepByStep') : t('chat.planMode')}</span>
                       </div>
                       <div className="flex gap-2 px-4 py-3">
                         <button

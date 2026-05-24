@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import Head from 'next/head';
 import axios from 'axios';
-import { motion, AnimatePresence } from 'framer-motion';
-import { 
-  ChevronLeft, ChevronRight, Terminal as TerminalIcon, 
-  Code2, Languages, Activity, X, PanelRightClose,
-  Zap, Code, Layout, Search, Sparkles, MessageSquare
+import { motion } from 'framer-motion';
+import {
+  ChevronLeft, ChevronRight, Terminal as TerminalIcon,
+  Code2, Activity, X, PanelRightClose,
+  Zap, Code, Layout, MessageSquare
 } from 'lucide-react';
+import { LangContext, translations, type Lang } from '../lib/i18n';
 
 import { Sidebar } from '../components/home/Sidebar';
 import { EditorPanel } from '../components/home/EditorPanel';
@@ -171,7 +172,11 @@ export default function Home() {
   }, [ipc, showToast]);
 
   // --- UI State ---
-  const [lang, setLang] = useState('tr');
+  const [lang, setLangState] = useState<Lang>(() =>
+    typeof window !== 'undefined' ? ((localStorage.getItem('app-lang') as Lang) || 'tr') : 'tr'
+  );
+  const setLang = (l: Lang) => { setLangState(l); localStorage.setItem('app-lang', l); };
+  const t = (key: string) => translations[lang][key] ?? key;
   const [thinkingLevel, setThinkingLevel] = useState<'off' | 'low' | 'medium' | 'high'>('medium');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isChatOpen, setIsChatOpen] = useState(true);
@@ -306,6 +311,8 @@ export default function Home() {
     chat.confirmPlan(originalMsg, mode, lang, fs.code, fs.setPendingGenFiles, fs.setPendingDelete);
   }, [chat.confirmPlan, lang, fs.code, fs.setPendingGenFiles, fs.setPendingDelete]);
 
+  const langCtxValue = { lang, setLang, t: (k: string) => translations[lang][k] ?? k };
+
   if (backendError) {
     return (
       <div className="h-screen bg-black flex flex-col items-center justify-center text-center p-6">
@@ -318,16 +325,19 @@ export default function Home() {
 
   if (!fs.workspacePath) {
     return (
-      <WorkspaceScreen
-        userName={auth.user.name} lastWorkspacePath={fs.lastWorkspacePath}
-        onOpenWorkspaceDialog={fs.openFolder} onSelectLastWorkspace={() => fs.selectWorkspace(fs.lastWorkspacePath!)}
-        onLogout={handleLogout}
-      />
+      <LangContext.Provider value={langCtxValue}>
+        <WorkspaceScreen
+          userName={auth.user.name} lastWorkspacePath={fs.lastWorkspacePath}
+          onOpenWorkspaceDialog={fs.openFolder} onSelectLastWorkspace={() => fs.selectWorkspace(fs.lastWorkspacePath!)}
+          onLogout={handleLogout}
+        />
+      </LangContext.Provider>
     );
   }
 
 
   return (
+    <LangContext.Provider value={langCtxValue}>
     <div className="flex h-screen bg-[#000000] text-slate-200 font-sans overflow-hidden">
       <Head>
         <title>{`Unity Architect AI | ${auth.user?.name || 'Giriş'}`}</title>
@@ -339,6 +349,7 @@ export default function Home() {
         onChange={ai.setAiConfig} onClose={() => ai.setShowSettings(false)} onSave={ai.saveAIConfig}
         onLogout={handleLogout} onDeleteKey={ai.deleteApiKey}
         unityMcpStatus={ai.unityMcpStatus} unityMcpToggling={ai.unityMcpToggling} onToggleUnityMcp={ai.toggleUnityMcp}
+        lang={lang} onLangChange={setLang}
       />
 
       <ExportModal
@@ -408,10 +419,10 @@ export default function Home() {
               onClick={ai.toggleUnityMcp}
               disabled={ai.unityMcpToggling || ai.unityMcpStatus === 'starting'}
               title={
-                ai.unityMcpStatus === 'connected' ? 'Unity bağlı — kapatmak için tıkla' :
-                ai.unityMcpStatus === 'running'   ? "Unity'ye bağlanılıyor..." :
-                ai.unityMcpStatus === 'starting'  ? 'Sunucu başlatılıyor...' :
-                "Unity MCP'yi aç (Unity açık olmalı)"
+                ai.unityMcpStatus === 'connected' ? t('home.unityConnected') :
+                ai.unityMcpStatus === 'running'   ? t('home.unityConnecting') :
+                ai.unityMcpStatus === 'starting'  ? t('home.unityStarting') :
+                t('home.unityOpen')
               }
               className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[10px] font-bold uppercase tracking-wider transition-all disabled:opacity-50 ${
                 ai.unityMcpStatus === 'connected' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20' :
@@ -438,10 +449,10 @@ export default function Home() {
               <button 
                 onClick={() => setIsChatOpen(true)} 
                 className="p-1.5 bg-blue-600/10 hover:bg-blue-600/20 text-blue-500 rounded-lg transition-all flex items-center gap-2 px-3 ml-2 border border-blue-500/20"
-                title="Sohbeti Aç"
+                title={t('home.openChat')}
               >
                 <MessageSquare size={14} />
-                <span className="text-[10px] font-bold uppercase tracking-wider">Sohbeti Aç</span>
+                <span className="text-[10px] font-bold uppercase tracking-wider">{t('home.openChat')}</span>
               </button>
             )}
           </div>
@@ -460,9 +471,9 @@ export default function Home() {
                 <Zap size={48} className="text-blue-500 relative z-10 opacity-40" />
               </div>
               <h2 className="text-2xl font-bold text-slate-200 mb-3 tracking-tight">UNITY ARCHITECT ENGINE</h2>
-              <p className="text-slate-500 text-sm max-w-md leading-relaxed mb-8">Düzenlemek için bir dosya aç ya da sağdaki chat’ten direkt bir şey iste</p>
+              <p className="text-slate-500 text-sm max-w-md leading-relaxed mb-8">{t("home.editorHint")}</p>
               <div className="grid grid-cols-3 gap-4 max-w-lg w-full">
-                {[ {icon:<Activity size={14}/>, label: 'BUG FIX'}, {icon:<Code size={14}/>, label: 'KOD ÜRETİM'}, {icon:<Layout size={14}/>, label: 'ANALİZ'} ].map((item, i) => (
+                {[ {icon:<Activity size={14}/>, label: t('home.bugfix')}, {icon:<Code size={14}/>, label: t('home.codegen')}, {icon:<Layout size={14}/>, label: t('home.analyze')} ].map((item, i) => (
                   <div key={i} className="px-4 py-3 bg-slate-900/40 border border-slate-800/50 rounded-xl flex items-center justify-center gap-2 text-[11px] font-bold text-slate-400 hover:bg-slate-800/60 hover:text-slate-200 transition-all cursor-default">
                     {item.icon} {item.label}
                   </div>
@@ -520,5 +531,6 @@ export default function Home() {
         </div>
       </motion.div>
     </div>
+    </LangContext.Provider>
   );
 }

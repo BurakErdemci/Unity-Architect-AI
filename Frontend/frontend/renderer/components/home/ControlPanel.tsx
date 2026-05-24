@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useLang } from '../../lib/i18n';
 import { 
   Brain, 
   Sparkles, 
@@ -40,6 +41,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
   isCompacting,
   contextUsage
 }) => {
+  const { t } = useLang();
   const [showMemoryMenu, setShowMemoryMenu] = useState(false);
   const [showThinkingMenu, setShowThinkingMenu] = useState(false);
 
@@ -57,11 +59,11 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
               ? 'bg-violet-500/15 border border-violet-500/30 text-violet-400 shadow-[0_0_15px_rgba(139,92,246,0.1)]'
               : 'text-slate-600 hover:text-slate-400 hover:bg-slate-800/30'
           } ${showThinkingMenu ? 'bg-violet-500/20 text-violet-300' : ''}`}
-          title="Düşünme Seviyesini Ayarla"
+          title={t('thinking.title')}
         >
           <Brain size={11} className={thinkingLevel !== 'off' ? 'animate-pulse' : ''} />
           <span className="capitalize">
-            Thinking {thinkingLevel === 'off' ? 'Kapalı' : thinkingLevel}
+            Thinking {thinkingLevel === 'off' ? t('thinking.off') : thinkingLevel}
           </span>
           <ChevronDown size={10} className={`opacity-50 transition-transform duration-200 ${showThinkingMenu ? 'rotate-180' : ''}`} />
         </button>
@@ -78,10 +80,10 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
                 className="absolute bottom-10 left-0 w-36 bg-[#0a0a0f] border border-slate-800 rounded-xl shadow-2xl z-50 p-1.5 overflow-hidden"
               >
                 {[
-                  { id: 'off', label: 'Kapalı', color: 'text-slate-500' },
-                  { id: 'low', label: 'Düşük', color: 'text-emerald-400' },
-                  { id: 'medium', label: 'Orta', color: 'text-violet-400' },
-                  { id: 'high', label: 'Yüksek (Deep)', color: 'text-fuchsia-400' }
+                  { id: 'off', label: t('thinking.off'), color: 'text-slate-500' },
+                  { id: 'low', label: t('thinking.low'), color: 'text-emerald-400' },
+                  { id: 'medium', label: t('thinking.medium'), color: 'text-violet-400' },
+                  { id: 'high', label: t('thinking.high'), color: 'text-fuchsia-400' }
                 ].map((lvl) => (
                   <button
                     key={lvl.id}
@@ -120,12 +122,12 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
           {isAnalyzingProject ? (
             <div className="flex items-center gap-2">
               <div className="w-2.5 h-2.5 border-2 border-blue-500/30 border-t-blue-500 rounded-full animate-spin" />
-              <span>Öğreniyorum...</span>
+              <span>{t('memory.learning')}</span>
             </div>
           ) : (
             <>
               <Sparkles size={11} className="text-blue-500" />
-              <span>Projeyi Öğren</span>
+              <span>{t('memory.learnProject')}</span>
             </>
           )}
         </button>
@@ -153,7 +155,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
                   onClick={() => { analyzeProject(); setShowMemoryMenu(false); }}
                   className="w-full flex items-center justify-between px-3 py-2 text-[11px] text-slate-300 hover:bg-blue-600/10 hover:text-blue-400 transition-all"
                 >
-                  <span>Hafızayı Yenile (Full Scan)</span>
+                  <span>{t('memory.refresh')}</span>
                   <Sparkles size={11} />
                 </button>
                 <button
@@ -161,14 +163,14 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
                   className="w-full flex items-center gap-2.5 px-3 py-2 text-[11px] text-slate-300 hover:bg-blue-600/10 hover:text-blue-400 transition-colors"
                 >
                   <Download size={13} />
-                  Hafızayı Dışarı Aktar
+                  {t('memory.export')}
                 </button>
                 <button
                   onClick={async () => { setShowMemoryMenu(false); await importMemory(); }}
                   className="w-full flex items-center gap-2.5 px-3 py-2 text-[11px] text-slate-300 hover:bg-emerald-600/10 hover:text-emerald-400 transition-colors"
                 >
                   <Upload size={13} />
-                  Hafıza Dosyası Yükle
+                  {t('memory.import')}
                 </button>
               </motion.div>
             </>
@@ -215,7 +217,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
                 <span className="absolute -top-1 -right-1 w-1.5 h-1.5 bg-red-500 rounded-full animate-ping" />
               )}
             </div>
-            <span>{isCompacting ? 'Özetleniyor...' : 'Hafıza'}</span>
+            <span>{isCompacting ? t('memory.compacting') : t('memory.compact')}</span>
           </button>
         </>
       )}

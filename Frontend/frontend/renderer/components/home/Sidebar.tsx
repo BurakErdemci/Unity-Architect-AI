@@ -1,5 +1,6 @@
 import React from 'react';
 import { motion } from 'framer-motion';
+import { useLang } from '../../lib/i18n';
 import { 
   Plus, 
   MessageSquare, 
@@ -82,6 +83,8 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
     treeCreating, startTreeCreate, treeCreateValue, setTreeCreateValue, submitTreeCreate, setTreeCreating
   } = props;
 
+  const { t } = useLang();
+
   if (!user) return null;
 
   return (
@@ -103,14 +106,14 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
       </div>
 
       <div className="flex border-b border-slate-800/50 min-w-[260px]">
-        <button onClick={() => setSidebarTab('chats')} className={`flex-1 py-2.5 text-[10px] font-semibold tracking-wider uppercase transition-colors ${sidebarTab === 'chats' ? 'text-blue-500 border-b-2 border-blue-500' : 'text-slate-500 hover:text-slate-300'}`}>Sohbetler</button>
-        <button onClick={() => setSidebarTab('files')} className={`flex-1 py-2.5 text-[10px] font-semibold tracking-wider uppercase transition-colors ${sidebarTab === 'files' ? 'text-blue-500 border-b-2 border-blue-500' : 'text-slate-500 hover:text-slate-300'}`}>Dosyalar</button>
+        <button onClick={() => setSidebarTab('chats')} className={`flex-1 py-2.5 text-[10px] font-semibold tracking-wider uppercase transition-colors ${sidebarTab === 'chats' ? 'text-blue-500 border-b-2 border-blue-500' : 'text-slate-500 hover:text-slate-300'}`}>{t('sidebar.chats')}</button>
+        <button onClick={() => setSidebarTab('files')} className={`flex-1 py-2.5 text-[10px] font-semibold tracking-wider uppercase transition-colors ${sidebarTab === 'files' ? 'text-blue-500 border-b-2 border-blue-500' : 'text-slate-500 hover:text-slate-300'}`}>{t('sidebar.files')}</button>
       </div>
 
       <div className="flex-1 overflow-y-auto custom-scrollbar min-w-[260px]">
         {sidebarTab === 'chats' ? (
           <div className="p-1.5 space-y-0.5">
-            <button onClick={() => createNewConversation()} className="w-full flex items-center gap-2 px-3 py-2 text-[11px] text-blue-500 hover:bg-blue-600/10 rounded-lg transition-all font-medium"><Plus size={14} /> Yeni Sohbet</button>
+            <button onClick={() => createNewConversation()} className="w-full flex items-center gap-2 px-3 py-2 text-[11px] text-blue-500 hover:bg-blue-600/10 rounded-lg transition-all font-medium"><Plus size={14} /> {t('sidebar.newChat')}</button>
             {conversations.map((conv) => (
               <div key={conv.id} onClick={() => selectConversation(conv)} className={`group relative px-3 py-2.5 rounded-lg transition-all cursor-pointer ${activeConvId === conv.id ? 'bg-slate-800/60 text-white' : 'text-slate-400 hover:bg-slate-800/30 hover:text-slate-200'}`}>
                 <div className="flex items-center gap-2.5">
@@ -135,8 +138,8 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
         ) : (
           <div className="p-1.5" onClick={() => treeContextMenu && setTreeContextMenu(null)}>
             <div className="flex gap-1 mb-2">
-              <button onClick={openFolder} className="flex-1 flex items-center justify-center gap-1.5 px-2 py-2 text-[10px] text-blue-500 hover:bg-blue-600/10 rounded-lg transition-all font-semibold"><FolderOpen size={13} /> Klasör Aç</button>
-              <button onClick={openFilePicker} className="flex-1 flex items-center justify-center gap-1.5 px-2 py-2 text-[10px] text-emerald-500 hover:bg-emerald-600/10 rounded-lg transition-all font-semibold"><FileIcon size={13} /> Dosya Aç</button>
+              <button onClick={openFolder} className="flex-1 flex items-center justify-center gap-1.5 px-2 py-2 text-[10px] text-blue-500 hover:bg-blue-600/10 rounded-lg transition-all font-semibold"><FolderOpen size={13} /> {t('sidebar.openFolder')}</button>
+              <button onClick={openFilePicker} className="flex-1 flex items-center justify-center gap-1.5 px-2 py-2 text-[10px] text-emerald-500 hover:bg-emerald-600/10 rounded-lg transition-all font-semibold"><FileIcon size={13} /> {t('sidebar.openFile')}</button>
             </div>
             {rootFolderPath ? (
               <div>
@@ -158,7 +161,7 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
             ) : (
               <div className="text-center py-8 text-slate-600">
                 <FolderOpen size={24} className="mx-auto mb-2 opacity-20" />
-                <p className="text-[11px]">Bir klasör açarak başlayın</p>
+                <p className="text-[11px]">{t('sidebar.emptyFolder')}</p>
               </div>
             )}
 
@@ -166,14 +169,14 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
               <div className="fixed z-50 bg-[#111111] border border-slate-700 rounded-lg shadow-2xl py-1 min-w-[160px] text-[12px]" style={{ left: treeContextMenu.x, top: treeContextMenu.y }} onClick={e => e.stopPropagation()}>
                 {treeContextMenu.entry.isDirectory && (
                   <>
-                    <button onClick={() => startTreeCreate(treeContextMenu.entry.path, 'file')} className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-slate-800 text-slate-300 hover:text-white transition-colors"><Plus size={13} /> Yeni Dosya</button>
-                    <button onClick={() => startTreeCreate(treeContextMenu.entry.path, 'folder')} className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-slate-800 text-slate-300 hover:text-white transition-colors"><FolderPlus size={13} /> Yeni Klasör</button>
+                    <button onClick={() => startTreeCreate(treeContextMenu.entry.path, 'file')} className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-slate-800 text-slate-300 hover:text-white transition-colors"><Plus size={13} /> {t('sidebar.newFile')}</button>
+                    <button onClick={() => startTreeCreate(treeContextMenu.entry.path, 'folder')} className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-slate-800 text-slate-300 hover:text-white transition-colors"><FolderPlus size={13} /> {t('sidebar.newFolder')}</button>
                     <div className="border-t border-slate-700/50 my-1" />
                   </>
                 )}
-                <button onClick={() => props.startRename(treeContextMenu.entry)} className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-slate-800 text-slate-300 hover:text-white transition-colors"><Pencil size={13} /> Yeniden Adlandır</button>
+                <button onClick={() => props.startRename(treeContextMenu.entry)} className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-slate-800 text-slate-300 hover:text-white transition-colors"><Pencil size={13} /> {t('sidebar.rename')}</button>
                 <div className="border-t border-slate-700/50 my-1" />
-                <button onClick={() => props.handleTreeDelete(treeContextMenu.entry)} className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-slate-800 text-red-400 hover:text-red-300 transition-colors"><Trash2 size={13} /> Sil</button>
+                <button onClick={() => props.handleTreeDelete(treeContextMenu.entry)} className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-slate-800 text-red-400 hover:text-red-300 transition-colors"><Trash2 size={13} /> {t('sidebar.delete')}</button>
               </div>
             )}
           </div>

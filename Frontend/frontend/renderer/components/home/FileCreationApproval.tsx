@@ -1,4 +1,5 @@
 import { motion } from 'framer-motion';
+import { useLang } from '../../lib/i18n';
 import { 
   Check, 
   CheckCircle2, 
@@ -39,6 +40,7 @@ export const FileCreationApproval = ({
   autoAccept,
   setDiffFile
 }: FileCreationApprovalProps) => {
+  const { t } = useLang();
   const [currentIdx, setCurrentIdx] = useState(0);
   const [done, setDone] = useState<Set<number>>(new Set());
   const [skipped, setSkipped] = useState<Set<number>>(new Set());
@@ -109,9 +111,9 @@ export const FileCreationApproval = ({
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
             <CheckCircle2 size={16} className="text-emerald-400" />
-            <span className="text-[12px] font-bold text-white">İşlem Tamamlandı</span>
+            <span className="text-[12px] font-bold text-white">{t('approval.done')}</span>
           </div>
-          <button onClick={onDone} className="text-[11px] text-slate-500 hover:text-white transition-colors">Kapat</button>
+          <button onClick={onDone} className="text-[11px] text-slate-500 hover:text-white transition-colors">{t('approval.close')}</button>
         </div>
         <div className="space-y-1">
           {createdFiles.map((file) => (
@@ -131,9 +133,9 @@ export const FileCreationApproval = ({
       <div className="flex items-center justify-between px-4 py-2 border-b border-slate-800/60 bg-black/40">
         <div className="flex items-center gap-2">
           <Zap size={14} className="text-yellow-400 animate-pulse" />
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Dosya Onay Paneli</span>
+          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{t('approval.title')}</span>
         </div>
-        <span className="text-[10px] text-slate-500 font-mono">{remaining} bekliyor</span>
+        <span className="text-[10px] text-slate-500 font-mono">{remaining} {t('approval.pending')}</span>
       </div>
 
       {/* COMPACT LIST */}
@@ -178,7 +180,7 @@ export const FileCreationApproval = ({
                     onClick={(e) => { e.stopPropagation(); handleAccept(i); }} 
                     className="px-2 py-0.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-[10px] font-bold"
                   >
-                    Uygula
+                    {t('approval.apply')}
                   </button>
                 </div>
               )}
@@ -194,14 +196,14 @@ export const FileCreationApproval = ({
       {/* FOOTER */}
       <div className="flex items-center justify-between px-3 py-2 border-t border-slate-800/60 bg-black/20">
         <button onClick={onDone} className="text-[10px] font-bold text-rose-500 hover:text-rose-400 flex items-center gap-1">
-          <XCircle size={12} /> İptal
+          <XCircle size={12} /> {t('approval.cancel')}
         </button>
         <button 
           onClick={handleAcceptAll} 
           disabled={processing}
           className="flex items-center gap-1 px-3 py-1 bg-blue-600/20 border border-blue-500/40 text-blue-400 hover:bg-blue-600/30 rounded-lg text-[10px] font-bold transition-all disabled:opacity-50"
         >
-          <CheckCircle2 size={12} /> Tümünü Onayla
+          <CheckCircle2 size={12} /> {t('approval.approveAll')}
         </button>
       </div>
     </div>

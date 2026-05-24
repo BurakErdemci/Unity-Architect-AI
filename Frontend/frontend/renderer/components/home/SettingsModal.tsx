@@ -1,8 +1,9 @@
-import { LogOut, Settings, Trash2, X, Gamepad2, Loader2 } from "lucide-react";
+import { LogOut, Settings, Trash2, X, Gamepad2, Loader2, Globe } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 
 import { AIConfig } from "./types";
 import { UnityMCPStatus } from "../../hooks/home/useAIConfig";
+import { useLang, type Lang } from "../../lib/i18n";
 
 
 const DEFAULT_MODELS: Record<string, string> = {
@@ -18,69 +19,8 @@ const DEFAULT_MODELS: Record<string, string> = {
   subscription: "claude-sonnet-4-6",
 };
 
-const MODEL_HINTS: Record<string, { label: string; value: string }[]> = {
-  anthropic: [
-    { label: "Sonnet 4.6 (Önerilen)", value: "claude-sonnet-4-6" },
-    { label: "Opus 4.7 (En Güçlü)", value: "claude-opus-4-7" },
-    { label: "Opus 4.6", value: "claude-opus-4-6" },
-    { label: "Haiku 4.5", value: "claude-haiku-4-5" },
-  ],
-  openai: [
-    { label: "GPT-5.5 (Frontier)", value: "gpt-5.5" },
-    { label: "GPT-5.5 Pro", value: "gpt-5.5-pro" },
-    { label: "GPT-5.4 (Önerilen)", value: "gpt-5.4" },
-    { label: "GPT-5.4 Mini", value: "gpt-5.4-mini" },
-  ],
-  openrouter: [
-    { label: "Kimi K2.6 (Önerilen)", value: "moonshotai/kimi-k2.6" },
-    { label: "Kimi K2 Thinking", value: "moonshotai/kimi-k2-thinking" },
-    { label: "GPT-5.5 (Frontier)", value: "openai/gpt-5.5" },
-    { label: "GPT-5.5 Pro (Elite)", value: "openai/gpt-5.5-pro" },
-    { label: "Claude Opus 4.7 (Elite)", value: "anthropic/claude-opus-4-7" },
-    { label: "Claude Sonnet 4.6", value: "anthropic/claude-sonnet-4-6" },
-    { label: "Gemini 3 Flash", value: "google/gemini-3-flash-preview" },
-  ],
-  google: [
-    { label: "Gemini 3 Flash (Önerilen)", value: "gemini-3-flash-preview" },
-    { label: "Gemini 3.1 Pro", value: "gemini-3.1-pro-preview" },
-    { label: "Gemini 3.1 Flash Lite", value: "gemini-3.1-flash-lite-preview" },
-    { label: "Gemini 2.5 Pro", value: "gemini-2.5-pro" },
-    { label: "Gemini 2.5 Flash", value: "gemini-2.5-flash" },
-  ],
-  moonshot: [
-    { label: "Kimi K2.6 (En Yeni)", value: "kimi-k2.6" },
-    { label: "Kimi K2", value: "kimi-k2" },
-  ],
-  groq: [
-    { label: "Llama 3.3 70B (Önerilen)", value: "llama-3.3-70b-versatile" },
-    { label: "Llama 3.1 8B (Hızlı)", value: "llama-3.1-8b-instant" },
-  ],
-  deepseek: [
-    { label: "DeepSeek Chat", value: "deepseek-chat" },
-    { label: "DeepSeek R1 (Reasoning)", value: "deepseek-reasoner" },
-  ],
-  subscription: [
-    { label: "Claude Sonnet 4.6 (Önerilen)", value: "claude-sonnet-4-6" },
-    { label: "Claude Opus 4.7 (En Güçlü)", value: "claude-opus-4-7" },
-    { label: "Claude Haiku 4.5 (Hızlı)", value: "claude-haiku-4-5" },
-    { label: "Codex GPT-5.5 (Frontier)", value: "gpt-5.5" },
-    { label: "Codex GPT-5.4", value: "gpt-5.4" },
-    { label: "Codex GPT-5.4 Mini", value: "gpt-5.4-mini" },
-    { label: "Gemini 3.1 Pro (En Zeki)", value: "gemini-3.1-pro-preview" },
-    { label: "Gemini 3 Flash (Önerilen)", value: "gemini-3-flash-preview" },
-    { label: "Gemini 3.1 Flash Lite (Hızlı)", value: "gemini-3.1-flash-lite-preview" },
-    { label: "Gemini 2.5 Pro (Stabil)", value: "gemini-2.5-pro" },
-    { label: "Gemini 2.5 Flash (Stabil)", value: "gemini-2.5-flash" },
-  ],
-};
 
 
-const UNITY_STATUS_CONFIG: Record<UnityMCPStatus, { label: string; dot: string; bg: string; border: string }> = {
-  off:       { label: "Kapalı",                dot: "bg-slate-600",                    bg: "bg-slate-900/50",   border: "border-slate-700/50" },
-  starting:  { label: "Başlatılıyor...",       dot: "bg-yellow-400 animate-pulse",     bg: "bg-yellow-500/5",   border: "border-yellow-500/20" },
-  running:   { label: "Unity'ye bağlanılıyor", dot: "bg-yellow-400 animate-pulse",     bg: "bg-yellow-500/5",   border: "border-yellow-500/20" },
-  connected: { label: "Unity bağlandı ✓",      dot: "bg-emerald-400",                  bg: "bg-emerald-500/5",  border: "border-emerald-500/20" },
-};
 
 interface SettingsModalProps {
   open: boolean;
@@ -94,6 +34,8 @@ interface SettingsModalProps {
   unityMcpStatus: UnityMCPStatus;
   unityMcpToggling: boolean;
   onToggleUnityMcp: () => void;
+  lang: Lang;
+  onLangChange: (l: Lang) => void;
 }
 
 
@@ -109,7 +51,72 @@ export const SettingsModal = ({
   unityMcpStatus,
   unityMcpToggling,
   onToggleUnityMcp,
-}: SettingsModalProps) => (
+  lang,
+  onLangChange,
+}: SettingsModalProps) => {
+  const { t } = useLang();
+  const UNITY_STATUS_CONFIG: Record<UnityMCPStatus, { label: string; dot: string; bg: string; border: string }> = {
+    off:       { label: t('unity.off'),       dot: "bg-slate-600",                bg: "bg-slate-900/50",   border: "border-slate-700/50" },
+    starting:  { label: t('unity.starting'),  dot: "bg-yellow-400 animate-pulse", bg: "bg-yellow-500/5",   border: "border-yellow-500/20" },
+    running:   { label: t('unity.running'),   dot: "bg-yellow-400 animate-pulse", bg: "bg-yellow-500/5",   border: "border-yellow-500/20" },
+    connected: { label: t('unity.connected'), dot: "bg-emerald-400",              bg: "bg-emerald-500/5",  border: "border-emerald-500/20" },
+  };
+  const MODEL_HINTS: Record<string, { label: string; value: string }[]> = {
+    anthropic: [
+      { label: `Sonnet 4.6 (${t('hint.recommended')})`, value: "claude-sonnet-4-6" },
+      { label: `Opus 4.7 (${t('hint.strongest')})`, value: "claude-opus-4-7" },
+      { label: "Opus 4.6", value: "claude-opus-4-6" },
+      { label: "Haiku 4.5", value: "claude-haiku-4-5" },
+    ],
+    openai: [
+      { label: "GPT-5.5 (Frontier)", value: "gpt-5.5" },
+      { label: "GPT-5.5 Pro", value: "gpt-5.5-pro" },
+      { label: `GPT-5.4 (${t('hint.recommended')})`, value: "gpt-5.4" },
+      { label: "GPT-5.4 Mini", value: "gpt-5.4-mini" },
+    ],
+    openrouter: [
+      { label: `Kimi K2.6 (${t('hint.recommended')})`, value: "moonshotai/kimi-k2.6" },
+      { label: "Kimi K2 Thinking", value: "moonshotai/kimi-k2-thinking" },
+      { label: "GPT-5.5 (Frontier)", value: "openai/gpt-5.5" },
+      { label: "GPT-5.5 Pro (Elite)", value: "openai/gpt-5.5-pro" },
+      { label: "Claude Opus 4.7 (Elite)", value: "anthropic/claude-opus-4-7" },
+      { label: "Claude Sonnet 4.6", value: "anthropic/claude-sonnet-4-6" },
+      { label: "Gemini 3 Flash", value: "google/gemini-3-flash-preview" },
+    ],
+    google: [
+      { label: `Gemini 3 Flash (${t('hint.recommended')})`, value: "gemini-3-flash-preview" },
+      { label: "Gemini 3.1 Pro", value: "gemini-3.1-pro-preview" },
+      { label: "Gemini 3.1 Flash Lite", value: "gemini-3.1-flash-lite-preview" },
+      { label: "Gemini 2.5 Pro", value: "gemini-2.5-pro" },
+      { label: "Gemini 2.5 Flash", value: "gemini-2.5-flash" },
+    ],
+    moonshot: [
+      { label: `Kimi K2.6 (${t('hint.newest')})`, value: "kimi-k2.6" },
+      { label: "Kimi K2", value: "kimi-k2" },
+    ],
+    groq: [
+      { label: `Llama 3.3 70B (${t('hint.recommended')})`, value: "llama-3.3-70b-versatile" },
+      { label: `Llama 3.1 8B (${t('hint.fast')})`, value: "llama-3.1-8b-instant" },
+    ],
+    deepseek: [
+      { label: "DeepSeek Chat", value: "deepseek-chat" },
+      { label: "DeepSeek R1 (Reasoning)", value: "deepseek-reasoner" },
+    ],
+    subscription: [
+      { label: `Claude Sonnet 4.6 (${t('hint.recommended')})`, value: "claude-sonnet-4-6" },
+      { label: `Claude Opus 4.7 (${t('hint.strongest')})`, value: "claude-opus-4-7" },
+      { label: `Claude Haiku 4.5 (${t('hint.fast')})`, value: "claude-haiku-4-5" },
+      { label: "Codex GPT-5.5 (Frontier)", value: "gpt-5.5" },
+      { label: "Codex GPT-5.4", value: "gpt-5.4" },
+      { label: "Codex GPT-5.4 Mini", value: "gpt-5.4-mini" },
+      { label: `Gemini 3.1 Pro (${t('hint.smartest')})`, value: "gemini-3.1-pro-preview" },
+      { label: `Gemini 3 Flash (${t('hint.recommended')})`, value: "gemini-3-flash-preview" },
+      { label: `Gemini 3.1 Flash Lite (${t('hint.fast')})`, value: "gemini-3.1-flash-lite-preview" },
+      { label: `Gemini 2.5 Pro (${t('hint.stable')})`, value: "gemini-2.5-pro" },
+      { label: `Gemini 2.5 Flash (${t('hint.stable')})`, value: "gemini-2.5-flash" },
+    ],
+  };
+  return (
   <AnimatePresence>
     {open && (
       <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[100]">
@@ -122,7 +129,7 @@ export const SettingsModal = ({
           <div className="flex items-center justify-between mb-6">
             <div className="flex items-center gap-2.5">
               <div className="p-1.5 bg-blue-500/10 rounded-lg text-blue-500"><Settings size={18} /></div>
-              <h2 className="text-base font-bold text-white">AI Yapılandırması</h2>
+              <h2 className="text-base font-bold text-white">{t('settings.title')}</h2>
             </div>
             <button onClick={onClose} className="p-1.5 hover:bg-slate-800 rounded-lg transition-colors text-slate-400">
               <X size={18} />
@@ -130,30 +137,30 @@ export const SettingsModal = ({
           </div>
           <div className="space-y-4">
             <div>
-              <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Provider</label>
+              <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1.5">{t('settings.provider')}</label>
               <select
                 style={{ backgroundColor: '#000000', color: 'white' }}
                 value={aiConfig.provider_type}
                 onChange={e => onChange({ ...aiConfig, provider_type: e.target.value, api_key: '', model_name: DEFAULT_MODELS[e.target.value] || '' })}
                 className="w-full bg-[#000000] border border-slate-800 rounded-xl p-3 text-white text-sm outline-none focus:border-blue-500 transition-colors"
               >
-                <option value="groq">Groq (Bulut)</option>
-                <option value="ollama">Ollama (Yerel)</option>
-                <option value="anthropic">Anthropic (Claude)</option>
-                <option value="google">Google Gemini (Bulut)</option>
-                <option value="openai">OpenAI (Bulut)</option>
-                <option value="deepseek">DeepSeek (Reasoning)</option>
-                <option value="moonshot">Moonshot (Kimi)</option>
-                <option value="openrouter">OpenRouter (Çoklu Model)</option>
-                <option value="subscription">Abonelik (Claude Code / Codex / Gemini CLI)</option>
+                <option value="groq">{t('settings.providerGroq')}</option>
+                <option value="ollama">{t('settings.providerOllama')}</option>
+                <option value="anthropic">{t('settings.providerAnthropic')}</option>
+                <option value="google">{t('settings.providerGoogle')}</option>
+                <option value="openai">{t('settings.providerOpenai')}</option>
+                <option value="deepseek">{t('settings.providerDeepseek')}</option>
+                <option value="moonshot">{t('settings.providerMoonshot')}</option>
+                <option value="openrouter">{t('settings.providerOpenrouter')}</option>
+                <option value="subscription">{t('settings.providerSubscription')}</option>
               </select>
             </div>
             {aiConfig.provider_type !== 'ollama' && aiConfig.provider_type !== 'subscription' && (
               <div>
                 <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
-                  API Key
+                  {t('settings.apiKey')}
                   {providersWithKeys.includes(aiConfig.provider_type) && !aiConfig.api_key && (
-                    <span className="ml-2 text-emerald-400 normal-case tracking-normal">✓ Kayıtlı key mevcut</span>
+                    <span className="ml-2 text-emerald-400 normal-case tracking-normal">{t('settings.savedKey')}</span>
                   )}
                 </label>
                 <input
@@ -162,28 +169,28 @@ export const SettingsModal = ({
                   value={aiConfig.api_key}
                   onChange={e => onChange({ ...aiConfig, api_key: e.target.value })}
                   className="w-full bg-[#000000] border border-slate-800 rounded-xl p-3 text-white text-sm outline-none focus:border-blue-500 transition-colors"
-                  placeholder={providersWithKeys.includes(aiConfig.provider_type) ? "Kayıtlı key kullanılacak (değiştirmek için yeni key girin)" : "API key girin..."}
+                  placeholder={providersWithKeys.includes(aiConfig.provider_type) ? t('settings.savedKeyPlaceholder') : t('settings.apiKeyPlaceholder')}
                 />
                 {providersWithKeys.includes(aiConfig.provider_type) && !aiConfig.api_key && (
                   <button
                     onClick={() => onDeleteKey(aiConfig.provider_type)}
                     className="mt-2 flex items-center gap-1.5 text-[11px] text-red-500/70 hover:text-red-400 transition-colors"
                   >
-                    <Trash2 size={12} /> API Key Sil
+                    <Trash2 size={12} /> {t('settings.deleteKey')}
                   </button>
                 )}
               </div>
             )}
             {aiConfig.provider_type === 'subscription' && (
               <div className="p-3 rounded-xl border border-purple-500/30 bg-purple-500/5">
-                <p className="text-[10px] text-purple-300 font-medium">Abonelik Modu Aktif</p>
+                <p className="text-[10px] text-purple-300 font-medium">{t('settings.subscriptionActive')}</p>
                 <p className="text-[9px] text-purple-400/70 mt-0.5">
-                  Bu modda API key gerekmez; terminalde (claude/codex) açık olan oturumunuz kullanılır.
+                  {t('settings.subscriptionDesc')}
                 </p>
               </div>
             )}
             <div>
-              <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Model İsmi</label>
+              <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1.5">{t('settings.modelName')}</label>
               <input
                 style={{ backgroundColor: '#000000', color: 'white' }}
                 value={aiConfig.model_name}
@@ -237,19 +244,41 @@ export const SettingsModal = ({
               </button>
             </div>
 
+            {/* Language */}
+            <div className="flex items-center justify-between p-3 rounded-xl border border-slate-700/50 bg-slate-900/30">
+              <div className="flex items-center gap-2.5">
+                <Globe size={15} className="text-slate-400 shrink-0" />
+                <p className="text-xs font-semibold text-slate-200">{t('settings.language')}</p>
+              </div>
+              <div className="flex gap-1">
+                {(['tr', 'en'] as Lang[]).map(l => (
+                  <button
+                    key={l}
+                    onClick={() => onLangChange(l)}
+                    className={`px-3 py-1 rounded-lg text-[11px] font-bold transition-all border ${
+                      lang === l
+                        ? 'bg-blue-600/20 border-blue-500/40 text-blue-300'
+                        : 'bg-slate-800 border-slate-700 text-slate-500 hover:text-slate-300 hover:border-slate-600'
+                    }`}
+                  >
+                    {l === 'tr' ? '🇹🇷 TR' : '🇬🇧 EN'}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <div className="flex gap-3 pt-2 mt-2 border-t border-slate-800/50">
               <button
                 onClick={onSave}
                 className="flex-1 bg-blue-600 hover:bg-blue-500 text-white p-3 rounded-xl font-bold text-xs tracking-wide transition-all"
               >
-                KAYDET
+                {t('settings.save')}
               </button>
               <button
                 onClick={onLogout}
                 className="bg-red-500/10 hover:bg-red-500/20 text-red-500 border border-red-500/20 px-4 py-3 rounded-xl font-bold text-xs tracking-wide transition-all flex items-center justify-center gap-2"
-                title="Hesaptan çıkış yap"
               >
-                <LogOut size={14} /> ÇIKIŞ YAP
+                <LogOut size={14} /> {t('settings.logout')}
               </button>
             </div>
           </div>
@@ -257,4 +286,5 @@ export const SettingsModal = ({
       </div>
     )}
   </AnimatePresence>
-);
+  );
+};

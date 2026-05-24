@@ -3,6 +3,7 @@ import { Editor, DiffEditor } from '@monaco-editor/react';
 import { motion } from 'framer-motion';
 import { Plus, Activity, Cpu, Sparkles } from 'lucide-react';
 import { defineUnityTheme, THEME_NAME } from './monaco-theme';
+import { useLang } from '../../lib/i18n';
 
 interface EditorPanelProps {
   code: string;
@@ -26,6 +27,7 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
   problems = [],
   diffFile
 }) => {
+  const { t } = useLang();
   const monacoRef = React.useRef<any>(null);
   const editorRef = React.useRef<any>(null);
   const [modelChangedTrigger, setModelChangedTrigger] = React.useState(0);
@@ -138,13 +140,13 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
               <div className="text-center space-y-2 opacity-30 px-6">
                 <h3 className="text-sm font-bold text-slate-400 tracking-[0.2em] uppercase">Unity Architect Engine</h3>
                 <p className="text-[11px] text-slate-500 max-w-[240px] leading-relaxed">
-                  Düzenlemek için bir dosya aç<br />ya da sağdaki chat'ten direkt bir şey iste
+                  {t('home.editorHint')}
                 </p>
               </div>
               <div className="mt-10 flex gap-6 text-[10px] font-mono text-slate-700 font-semibold uppercase tracking-widest pointer-events-none">
-                <span className="flex items-center gap-1.5"><Activity size={14} /> Bug Fix</span>
-                <span className="flex items-center gap-1.5"><Cpu size={14} /> Kod Üretim</span>
-                <span className="flex items-center gap-1.5"><Sparkles size={14} /> Analiz</span>
+                <span className="flex items-center gap-1.5"><Activity size={14} /> {t('home.bugfix')}</span>
+                <span className="flex items-center gap-1.5"><Cpu size={14} /> {t('home.codegen')}</span>
+                <span className="flex items-center gap-1.5"><Sparkles size={14} /> {t('home.analyze')}</span>
               </div>
             </div>
           )}

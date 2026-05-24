@@ -1,6 +1,7 @@
 import React from 'react';
 import { motion } from 'framer-motion';
 import { AlertTriangle, Trash2, X, Check } from 'lucide-react';
+import { useLang } from '../../lib/i18n';
 
 interface FileDeleteApprovalProps {
   path: string;
@@ -13,6 +14,7 @@ export const FileDeleteApproval: React.FC<FileDeleteApprovalProps> = ({
   onConfirm,
   onCancel
 }) => {
+  const { t } = useLang();
   const fileName = path.split('/').pop();
 
   return (
@@ -24,7 +26,7 @@ export const FileDeleteApproval: React.FC<FileDeleteApprovalProps> = ({
       <div className="flex items-center justify-between px-4 py-2.5 bg-rose-500/10 border-b border-rose-500/20">
         <div className="flex items-center gap-2 text-rose-400 font-bold text-[11px] uppercase tracking-wider">
           <AlertTriangle size={14} />
-          Dosya Silme Onayı
+          {t('deleteApproval.title')}
         </div>
         <button onClick={onCancel} className="text-slate-500 hover:text-white transition-colors">
           <X size={14} />
@@ -38,7 +40,7 @@ export const FileDeleteApproval: React.FC<FileDeleteApprovalProps> = ({
           </div>
           <div>
             <p className="text-[13px] text-white font-medium leading-tight">
-              "<span className="text-rose-400 font-bold">{fileName}</span>" dosyasını silmek istediğine emin misin?
+              "<span className="text-rose-400 font-bold">{fileName}</span>" {t('deleteApproval.confirm')}
             </p>
             <p className="text-[11px] text-slate-500 mt-1 font-mono break-all">
               {path}
@@ -52,20 +54,20 @@ export const FileDeleteApproval: React.FC<FileDeleteApprovalProps> = ({
             className="flex-1 flex items-center justify-center gap-2 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-[12px] font-bold transition-all shadow-lg shadow-rose-900/20 active:scale-[0.98]"
           >
             <Check size={14} className="stroke-[3px]" />
-            Evet, Dosyayı Sil
+            {t('deleteApproval.yes')}
           </button>
           <button 
             onClick={onCancel}
             className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-[12px] font-bold transition-all"
           >
-            Vazgeç
+            {t('deleteApproval.cancel')}
           </button>
         </div>
       </div>
       
       <div className="px-4 py-2 bg-black/40 border-t border-rose-500/10">
         <p className="text-[10px] text-slate-600 italic">
-          * Bu işlem geri alınamaz ve dosya fiziksel olarak diskten silinir.
+          * {t('deleteApproval.warning')}
         </p>
       </div>
     </motion.div>

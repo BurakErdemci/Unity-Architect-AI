@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { ModelAvatar } from './ModelAvatar';
 import { AIConfig, AvailableModels, UserData } from './types';
+import { useLang } from '../../lib/i18n';
 
 interface ModelSelectorProps {
   aiConfig: AIConfig;
@@ -68,6 +69,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
   axios,
   showToast
 }) => {
+  const { t } = useLang();
   const activeGroup = CLI_GROUPS.find(g => g.ids.includes(aiConfig.model_name))?.key ?? null;
   const [expandedCliGroup, setExpandedCliGroup] = useState<string | null>(activeGroup);
 
@@ -115,7 +117,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                 {availableModels.cloud.length > 0 && (
                   <div className="p-1">
                     <div className="px-2 py-1.5 text-[10px] font-bold text-slate-500 uppercase flex items-center gap-2 mt-1">
-                      <Sparkles size={10} /> Bulut API Modelleri
+                      <Sparkles size={10} /> {t('models.cloud')}
                     </div>
                     {availableModels.cloud.map(m => {
                       const orToggle = modelOrToggles[m.id] ?? false;
@@ -130,7 +132,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                             onClick={async () => {
                               if (!hasKey) {
                                 setShowSettings(true);
-                                showToast(`${cloudProvider} key eksik!`, 'warning');
+                                showToast(`${cloudProvider} ${t('models.keyMissing')}`, 'warning');
                                 return;
                               }
                               const newCfg = { ...aiConfig, provider_type: cloudProvider, model_name: effectiveModelId };
@@ -168,7 +170,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                 {(availableModels.subscription?.length ?? 0) > 0 && (
                   <div className="p-1 border-t border-slate-800/80">
                     <div className="px-2 py-1.5 text-[10px] font-bold text-slate-500 uppercase flex items-center gap-2 mt-1">
-                      <Key size={10} /> Abonelik (CLI) Modelleri
+                      <Key size={10} /> {t('models.subscription')}
                     </div>
                     {CLI_GROUPS.map(group => {
                       const groupModels = availableModels.subscription.filter(m => group.ids.includes(m.id));
@@ -207,7 +209,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
 
                 <div className="p-1 border-t border-slate-800/80">
                   <div className="px-2 py-1.5 text-[10px] font-bold text-slate-500 uppercase flex items-center gap-2 mt-1">
-                    <Cpu size={10} /> Yerel (Ollama) Modeller
+                    <Cpu size={10} /> {t('models.local')}
                   </div>
                   {availableModels.local.map(m => (
                     <button
@@ -231,7 +233,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                 onClick={() => { setIsModelDropdownOpen(false); setShowSettings(true); }}
                 className="w-full text-left p-3 text-[11px] text-slate-400 bg-[#000000] hover:bg-slate-800 transition-colors flex items-center justify-between group"
               >
-                Ayarlar / API Keys
+                {t('models.settings')}
                 <ChevronRight size={12} className="opacity-0 group-hover:opacity-100" />
               </button>
             </motion.div>
