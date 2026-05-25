@@ -14,6 +14,8 @@ export const ALLOWED_INVOKE_CHANNELS = new Set([
   'move-entry',
   'app-token-get',
   'save-file-dialog',
+  'export-text-file',
+  'import-text-file',
   'delete-file',
   'terminal-spawn',
   'terminal-write',

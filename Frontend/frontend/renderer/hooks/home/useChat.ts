@@ -20,8 +20,6 @@ export const useChat = (
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
   const [chatInput, setChatInput] = useState('');
-  const [wisdomSummary, setWisdomSummary] = useState<string | null>(null);
-  const [isWisdomExpanded, setIsWisdomExpanded] = useState(true);
   const [currentPlan, setCurrentPlan] = useState<Task[]>([]);
   const [contextUsage, setContextUsage] = useState({ percent: 0, should_compact: false, message_count: 0 });
   const [isCompacting, setIsCompacting] = useState(false);
@@ -48,18 +46,8 @@ export const useChat = (
     try {
       const res = await axios.get(`${API}/conversations/${convId}/messages`);
       setMessages(res.data);
-      setWisdomSummary(null);
-      try {
-        const memRes = await axios.get(`${API}/conversations/${convId}/export-memory`, {
-          headers: { 'X-Session-Token': user?.sessionToken }
-        });
-        if (memRes.data.content) {
-          const match = memRes.data.content.match(/\[USER_SUMMARY\]\n([\s\S]*?)\n\[TECHNICAL_WISDOM\]/);
-          setWisdomSummary(match ? match[1].trim() : memRes.data.content.substring(0, 500) + "...");
-        }
-      } catch { }
     } catch (err) { console.error("Mesaj hatası:", err); }
-  }, [API, user?.sessionToken]);
+  }, [API]);
 
   const selectConversation = useCallback(async (conv: Conversation) => {
     if (editingId) return;
@@ -276,10 +264,18 @@ export const useChat = (
   }, [API, activeConvId, aiConfig.provider_type, refreshFileTree, suggestFilePath, user?.id, workspacePath, showToast]);
 
   const analyzeProject = useCallback(async (silent = false) => {
-    if (!activeConvId || !user || !API) return;
+    if (!user || !API) return;
+
+    // Aktif sohbet yoksa Projeyi Öğren tek tıkla çalışsın diye yenisini açıyoruz.
+    let targetConvId = activeConvId;
+    if (!targetConvId) {
+      targetConvId = await createNewConversation('Proje Analizi');
+      if (!targetConvId) return;
+    }
+
     setIsAnalyzingProject(true);
     try {
-      const res = await axios.post(`${API}/conversations/${activeConvId}/analyze-project`, {}, {
+      const res = await axios.post(`${API}/conversations/${targetConvId}/analyze-project`, {}, {
         headers: { 'X-Session-Token': user.sessionToken }, timeout: 120000
       });
       if (res.data.status === 'success') {
@@ -287,28 +283,28 @@ export const useChat = (
           showToast(`🧠 Proje hafızaya alındı! (${res.data.file_count} dosya)`, 'success');
           setMessages(prev => [...prev, { id: Date.now(), role: 'assistant', content: `🧠 **Analiz Raporu**\n\n${res.data.summary}`, timestamp: new Date().toISOString(), smells: [] }]);
         }
-        setWisdomSummary(res.data.summary);
       }
     } catch (err: any) { if (!silent) showToast('Analiz hatası.', 'error'); }
     finally { setIsAnalyzingProject(false); }
-  }, [API, activeConvId, showToast, user]);
+  }, [API, activeConvId, createNewConversation, showToast, user]);
 
   const exportMemory = useCallback(async () => {
     if (!activeConvId || !user || !API) return;
     try {
       const res = await axios.get(`${API}/conversations/${activeConvId}/export-memory`, { headers: { 'X-Session-Token': user.sessionToken } });
-      if (res.data.content) {
-        const filePath = await ipc?.invoke('save-file-dialog', { title: 'Hafıza Kaydet', defaultPath: `wisdom_${activeConvId}.md`, filters: [{ name: 'Markdown', extensions: ['md'] }] });
-        if (filePath) await ipc?.invoke('write-file', filePath, res.data.content, "");
-        showToast('Hafıza kaydedildi.', 'success');
-      }
+      if (!res.data.content) { showToast('Henüz hafıza yok.', 'error'); return; }
+      const out = await ipc?.invoke('export-text-file', `wisdom_${activeConvId}.md`, res.data.content);
+      if (out?.canceled) return;
+      if (out?.success) showToast('Hafıza kaydedildi.', 'success');
+      else showToast(`Kaydedilemedi: ${out?.error || 'bilinmeyen hata'}`, 'error');
     } catch { showToast('Export hatası.', 'error'); }
   }, [API, activeConvId, showToast, user]);
 
   const importMemory = useCallback(async () => {
     if (!activeConvId || !user || !API) return;
     try {
-      const res = await ipc?.invoke('read-file-dialog', { filters: [{ name: 'Markdown', extensions: ['md'] }] });
+      const res = await ipc?.invoke('import-text-file', { filters: [{ name: 'Markdown', extensions: ['md'] }] });
+      if (res?.canceled) return;
       if (res?.content) {
         await axios.post(`${API}/conversations/${activeConvId}/import-memory`, { content: res.content }, { headers: { 'X-Session-Token': user.sessionToken } });
         showToast('Hafıza aktarıldı!', 'success');
@@ -337,8 +333,6 @@ export const useChat = (
     messages, setMessages,
     loading, setLoading,
     chatInput, setChatInput,
-    wisdomSummary, setWisdomSummary,
-    isWisdomExpanded, setIsWisdomExpanded,
     currentPlan, setCurrentPlan,
     contextUsage, setContextUsage,
     isCompacting, setIsCompacting,

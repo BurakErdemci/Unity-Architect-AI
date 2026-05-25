@@ -1,14 +1,12 @@
 import React from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import { useLang } from '../../lib/i18n';
-import { 
-  User, 
-  Cpu, 
-  History, 
-  Trash2, 
-  Brain, 
-  ChevronDown, 
-  AlertTriangle, 
+import {
+  User,
+  Cpu,
+  History,
+  Trash2,
+  AlertTriangle,
   X,
   Bot
 } from 'lucide-react';
@@ -30,9 +28,6 @@ interface ChatPanelProps {
   loading: boolean;
   clearHistory: () => void;
   lang: string;
-  wisdomSummary: string | null;
-  isWisdomExpanded: boolean;
-  setIsWisdomExpanded: (val: boolean) => void;
   effectiveProvider: string;
   thinkingLevel: 'low' | 'medium' | 'high' | 'off';
   workspacePath: string | null;
@@ -71,9 +66,6 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   user,
   loading,
   clearHistory,
-  wisdomSummary,
-  isWisdomExpanded,
-  setIsWisdomExpanded,
   effectiveProvider,
   thinkingLevel,
   workspacePath,
@@ -127,44 +119,6 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   return (
     <div className="flex-1 overflow-y-auto px-4 py-6 custom-scrollbar scroll-smooth">
       <div className="max-w-4xl mx-auto space-y-6">
-        {/* ARCHITECT WISDOM PANEL */}
-        {wisdomSummary && (
-          <motion.div
-            initial={{ opacity: 0, y: -20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="mb-8 bg-blue-500/5 border border-blue-500/20 rounded-xl overflow-hidden"
-          >
-            <div 
-              className="px-4 py-2.5 flex items-center justify-between cursor-pointer hover:bg-blue-500/10 transition-colors"
-              onClick={() => setIsWisdomExpanded(!isWisdomExpanded)}
-            >
-              <div className="flex items-center gap-2 text-blue-400 font-medium text-[12px]">
-                <Brain size={14} />
-                <span>{t('chat.wisdom')}</span>
-              </div>
-              <ChevronDown 
-                size={14} 
-                className={`text-slate-500 transition-transform duration-300 ${isWisdomExpanded ? 'rotate-180' : ''}`} 
-              />
-            </div>
-            
-            <AnimatePresence>
-              {isWisdomExpanded && (
-                <motion.div
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: 'auto', opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  className="overflow-hidden"
-                >
-                  <div className="px-5 pb-5 pt-1 text-slate-300 text-[12px] leading-relaxed border-t border-blue-500/10">
-                    <MarkdownRenderer content={wisdomSummary} />
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </motion.div>
-        )}
-
         {messages.map((msg, msgIdx) => (
           <div key={msg.id} className={`chat-message-enter ${msg.role === 'user' ? 'flex justify-end' : ''}`}>
             {msg.role === 'assistant' ? (

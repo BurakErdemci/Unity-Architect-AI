@@ -86,14 +86,14 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
             }
           }
         }}
-        className="flex items-center gap-1.5 hover:bg-slate-800 px-2 py-1 rounded transition-all text-left"
+        className="flex items-center gap-1.5 hover:bg-slate-800 px-2 py-1 rounded transition-all text-left shrink-0 max-w-[160px]"
       >
         <ModelAvatar provider={aiConfig.provider_type} size={14} />
-        <div className="flex flex-col">
-          <span className="text-[12px] font-semibold text-slate-300 leading-tight">
+        <div className="flex flex-col min-w-0">
+          <span className="text-[12px] font-semibold text-slate-300 leading-tight whitespace-nowrap truncate">
             {displayModelName}
           </span>
-          <span className="text-[9px] text-slate-500 leading-tight capitalize">
+          <span className="text-[9px] text-slate-500 leading-tight capitalize whitespace-nowrap truncate">
             {effectiveProvider}
           </span>
         </div>

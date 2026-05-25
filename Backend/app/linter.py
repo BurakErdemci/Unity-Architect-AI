@@ -205,8 +205,17 @@ def lint_csharp(code: str, workspace_path: str, filename: str, full_project: boo
     if full_project:
         # Full scan: Get all .cs files in Assets
         assets_path = os.path.join(workspace_path, "Assets")
+
+        # asmdef-bound dirs are packages Unity compiles to separate DLLs in Library/ScriptAssemblies.
+        # Compiling their source AND linking their DLL produces CS0436 type conflicts → treat them as precompiled.
+        asmdef_dirs = []
         for root, dirs, files in os.walk(assets_path):
-            # Skip hidden and non-CS
+            if any(f.endswith(".asmdef") for f in files):
+                asmdef_dirs.append(root)
+
+        for root, dirs, files in os.walk(assets_path):
+            if any(root == d or root.startswith(d + os.sep) for d in asmdef_dirs):
+                continue
             for f in files:
                 if f.endswith(".cs") and not f.startswith("."):
                     sources.append(os.path.join(root, f))
@@ -276,23 +285,23 @@ def lint_csharp(code: str, workspace_path: str, filename: str, full_project: boo
         if os.path.exists(project_dll_path):
             for f in os.listdir(project_dll_path):
                 if f.endswith(".dll") and f not in found_refs:
-                    # full_project modunda kendi kodumuzun DLL'ini hariç tutmalıyız (çakışma olmaması için)
-                    if full_project and f in ["Assembly-CSharp.dll", "Assembly-CSharp-Editor.dll"]:
+                    # full_project'te tüm Assembly-CSharp* (main, Editor, firstpass, firstpass-Editor) hariç —
+                    # bunların source'unu zaten derliyoruz, hem source hem DLL referans olunca CS0436/CS0121 üretir.
+                    if full_project and f.startswith("Assembly-CSharp"):
                         continue
                     refs.append(f"-r:{os.path.join(project_dll_path, f)}")
                     found_refs.add(f)
 
-        # Plugins (Always needed)
-        # full_project modunda Assets içindeki kodlar zaten kaynak olarak eklendiği için
-        # buradaki DLL'leri eklemek "Ambiguous call" (çakışma) yaratabilir.
-        if not full_project:
-            assets_plugins_path = os.path.join(workspace_path, "Assets", "Plugins")
-            if os.path.exists(assets_plugins_path):
-                for root, dirs, files in os.walk(assets_plugins_path):
-                    for f in files:
-                        if f.endswith(".dll") and f not in found_refs:
-                            refs.append(f"-r:{os.path.join(root, f)}")
-                            found_refs.add(f)
+        # Plugins: precompiled 3rd party DLLs (DOTween core, etc.) — always needed.
+        # Source under Plugins (e.g. DOTween Modules) is part of Assembly-CSharp source and
+        # references types from these DLLs, so skipping them breaks full_project lint.
+        assets_plugins_path = os.path.join(workspace_path, "Assets", "Plugins")
+        if os.path.exists(assets_plugins_path):
+            for root, dirs, files in os.walk(assets_plugins_path):
+                for f in files:
+                    if f.endswith(".dll") and f not in found_refs:
+                        refs.append(f"-r:{os.path.join(root, f)}")
+                        found_refs.add(f)
 
         # 3. Compile
         with tempfile.NamedTemporaryFile(suffix=".dll", delete=False) as out_tmp:
@@ -303,9 +312,9 @@ def lint_csharp(code: str, workspace_path: str, filename: str, full_project: boo
         csc_exe = csc_path.replace("/bin/csc", "/lib/mono/msbuild/Current/bin/Roslyn/csc.exe")
         
         if os.name == 'posix' and "/bin/csc" in csc_path and os.path.exists(mono_path) and os.path.exists(csc_exe):
-            cmd = [mono_path, csc_exe, "-target:library", "-noconfig", "-nologo", f"-out:{out_tmp_path}"] + refs + sources
+            cmd = [mono_path, csc_exe, "-target:library", "-noconfig", "-nologo", "-langversion:preview", f"-out:{out_tmp_path}"] + refs + sources
         else:
-            cmd = [csc_path, "-target:library", "-noconfig", "-nologo", f"-out:{out_tmp_path}"] + refs + sources
+            cmd = [csc_path, "-target:library", "-noconfig", "-nologo", "-langversion:preview", f"-out:{out_tmp_path}"] + refs + sources
         
         print(f"[LINTER_CMD] Executing C# compiler command: {' '.join(cmd[:10])}... (total args: {len(cmd)})", flush=True)
         
@@ -325,6 +334,18 @@ def lint_csharp(code: str, workspace_path: str, filename: str, full_project: boo
         for line in combined_output.splitlines():
             match = pattern.search(line)
             if match:
+                msg = match.group(5).strip()
+
+                # Filter linter-setup noise — these aren't user code issues:
+                # CS0436: source type X conflicts with imported type X (single-file mode references
+                #         Assembly-CSharp.dll which contains the same type; harmless here)
+                # CS0731: type forwarder cycle (Mono runtime mscorlib vs .NET Standard shim mismatch
+                #         — a csc setup quirk, has nothing to do with user code)
+                if "conflicts with the imported type" in msg:
+                    continue
+                if "type forwarder" in msg and "causes a cycle" in msg:
+                    continue
+
                 # Get the full line to extract the path correctly if possible
                 # The regex (?:.*[\\/])? matches the directory part
                 full_match = re.search(r'^(.*?)\.cs\(', line)
@@ -336,8 +357,6 @@ def lint_csharp(code: str, workspace_path: str, filename: str, full_project: boo
                 # If we used a temp file, replace it with the real filename
                 if tmp_path and file_found in tmp_path:
                     file_found = filename
-
-                msg = match.group(5).strip()
                 col = int(match.group(3))
                 # CSC hata mesajından identifier uzunluğunu çıkar (örn: 'Rigidbody2D' → 11)
                 id_match = re.search(r"'([^']+)'", msg)

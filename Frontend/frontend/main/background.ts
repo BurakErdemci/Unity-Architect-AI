@@ -143,6 +143,39 @@ ipcMain.handle('save-file-dialog', async (_event, options) => {
   return result.filePath
 })
 
+// Hafıza export/import gibi kullanıcı-tetikli akışlar için atomik dialog+yazma/okuma.
+// write-file kasıtlı olarak workspace .cs dosyalarına kısıtlı; bu handler kullanıcı
+// dialog'dan onayladığı path'i doğrudan kullandığı için ayrı kanaldan gidiyor.
+ipcMain.handle('export-text-file', async (_event, defaultName: string, content: string) => {
+  const result = await dialog.showSaveDialog({
+    title: 'Hafıza Kaydet',
+    defaultPath: defaultName,
+    filters: [{ name: 'Markdown', extensions: ['md'] }, { name: 'Text', extensions: ['txt'] }],
+  })
+  if (result.canceled || !result.filePath) return { success: false, canceled: true }
+  try {
+    fs.writeFileSync(result.filePath, content, 'utf-8')
+    return { success: true, path: result.filePath }
+  } catch (err: any) {
+    return { success: false, error: err.message }
+  }
+})
+
+ipcMain.handle('import-text-file', async (_event, options?: { filters?: { name: string; extensions: string[] }[] }) => {
+  const result = await dialog.showOpenDialog({
+    title: 'Hafıza Yükle',
+    properties: ['openFile'],
+    filters: options?.filters ?? [{ name: 'Markdown', extensions: ['md'] }, { name: 'Text', extensions: ['txt'] }],
+  })
+  if (result.canceled || !result.filePaths[0]) return { canceled: true, content: '' }
+  try {
+    const content = fs.readFileSync(result.filePaths[0], 'utf-8')
+    return { canceled: false, content, path: result.filePaths[0] }
+  } catch (err: any) {
+    return { canceled: false, content: '', error: err.message }
+  }
+})
+
 ipcMain.handle('read-directory', async (_event, dirPath: string, workspacePath?: string) => {
   try {
     if (!workspacePath) return [];

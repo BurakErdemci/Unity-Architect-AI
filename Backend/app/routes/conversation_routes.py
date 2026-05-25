@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 from typing import Dict, List, Any, Optional
 import logging
 from collections import defaultdict
@@ -188,8 +189,17 @@ Yanıtını mutlaka [USER_SUMMARY] ve [TECHNICAL_WISDOM] başlıklarıyla ayır.
 """
 
         try:
-            full_response = await asyncio.to_thread(provider.analyze_code, analysis_prompt, 2048)
-            
+            # CLIProvider (abonelik akışı) async generator döner — event'leri topla;
+            # SDK provider'lar sync string döner — to_thread ile çağır.
+            if inspect.isasyncgenfunction(provider.analyze_code):
+                parts: List[str] = []
+                async for ev in provider.analyze_code(analysis_prompt, 2048, cwd=workspace_path):
+                    if isinstance(ev, dict) and ev.get("type") == "delta":
+                        parts.append(ev.get("text", ""))
+                full_response = "".join(parts)
+            else:
+                full_response = await asyncio.to_thread(provider.analyze_code, analysis_prompt, 2048)
+
             # Yanıtı ikiye böl
             user_summary = ""
             wisdom = ""
@@ -204,9 +214,14 @@ Yanıtını mutlaka [USER_SUMMARY] ve [TECHNICAL_WISDOM] başlıklarıyla ayır.
 
             # 3. Hafızaya sadece teknik kısmı (veya tamamını) kaydet
             memory_manager.save_memory(str(conv_id), wisdom)
-            
+
+            # 4. Kullanıcıya görünen özeti sohbet geçmişine asistan mesajı olarak ekle
+            # (sonraki açılışta normal bir AI mesajı gibi görünsün — ayrı wisdom paneline gerek kalmasın)
+            chat_summary = f"🧠 **Analiz Raporu**\n\n{user_summary}"
+            db.add_message(conv_id, "assistant", chat_summary)
+
             return {
-                "status": "success", 
+                "status": "success",
                 "summary": user_summary, # Kullanıcıya samimi olanı gönder
                 "file_count": len(rag.documents)
             }

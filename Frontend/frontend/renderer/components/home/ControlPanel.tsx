@@ -18,7 +18,6 @@ interface ControlPanelProps {
   isAnalyzingProject: boolean;
   activeConvId: number | null;
   analyzeProject: (silent?: boolean) => Promise<void>;
-  wisdomSummary: string | null;
   exportMemory: () => Promise<void>;
   importMemory: () => Promise<void>;
   compactConversation: () => Promise<void>;
@@ -34,7 +33,6 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
   isAnalyzingProject,
   activeConvId,
   analyzeProject,
-  wisdomSummary,
   exportMemory,
   importMemory,
   compactConversation,
@@ -111,10 +109,10 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
       <div className="relative flex items-center">
         <button
           onClick={() => analyzeProject()}
-          disabled={isAnalyzingProject || !activeConvId}
+          disabled={isAnalyzingProject}
           className={`flex items-center gap-1.5 px-3 py-1 rounded-l-lg text-[11px] font-medium transition-all ${
-            isAnalyzingProject 
-              ? 'bg-blue-500/20 text-blue-400 animate-pulse' 
+            isAnalyzingProject
+              ? 'bg-blue-500/20 text-blue-400 animate-pulse'
               : 'text-slate-500 hover:text-blue-400 hover:bg-blue-500/5'
           }`}
           title="Tüm projeyi tarar ve AI'nın mimariyi öğrenmesini sağlar"

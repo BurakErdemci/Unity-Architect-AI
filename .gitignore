@@ -4,6 +4,7 @@ Backend/venv/
 Backend/app_data/memories/
 Backend/mcp_server.log
 Backend/unity_mcp_server.log
+Backend/.gemini_antigravity_policy.toml
 **/__pycache__/
 *.py[cod]
 *.pyo

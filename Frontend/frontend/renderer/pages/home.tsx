@@ -424,7 +424,7 @@ export default function Home() {
                 ai.unityMcpStatus === 'starting'  ? t('home.unityStarting') :
                 t('home.unityOpen')
               }
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[10px] font-bold uppercase tracking-wider transition-all disabled:opacity-50 ${
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[10px] font-bold uppercase tracking-wider transition-all disabled:opacity-50 whitespace-nowrap shrink-0 ${
                 ai.unityMcpStatus === 'connected' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20' :
                 ai.unityMcpStatus === 'running' ? 'bg-yellow-500/10 border-yellow-500/30 text-yellow-400 hover:bg-yellow-500/20' :
                 ai.unityMcpStatus === 'starting' ? 'bg-yellow-500/10 border-yellow-500/30 text-yellow-400' :
@@ -505,7 +505,7 @@ export default function Home() {
           <div className="flex-1 overflow-y-auto custom-scrollbar">
             <ChatPanel 
               messages={chat.messages} activeConvId={chat.activeConvId} user={auth.user} loading={chat.loading} clearHistory={chat.clearHistory} lang={lang}
-              wisdomSummary={chat.wisdomSummary} isWisdomExpanded={chat.isWisdomExpanded} setIsWisdomExpanded={chat.setIsWisdomExpanded} effectiveProvider={ai.effectiveProvider}
+              effectiveProvider={ai.effectiveProvider}
               thinkingLevel={thinkingLevel} workspacePath={fs.workspacePath} handleExportToUnity={fs.handleExportToUnity} pendingPlan={chat.pendingPlan} setPendingPlan={chat.setPendingPlan}
               pendingGenFiles={fs.pendingGenFiles} setPendingGenFiles={fs.setPendingGenFiles} pendingFix={chat.pendingFix} setPendingFix={chat.setPendingFix} openedFilePath={fs.openedFilePath}
               setCode={fs.setCode} refreshFileTree={fs.refreshFileTree} analyzeProject={chat.analyzeProject} openFile={fs.openFile} sendMessage={handleSendMessage} onConfirmPlan={handleConfirmPlan}
@@ -517,7 +517,7 @@ export default function Home() {
           <div className="p-4 border-t border-slate-800/50 bg-[#000000]">
             <ControlPanel
               thinkingLevel={thinkingLevel} setThinkingLevel={setThinkingLevel} generationMode={chat.generationMode} setGenerationMode={chat.setGenerationMode}
-              isAnalyzingProject={chat.isAnalyzingProject} activeConvId={chat.activeConvId} analyzeProject={chat.analyzeProject} wisdomSummary={chat.wisdomSummary}
+              isAnalyzingProject={chat.isAnalyzingProject} activeConvId={chat.activeConvId} analyzeProject={chat.analyzeProject}
               exportMemory={chat.exportMemory} importMemory={chat.importMemory} compactConversation={chat.compactConversation} isCompacting={chat.isCompacting} contextUsage={chat.contextUsage}
             />
             <div className="mt-3">
