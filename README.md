@@ -14,7 +14,7 @@
 
 *Unity Architect AI, sıradan bir kod asistanı değildir. Projenizi baştan sona tanıyan, terminali yöneten, Unity Editor'e doğrudan komut veren ve tüm bunları katmanlı bir güvenlik sistemi arkasında yapan otonom bir geliştirme ortağıdır.*
 
-[English README](./README_EN.md) · [Yol Haritası](./ROADMAP.md)
+[English README](./README_EN.md)
 
 </div>
 
@@ -26,6 +26,7 @@
 - [Özellikler](#-özellikler)
 - [Sistem Mimarisi](#-sistem-mimarisi)
 - [Desteklenen AI Sağlayıcılar](#-desteklenen-ai-sağlayıcılar)
+- [Tool Ekosistemi (MCP + Function Calling)](#tool-ekosistemi-mcp--function-calling)
 - [Güvenlik Mimarisi](#️-güvenlik-mimarisi)
 - [Kurulum](#-kurulum)
 - [Kullanım](#-kullanım)
@@ -62,11 +63,11 @@ Unity Architect AI bu boşluğu kapatır:
 - Her adım kullanıcıya canlı (SSE) akıtılır: `thinking` → `tool_call` → `tool_result` → `response`
 - Kullanıcı herhangi bir anda "Durdur" butonuyla iptal edebilir; bekleyen tüm onay kapıları otomatik reddedilir
 
-### Çoklu CLI Sağlayıcı Desteği
-- **Claude Code** — Anthropic'in resmi CLI aracı, MCP entegrasyonuyla
-- **Codex CLI** — OpenAI'ın otonom kodlama CLI aracı
-- **Antigravity CLI (agy)** — Google'ın yeni CLI'ı; eski Gemini CLI'dan hot-swap geçişiyle (subscription Gemini modelleri otomatik olarak agy'ye yönlendirilir)
-- Her CLI için MCP yapılandırması otomatik oluşturulur (`~/.claude.json`, `~/.codex/config.toml`, `~/.gemini/antigravity-cli/mcp_config.json`)
+### Geniş Sağlayıcı Yelpazesi
+- **Cloud API**: Anthropic, OpenAI, Google, Groq, DeepSeek, Moonshot/Kimi (+ tümü için OpenRouter alternatifi)
+- **Subscription CLI**: Claude Code, Codex CLI, Antigravity CLI (agy) — kullanıcının kendi Anthropic/OpenAI/Google aboneliğinden çalışır
+- **Local**: Ollama (`http://localhost:11434`) — yüklü tüm modeller dinamik olarak keşfedilir
+- CLI seçilince ilk mesajda backend MCP config dosyalarını otomatik yazar (`~/.claude.json`, `~/.codex/config.toml`, `~/.gemini/antigravity-cli/mcp_config.json`)
 
 ### Semantik RAG Motoru
 - Tüm `.cs` dosyaları taranır, 1000 karakterlik parçalara bölünür ve vektör olarak indekslenir
@@ -228,7 +229,7 @@ unityaıPython/
 ├── unity-mcp/                  # CoplayDev/unity-mcp (submodule)
 │   ├── Server/                 # Python MCP sunucusu
 │   └── MCPForUnity/            # C# Unity Editor eklentisi
-├── ROADMAP.md
+├── LICENSE
 └── docker-compose.yml
 ```
 
@@ -236,31 +237,71 @@ unityaıPython/
 
 ## Desteklenen AI Sağlayıcılar
 
-### Doğrudan API (Backend üzerinden)
+Sağlayıcılar 3 ana kategoriye ayrılır. Bu kategoriler **modelin nereden çalıştığını** belirler — tool kullanımı (MCP / function calling) ayrı bir katmandır ve aşağıdaki *Tool Ekosistemi* bölümünde anlatılır.
 
-| Sağlayıcı | Modeller | Özellikler |
+### 1. Cloud API (Doğrudan API çağrısı)
+
+Backend ilgili sağlayıcının resmi SDK'sı veya OpenRouter gateway'i üzerinden istek atar. Tool kullanımı **function calling** ile yapılır (model JSON formatında tool çağrısı üretir, backend dispatch eder).
+
+| Sağlayıcı | Örnek Modeller | Notlar |
 |---|---|---|
-| **Anthropic Claude** | claude-opus-4-7, claude-sonnet-4-6, claude-haiku-4-5 | Extended Thinking, araç kullanımı |
-| **Google Gemini** | gemini-2.5-pro, gemini-2.5-flash, gemini-3.1-pro-preview | Thinking stream, araç kullanımı |
-| **OpenAI** | gpt-4o, gpt-4, gpt-3.5-turbo | Fonksiyon çağırma, görüntü |
-| **Ollama** | Yerel her model (Llama, Mistral, vb.) | Sıfır API maliyeti, gizlilik |
-| **Bilgi Tabanı** | — | Çevrimdışı, anında yanıt |
+| **Anthropic** | claude-opus-4-7, claude-sonnet-4-6, claude-haiku-4-5, claude-opus-4-6 | Extended Thinking, tool use |
+| **Google** | gemini-3.1-pro-preview, gemini-3-flash-preview, gemini-3.1-flash-lite-preview, gemini-2.5-pro, gemini-2.5-flash, gemini-2.5-flash-lite | Thinking stream, tool use |
+| **OpenAI** | gpt-5.5-pro, gpt-5.5, gpt-5.4, gpt-5.4-mini, gpt-5.4-nano | Function calling, vision |
+| **Groq** | llama-3.3-70b-versatile | Düşük gecikme inference (LPU) |
+| **DeepSeek** | deepseek-chat (V3) | Uygun fiyatlı genel-amaçlı |
+| **Moonshot / Kimi** | kimi-k2.6, kimi-k2.5 | Uzun bağlam (200K+) |
+| **OpenRouter** | Yukarıdaki tüm modeller `openrouter_id` ile | Tek API key, tüm sağlayıcılar (yedek yol) |
 
-### CLI Sağlayıcılar (MCP üzerinden otonom çalışma)
+### 2. Subscription CLI Ajanları
 
-| CLI | Yapılandırma | Notlar |
+Backend, kullanıcının makinesindeki resmi CLI aracını subprocess olarak çağırır. CLI'nın kendi auth'unu (Anthropic/OpenAI/Google subscription) kullanır. Tool kullanımı **MCP (Model Context Protocol)** ile yapılır — backend her çağrı öncesi CLI'nın okuyacağı `mcp_config.json` dosyasını yazar.
+
+| CLI Aracı | Modeller | Yapılandırma Dosyası |
 |---|---|---|
-| **Claude Code** | `~/.claude.json` | Anthropic'in resmi CLI aracı, MCP tool dispatch tam çalışır |
-| **Codex CLI** | `~/.codex/config.toml` | OpenAI Codex CLI, stream-json çıktı |
-| **Antigravity CLI (agy)** | `~/.gemini/antigravity-cli/mcp_config.json` | Google'ın yeni CLI'ı, **Gemini CLI 27 gün sonra kapanacağı için hot-swap geçişi yapıldı**. MCP tool execution `--print` modunda upstream'de henüz desteklenmiyor (bkz. *Geliştirici Notları*) |
+| **Claude Code** | claude-sonnet-4-6, claude-opus-4-7, claude-haiku-4-5 | `~/.claude.json` |
+| **Codex CLI** | gpt-5.5, gpt-5.4, gpt-5.4-mini | `~/.codex/config.toml` |
+| **Antigravity CLI (agy)** | Gemini 3.5 Flash, Gemini 3.1 Pro, Gemini 3 Flash, Gemini 2.5 Pro/Flash + agy üzerinden Claude/GPT-OSS | `~/.gemini/antigravity-cli/mcp_config.json` |
 
-CLI sağlayıcılar seçildiğinde backend otomatik olarak:
-1. MCP yapılandırma dosyalarını oluşturur (Antigravity MCP + Unity MCP)
-2. Güvenlik politikasını yazar (tehlikeli araçlar engellenir)
-3. CLI'yi doğru workspace ve parametrelerle başlatır
-4. Yanıtları SSE stream olarak frontend'e iletir
+**Şeffaf Hot-Swap (Gemini CLI → agy):** Frontend'de `gemini-cli-*` model ID'leri kalır, backend bunları yakalar (`_AGY_MODEL_MAP`) ve agy binary'sine yönlendirir. agy'nin `--print` modunda MCP tool dispatch'i henüz upstream'de desteklenmediği için (bkz. *Geliştirici Notları — agy Macerası*), bu modeller seçildiğinde chat panel'de sarı bir uyarı banner'ı görünür.
 
-**Şeffaf Hot-Swap:** Frontend'de `gemini-cli-*` model ID'leri görünür, backend bunları yakalar (`_AGY_MODEL_MAP`) ve agy binary'sine yönlendirir. Kullanıcı için Gemini CLI gibi görünür, gerçekte agy çalışır. agy'nin MCP onay flow'u henüz tam çalışmadığı için bu modeller seçildiğinde chat panel'de sarı bir uyarı banner'ı görünür.
+### 3. Local (Ollama)
+
+Ollama API'si (`http://localhost:11434`) backend tarafından yoklanır; yüklü tüm modeller dinamik olarak listelenir. Sıfır API maliyeti, tam offline çalışma. Function calling destekleyen modeller (örn. Llama 3.3, Qwen2.5) tool kullanabilir.
+
+---
+
+## Tool Ekosistemi (MCP + Function Calling)
+
+Tool kullanımı sağlayıcıdan **bağımsız** bir katmandır. Bir model dosya okumak, yazmak veya terminal komutu çalıştırmak istediğinde iki farklı mekanizma vardır:
+
+| Mekanizma | Hangi Sağlayıcılar | Nasıl Çalışır |
+|---|---|---|
+| **Function Calling** | Cloud API + Ollama (uyumlu modeller) | Model JSON formatında tool çağrısı üretir, backend'in `AgentRunner`'ı yakalar, `ToolRegistry`'den dispatch eder |
+| **MCP (Model Context Protocol)** | Subscription CLI ajanları | CLI bir MCP client'tır, backend'in yazdığı `mcp_config.json` ile MCP server'larına bağlanır, tool'ları stdio veya HTTP üzerinden çağırır |
+
+### MCP Server'ları (Bizim Yazdığımız)
+
+Backend iki MCP server çalıştırır:
+
+1. **Antigravity MCP** (`Backend/app/unity_ai_mcp/server.py`) — `save_file`, `delete_file`, `read_file`, `list_directory`, `bash`. Approval bridge ile dosya yazma/komut çalıştırma onay paneline yönlendirilir
+2. **Unity MCP** (CoplayDev/unity-mcp, submodule) — Unity Editor için 40+ tool (sahne, GameObject, prefab, vb.)
+
+### MCP Config'leri Ne Zaman Yazılır?
+
+| Olay | Sonuç |
+|---|---|
+| Cloud API / Ollama modeli seçilir | MCP config yazılmaz (gerekmiyor — function calling kullanılır) |
+| CLI modeli seçilir | Hiçbir şey olmaz (config sadece çağrı anında yazılır) |
+| **CLI modeli ile mesaj gönderilir** | `_write_mcp_config()` / `_register_agy_mcp()` çağrılır → CLI'nın config dosyasına **Antigravity MCP** server kaydı yazılır |
+| **Unity MCP toggle açılır** | `unity_mcp_manager.start_server()` Unity MCP subprocess'ini başlatır. Bir sonraki CLI çağrısında config dosyalarına `unityMCP` entry'si de eklenir |
+| Unity MCP toggle kapatılır | Server durdurulur, sonraki CLI config'lerinden `unityMCP` entry'si çıkarılır |
+
+**Anahtar nokta:** Unity MCP'nin **kendisi** toggle ile başlar/durur. CLI seçimi sadece config dosyalarını yazar — yani bir CLI Unity MCP'ye erişebilmesi için (a) Unity MCP toggle'ı açık olmalı, (b) o CLI ile bir mesaj gönderilmiş olmalı.
+
+### Function Calling tarafında MCP Köprüsü (Yol Haritası)
+
+Şu an Cloud API ve Ollama modelleri kendi `ToolRegistry`'sini kullanır; MCP server'larına doğrudan erişimleri yok. Bu kasıtlı bir mimari sınırdır — API modellerinin tool listesini MCP server'larından dinamik olarak almak için bir köprü katmanı gerekir. Yol haritasında.
 
 ---
 
@@ -465,30 +506,14 @@ Unity Architect AI, [CoplayDev/unity-mcp](https://github.com/CoplayDev/unity-mcp
 
 ### Kurulum
 
-**1. Unity Paketini Yükleyin**
+**Tamamen Otomatik** — manuel kurulum gerekmez.
 
-Unity projenizin `Packages/manifest.json` dosyasına ekleyin:
+1. Unity projenizi açın (Unity Editor açık olmalı)
+2. Uygulamada sağ üstteki **Unity MCP toggle**'ına tıklayın
+3. Toggle, `unity_mcp_manager` üzerinden Unity MCP sunucusunu başlatır, gerekli bağımlılıkları kurar ve Unity Editor ile bağlantıyı otomatik olarak kurar
+4. Toggle yeşile döndüğünde (`Unity bağlandı ✓`) her şey hazırdır
 
-```json
-{
-  "dependencies": {
-    "com.coplaydev.unity-mcp": "https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity"
-  }
-}
-```
-
-**2. MCP Sunucusunu Başlatın**
-
-```bash
-cd unity-mcp/Server
-pip install -e .
-python -m mcp_for_unity
-# Varsayılan port: 8080
-```
-
-**3. Unity'de Bağlantıyı Doğrulayın**
-
-Unity Editor'ü açın → `Window > MCP For Unity` → Bağlantı durumunu kontrol edin.
+> **Not:** Unity Editor açık değilse toggle bağlanamaz. Önce Unity'yi başlatın, ardından toggle'a basın.
 
 ### Mevcut Araçlar (40+)
 
@@ -931,14 +956,6 @@ Bu proje aktif geliştirme aşamasındadır. Katkı yapmak isteyenler için:
 3. Backend için `pytest` testlerini çalıştırın: `cd Backend && pytest`
 4. Frontend için `vitest` testlerini çalıştırın: `cd Frontend/frontend && npm test`
 5. Pull request açın
-
----
-
-## Yol Haritası
-
-Projenin detaylı yol haritası için [ROADMAP.md](./ROADMAP.md) dosyasına bakın.
-
-**Aktif Sprint (Phase 5):** Unity MCP tam entegrasyonu + Expert Agent Swarm (8 uzman agent: UI Maestro, Prefab Architect, Scene Director, VFX Artist, Physics Expert, Animation Expert, Script Writer, Build Manager)
 
 ---
 

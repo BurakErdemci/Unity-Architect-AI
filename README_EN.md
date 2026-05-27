@@ -14,7 +14,7 @@
 
 *Unity Architect AI is not just a code assistant. It is an autonomous development partner that understands your entire project, manages the terminal, issues direct commands to the Unity Editor, and does all of this behind a layered security system.*
 
-[Turkish README](./README.md) · [Roadmap](./ROADMAP.md)
+[Turkish README](./README.md)
 
 </div>
 
@@ -26,6 +26,7 @@
 - [Features](#-features)
 - [System Architecture](#-system-architecture)
 - [Supported AI Providers](#-supported-ai-providers)
+- [Tool Ecosystem (MCP + Function Calling)](#tool-ecosystem-mcp--function-calling)
 - [Security Architecture](#️-security-architecture)
 - [Installation](#-installation)
 - [Usage](#-usage)
@@ -62,11 +63,11 @@ Unity Architect AI closes this gap:
 - Every step is streamed live to the user (SSE): `thinking` → `tool_call` → `tool_result` → `response`
 - User can cancel at any time via the "Stop" button; all pending approval gates are automatically rejected
 
-### Multi-CLI Provider Support
-- **Claude Code** — Anthropic's official CLI tool with MCP integration
-- **Codex CLI** — OpenAI's autonomous coding CLI
-- **Antigravity CLI (agy)** — Google's new CLI; hot-swap migration from the old Gemini CLI (subscription Gemini models routed transparently)
-- MCP configuration is automatically generated for each CLI (`~/.claude.json`, `~/.codex/config.toml`, `~/.gemini/antigravity-cli/mcp_config.json`)
+### Broad Provider Coverage
+- **Cloud API**: Anthropic, OpenAI, Google, Groq, DeepSeek, Moonshot/Kimi (+ all of them via OpenRouter fallback)
+- **Subscription CLI**: Claude Code, Codex CLI, Antigravity CLI (agy) — runs on the user's own Anthropic/OpenAI/Google subscription
+- **Local**: Ollama (`http://localhost:11434`) — all installed models discovered dynamically
+- When a CLI is selected, the backend writes its MCP config files on the first message (`~/.claude.json`, `~/.codex/config.toml`, `~/.gemini/antigravity-cli/mcp_config.json`)
 
 ### Semantic RAG Engine
 - All `.cs` files are scanned, chunked into 1000-character segments, and indexed as vectors
@@ -228,7 +229,7 @@ unityaıPython/
 ├── unity-mcp/                  # CoplayDev/unity-mcp (submodule)
 │   ├── Server/                 # Python MCP server
 │   └── MCPForUnity/            # C# Unity Editor plugin
-├── ROADMAP.md
+├── LICENSE
 └── docker-compose.yml
 ```
 
@@ -236,31 +237,71 @@ unityaıPython/
 
 ## Supported AI Providers
 
-### Direct API (via Backend)
+Providers fall into 3 main categories. These categories define **where the model runs** — tool usage (MCP / function calling) is a separate layer, explained in the *Tool Ecosystem* section below.
 
-| Provider | Models | Features |
+### 1. Cloud API (Direct API call)
+
+The backend issues requests via the provider's official SDK or through the OpenRouter gateway. Tool usage happens via **function calling** (the model emits a tool call in JSON, the backend dispatches it).
+
+| Provider | Example Models | Notes |
 |---|---|---|
-| **Anthropic Claude** | claude-opus-4-7, claude-sonnet-4-6, claude-haiku-4-5 | Extended Thinking, tool use |
-| **Google Gemini** | gemini-2.5-pro, gemini-2.5-flash, gemini-3.1-pro-preview | Thinking stream, tool use |
-| **OpenAI** | gpt-4o, gpt-4, gpt-3.5-turbo | Function calling, vision |
-| **Ollama** | Any local model (Llama, Mistral, etc.) | Zero API cost, privacy |
-| **Knowledge Base** | — | Offline, instant response |
+| **Anthropic** | claude-opus-4-7, claude-sonnet-4-6, claude-haiku-4-5, claude-opus-4-6 | Extended Thinking, tool use |
+| **Google** | gemini-3.1-pro-preview, gemini-3-flash-preview, gemini-3.1-flash-lite-preview, gemini-2.5-pro, gemini-2.5-flash, gemini-2.5-flash-lite | Thinking stream, tool use |
+| **OpenAI** | gpt-5.5-pro, gpt-5.5, gpt-5.4, gpt-5.4-mini, gpt-5.4-nano | Function calling, vision |
+| **Groq** | llama-3.3-70b-versatile | Low-latency inference (LPU) |
+| **DeepSeek** | deepseek-chat (V3) | Affordable general-purpose |
+| **Moonshot / Kimi** | kimi-k2.6, kimi-k2.5 | Long context (200K+) |
+| **OpenRouter** | All of the above via `openrouter_id` | Single API key, all providers (fallback path) |
 
-### CLI Providers (Autonomous via MCP)
+### 2. Subscription CLI Agents
 
-| CLI | Config File | Notes |
+The backend invokes the official CLI binary on the user's machine as a subprocess. The CLI uses its own auth (Anthropic / OpenAI / Google subscription). Tool usage happens via **MCP (Model Context Protocol)** — before each call, the backend writes the `mcp_config.json` that the CLI will read.
+
+| CLI Tool | Models | Config File |
 |---|---|---|
-| **Claude Code** | `~/.claude.json` | Anthropic's official CLI tool, full MCP tool dispatch |
-| **Codex CLI** | `~/.codex/config.toml` | OpenAI Codex CLI, stream-json output |
-| **Antigravity CLI (agy)** | `~/.gemini/antigravity-cli/mcp_config.json` | Google's new CLI; **hot-swapped from Gemini CLI which is shutting down in 27 days**. MCP tool execution is not yet supported upstream in `--print` mode (see *Developer Notes*) |
+| **Claude Code** | claude-sonnet-4-6, claude-opus-4-7, claude-haiku-4-5 | `~/.claude.json` |
+| **Codex CLI** | gpt-5.5, gpt-5.4, gpt-5.4-mini | `~/.codex/config.toml` |
+| **Antigravity CLI (agy)** | Gemini 3.5 Flash, Gemini 3.1 Pro, Gemini 3 Flash, Gemini 2.5 Pro/Flash + Claude/GPT-OSS via agy | `~/.gemini/antigravity-cli/mcp_config.json` |
 
-When a CLI provider is selected, the backend automatically:
-1. Generates MCP config files (Antigravity MCP + Unity MCP)
-2. Writes a security policy (dangerous built-in tools are blocked)
-3. Launches the CLI with the correct workspace and parameters
-4. Streams responses to the frontend via SSE
+**Transparent Hot-Swap (Gemini CLI → agy):** The frontend keeps the `gemini-cli-*` model IDs; the backend catches them (`_AGY_MODEL_MAP`) and routes them to the agy binary. Since agy's `--print` mode doesn't yet dispatch MCP tools upstream (see *Developer Notes — The agy Adventure*), a yellow warning banner appears in the chat panel when these models are selected.
 
-**Transparent Hot-Swap:** The frontend shows `gemini-cli-*` model IDs; the backend catches these (`_AGY_MODEL_MAP`) and routes them to the agy binary. The user sees Gemini CLI but agy runs underneath. Since agy's MCP approval flow doesn't fully work, a yellow warning banner appears in the chat panel when these models are selected.
+### 3. Local (Ollama)
+
+The backend polls the Ollama API (`http://localhost:11434`) and lists all installed models dynamically. Zero API cost, fully offline. Models that support function calling (e.g. Llama 3.3, Qwen2.5) can use tools.
+
+---
+
+## Tool Ecosystem (MCP + Function Calling)
+
+Tool usage is **independent of the provider**. When a model wants to read a file, write a file, or run a terminal command, two distinct mechanisms exist:
+
+| Mechanism | Which Providers | How It Works |
+|---|---|---|
+| **Function Calling** | Cloud API + Ollama (compatible models) | The model emits a tool call in JSON, the backend's `AgentRunner` catches it and dispatches via `ToolRegistry` |
+| **MCP (Model Context Protocol)** | Subscription CLI agents | The CLI acts as an MCP client, connects to MCP servers via the `mcp_config.json` the backend writes, and invokes tools over stdio or HTTP |
+
+### MCP Servers (Authored by Us)
+
+The backend runs two MCP servers:
+
+1. **Antigravity MCP** (`Backend/app/unity_ai_mcp/server.py`) — `save_file`, `delete_file`, `read_file`, `list_directory`, `bash`. File writes and shell commands are routed through the approval bridge to the user's approval panel
+2. **Unity MCP** (CoplayDev/unity-mcp, submodule) — 40+ tools for Unity Editor (scene, GameObject, prefab, etc.)
+
+### When Are MCP Configs Written?
+
+| Event | Effect |
+|---|---|
+| Cloud API / Ollama model selected | No MCP config is written (not needed — function calling is used) |
+| CLI model selected | Nothing happens (config is written only on invocation) |
+| **CLI model is sent a message** | `_write_mcp_config()` / `_register_agy_mcp()` runs → the **Antigravity MCP** server entry is written to the CLI's config file |
+| **Unity MCP toggle turned on** | `unity_mcp_manager.start_server()` starts the Unity MCP subprocess. On the next CLI invocation, the `unityMCP` entry is added to config files as well |
+| Unity MCP toggle turned off | Server stops, the `unityMCP` entry is removed from subsequent CLI configs |
+
+**Key point:** Unity MCP **itself** is started/stopped by the toggle. CLI selection only writes config files — so for a CLI to access Unity MCP, both (a) the Unity MCP toggle must be on, and (b) a message must have been sent through that CLI.
+
+### MCP Bridge on the Function Calling Side
+
+Currently Cloud API and Ollama models use their own `ToolRegistry`; they don't have direct access to the MCP servers. This is a deliberate architectural boundary — bridging API-model tool lists dynamically from MCP servers requires a translation layer. Not yet implemented.
 
 ---
 
@@ -465,30 +506,14 @@ Unity Architect AI integrates [CoplayDev/unity-mcp](https://github.com/CoplayDev
 
 ### Setup
 
-**1. Install Unity Package**
+**Fully Automatic** — no manual installation needed.
 
-Add to your Unity project's `Packages/manifest.json`:
+1. Open your Unity project (Unity Editor must be running)
+2. Click the **Unity MCP toggle** in the top-right of the app
+3. The toggle starts the Unity MCP server via `unity_mcp_manager`, installs all required dependencies, and establishes the connection to Unity Editor automatically
+4. When the toggle turns green (`Unity connected ✓`), everything is ready
 
-```json
-{
-  "dependencies": {
-    "com.coplaydev.unity-mcp": "https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity"
-  }
-}
-```
-
-**2. Start MCP Server**
-
-```bash
-cd unity-mcp/Server
-pip install -e .
-python -m mcp_for_unity
-# Default port: 8080
-```
-
-**3. Verify Connection in Unity**
-
-Open Unity Editor → `Window > MCP For Unity` → Check connection status.
+> **Note:** The toggle cannot connect if Unity Editor is not open. Start Unity first, then press the toggle.
 
 ### Available Tools (40+)
 
@@ -932,14 +957,6 @@ This project is in active development. To contribute:
 3. Run backend tests: `cd Backend && pytest`
 4. Run frontend tests: `cd Frontend/frontend && npm test`
 5. Open a pull request
-
----
-
-## Roadmap
-
-See [ROADMAP.md](./ROADMAP.md) for the detailed project roadmap.
-
-**Active Sprint (Phase 5):** Full Unity MCP integration + Expert Agent Swarm (8 specialized agents: UI Maestro, Prefab Architect, Scene Director, VFX Artist, Physics Expert, Animation Expert, Script Writer, Build Manager)
 
 ---
 
