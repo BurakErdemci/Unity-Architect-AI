@@ -133,6 +133,7 @@ export function AnimatedChatInput({
     value,
     setValue,
     onSendMessage,
+    onCommand,
     onStop,
     onFileDrop,
     isLoading,
@@ -140,10 +141,11 @@ export function AnimatedChatInput({
     className,
     disabled = false,
     disabledPlaceholder = "Bu bölüm bakımda..."
-}: { 
+}: {
     value: string;
     setValue: (val: string) => void;
     onSendMessage: (val: string, images?: string[]) => void;
+    onCommand?: (cmd: string) => boolean;
     onStop?: () => void;
     onFileDrop?: (entry: { path: string, name: string }) => void;
     isLoading: boolean;
@@ -229,7 +231,9 @@ export function AnimatedChatInput({
         }
     }, [value]);
 
-    const commandSuggestions: CommandSuggestion[] = [];
+    const commandSuggestions: CommandSuggestion[] = [
+        { icon: <span>🧠</span>, label: 'Compact', description: 'Sohbeti özetle ve hafızaya al', prefix: '/compact' },
+    ];
 
     useEffect(() => {
         if (internalValue.startsWith('/') && !internalValue.includes(' ')) {
@@ -280,6 +284,16 @@ export function AnimatedChatInput({
 
     const handleSendMessage = async () => {
         if ((internalValue.trim() || attachments.length > 0) && !isLoading) {
+            const trimmed = internalValue.trim();
+            if (trimmed.startsWith('/') && onCommand) {
+                const handled = onCommand(trimmed);
+                if (handled) {
+                    setInternalValue('');
+                    setValue('');
+                    adjustHeight(true);
+                    return;
+                }
+            }
             let finalMsg = internalValue;
             const images = attachments.filter(a => a.type === 'image').map(a => a.data);
             const fileAttachments = attachments.filter(a => a.type === 'file');

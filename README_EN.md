@@ -32,6 +32,7 @@
 - [Unity MCP Integration](#-unity-mcp-integration)
 - [Agentic System Details](#-agentic-system-details)
 - [API Reference](#-api-reference)
+- [Developer Notes: Lessons Learned](#developer-notes-lessons-learned-and-architectural-decisions)
 - [Contributing](#-contributing)
 
 ---
@@ -64,8 +65,8 @@ Unity Architect AI closes this gap:
 ### Multi-CLI Provider Support
 - **Claude Code** — Anthropic's official CLI tool with MCP integration
 - **Codex CLI** — OpenAI's autonomous coding CLI
-- **Gemini CLI** — Google's open-source CLI (Google AI Pro subscription support via OAuth)
-- MCP configuration is automatically generated for each CLI (`~/.claude.json`, `~/.codex/config.toml`, `~/.gemini/settings.json`)
+- **Antigravity CLI (agy)** — Google's new CLI; hot-swap migration from the old Gemini CLI (subscription Gemini models routed transparently)
+- MCP configuration is automatically generated for each CLI (`~/.claude.json`, `~/.codex/config.toml`, `~/.gemini/antigravity-cli/mcp_config.json`)
 
 ### Semantic RAG Engine
 - All `.cs` files are scanned, chunked into 1000-character segments, and indexed as vectors
@@ -92,9 +93,10 @@ Unity Architect AI closes this gap:
 - AI cannot change a single byte without approval
 
 ### Memory and Persistence
-- Conversation summarization: `/compact` compresses context before token limit is reached
+- Conversation compaction: `POST /conversations/{id}/compact` triggers AI to summarize before approaching the context limit; result is written to `conversations.memory_summary`
 - Project memory: stored as markdown files under `app_data/memories/`
 - RAG index: updated after every analysis
+- API key storage: Fernet encryption + OS keystore (Keychain/Credential Manager) — the `api_keys` table only stores encrypted data
 
 ### User Interface
 - **Monaco Editor** — The VS Code editor engine with Unity C# syntax support
@@ -103,6 +105,7 @@ Unity Architect AI closes this gap:
 - **Thinking Block** — Watch the AI think in real-time (Claude Extended Thinking, Gemini thinking stream)
 - **Model Selector** — Instantly switch between all providers; CLI groups expand/collapse
 - **File Explorer** — Navigate project hierarchy visually
+- **Bilingual UI (TR/EN)** — Custom React Context + `useLang()` hook, language preference persisted in localStorage, 100+ translation keys
 
 ---
 
@@ -111,13 +114,19 @@ Unity Architect AI closes this gap:
 ```
 ┌──────────────────────────────────────────────────────┐
 │                   Electron Desktop App                │
+│  ┌──────────────────────────────────────────────────┐ │
+│  │  main/background.ts — LOCAL_APP_TOKEN = uuid()    │ │
+│  │  ├─► Backend subprocess env                        │ │
+│  │  ├─► MCP subprocess env                            │ │
+│  │  └─► Renderer IPC: 'app-token-get'                 │ │
+│  └──────────────────────────────────────────────────┘ │
 │  ┌─────────────┐  ┌──────────────┐  ┌─────────────┐ │
 │  │ Chat Panel  │  │Monaco Editor │  │  Terminal   │ │
 │  │ (SSE stream)│  │ (C# linter)  │  │ (xterm.js)  │ │
 │  └──────┬──────┘  └──────────────┘  └─────────────┘ │
-│         │              React 18 + Next.js 14          │
+│         │       React 18 + Next.js 14 (TR/EN i18n)    │
 └─────────┼────────────────────────────────────────────┘
-          │ HTTP / SSE
+          │ HTTP / SSE   +   X-Session-Token header
           ▼
 ┌──────────────────────────────────────────────────────┐
 │                 FastAPI Backend (Python 3.13)          │
@@ -150,10 +159,11 @@ Unity Architect AI closes this gap:
                                   │ MCP (stdio / HTTP)
           ┌───────────────────────┼───────────────────┐
           ▼                       ▼                    ▼
-   ┌─────────────┐       ┌─────────────────┐   ┌────────────┐
-   │ Claude Code │       │   Codex CLI     │   │ Gemini CLI │
-   │  (CLI)      │       │   (CLI)         │   │  (CLI)     │
-   └─────────────┘       └─────────────────┘   └────────────┘
+   ┌─────────────┐       ┌─────────────────┐   ┌──────────────────┐
+   │ Claude Code │       │   Codex CLI     │   │ Antigravity CLI  │
+   │  (CLI)      │       │   (CLI)         │   │ (agy) — hot-swap │
+   └─────────────┘       └─────────────────┘   │ ← gemini-cli-*   │
+                                                └──────────────────┘
           │                                            │
           └──────────────────┬─────────────────────────┘
                              │ MCP HTTP (localhost:8080)
@@ -178,15 +188,26 @@ Unity Architect AI closes this gap:
 unityaıPython/
 ├── Backend/
 │   ├── app/
-│   │   ├── agentic/            # AgentRunner, approval gates
-│   │   ├── mcp/                # MCP server, tools, Unity MCP manager
-│   │   │   └── tools/          # save_file, bash, read_file, list_directory
-│   │   ├── tools/              # ToolRegistry (554 lines), tool definitions
+│   │   ├── agentic/            # AgentRunner, approval gates, agent loop
+│   │   ├── unity_ai_mcp/       # MCP server (FastMCP) + Unity MCP manager
+│   │   │   ├── tools/          # save_file, delete_file, read_file, list_directory, bash
+│   │   │   ├── approval_bridge.py  # Backend ↔ MCP approval bridge
+│   │   │   └── server.py
+│   │   ├── tools/              # Legacy ToolRegistry (for direct-API agentic)
 │   │   ├── rag/                # ProjectRAG (FAISS), MemoryManager
 │   │   ├── knowledge/          # Offline Unity knowledge base
-│   │   ├── routes/             # 7 API routers (chat, auth, config, analysis, lint, mcp, workspace)
-│   │   ├── ai_providers.py     # Multi-provider integration + CLI management
-│   │   ├── database.py         # SQLite encrypted database
+│   │   ├── routes/             # FastAPI routers
+│   │   │   ├── auth_routes.py            # Local token validation (stub /login, /me)
+│   │   │   ├── conversation_routes.py    # Chat stream + approval endpoints
+│   │   │   ├── config_routes.py          # AI config, model list
+│   │   │   ├── analysis_routes.py        # Project analysis, memory
+│   │   │   ├── lint_routes.py            # C# Roslyn linter
+│   │   │   ├── mcp_routes.py             # Unity MCP toggle/status
+│   │   │   └── workspace_routes.py       # Workspace management
+│   │   ├── ai_providers.py     # Multi-provider + CLI management (agy hot-swap included)
+│   │   ├── auth_utils.py       # LOCAL_APP_TOKEN validation (env var)
+│   │   ├── database.py         # SQLite — local user seed (id=1)
+│   │   ├── linter.py           # Resolves Roslyn path from Unity Hub
 │   │   └── prompts.py          # System prompts, intent classifier
 │   ├── tests/                  # pytest test suite
 │   ├── requirements.txt
@@ -198,8 +219,12 @@ unityaıPython/
 │       │   ├── components/     # 25+ components
 │       │   │   ├── home/       # ChatPanel, DiffViewer, approval UIs, editor
 │       │   │   └── ui/         # Reusable UI components
-│       │   └── hooks/          # useChat, user state hooks
-│       └── main/               # Electron main process, preload
+│       │   ├── hooks/          # useChat, useAuth, useAIConfig, useMCPApproval
+│       │   └── lib/
+│       │       └── i18n.tsx    # TR/EN translation context, useLang hook
+│       └── main/
+│           ├── background.ts   # Electron main process, LOCAL_APP_TOKEN generator
+│           └── helpers/        # IPC whitelist, preload
 ├── unity-mcp/                  # CoplayDev/unity-mcp (submodule)
 │   ├── Server/                 # Python MCP server
 │   └── MCPForUnity/            # C# Unity Editor plugin
@@ -225,15 +250,17 @@ unityaıPython/
 
 | CLI | Config File | Notes |
 |---|---|---|
-| **Claude Code** | `~/.claude.json` | Anthropic's official CLI tool |
-| **Codex CLI** | `~/.codex/config.toml` | OpenAI Codex CLI |
-| **Gemini CLI** | `~/.gemini/settings.json` | Google AI Pro subscription support |
+| **Claude Code** | `~/.claude.json` | Anthropic's official CLI tool, full MCP tool dispatch |
+| **Codex CLI** | `~/.codex/config.toml` | OpenAI Codex CLI, stream-json output |
+| **Antigravity CLI (agy)** | `~/.gemini/antigravity-cli/mcp_config.json` | Google's new CLI; **hot-swapped from Gemini CLI which is shutting down in 27 days**. MCP tool execution is not yet supported upstream in `--print` mode (see *Developer Notes*) |
 
 When a CLI provider is selected, the backend automatically:
 1. Generates MCP config files (Antigravity MCP + Unity MCP)
 2. Writes a security policy (dangerous built-in tools are blocked)
 3. Launches the CLI with the correct workspace and parameters
 4. Streams responses to the frontend via SSE
+
+**Transparent Hot-Swap:** The frontend shows `gemini-cli-*` model IDs; the backend catches these (`_AGY_MODEL_MAP`) and routes them to the agy binary. The user sees Gemini CLI but agy runs underneath. Since agy's MCP approval flow doesn't fully work, a yellow warning banner appears in the chat panel when these models are selected.
 
 ---
 
@@ -274,14 +301,41 @@ Writes  Returns "Rejected"
 - File-write attempts via terminal (`python3 -c "open().write()"`, `printf > path`) are intercepted and redirected to DiffViewer
 - TOML policy for CLI tools: built-in tools like `run_shell_command` and `replace` are denied
 
-### 4. Network & Auth Security
-- Password hashing with bcrypt
-- Fernet-encrypted API key storage (primary: OS keystore, fallback: encrypted file)
-- JWT + session token (configurable TTL, default 24 hours)
-- OAuth2 (Google, GitHub)
-- Rate limiting: 15 requests per user per minute
+### 4. Local Token Architecture (Ephemeral Session)
 
-### 5. MCP Security (CLI Providers)
+Since this is a desktop app, the OAuth/JWT/session-DB layers were **removed**. They were replaced with an **application-lifetime token** (LOCAL_APP_TOKEN):
+
+```
+Electron starts → generates token via randomUUID()
+        │
+        ├─► Passed to backend subprocess via env var
+        ├─► Passed to MCP server subprocess via env var
+        └─► Exposed to renderer via IPC handler (`app-token-get`)
+
+Each HTTP request includes X-Session-Token header
+        │
+        ▼
+Backend `auth_utils._check_token()` compares against env var
+        │
+    Mismatch → 401
+    Match    → user_id=1 (single local user)
+```
+
+- **Single-user model**: `users` table contains only a seed row `id=1, username=local`
+- **Token scope**: Valid only for that application session; cleared when app closes
+- **API key encryption**: Fernet + OS keystore (Keychain/Credential Manager) — this layer was preserved
+
+### 5. Legacy Web Security (Why Removed)
+
+The old architecture had bcrypt, JWT, OAuth2, rate limiting, and a session DB. All removed because:
+- This is a desktop application, not exposed to the internet
+- The user already has physical access to the device
+- The multi-user layer was **fake security** — an attacker would already have file system access
+- 7 endpoints + 4 DB tables + 3 OAuth provider layers were generating pure technical debt
+
+Result: ~2000 lines of auth code removed, the system became simpler and more secure.
+
+### 6. MCP Security (CLI Providers)
 
 ```toml
 # Auto-generated TOML policy (Gemini CLI)
@@ -354,25 +408,18 @@ docker run -p 8000:8000 unity-architect-backend
 ### Environment Variables
 
 ```env
-# OAuth (optional)
-GOOGLE_CLIENT_ID=
-GOOGLE_CLIENT_SECRET=
-GITHUB_CLIENT_ID=
-GITHUB_CLIENT_SECRET=
-
 # Database
 DB_PATH=~/.unity_architect_ai/unity_master_v3.db
 
-# Server
+# Server (Electron picks a random free port; set this for a fixed port)
 HOST=127.0.0.1
 PORT=8000
 
-# Session
-SESSION_TTL_MINUTES=1440
-
-# API key encryption (auto-generated if empty)
+# API key encryption (uses OS keystore if empty)
 API_KEY_ENCRYPTION_KEY=
 ```
+
+> **Note — LOCAL_APP_TOKEN**: The backend validates `X-Session-Token` header against the `LOCAL_APP_TOKEN` env var on every request. This value is **generated by Electron at every app launch via `randomUUID()`** and passed to subprocesses automatically — you don't need to set it manually. If you run the backend standalone (without Electron), you can either set it explicitly or leave it empty (empty disables token check, dev mode).
 
 ---
 
@@ -726,6 +773,138 @@ stopMessage: () => {
 
 ---
 
+### Removing Auth: From Multi-User Web Architecture to Local Desktop
+
+I started the project reflexively with web-app patterns: bcrypt, JWT, session DB, OAuth2 (Google + GitHub), rate limiting. ~2000 lines of auth code, 4 separate database tables (`users`, `sessions`, `oauth_states`, `oauth_completions`), 7 endpoints.
+
+One day I realized: **this is an Electron application.** The user already has physical access to the device. The multi-user layer was providing only fake security — an attacker would already have file system access, API keys, the user's data. JWT defends against web attack vectors; a local application has no web attack vectors.
+
+In the refactor, I tore out the entire auth layer. An **ephemeral token** took its place:
+
+```typescript
+// Frontend/frontend/main/background.ts
+const localAppToken = randomUUID()  // New on every app launch
+// Passed as env var to backend and MCP subprocesses
+spawn(backend, { env: { ...process.env, LOCAL_APP_TOKEN: localAppToken } })
+// Renderer receives it via IPC
+ipcMain.handle('app-token-get', () => localAppToken)
+```
+
+```python
+# Backend/app/auth_utils.py
+def _check_token(token):
+    expected = os.environ.get("LOCAL_APP_TOKEN", "")
+    if expected and token != expected:
+        raise HTTPException(401, "Invalid token")
+    # Empty expected → dev mode, token check skipped
+```
+
+The `users` table now has a single row: `(id=1, username='local')`. The sessions/OAuth tables were dropped.
+
+**Numeric outcome:** ~2000 lines deleted, 7 endpoints reduced to stubs (kept for frontend compatibility), 4 tables removed. Pytest runtime dropped 40% (auth fixtures gone).
+
+**What I learned:** Architecture has to match the application context. Copying web patterns into a local application only manufactures technical debt. If the only answer to "why is this code here?" is "because that's how it's done," that code should go.
+
+---
+
+### The agy Adventure: Learning the Limits of Embedding a CLI (xD)
+
+This was the project's biggest dead end, and it ended with a **warning banner** instead of a solution. Here's how it played out.
+
+#### Act 1: "We have 27 days"
+
+One morning I learned that Google was sunsetting Gemini CLI in 27 days. Antigravity CLI (`agy`) was the replacement — a hot-swap migration was needed. The logic seemed simple: call `--print` mode, pipe the prompt to stdin, read the output. Same pattern as Claude Code.
+
+It looked like 3 hours of work. **It took three days.**
+
+#### Act 2: "Where are the tool calls?"
+
+I set up the hot-swap. agy was returning text answers. But on file-write requests, MCP tools were **never being called**. The frontend approval panel never opened, and the backend log had no `CallToolRequest` entries.
+
+I spent hours sifting through config files: `mcp_config.json`, `settings.json`, `disabledTools`, `trust: true`. Everything looked correct. Then I found this **critical line** in the agy log:
+
+```
+[ERROR] checkpoint model generated tool calls
+```
+
+I asked agy itself (yes, I literally ran `agy` and had an argument with it). Then I asked Codex. Both reached the same conclusion: **`--print` mode blocks tool dispatch by design.** The model generates a tool call, agy catches it, says "you're non-interactive, you can't call tools," and re-prompts the LLM for a text-only response.
+
+> *This is where I forgot that every dead end is a lesson, and fell into the "I'll find a flag for sure" trap.*
+
+#### Act 3: "We'll use `-i` mode!"
+
+I thought I'd found the solution. Use `--prompt-interactive` (`-i`) instead of `--print`, and tools would work. agy and Codex both endorsed this:
+
+> "Do an stdin EOF for graceful exit, bubbletea will auto-fallback on PIPE, no problem."
+
+First try: `-i` flag, stdin PIPE. Result:
+
+```
+bubbletea: error opening TTY: bubbletea: could not open TTY:
+open /dev/tty: device not configured
+```
+
+bubbletea (agy's TUI library) refused to run over PIPE. **A real PTY was required.**
+
+#### Act 4: PTY and the Terminal Hijack Disaster
+
+Python `pty.openpty()`, `termios.tcsetattr()` to disable echo, `TIOCSWINSZ` to set dimensions, `start_new_session=True` to detach from parent. All by the book. Ran it.
+
+The user's `npm run dev` terminal **showed agy's TUI**. Sign-in flow, spinners, "press ctrl+d again to exit", "Do you want to allow Bash(git status)?" prompts — all flowing from the backend-spawned subprocess into the user's terminal. Meanwhile, the backend could read nothing from stdout.
+
+How was that possible? `start_new_session=True` should have detached from the controlling tty. But agy was finding `/dev/tty` through the parent chain anyway. To force the slave PTY as the controlling tty, I'd need a `TIOCSCTTY` ioctl. **And worse:** `--dangerously-skip-permissions` in `-i` mode wasn't bypassing native shell command prompts. So even if PTY worked, agy would still ask "allow git status?"
+
+#### Act 5: Research — We're Not Alone
+
+I scoured the web. Looked at `google-antigravity/antigravity-cli` on GitHub. Issue #187 was right there, open with **no response from Google**:
+
+> *"Windows: agy.exe produces no stdout when spawned non-interactively (stdio: ['ignore', 'pipe', 'pipe'])"*
+
+The exact same problem, from another user's mouth. Then in the Gemini API docs I found the "Antigravity Agent" endpoint:
+
+> *"function_calling and mcp are not yet supported."*
+
+On top of that, agy runs in Google's cloud sandbox — it couldn't write to our Unity workspace anyway.
+
+The verdict was clear: **`--print` mode doesn't dispatch MCP tools. `-i` mode requires interactive TUI, not automation-friendly. The Antigravity API doesn't yet support function calling.** All three roads closed.
+
+#### Act 6: Acceptance and the Banner
+
+I reverted the PTY changes. Went back to `--print` mode. agy returned text answers — couldn't call my `save_file` MCP tool, but at least it wasn't hijacking the user's terminal anymore.
+
+Then I noticed something: agy was writing files and running terminal commands in some cases — bypassing our approval bridge, through Antigravity's own sandbox. To the user, the behavior looked like "the AI is doing things without asking me."
+
+The only honest fix: **tell the user.**
+
+```tsx
+{isAgyModel && !agyBannerDismissed && (
+  <div className="bg-yellow-500/15 border-yellow-500/40 ...">
+    <AlertTriangle />
+    <span>{t('chat.agyNotice')}</span>
+    {/* "Antigravity CLI: file writes and terminal commands run
+         automatically without approval (Google MCP approval
+         integration is not yet available)." */}
+    <button onClick={dismissAgyBanner}><X /></button>
+  </div>
+)}
+```
+
+Yellow, dismissible, persisted in sessionStorage. The user sees it once at app launch, dismisses it, moves on. When Google ships MCP integration, all I'll need to do is change the `--print` flag.
+
+#### Lessons Learned
+
+1. **Embedding a CLI is categorically different from API integration.** A CLI is designed for users — interactive TUI, permission prompts, terminal control. Forcing it into a programmatic shape is fighting the wrong layer.
+
+2. **Don't forget to verify when you ask an AI agent.** agy said "PIPE has fallback, stdin EOF gives graceful exit." Both were wrong. Codex said the same thing. AI agents don't *remember* their own library behavior — they *guess*. Every recommendation needs an isolated test.
+
+3. **"It doesn't work" is a valid answer.** I spent three days wrestling with PTY because it *should* have been solvable. It wasn't (yet). Accepting that and giving the user clear information beats a fragile hack every time.
+
+4. **Check GitHub Issues early.** Issue #187 was already there. Looking on day one would have saved me two days.
+
+5. **Document the dead ends.** That's what this section is for. So the next developer (or me in 6 months) doesn't walk the same road.
+
+---
+
 ### Practical Rules: What I'd Want You to Know Before Contributing
 
 1. **Always write CLI configurations to global scope.** Gemini CLI in headless mode does not read project-level `.gemini/settings.json` — only `~/.gemini/settings.json`.
@@ -737,6 +916,10 @@ stopMessage: () => {
 4. **Nudge the intent classifier toward the safe side.** In edge cases, prefer CHAT over GENERATION. Creating the wrong file is much worse than giving the wrong conversational response.
 
 5. **Split routes early.** Any route file over 500 lines should be broken up. This was the most expensive technical debt in this project.
+
+6. **Before spawning a CLI as a subprocess, scan upstream Issues.** I spent 3 days integrating `agy` with MCP before finding Issue #187 in the `google-antigravity/antigravity-cli` repo — exact same problem, no response from Google. A 5-minute search would have saved me 2 days.
+
+7. **Verify claims AI agents make about their own libraries.** I asked agy "how do you behave on PIPE?" — it said "I fall back." Lie. An isolated test is always more reliable than an AI's answer.
 
 ---
 

@@ -98,15 +98,20 @@ def create_conversation_router(db, progress_store):
     @router.post("/conversations/{conv_id}/compact")
     async def compact_conversation(conv_id: int, x_session_token: str = Header(alias="X-Session-Token")):
         """Sohbeti özetle ve hafızaya kaydet (Claude Code /compact gibi)."""
+        import time as _time
         user_id, _ = require_conversation_owner(db, x_session_token, conv_id)
 
         messages = db.get_conversation_messages(conv_id)
-        if len(messages) <= 6:
+        msg_count = len(messages)
+        logger.info(f"[Compact] conv_id={conv_id} | {msg_count} mesaj bulundu")
+
+        if msg_count <= 6:
+            logger.info(f"[Compact] Sohbet çok kısa ({msg_count} mesaj), atlandı.")
             return {"status": "success", "message": "Sohbet çok kısa, özetlemeye gerek yok."}
 
-        # AI config'i al
         provider_type, model_name, _, _ = db.get_ai_config(user_id)
         api_key = (db.get_api_key(user_id, provider_type) or "")
+        logger.info(f"[Compact] Provider: {provider_type}/{model_name}")
 
         try:
             provider = AIProviderManager.get_provider(
@@ -115,7 +120,6 @@ def create_conversation_router(db, progress_store):
         except ValueError:
             raise HTTPException(400, "AI provider bağlanamıyor. API key kontrol edin.")
 
-        # Son 20 mesajı özetle
         history_text = "\n".join(
             f"{'Kullanıcı' if m['role'] == 'user' else 'AI'}: {m['content'][:500]}"
             for m in messages[-20:]
@@ -130,18 +134,33 @@ SOHBET:
 
 ÖZET:"""
 
+        logger.info(f"[Compact] AI özetleme başlıyor... (async_gen={inspect.isasyncgenfunction(provider.analyze_code)})")
+        t0 = _time.time()
         try:
-            import asyncio
-            summary = await asyncio.to_thread(provider.analyze_code, compact_prompt, 800)
-            db.update_memory(conv_id, summary)
-            # Tüm mesajları sil
-            db.clear_messages(conv_id)
-            # Yapay zeka mesajı olarak özeti ekle
-            msg = f"🧠 **Bağlam Temizlendi & Hafızaya Alındı**\n\n_Özet:_ {summary}"
-            db.add_message(conv_id, "assistant", msg)
+            if inspect.isasyncgenfunction(provider.analyze_code):
+                summary = ""
+                async for ev in provider.analyze_code(compact_prompt, 800):
+                    if not isinstance(ev, dict):
+                        continue
+                    if ev.get("type") == "final":
+                        summary = ev.get("text", "")
+                        break
+                    elif ev.get("type") == "delta":
+                        summary += ev.get("text", "")
+            else:
+                summary = await asyncio.to_thread(provider.analyze_code, compact_prompt, 800)
+
+            elapsed = round(_time.time() - t0, 1)
+            logger.info(f"[Compact] Özet alındı: {len(summary)} karakter | {elapsed}s")
+
+            if not summary.strip():
+                raise ValueError("AI boş özet döndürdü.")
+
+            db.compact_conversation(conv_id, summary)
+            logger.info(f"[Compact] DB güncellendi — mesajlar silindi, özet kaydedildi.")
             return {"status": "success", "summary": summary}
         except Exception as exc:
-            logger.error(f"Compact hatası: {exc}")
+            logger.error(f"[Compact] Hata: {exc}")
             raise HTTPException(500, "Özetleme yapılamadı.")
 
     @router.post("/conversations/{conv_id}/analyze-project")

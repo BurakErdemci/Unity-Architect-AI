@@ -25,40 +25,36 @@ interface TerminalPanelProps {
 const ipc = typeof window !== 'undefined' ? (window as any).ipc : null;
 
 // ── Output Tab ────────────────────────────────────────────────────────────────
-const OutputTab: React.FC<{ apiUrl?: string; sessionToken?: string }> = ({ apiUrl, sessionToken }) => {
-  const [logs, setLogs] = useState<any[]>([]);
-  const [since, setSince] = useState(0);
+const OutputTab: React.FC<{ apiUrl?: string; sessionToken?: string; unityConnected?: boolean }> = ({ apiUrl, sessionToken, unityConnected }) => {
+  const [entries, setEntries] = useState<any[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
   const autoScrollRef = useRef(true);
 
   useEffect(() => {
-    if (!apiUrl || !sessionToken) return;
-    const fetch = async () => {
+    if (!apiUrl || !sessionToken || !unityConnected) { setEntries([]); return; }
+    const poll = async () => {
       try {
-        const res = await axios.get(`${apiUrl}/logs`, {
-          params: { since },
+        const res = await axios.get(`${apiUrl}/mcp/unity/console`, {
           headers: { 'X-Session-Token': sessionToken }
         });
-        const incoming = res.data.logs || [];
-        if (incoming.length > 0) {
-          setLogs(prev => [...prev.slice(-500), ...incoming]);
-          setSince(incoming[incoming.length - 1].ts);
+        if (res.data.connected && Array.isArray(res.data.logs)) {
+          setEntries(res.data.logs.slice(-500));
         }
-      } catch { /* backend kapalı olabilir */ }
+      } catch { /* Unity bağlı değil */ }
     };
-    fetch();
-    const interval = setInterval(fetch, 1500);
+    poll();
+    const interval = setInterval(poll, 2000);
     return () => clearInterval(interval);
-  }, [apiUrl, sessionToken, since]);
+  }, [apiUrl, sessionToken, unityConnected]);
 
   useEffect(() => {
     if (autoScrollRef.current) bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [logs]);
+  }, [entries]);
 
-  const levelColor = (level: string) => {
-    if (level === 'ERROR') return 'text-red-400';
-    if (level === 'WARNING') return 'text-amber-400';
-    if (level === 'DEBUG') return 'text-slate-600';
+  const typeColor = (type: string) => {
+    const t = (type || '').toLowerCase();
+    if (t.includes('error') || t.includes('exception')) return 'text-red-400';
+    if (t.includes('warn')) return 'text-amber-400';
     return 'text-slate-400';
   };
 
@@ -68,16 +64,13 @@ const OutputTab: React.FC<{ apiUrl?: string; sessionToken?: string }> = ({ apiUr
         const el = e.currentTarget;
         autoScrollRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
       }}>
-      {logs.length === 0 ? (
-        <div className="h-full flex items-center justify-center text-slate-700 text-xs">Backend logları bekleniyor...</div>
-      ) : logs.map((log, i) => (
-        <div key={i} className="flex gap-2 hover:bg-white/3 px-1 py-0.5 rounded leading-relaxed">
-          <span className="text-slate-700 shrink-0 w-16">
-            {new Date(log.ts * 1000).toLocaleTimeString('tr', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-          </span>
-          <span className={`shrink-0 w-14 ${levelColor(log.level)}`}>{log.level}</span>
-          <span className="text-slate-500 shrink-0 max-w-[120px] truncate">{log.logger}</span>
-          <span className="text-slate-300 break-all">{log.message}</span>
+      {!unityConnected ? (
+        <div className="h-full flex items-center justify-center text-slate-700 text-xs">Unity MCP bağlı değil</div>
+      ) : entries.length === 0 ? (
+        <div className="h-full flex items-center justify-center text-slate-700 text-xs">Unity logları bekleniyor...</div>
+      ) : entries.map((entry, i) => (
+        <div key={i} className={`flex gap-2 hover:bg-white/3 px-1 py-0.5 rounded leading-relaxed ${typeColor(entry.type || entry.logType || '')}`}>
+          <span className="text-slate-300 break-all">{entry.message || entry.text || JSON.stringify(entry)}</span>
         </div>
       ))}
       <div ref={bottomRef} />
@@ -550,7 +543,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
               )}
             </div>
           )}
-          {activeTab === 'Output' && <OutputTab apiUrl={apiUrl} sessionToken={sessionToken} />}
+          {activeTab === 'Output' && <OutputTab apiUrl={apiUrl} sessionToken={sessionToken} unityConnected={unityConnected} />}
           {activeTab === 'Debug Console' && <DebugConsoleTab apiUrl={apiUrl} sessionToken={sessionToken} unityConnected={unityConnected} />}
           {activeTab === 'Ports' && <PortsTab apiUrl={apiUrl} sessionToken={sessionToken} unityConnected={unityConnected} />}
         </div>

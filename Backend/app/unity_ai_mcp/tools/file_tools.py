@@ -43,17 +43,28 @@ def register_file_tools(mcp: FastMCP, get_workspace: callable):
 
     @mcp.tool(name="save_file")
     async def write_file(path: str, content: str) -> str:
-        """Dosya oluşturur veya düzenler (onay gerektirmez)."""
+        """Dosya oluşturur veya düzenler. ONAY GEREKTİRİR."""
         workspace = get_workspace()
         abs_path = _resolve(path, workspace)
 
+        original = ""
         if os.path.exists(abs_path):
             try:
                 with open(abs_path, "r", encoding="utf-8", errors="replace") as f:
-                    if f.read().strip() == content.strip():
-                        return "Dosya zaten aynı içerikte, değişiklik yok."
+                    original = f.read()
+                if original.strip() == content.strip():
+                    return "Dosya zaten aynı içerikte, değişiklik yok."
             except Exception:
                 pass
+
+        result = await request_approval(
+            tool_name="write_file",
+            params={"path": path, "content": content, "original": original},
+            workspace_path=workspace,
+        )
+
+        if not result.get("approved"):
+            return f"❌ Yazma reddedildi: {path}"
 
         os.makedirs(os.path.dirname(abs_path), exist_ok=True)
         with open(abs_path, "w", encoding="utf-8") as f:

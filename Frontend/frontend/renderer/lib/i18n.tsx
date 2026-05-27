@@ -43,6 +43,7 @@ const tr = {
   'chat.approve': 'Onaylıyor musun?',
   'chat.stepByStep': 'Adım Adım',
   'chat.planMode': 'Plan Modu',
+  'chat.agyNotice': 'Antigravity CLI: dosya yazma ve terminal komutları onay alınmadan otomatik çalışır (Google MCP onay entegrasyonu henüz hazır değil).',
   // SettingsModal
   'settings.title': 'AI Yapılandırması',
   'settings.language': 'Dil',
@@ -169,6 +170,7 @@ const en: Record<keyof typeof tr, string> = {
   'chat.approve': 'Do you approve?',
   'chat.stepByStep': 'Step by Step',
   'chat.planMode': 'Plan Mode',
+  'chat.agyNotice': 'Antigravity CLI: file writes and terminal commands run automatically without approval (Google MCP approval integration not yet available).',
   // SettingsModal
   'settings.title': 'AI Configuration',
   'settings.language': 'Language',

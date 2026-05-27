@@ -32,6 +32,7 @@
 - [Unity MCP Entegrasyonu](#-unity-mcp-entegrasyonu)
 - [Agentic Sistem Detayları](#-agentic-sistem-detayları)
 - [API Referansı](#-api-referansı)
+- [Geliştirici Notları: Alınan Dersler](#geliştirici-notları-alınan-dersler-ve-mimari-kararlar)
 - [Katkıda Bulunma](#-katkıda-bulunma)
 
 ---
@@ -64,8 +65,8 @@ Unity Architect AI bu boşluğu kapatır:
 ### Çoklu CLI Sağlayıcı Desteği
 - **Claude Code** — Anthropic'in resmi CLI aracı, MCP entegrasyonuyla
 - **Codex CLI** — OpenAI'ın otonom kodlama CLI aracı
-- **Gemini CLI** — Google'ın açık kaynak CLI aracı (OAuth ile Google AI Pro desteği)
-- Her CLI için MCP yapılandırması otomatik oluşturulur (`~/.claude.json`, `~/.codex/config.toml`, `~/.gemini/settings.json`)
+- **Antigravity CLI (agy)** — Google'ın yeni CLI'ı; eski Gemini CLI'dan hot-swap geçişiyle (subscription Gemini modelleri otomatik olarak agy'ye yönlendirilir)
+- Her CLI için MCP yapılandırması otomatik oluşturulur (`~/.claude.json`, `~/.codex/config.toml`, `~/.gemini/antigravity-cli/mcp_config.json`)
 
 ### Semantik RAG Motoru
 - Tüm `.cs` dosyaları taranır, 1000 karakterlik parçalara bölünür ve vektör olarak indekslenir
@@ -92,9 +93,10 @@ Unity Architect AI bu boşluğu kapatır:
 - Onay verilmeden AI tek bir byte değiştiremez
 
 ### Hafıza ve Kalıcılık
-- Sohbet özetleme: `/compact` ile bağlam token limitine yaklaşmadan hafızaya alınır
+- Sohbet özetleme: `POST /conversations/{id}/compact` ile bağlam token limitine yaklaşmadan AI tarafından özetlenir ve `conversations.memory_summary` kolonuna yazılır
 - Proje hafızası: `app_data/memories/` altında markdown dosyaları olarak saklanır
 - RAG indeksi: her analiz sonrası güncellenir
+- API anahtarı saklama: Fernet şifreleme + OS keystore (Keychain/Credential Manager) — `api_keys` tablosu sadece şifrelenmiş veri tutar
 
 ### Kullanıcı Arayüzü
 - **Monaco Editor** — VS Code'un editör motoru, Unity C# sözdizimi desteğiyle
@@ -103,6 +105,7 @@ Unity Architect AI bu boşluğu kapatır:
 - **Düşünce Bloğu** — AI'ın düşünme sürecini canlı olarak görün (Claude Extended Thinking, Gemini thinking stream)
 - **Model Seçici** — Tüm sağlayıcılar arasında anında geçiş, CLI grupları açılır/kapanır
 - **Dosya Gezgini** — Proje hiyerarşisini görsel olarak gezin
+- **İki Dilli Arayüz (TR/EN)** — Custom React Context + `useLang()` hook, localStorage ile tercih persist edilir, 100+ çeviri anahtarı
 
 ---
 
@@ -111,13 +114,19 @@ Unity Architect AI bu boşluğu kapatır:
 ```
 ┌──────────────────────────────────────────────────────┐
 │                   Electron Desktop App                │
+│  ┌──────────────────────────────────────────────────┐ │
+│  │  main/background.ts — LOCAL_APP_TOKEN = uuid()    │ │
+│  │  ├─► Backend subprocess env                        │ │
+│  │  ├─► MCP subprocess env                            │ │
+│  │  └─► Renderer IPC: 'app-token-get'                 │ │
+│  └──────────────────────────────────────────────────┘ │
 │  ┌─────────────┐  ┌──────────────┐  ┌─────────────┐ │
 │  │ Chat Panel  │  │Monaco Editor │  │  Terminal   │ │
 │  │ (SSE stream)│  │ (C# linter)  │  │ (xterm.js)  │ │
 │  └──────┬──────┘  └──────────────┘  └─────────────┘ │
-│         │              React 18 + Next.js 14          │
+│         │       React 18 + Next.js 14 (TR/EN i18n)    │
 └─────────┼────────────────────────────────────────────┘
-          │ HTTP / SSE
+          │ HTTP / SSE   +   X-Session-Token header
           ▼
 ┌──────────────────────────────────────────────────────┐
 │                 FastAPI Backend (Python 3.13)          │
@@ -150,10 +159,11 @@ Unity Architect AI bu boşluğu kapatır:
                                   │ MCP (stdio / HTTP)
           ┌───────────────────────┼───────────────────┐
           ▼                       ▼                    ▼
-   ┌─────────────┐       ┌─────────────────┐   ┌────────────┐
-   │ Claude Code │       │   Codex CLI     │   │ Gemini CLI │
-   │  (CLI)      │       │   (CLI)         │   │  (CLI)     │
-   └─────────────┘       └─────────────────┘   └────────────┘
+   ┌─────────────┐       ┌─────────────────┐   ┌──────────────────┐
+   │ Claude Code │       │   Codex CLI     │   │ Antigravity CLI  │
+   │  (CLI)      │       │   (CLI)         │   │ (agy) — hot-swap │
+   └─────────────┘       └─────────────────┘   │ ← gemini-cli-*   │
+                                                └──────────────────┘
           │                                            │
           └──────────────────┬─────────────────────────┘
                              │ MCP HTTP (localhost:8080)
@@ -178,15 +188,26 @@ Unity Architect AI bu boşluğu kapatır:
 unityaıPython/
 ├── Backend/
 │   ├── app/
-│   │   ├── agentic/            # AgentRunner, onay kapıları
-│   │   ├── mcp/                # MCP sunucu, araçlar, Unity MCP yöneticisi
-│   │   │   └── tools/          # save_file, bash, read_file, list_directory
-│   │   ├── tools/              # ToolRegistry (554 satır), araç tanımları
+│   │   ├── agentic/            # AgentRunner, onay kapıları, agent loop
+│   │   ├── unity_ai_mcp/       # MCP sunucu (FastMCP) + Unity MCP yöneticisi
+│   │   │   ├── tools/          # save_file, delete_file, read_file, list_directory, bash
+│   │   │   ├── approval_bridge.py  # Backend ↔ MCP onay köprüsü
+│   │   │   └── server.py
+│   │   ├── tools/              # Legacy ToolRegistry (direct API agentic için)
 │   │   ├── rag/                # ProjectRAG (FAISS), MemoryManager
 │   │   ├── knowledge/          # Offline Unity bilgi tabanı
-│   │   ├── routes/             # 7 API router (sohbet, auth, config, analiz, lint, mcp, workspace)
-│   │   ├── ai_providers.py     # Çoklu sağlayıcı entegrasyonu + CLI yönetimi
-│   │   ├── database.py         # SQLite şifrelemeli veritabanı
+│   │   ├── routes/             # FastAPI router'ları
+│   │   │   ├── auth_routes.py            # Lokal token doğrulama (stub /login, /me)
+│   │   │   ├── conversation_routes.py    # Chat stream + onay endpoint'leri
+│   │   │   ├── config_routes.py          # AI config, model listesi
+│   │   │   ├── analysis_routes.py        # Proje analizi, hafıza
+│   │   │   ├── lint_routes.py            # C# Roslyn linter
+│   │   │   ├── mcp_routes.py             # Unity MCP toggle/status
+│   │   │   └── workspace_routes.py       # Workspace yönetimi
+│   │   ├── ai_providers.py     # Çoklu sağlayıcı + CLI yönetimi (agy hot-swap dahil)
+│   │   ├── auth_utils.py       # LOCAL_APP_TOKEN doğrulama (env var)
+│   │   ├── database.py         # SQLite — local user seed (id=1)
+│   │   ├── linter.py           # Unity Hub'dan Roslyn yolu çözer
 │   │   └── prompts.py          # Sistem promptları, intent sınıflandırıcı
 │   ├── tests/                  # pytest test paketi
 │   ├── requirements.txt
@@ -198,8 +219,12 @@ unityaıPython/
 │       │   ├── components/     # 25+ bileşen
 │       │   │   ├── home/       # ChatPanel, DiffViewer, onay UI'ları, editör
 │       │   │   └── ui/         # Yeniden kullanılabilir UI bileşenleri
-│       │   └── hooks/          # useChat, kullanıcı durum hook'ları
-│       └── main/               # Electron ana süreç, preload
+│       │   ├── hooks/          # useChat, useAuth, useAIConfig, useMCPApproval
+│       │   └── lib/
+│       │       └── i18n.tsx    # TR/EN çeviri context'i, useLang hook
+│       └── main/
+│           ├── background.ts   # Electron ana süreç, LOCAL_APP_TOKEN üretici
+│           └── helpers/        # IPC whitelist, preload
 ├── unity-mcp/                  # CoplayDev/unity-mcp (submodule)
 │   ├── Server/                 # Python MCP sunucusu
 │   └── MCPForUnity/            # C# Unity Editor eklentisi
@@ -225,15 +250,17 @@ unityaıPython/
 
 | CLI | Yapılandırma | Notlar |
 |---|---|---|
-| **Claude Code** | `~/.claude.json` | Anthropic'in resmi CLI aracı |
-| **Codex CLI** | `~/.codex/config.toml` | OpenAI Codex CLI |
-| **Gemini CLI** | `~/.gemini/settings.json` | Google AI Pro aboneliği desteği |
+| **Claude Code** | `~/.claude.json` | Anthropic'in resmi CLI aracı, MCP tool dispatch tam çalışır |
+| **Codex CLI** | `~/.codex/config.toml` | OpenAI Codex CLI, stream-json çıktı |
+| **Antigravity CLI (agy)** | `~/.gemini/antigravity-cli/mcp_config.json` | Google'ın yeni CLI'ı, **Gemini CLI 27 gün sonra kapanacağı için hot-swap geçişi yapıldı**. MCP tool execution `--print` modunda upstream'de henüz desteklenmiyor (bkz. *Geliştirici Notları*) |
 
 CLI sağlayıcılar seçildiğinde backend otomatik olarak:
 1. MCP yapılandırma dosyalarını oluşturur (Antigravity MCP + Unity MCP)
 2. Güvenlik politikasını yazar (tehlikeli araçlar engellenir)
 3. CLI'yi doğru workspace ve parametrelerle başlatır
 4. Yanıtları SSE stream olarak frontend'e iletir
+
+**Şeffaf Hot-Swap:** Frontend'de `gemini-cli-*` model ID'leri görünür, backend bunları yakalar (`_AGY_MODEL_MAP`) ve agy binary'sine yönlendirir. Kullanıcı için Gemini CLI gibi görünür, gerçekte agy çalışır. agy'nin MCP onay flow'u henüz tam çalışmadığı için bu modeller seçildiğinde chat panel'de sarı bir uyarı banner'ı görünür.
 
 ---
 
@@ -274,14 +301,41 @@ Yazar   "Reddedildi" döner
 - `python3 -c "open().write()"` ve `printf > path` gibi terminal üzerinden dosya yazma girişimleri yakalanır ve DiffViewer'a yönlendirilir
 - CLI araçlar için TOML politikası: `run_shell_command`, `replace` gibi built-in araçlar engellenir
 
-### 4. Ağ ve Auth Güvenliği
-- Bcrypt ile parola hashleme
-- Fernet şifrelemeli API anahtarı saklama (birincil: OS keystore, yedek: şifreli dosya)
-- JWT + oturum token'ı (yapılandırılabilir TTL, varsayılan 24 saat)
-- OAuth2 (Google, GitHub)
-- Rate limiting: kullanıcı başına dakikada 15 istek
+### 4. Lokal Token Mimarisi (Ephemeral Session)
 
-### 5. MCP Güvenliği (CLI Sağlayıcılar)
+Uygulama bir desktop yazılımı olduğu için OAuth/JWT/session DB katmanlarını **kaldırdım**. Yerine **uygulama-yaşam-süresi token'ı** (LOCAL_APP_TOKEN) geldi:
+
+```
+Electron başlar → randomUUID() ile token üretir
+         │
+         ├─► Backend subprocess'ine env var olarak geçirilir
+         ├─► MCP server subprocess'ine env var olarak geçirilir
+         └─► Renderer'a IPC handler ile sunulur (`app-token-get`)
+
+Her HTTP isteği X-Session-Token header'ı ile gelir
+         │
+         ▼
+Backend `auth_utils._check_token()` env var'la karşılaştırır
+         │
+     Eşleşmezse → 401
+     Eşleşirse  → user_id=1 (tek lokal kullanıcı)
+```
+
+- **Tek kullanıcı modeli**: `users` tablosunda yalnızca `id=1, username=local` seed kaydı vardır
+- **Token kapsamı**: Sadece o uygulama oturumu için geçerlidir; uygulama kapanınca silinir
+- **API anahtarı şifrelemesi**: Fernet + OS keystore (Keychain/Credential Manager) — bu katman korundu
+
+### 5. Web Güvenliği Mirası (Niye Kaldırıldı)
+
+Eski mimaride bcrypt, JWT, OAuth2, rate limiting, oturum DB'si vardı. Hepsi silindi çünkü:
+- Bu bir desktop uygulaması, internet üzerinden erişilmiyor
+- Kullanıcı zaten cihazına fiziksel erişimi olan kişi
+- Multi-user katmanı **sahte güvenlik** veriyordu — saldırgan zaten dosya sistemine erişebilir
+- 7 endpoint + 4 DB tablosu + 3 OAuth provider katmanı sadece teknik borç üretiyordu
+
+Sonuç: ~2000 satır auth kodu silindi, sistem daha basit ve daha güvenli oldu.
+
+### 6. MCP Güvenliği (CLI Sağlayıcılar)
 
 ```toml
 # Otomatik oluşturulan TOML politikası (Gemini CLI)
@@ -354,25 +408,18 @@ docker run -p 8000:8000 unity-architect-backend
 ### Ortam Değişkenleri
 
 ```env
-# OAuth (isteğe bağlı)
-GOOGLE_CLIENT_ID=
-GOOGLE_CLIENT_SECRET=
-GITHUB_CLIENT_ID=
-GITHUB_CLIENT_SECRET=
-
 # Veritabanı
 DB_PATH=~/.unity_architect_ai/unity_master_v3.db
 
-# Sunucu
+# Sunucu (Electron rastgele boş port seçer; sabit istiyorsan ayarla)
 HOST=127.0.0.1
 PORT=8000
 
-# Oturum
-SESSION_TTL_MINUTES=1440
-
-# API anahtarı şifrelemesi (boş bırakılırsa otomatik oluşturulur)
+# API anahtarı şifrelemesi (boş bırakılırsa OS keystore kullanılır)
 API_KEY_ENCRYPTION_KEY=
 ```
+
+> **Not — LOCAL_APP_TOKEN**: Backend, `LOCAL_APP_TOKEN` env var'ını her istekte `X-Session-Token` header'ı ile karşılaştırır. Bu değer **Electron tarafından her uygulama açılışında `randomUUID()` ile üretilir** ve subprocess'lere otomatik olarak geçirilir — manuel ayarlamanıza gerek yoktur. Backend'i standalone (Electron olmadan) çalıştırırsanız bu env var'ı set edebilir veya boş bırakabilirsiniz (boşken token kontrolü atlanır, dev mode).
 
 ---
 
@@ -726,6 +773,137 @@ stopMessage: () => {
 
 ---
 
+### Auth'u Söktüm: Multi-User Web Mimarisinden Lokal Desktop'a
+
+Projeyi başlarken refleks olarak web uygulaması paternleriyle yazdım: bcrypt, JWT, session DB, OAuth2 (Google + GitHub), rate limiting. Toplamda ~2000 satır auth kodu, 4 ayrı veritabanı tablosu (`users`, `sessions`, `oauth_states`, `oauth_completions`), 7 endpoint.
+
+Bir gün şunu fark ettim: **Bu bir Electron uygulaması.** Kullanıcı zaten cihazına fiziksel erişimi olan kişi. Multi-user katmanı sadece sahte güvenlik veriyordu — saldırgan zaten `app_data/` klasörüne, API anahtarlarına, kullanıcının dosya sistemine erişebilir. JWT, web saldırı vektörlerine karşı koruma sağlar; lokal bir uygulamada hiçbir saldırı vektörü yok.
+
+Refactor'da auth katmanını tamamen söktüm. Yerine **ephemeral token** geldi:
+
+```typescript
+// Frontend/frontend/main/background.ts
+const localAppToken = randomUUID()  // Her uygulama açılışında yeni
+// Backend ve MCP subprocess'lerine env var olarak geçer
+spawn(backend, { env: { ...process.env, LOCAL_APP_TOKEN: localAppToken } })
+// Renderer IPC ile alır
+ipcMain.handle('app-token-get', () => localAppToken)
+```
+
+```python
+# Backend/app/auth_utils.py
+def _check_token(token):
+    expected = os.environ.get("LOCAL_APP_TOKEN", "")
+    if expected and token != expected:
+        raise HTTPException(401, "Geçersiz token")
+    # Boş expected → dev mode, token kontrolü atlanır
+```
+
+`users` tablosunda artık tek bir satır var: `(id=1, username='local')`. Sessions/OAuth tabloları DROP edildi.
+
+**Sayısal sonuç:** ~2000 satır kod silindi, 7 endpoint stub'a indirildi (frontend uyumluluğu için), 4 tablo kaldırıldı. Pytest süresi %40 düştü (auth fixture'ları kalktı).
+
+**Öğrendiğim ders:** Mimarinin uygulama bağlamına uygun olması gerekir. Web paternlerini lokal bir uygulamaya kopyalamak, sadece teknik borç üretir. "Bu kod neden burada?" sorusuna verilebilecek tek cevap "çünkü öyle olur" ise, o kod çıkmalı.
+
+---
+
+### agy Macerası: CLI Embed Etmenin Sınırlarını Öğrendim (xD)
+
+Bu, projenin en büyük çıkmaz sokağıydı ve sonunda bir çözüm yerine bir **uyarı banner'ıyla** bitti. Hikaye şöyle gelişti.
+
+#### Sahne 1: "27 günümüz var"
+
+Bir sabah Google'ın Gemini CLI'yi 27 gün içinde kapatacağını öğrendim. Yerine Antigravity CLI (`agy`) geliyordu — bir hot-swap geçişi yapmak gerekiyordu. Mantık basit görünüyordu: `--print` modunu çağır, prompt'u stdin'den ver, çıktıyı oku. Claude Code ile aynı pattern.
+
+3 saatlik bir iş gibi durdu. **Üç gün sürdü.**
+
+#### Sahne 2: "Tool çağrıları nerede?"
+
+Hot-swap'i kurdum. agy text yanıtlarını veriyordu. Ama dosya yazma isteklerinde MCP tool'ları **hiç çağrılmıyordu**. Frontend'deki onay paneli açılmıyordu, backend log'larında `CallToolRequest` yoktu.
+
+Saatlerce config dosyalarını döndüm: `mcp_config.json`, `settings.json`, `disabledTools`, `trust: true`. Her şey doğru görünüyordu. agy log'unda **kritik bir satır** vardı:
+
+```
+[ERROR] checkpoint model generated tool calls
+```
+
+agy'nin kendisine sordum (`agy` çalıştırıp tartıştım — gerçekten). Sonra Codex'e sordum. İkisinin de yorumu aynıydı: **`--print` modu tool dispatch'i tasarım gereği engelliyor.** Model bir tool call üretiyor, agy bunu yakalıyor, "interaktif değilsin, tool çağıramazsın" diyerek LLM'e text-only yanıt için yeniden istek atıyor.
+
+> *İşte burada her şeyin bir ders olduğunu unutup "kesin bir flag bulurum" tuzağına düştüm.*
+
+#### Sahne 3: "`-i` modu kullanırız!"
+
+Çözüm bulduğumu sandım. `--print` yerine `--prompt-interactive` (`-i`) modunu kullanırsam tool'lar çalışırdı. agy ve Codex bunu önerdi:
+
+> "stdin EOF ile graceful exit yap, bubbletea PIPE'ta auto-fallback yapar, bir sorun olmaz."
+
+İlk deneme: `-i` flag'i, stdin PIPE. Sonuç:
+
+```
+bubbletea: error opening TTY: bubbletea: could not open TTY:
+open /dev/tty: device not configured
+```
+
+bubbletea (agy'nin TUI kütüphanesi) PIPE üzerinden çalışmayı reddediyordu. **Gerçek bir PTY gerekiyordu.**
+
+#### Sahne 4: PTY ve Terminal Hijack Felaketi
+
+Python'da `pty.openpty()`, `termios.tcsetattr()` ile echo kapat, `TIOCSWINSZ` ile boyut ayarla, `start_new_session=True` ile parent'tan ayır. Hepsi kitabına göre. Çalıştırdım.
+
+Kullanıcının `npm run dev` çalıştırdığı terminal **agy'nin TUI'sini gösterdi**. Sign-in flow, spinner'lar, "press ctrl+d again to exit", "Bash(git status) için izin ister misin?" promptları — hepsi backend'in spawn ettiği subprocess'ten kullanıcının terminaline akıyordu. Backend ise stdout'tan hiçbir şey okuyamıyordu. 
+
+Bu nasıl mümkündü? `start_new_session=True` ile session ayırmıştım. Ama agy `/dev/tty`'yi parent chain üzerinden buluyor ve oraya yazıyordu. PTY slave'i controlling tty olarak ayarlamak için `TIOCSCTTY` ioctl çağırması gerekiyordu. **Ve daha kötüsü:** `--dangerously-skip-permissions` flag'i `-i` modunda native shell command prompt'larını bypass etmiyordu. Yani PTY çalışsa bile agy hâlâ "git status için izin ver misin?" diye soruyor olacaktı.
+
+#### Sahne 5: Araştırma — Yalnız Değiliz
+
+Web'i taradım. GitHub'da `google-antigravity/antigravity-cli` reposuna baktım. Issue #187 vardı, açık ve Google'dan **yanıt yok**:
+
+> *"Windows: agy.exe produces no stdout when spawned non-interactively (stdio: ['ignore', 'pipe', 'pipe'])"*
+
+Tam bizim sorunumuz, başka bir kullanıcının ağzından. Sonra Gemini API dokümantasyonunda "Antigravity Agent" endpoint'ini buldum:
+
+> *"function_calling and mcp are not yet supported."*
+
+Üstüne agy Google'ın cloud sandbox'ında çalışıyordu — bizim Unity workspace'ine zaten yazamazdı.
+
+Sonuç netti: **`--print` modu MCP tool'larını çalıştırmıyor. `-i` modu interactive TUI gerektiriyor ve otomasyona uygun değil. Antigravity API ise henüz function calling desteklemiyor.** Üç yol da kapalı.
+
+#### Sahne 6: Kabul ve Banner
+
+PTY değişikliklerini geri aldım. `--print` mode'a geri döndüm. agy text yanıt veriyordu — `save_file` MCP tool'umu çağıramıyordu ama en azından kullanıcının terminalini ele geçirmiyordu.
+
+Sonra şunu fark ettim: agy bazı durumlarda dosya yazıyor ve terminal komutu çalıştırıyordu — bizim approval bridge'imizi bypass ederek, Antigravity'nin kendi sandbox'ı üzerinden. Yani kullanıcı için davranış "AI bir şeyler yapıyor ama bana sormuyor" şeklinde gözüküyordu.
+
+Tek dürüst çözüm: **kullanıcıya bunu söylemek.**
+
+```tsx
+{isAgyModel && !agyBannerDismissed && (
+  <div className="bg-yellow-500/15 border-yellow-500/40 ...">
+    <AlertTriangle />
+    <span>{t('chat.agyNotice')}</span>
+    {/* "Antigravity CLI: dosya yazma ve terminal komutları onay alınmadan
+         otomatik çalışır (Google MCP onay entegrasyonu henüz hazır değil)." */}
+    <button onClick={dismissAgyBanner}><X /></button>
+  </div>
+)}
+```
+
+Sarı, dismissable, sessionStorage ile persistent. Kullanıcı uygulama açılışında bir kere görüyor, kapatıyor, devam ediyor. Google MCP entegrasyonunu tamamlayınca tek yapmamız gereken `--print` flag'ini değiştirmek olacak.
+
+#### Çıkarılan Dersler
+
+1. **CLI araçlarını embed etmek API entegrasyonundan kategori olarak farklıdır.** Bir CLI, kullanıcı aracı olarak tasarlanır — interaktif TUI, izin promptları, terminal kontrolü. Bunu programatik olarak yönetmek, yanlış katmanı zorlamak demektir.
+
+2. **AI ajanına danışırken doğrulamayı unutma.** agy "PIPE'ta fallback yapar, stdin EOF graceful exit verir" dedi. İkisi de yanlıştı. Codex de aynı şeyi söyledi. AI ajanları, kendi kütüphanelerinin davranışını **hatırlamıyor**, **tahmin ediyor**. Her tavsiyeyi izole bir testle doğrulamak şart.
+
+3. **"Çalışmıyor" bir cevaptır.** Üç gün PTY ile boğuştum çünkü çözmek mümkün olmalıydı. Aslında çözüm yoktu (henüz). Bunu kabul edip kullanıcıya net bilgi vermek, kırılgan bir hack'ten her zaman daha iyidir.
+
+4. **GitHub Issues'i erken kontrol et.** Issue #187 zaten oradaydı. İlk gün baksaydım 2 gün kazanmıştım.
+
+5. **Çıkmaz sokakları belgele.** Bu bölüm bunun için var. Bir sonraki geliştirici (veya 6 ay sonraki ben) aynı yolu yürümesin.
+
+---
+
 ### Pratik Kurallar: Projeye Katkı Yaparken Bunları Bilmenizi İstersem
 
 1. **CLI konfigürasyonlarını her zaman global scope'ta yazın.** Gemini CLI headless modda proje seviyesi `.gemini/settings.json`'ı okumaz, sadece `~/.gemini/settings.json`'ı okur.
@@ -737,6 +915,10 @@ stopMessage: () => {
 4. **Intent classifier'ı "güvenli tarafa" yatırın.** Sınır durumlarında GENERATION yerine CHAT seçin. Yanlış dosya oluşturmak, yanlış sohbet etmekten çok daha kötüdür.
 
 5. **Route'ları şimdiden ayırın.** 500 satırı geçen her route dosyası bölünmeli. Bu projedeki en pahalı teknik borç buydu.
+
+6. **Bir CLI'yi subprocess olarak çağırmadan önce upstream Issues'ları tara.** `agy`'yi MCP ile entegre etmek için 3 gün harcadıktan sonra `google-antigravity/antigravity-cli` reposunda Issue #187'yi buldum — tam benim sorunum, Google'dan yanıt yok. 5 dakikalık bir arama 2 günümü kurtarırdı.
+
+7. **AI ajanlarının kendi kütüphaneleri hakkındaki iddialarını doğrula.** agy'ye "PIPE'ta nasıl çalışırsın" diye sordum, "fallback yaparım" dedi. Yalandı. İzole bir test, bir AI yanıtından her zaman daha güvenilirdir.
 
 ---
 

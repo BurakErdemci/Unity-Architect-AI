@@ -506,6 +506,7 @@ export default function Home() {
             <ChatPanel 
               messages={chat.messages} activeConvId={chat.activeConvId} user={auth.user} loading={chat.loading} clearHistory={chat.clearHistory} lang={lang}
               effectiveProvider={ai.effectiveProvider}
+              modelName={ai.aiConfig?.model_name}
               thinkingLevel={thinkingLevel} workspacePath={fs.workspacePath} handleExportToUnity={fs.handleExportToUnity} pendingPlan={chat.pendingPlan} setPendingPlan={chat.setPendingPlan}
               pendingGenFiles={fs.pendingGenFiles} setPendingGenFiles={fs.setPendingGenFiles} pendingFix={chat.pendingFix} setPendingFix={chat.setPendingFix} openedFilePath={fs.openedFilePath}
               setCode={fs.setCode} refreshFileTree={fs.refreshFileTree} analyzeProject={chat.analyzeProject} openFile={fs.openFile} sendMessage={handleSendMessage} onConfirmPlan={handleConfirmPlan}
@@ -525,6 +526,10 @@ export default function Home() {
                 value={chat.chatInput} setValue={chat.setChatInput} onSendMessage={handleSendMessage} isLoading={chat.loading}
                 onStop={chat.stopMessage}
                 onFileDrop={(entry) => chat.setChatInput(prev => prev + ` [File Attached: ${entry.path}]`)}
+                onCommand={(cmd) => {
+                  if (cmd === '/compact') { chat.compactConversation(); return true; }
+                  return false;
+                }}
               />
             </div>
           </div>

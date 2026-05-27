@@ -465,8 +465,10 @@ class CLIProvider(AIProvider):
             "command": launcher, "args": ["--workspace", workspace],
             "env": env, "trust": True,
         }
-        config["disabledTools"] = self._AGY_DISABLED_TOOLS
-        
+        # disabledTools mcp_config.json'da OLMAMALI — agy geçersiz key görünce tüm dosyayı
+        # yoksayarak MCP server'ları başlatmaz. disabledTools sadece settings.json'da olmalı.
+        config.pop("disabledTools", None)
+
         from unity_ai_mcp.unity_mcp_manager import unity_mcp_manager
         if unity_mcp_manager.is_running():
             config["mcpServers"]["unityMCP"] = {
@@ -546,7 +548,7 @@ class CLIProvider(AIProvider):
         """
         import json
         backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        launcher = os.path.join(backend_dir, "run_mcp_server.sh")
+        launcher = os.path.join(backend_dir, "run_mcp_server.sh").replace("unityaıPython", "unityaiPython")
         antigravity_url = os.environ.get("ANTIGRAVITY_URL", "http://localhost:8000")
         local_app_token = os.environ.get("LOCAL_APP_TOKEN", "")
         antigravity_env = {"ANTIGRAVITY_URL": antigravity_url}
@@ -902,6 +904,7 @@ class CLIProvider(AIProvider):
                 )
 
             cmd = self._build_cmd(enriched_prompt, thinking_level, workspace)
+            _is_agy = self.binary_name.startswith("gemini") or self.binary_name.startswith("agy-")
             _env = {**os.environ, "NO_COLOR": "1", "TERM": "xterm-256color",
                     "COLUMNS": "220", "LINES": "50"}
 
@@ -909,13 +912,10 @@ class CLIProvider(AIProvider):
             logger.info(f"[CLIProvider:{self.binary_name}][CWD] {workspace}")
             logger.info(f"[CLIProvider:{self.binary_name}][ENV] LOCAL_APP_TOKEN={'set' if _env.get('LOCAL_APP_TOKEN') else 'unset'} ANTIGRAVITY_URL={_env.get('ANTIGRAVITY_URL', 'unset')}")
 
-            _is_agy = self.binary_name.startswith("gemini") or self.binary_name.startswith("agy-")  # hot-swap: gemini+agy → agy binary
-
+            _pty_master_fd = None
             if _is_agy:
                 async with CLIProvider._AGY_LOCK:
-                    # 1. Lock altında model yaz + workspace'i trusted olarak işaretle
                     self._set_agy_model(self._pending_agy_model, workspace)
-                    # 2. Hemen subprocess başlat
                     process = await asyncio.create_subprocess_exec(
                         *cmd,
                         stdin=asyncio.subprocess.PIPE,
@@ -924,7 +924,6 @@ class CLIProvider(AIProvider):
                         env=_env,
                         cwd=workspace,
                     )
-                    # 3. Prompt stdin'e yaz ve kapat
                     mcp_hint = (
                         "IMPORTANT: You MUST respond in Turkish (Türkçe) at all times.\n\n"
                         "CRITICAL RULES — follow exactly:\n"
@@ -949,6 +948,7 @@ class CLIProvider(AIProvider):
                     env=_env,
                     cwd=workspace,
                 )
+            _stdout_reader = process.stdout
             logger.info(f"[CLIProvider:{self.binary_name}] PID={process.pid} başlatıldı")
 
             stderr_buffer = []
@@ -970,7 +970,7 @@ class CLIProvider(AIProvider):
 
             while True:
                 try:
-                    line = await asyncio.wait_for(process.stdout.readline(), timeout=15.0)
+                    line = await asyncio.wait_for(_stdout_reader.readline(), timeout=15.0)
                 except asyncio.TimeoutError:
                     _now = asyncio.get_event_loop().time()
                     logger.warning(
@@ -1025,8 +1025,9 @@ class CLIProvider(AIProvider):
                     if process.returncode is not None:
                         logger.error(f"[CLIProvider:{self.binary_name}] Process bitti rc={process.returncode}")
                         break
-                    if _now - _start > 120:
-                        logger.error(f"[CLIProvider:{self.binary_name}] 120s timeout — kill")
+                    _hard_timeout = 300 if _is_agy else 120
+                    if _now - _start > _hard_timeout:
+                        logger.error(f"[CLIProvider:{self.binary_name}] {_hard_timeout}s timeout — kill")
                         process.kill()
                         break
                     continue
@@ -1037,6 +1038,9 @@ class CLIProvider(AIProvider):
 
                 raw = _strip_ansi(line.decode("utf-8", errors="ignore")).strip()
                 if not raw:
+                    continue
+                # agy interactive mode: "You >" ve "You (press Ctrl+D..." prompt kalıntılarını filtrele
+                if _is_agy and re.match(r'^You\s*(>|\(press)', raw):
                     continue
                 line_count += 1
                 # Ham stdout — Codex için her satırı logla (debug)
@@ -1184,6 +1188,12 @@ class CLIProvider(AIProvider):
 
             await process.wait()
             await stderr_task
+            # PTY master fd cleanup
+            if _pty_master_fd is not None:
+                try:
+                    os.close(_pty_master_fd)
+                except OSError:
+                    pass
 
             logger.info(
                 f"[CLIProvider:{self.binary_name}][DONE] "
