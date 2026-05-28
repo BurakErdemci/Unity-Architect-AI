@@ -817,9 +817,13 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
         CLI özgürce yazar → değişiklikler yakalanır → revert → onaya sunulur.
         Onaylanan dosyalar mevcut frontend write mekanizmasıyla uygulanır.
         """
-        from ai_providers import CLIProvider
+        from ai_providers import AIProviderManager
 
-        provider = CLIProvider(binary_name=self.model_name)
+        provider = AIProviderManager.get_provider({
+            "provider_type": self.provider_type,
+            "model_name": self.model_name,
+            "api_key": getattr(self, "api_key", ""),
+        })
 
         # Bağlamı prompt'a ekle
         context_block = f"\n\n[PROJE BAĞLAMI]\n{self.context}" if self.context else ""

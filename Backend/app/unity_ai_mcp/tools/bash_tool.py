@@ -74,7 +74,7 @@ def register_bash_tool(mcp: FastMCP, get_workspace: callable):
             path, new_content = file_write
             # Boş içerikli test dosyaları → reddet, write_file kullanmasını söyle
             if not new_content.strip():
-                return "❌ Boş dosya oluşturma reddedildi. Dosya içeriğiyle birlikte mcp__antigravity__write_file kullan."
+                return "❌ Boş dosya oluşturma reddedildi. Dosya içeriğiyle birlikte mcp__unityai__save_file kullan."
             abs_path = os.path.join(workspace, path) if not os.path.isabs(path) else path
             original = ""
             if os.path.exists(abs_path):

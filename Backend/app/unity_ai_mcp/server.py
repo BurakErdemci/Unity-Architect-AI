@@ -1,8 +1,8 @@
 """
-Antigravity MCP Server
+UnityAI MCP Server
 
 Claude Code ve Codex'in bağlandığı MCP sunucusu.
-Tehlikeli operasyonlar (write_file, delete_file, bash) Antigravity UI'dan onay alır.
+Tehlikeli operasyonlar (write_file, delete_file, bash) UnityAI UI'dan onay alır.
 
 Kullanım:
   python -m app.mcp.server --workspace /path/to/unity/project
@@ -10,20 +10,20 @@ Kullanım:
 Claude Code (.mcp.json veya settings.json):
   {
     "mcpServers": {
-      "antigravity": {
+      "unityai": {
         "command": "python",
         "args": ["-m", "app.mcp.server", "--workspace", "/path/to/project"],
-        "env": {"ANTIGRAVITY_URL": "http://localhost:8000"}
+        "env": {"UNITYAI_URL": "http://localhost:8000"}
       }
     }
   }
 
 Codex (~/.codex/config.toml):
-  [mcp_servers.antigravity]
+  [mcp_servers.unityai]
   command = "python"
   args = ["-m", "app.mcp.server", "--workspace", "/path/to/project"]
-  [mcp_servers.antigravity.env]
-  ANTIGRAVITY_URL = "http://localhost:8000"
+  [mcp_servers.unityai.env]
+  UNITYAI_URL = "http://localhost:8000"
 """
 import os
 import sys
@@ -48,7 +48,7 @@ def create_server(workspace: str = "") -> FastMCP:
         _workspace_path = workspace
 
     mcp = FastMCP(
-        name="antigravity",
+        name="unityai",
         instructions=(
             "Unity projesi üzerinde çalışan bir AI asistanısın. "
             "Dosya okuma ve dizin listeleme özgürce yapılabilir. "
@@ -68,7 +68,7 @@ def create_server(workspace: str = "") -> FastMCP:
 def main():
     global _workspace_path
 
-    parser = argparse.ArgumentParser(description="Antigravity MCP Server")
+    parser = argparse.ArgumentParser(description="UnityAI MCP Server")
     parser.add_argument("--workspace", default=os.environ.get("WORKSPACE_PATH", ""))
     args, _ = parser.parse_known_args()
     _workspace_path = args.workspace or os.getcwd()

@@ -14,7 +14,7 @@ from typing import Any
 
 import os
 logger = logging.getLogger(__name__)
-BACKEND_URL = os.environ.get("ANTIGRAVITY_URL", "http://localhost:8000")
+BACKEND_URL = os.environ.get("UNITYAI_URL", os.environ.get("ANTIGRAVITY_URL", "http://localhost:8000"))
 
 
 def _get_headers() -> dict:
