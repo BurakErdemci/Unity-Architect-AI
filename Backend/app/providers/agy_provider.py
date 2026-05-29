@@ -190,32 +190,5 @@ class AgyProvider(BaseCLIProvider):
         except Exception as e:
             logger.warning(f"[CLIProvider] Global settings.json yazılamadı: {e}")
 
-    def _write_gemini_policy(self, workspace: str) -> str:
-        """
-        Gemini CLI'ın built-in araçlarını deny eden policy dosyasını TOML formatında yazar.
-        --policy flag'i JSON değil TOML bekler; JSON olunca sessizce ignore edilir.
-        """
-        deny_tools = [
-            "run_shell_command",  # Native terminal → MCP run_terminal_command kullanmak zorunda kalır
-            "replace",            # Native text replace → MCP write_file kullanmak zorunda kalır
-        ]
-        # Her araç için ayrı [[rule]] bloğu gerekiyor (TOML array of tables)
-        lines = []
-        for i, tool in enumerate(deny_tools, start=1):
-            lines.append("[[rule]]")
-            lines.append(f'toolName = "{tool}"')
-            lines.append('decision = "deny"')
-            lines.append(f'priority = {i}')
-            lines.append("")
-        toml_content = "\n".join(lines)
-
-        policy_path = os.path.join(workspace, ".gemini_antigravity_policy.toml")
-        try:
-            with open(policy_path, "w") as f:
-                f.write(toml_content)
-        except Exception as e:
-            logger.error(f"[CLIProvider] Gemini policy yazılamadı: {e}")
-        return policy_path
-
     # Backward-compat alias: eski kod _register_agy_mcp'yi de çağırabilir
     _register_agy_mcp = _register_mcp
