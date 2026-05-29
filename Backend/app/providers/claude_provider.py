@@ -17,6 +17,10 @@ class ClaudeCodeProvider(BaseCLIProvider):
             "Edit",          # → mcp__unityai__save_file
             "MultiEdit",     # → mcp__unityai__save_file
             "NotebookEdit",
+            # unityMCP'nin .cs dosyası yazan aracı → bizim onaylı save_file'ı bypass
+            # ediyordu. Kapatınca tüm .cs yazımı mcp__unityai__save_file'dan (onay) geçer.
+            # GameObject'e script ekleme manage_gameobject/manage_components ile yapılır.
+            "mcp__unityMCP__manage_script",
         ])
         from unity_ai_mcp.unity_mcp_manager import unity_mcp_manager
         unity_running = unity_mcp_manager.is_running()
@@ -28,11 +32,12 @@ class ClaudeCodeProvider(BaseCLIProvider):
                 "- Create/modify GameObjects:     mcp__unityMCP__manage_gameobject\n"
                 "- Add/remove/edit components:    mcp__unityMCP__manage_components\n"
                 "- UI elements (Canvas/Button):   mcp__unityMCP__manage_ui\n"
-                "- Scripts (create/attach):       mcp__unityMCP__manage_script\n"
                 "- Materials/shaders:             mcp__unityMCP__manage_material\n"
                 "- Console logs:                  mcp__unityMCP__read_console\n"
                 "RULE: Never write Editor scripts to create scene objects — use unityMCP tools directly.\n"
-                "Only use mcp__unityai__save_file for runtime C# scripts (.cs), NOT for scene setup.\n"
+                "C# SCRIPTS (.cs): ALWAYS create/edit them with mcp__unityai__save_file (user approval).\n"
+                "  NEVER use unityMCP for writing .cs files. To attach a script to a GameObject, first\n"
+                "  create the .cs with save_file, then attach via mcp__unityMCP__manage_gameobject.\n"
             )
         subagent_prefix = (
             "SUBAGENT EXECUTION MODE: You are a subagent dispatched to execute a specific task. "

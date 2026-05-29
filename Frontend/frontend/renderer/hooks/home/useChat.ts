@@ -176,7 +176,12 @@ export const useChat = (
               if (data.type === 'pending_delete' && data.path) setPendingDelete({ path: data.path, messageId: aiMsgId });
               if (data.type === 'refresh_file_tree') refreshFileTree();
               if (data.type === 'done') refreshFileTree();
-              if (data.type === 'done' || data.type === 'response') {
+              // Subscription (claude/codex/agy) provider'larda dosya yazımı MCP/CLI
+              // gate'iyle yapılır (useMCPApproval). Bu provider'lar açıklama metninde
+              // kod bloğunu da yazdığı için parseGeneratedFiles burada FAZLADAN diff
+              // kartı üretir (agy kodu iki kez yazınca iki kart). O yüzden sadece
+              // tool kullanmayan provider'larda (Gemini/OpenAI/Ollama API) metni ayrıştır.
+              if ((data.type === 'done' || data.type === 'response') && aiConfig.provider_type !== 'subscription') {
                 const { parseGeneratedFiles } = await import('../../components/home/export-utils');
                 // currentAiMsg o anki en güncel mesaj içeriğini tutmalı
                 const parsed = parseGeneratedFiles(currentAiMsg.content);

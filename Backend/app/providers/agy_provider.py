@@ -33,6 +33,7 @@ class AgyProvider(BaseCLIProvider):
         except Exception:
             settings = {"colorScheme": "dark", "trustedWorkspaces": []}
         settings["model"] = agy_model_name
+        settings.pop("toolPermission", None)  # geçersiz/junk değer agy'nin TÜM ayarı (disabledTools dahil) reddetmesine yol açıyor
         settings["disabledTools"] = self._AGY_DISABLED_TOOLS
         if workspace:
             trusted = settings.get("trustedWorkspaces", [])
@@ -53,6 +54,7 @@ class AgyProvider(BaseCLIProvider):
         except Exception:
             global_settings = {}
         global_settings["model"] = agy_model_name
+        global_settings.pop("toolPermission", None)  # geçersiz/junk değer agy ayar yüklemesini bozuyor
         global_settings["disabledTools"] = self._AGY_DISABLED_TOOLS
         if workspace:
             global_trusted = global_settings.get("trustedWorkspaces", [])
@@ -67,12 +69,46 @@ class AgyProvider(BaseCLIProvider):
 
         logger.info(f"[CLIProvider] agy model → {agy_model_name}, trusted → {workspace}")
 
+    def _write_cli_env(self, launcher: str, workspace: str, backend_url: str, local_app_token: str):
+        """Backend/.unityai_cli.env yazar — 'unityai' wrapper bu dosyayı source eder.
+        launcher = .../Backend/run_mcp_server.sh → backend_dir = .../Backend."""
+        backend_dir = os.path.dirname(launcher)
+        env_path = os.path.join(backend_dir, ".unityai_cli.env")
+        lines = [
+            f"UNITYAI_URL={backend_url}",
+            f"WORKSPACE={workspace}",
+        ]
+        if local_app_token:
+            lines.append(f"LOCAL_APP_TOKEN={local_app_token}")
+        try:
+            with open(env_path, "w") as f:
+                f.write("\n".join(lines) + "\n")
+            logger.info(f"[CLIProvider] unityai CLI env yazıldı: {env_path}")
+        except Exception as e:
+            logger.warning(f"[CLIProvider] unityai CLI env yazılamadı: {e}")
+
     def _register_mcp(self, launcher: str, workspace: str, backend_url: str):
-        """~/.gemini/antigravity-cli/mcp_config.json, settings.json ve global ~/.gemini/settings.json içindeki unityai kaydını ve disabledTools'u günceller."""
+        """agy config dosyalarını günceller.
+
+        ÖNEMLİ: agy --print modu HİÇBİR MCP server'ını yüklemez (stdio da HTTP da)
+        — doğrudan test edildi. Bu yüzden agy mcp__unityai__* araçlarını GÖREMEZ.
+        Bunun yerine agy, run_command built-in aracıyla 'unityai' CLI'ını çağırır
+        (bkz. cli_base mcp_hint). Buradaki MCP kaydı sadece agy interaktif modda
+        kullanılırsa diye tutulur; --print akışında etkisizdir. Asıl iş .unityai_cli.env
+        + disabledTools (agy'nin gerçek write araçlarını kapatma) ile yapılır.
+        """
         local_app_token = os.environ.get("LOCAL_APP_TOKEN", "")
         env = {"UNITYAI_URL": backend_url, "WORKSPACE": workspace}
         if local_app_token:
             env["LOCAL_APP_TOKEN"] = local_app_token
+
+        # 0. unityai CLI env dosyası — agy run_command env'i propagate etmese bile
+        #    CLI doğru backend'e/token'a/workspace'e bağlanmayı garanti eder.
+        self._write_cli_env(launcher, workspace, backend_url, local_app_token)
+        unityai_entry = {
+            "command": launcher, "args": ["--workspace", workspace],
+            "env": env, "trust": True,
+        }
 
         # 1. ~/.gemini/antigravity-cli/mcp_config.json güncelle
         config_path = os.path.expanduser("~/.gemini/antigravity-cli/mcp_config.json")
@@ -82,10 +118,7 @@ class AgyProvider(BaseCLIProvider):
         except Exception:
             config = {}
         config.setdefault("mcpServers", {}).pop("antigravity", None)
-        config["mcpServers"]["unityai"] = {
-            "command": launcher, "args": ["--workspace", workspace],
-            "env": env, "trust": True,
-        }
+        config["mcpServers"]["unityai"] = dict(unityai_entry)
         # disabledTools mcp_config.json'da OLMAMALI — agy geçersiz key görünce tüm dosyayı
         # yoksayarak MCP server'ları başlatmaz. disabledTools sadece settings.json'da olmalı.
         config.pop("disabledTools", None)
@@ -114,10 +147,8 @@ class AgyProvider(BaseCLIProvider):
         except Exception:
             settings = {"colorScheme": "dark", "trustedWorkspaces": []}
         settings.setdefault("mcpServers", {}).pop("antigravity", None)
-        settings["mcpServers"]["unityai"] = {
-            "command": launcher, "args": ["--workspace", workspace],
-            "env": env, "trust": True,
-        }
+        settings["mcpServers"]["unityai"] = dict(unityai_entry)
+        settings.pop("toolPermission", None)  # geçersiz/junk değer agy'nin TÜM ayarı (disabledTools dahil) reddetmesine yol açıyor
         settings["disabledTools"] = self._AGY_DISABLED_TOOLS
         if unity_mcp_manager.is_running():
             settings["mcpServers"]["unityMCP"] = {
@@ -141,10 +172,8 @@ class AgyProvider(BaseCLIProvider):
                 global_settings = json.load(f)
         except Exception:
             global_settings = {}
-        global_settings.setdefault("mcpServers", {})["unityai"] = {
-            "command": launcher, "args": ["--workspace", workspace],
-            "env": env, "trust": True,
-        }
+        global_settings.setdefault("mcpServers", {})["unityai"] = dict(unityai_entry)
+        global_settings.pop("toolPermission", None)  # geçersiz/junk değer agy ayar yüklemesini bozuyor
         global_settings["disabledTools"] = self._AGY_DISABLED_TOOLS
         if unity_mcp_manager.is_running():
             global_settings["mcpServers"]["unityMCP"] = {

@@ -23,11 +23,12 @@ class CodexProvider(BaseCLIProvider):
                 "- Create/modify/delete objects:  unityMCP/manage_gameobject\n"
                 "- Components (add/remove/edit):  unityMCP/manage_components\n"
                 "- UI elements (Button/Text/etc): unityMCP/manage_ui\n"
-                "- Scripts (create/read/update):  unityMCP/manage_script\n"
                 "- Console errors/warnings:       unityMCP/read_console\n"
                 "- Play/Pause/Save scene:         unityMCP/manage_editor\n"
                 "- Materials/shaders:             unityMCP/manage_material\n"
                 "- Physics settings:              unityMCP/manage_physics\n"
+                "C# SCRIPTS (.cs): ALWAYS create/edit with mcp__unityai__save_file (user approval).\n"
+                "  NEVER use unityMCP/manage_script to write .cs files — it bypasses approval.\n"
                 "Only use unityai file tools for C# source files (.cs), NOT for Unity scene data.\n"
             )
 

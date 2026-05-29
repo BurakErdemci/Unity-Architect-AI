@@ -263,7 +263,7 @@ Backend, kullanıcının makinesindeki resmi CLI aracını subprocess olarak ça
 | **Codex CLI** | gpt-5.5, gpt-5.4, gpt-5.4-mini | `~/.codex/config.toml` |
 | **Antigravity CLI (agy)** | Gemini 3.5 Flash, Gemini 3.1 Pro, Gemini 3 Flash, Gemini 2.5 Pro/Flash + agy üzerinden Claude/GPT-OSS | `~/.gemini/antigravity-cli/mcp_config.json` |
 
-**Şeffaf Hot-Swap (Gemini CLI → agy):** Frontend'de `gemini-cli-*` model ID'leri kalır, backend bunları yakalar (`_AGY_MODEL_MAP`) ve agy binary'sine yönlendirir. agy'nin `--print` modunda MCP tool dispatch'i henüz upstream'de desteklenmediği için (bkz. *Geliştirici Notları — agy Macerası*), bu modeller seçildiğinde chat panel'de sarı bir uyarı banner'ı görünür.
+**Şeffaf Hot-Swap (Gemini CLI → agy):** Frontend'de `gemini-cli-*` model ID'leri kalır, backend bunları yakalar (`_AGY_MODEL_MAP`) ve agy binary'sine yönlendirir. agy'nin `--print` modu MCP tool'larını native yüklemediği için (Claude Code/Codex gibi değil), dosya/terminal işlemleri `run_command` ile çağrılan bir `unityai` CLI köprüsü üzerinden yapılır — bu köprü MCP tool'larıyla aynı onay kapısını kullanır, yani agy de onay kartı gösterir (bkz. *Geliştirici Notları — agy Macerası, Sahne 7*).
 
 ### 3. Local (Ollama)
 
@@ -834,7 +834,7 @@ def _check_token(token):
 
 ### agy Macerası: CLI Embed Etmenin Sınırlarını Öğrendim (xD)
 
-Bu, projenin en büyük çıkmaz sokağıydı ve sonunda bir çözüm yerine bir **uyarı banner'ıyla** bitti. Hikaye şöyle gelişti.
+Bu, projenin en büyük çıkmaz sokağıydı. Uzun süre bir **uyarı banner'ıyla** idare etti — ta ki doğru kanalı (`run_command` köprüsü) keşfedip **gerçekten çözene** kadar. Hikaye şöyle gelişti.
 
 #### Sahne 1: "27 günümüz var"
 
@@ -913,7 +913,31 @@ Tek dürüst çözüm: **kullanıcıya bunu söylemek.**
 )}
 ```
 
-Sarı, dismissable, sessionStorage ile persistent. Kullanıcı uygulama açılışında bir kere görüyor, kapatıyor, devam ediyor. Google MCP entegrasyonunu tamamlayınca tek yapmamız gereken `--print` flag'ini değiştirmek olacak.
+Sarı, dismissable, sessionStorage ile persistent. Kullanıcı uygulama açılışında bir kere görüyor, kapatıyor, devam ediyor.
+
+#### Sahne 7: Çözüm — "Yanlış kapıyı çalıyormuşum"
+
+Banner birkaç gün idare etti. Sonra şu soruyu tekrar sordum: *agy unityMCP'yi nasıl kullanıyor?* Çünkü unityMCP **çalışıyordu** — agy sahneye GameObject ekleyebiliyordu. Eğer `--print` MCP'yi hiç yüklemiyorsa, unityMCP nasıl çalışıyordu?
+
+İzole bir testle (sadece unityMCP kayıtlı, agy'ye "tüm araçlarını listele ve `read_console` çağır" dedim) cevabı buldum. agy kendi ağzıyla anlattı:
+
+> *"`read_console` aracım HTTP MCP server üzerinden lazily-loaded; o yüzden workspace'e bir Python script yazıp `streamable_http_client` ile `http://127.0.0.1:8080/mcp`'ye bağlanıp aracı oradan çağırdım."*
+
+**İşte aydınlanma anı buydu.** agy `--print` MCP'yi gerçekten native yüklemiyor (eski teşhisim doğruymuş). Ama agy yeterince akıllı: bir HTTP MCP server'ın URL'ini config'de görünce, `run_command` ile **kendi köprü script'ini yazıp** ona bağlanıyor. unityMCP "çalışıyordu" çünkü HTTP'ydi ve agy ona `run_command` üzerinden ulaşıyordu — MCP protokolüyle değil.
+
+Yani `--print` modunda agy'nin gördüğü **tek gerçek kanal `run_command`.** Bunca zaman yanlış kapıyı çalıyormuşum: MCP tool dispatch'ini zorlamak yerine, `run_command`'ı kullanmalıydım.
+
+**Çözüm — `unityai` CLI köprüsü:**
+
+1. `Backend/app/unityai_cli.py` + `Backend/unityai` (shell wrapper) yazdım. Bu CLI, MCP tool'larıyla **aynı `approval_bridge`'i paylaşıyor** — yani `unityai save-file ...` çağrısı da tıpkı `mcp__unityai__save_file` gibi onay kartını açıyor. agy bunu `run_command` ile çağırıyor.
+
+2. agy'nin **gerçek** built-in yazma araçlarını `disabledTools` ile kapattım: `write_to_file`, `replace_file_content`, `multi_replace_file_content`. (Eski listede `write_file`/`modify_file` gibi **yanlış isimler** vardı — agy'de öyle araçlar yok, o yüzden hiç tutmuyordu. Doğru isimleri agy'nin kendi araç listesini bastırarak öğrendim.) Yazma araçları kapanınca agy dosya oluşturmak için tek yol olarak `run_command`'a düşüyor, biz de onu `unityai save-file`'a yönlendiriyoruz → **onay kartı çıkıyor.**
+
+3. Sarı banner'ı **kaldırdım** — artık yalan söylüyordu. agy de Claude Code/Codex gibi onay kapısından geçiyor.
+
+İzole test + canlı test: agy `unityai save-file`'ı `run_command` ile çağırdı, dosya doğru içerikle ve **onay kartıyla** oluştu. Üç gün boğuştuğum tool dispatch sorunu, doğru soyutlama katmanına (`run_command`) inince çözüldü — tüm hot-swap macerası bir haftaya sığdı.
+
+**Hâlâ duran ufak sıkıntı (dürüstlük payı):** `run_command`'ı kapatamıyoruz — çünkü `unityai` CLI'ını da onunla çağırıyoruz (çıkmaz). Bu yüzden agy teorik olarak ham shell (`echo > x.cs`) ile ya da unityMCP'nin `manage_script` aracına `run_command` köprüsü kurarak onayı **bypass edebilir**. Bunu sadece prompt'la caydırıyoruz; %100 garanti değil. Pratikte yazma araçları kapalı olduğu için agy doğal olarak `unityai`'ye yöneliyor. Karşılaştırma: Claude Code & Codex MCP'yi **native** yüklediği için onlarda `mcp__unityMCP__manage_script` `--disallowedTools` ile **kesin** yasaklı; agy'de bu garanti yok. Kabul edilebilir bir ödünleşme — agy unityMCP'yi sahne kontrolü için serbestçe kullanmaya devam etsin diye.
 
 #### Çıkarılan Dersler
 

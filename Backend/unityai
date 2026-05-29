@@ -1,0 +1,29 @@
+#!/bin/bash
+# unityai CLI wrapper — agy bunu run_command ile çağırır.
+# Backend venv'i varsa onu kullanır, yoksa sistem python'ına düşer.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# WORKSPACE: env'de set değilse agy'nin çağırdığı dizini (orijinal cwd) kullan.
+ORIG_PWD="$(pwd)"
+
+# Backend'in yazdığı env dosyası (UNITYAI_URL, LOCAL_APP_TOKEN, WORKSPACE).
+# agy run_command env'i propagate etmezse bile doğru backend'e bağlanmayı garanti eder.
+if [ -f "$SCRIPT_DIR/.unityai_cli.env" ]; then
+    set -a
+    # shellcheck disable=SC1091
+    . "$SCRIPT_DIR/.unityai_cli.env"
+    set +a
+fi
+export WORKSPACE="${WORKSPACE:-$ORIG_PWD}"
+
+if [ -f "$SCRIPT_DIR/venv/bin/python3" ]; then
+    PYTHON="$SCRIPT_DIR/venv/bin/python3"
+elif [ -f "$SCRIPT_DIR/venv/bin/python" ]; then
+    PYTHON="$SCRIPT_DIR/venv/bin/python"
+else
+    PYTHON="python3"
+fi
+
+cd "$SCRIPT_DIR"
+export PYTHONPATH="$SCRIPT_DIR/app${PYTHONPATH:+:$PYTHONPATH}"
+exec "$PYTHON" -m app.unityai_cli "$@"

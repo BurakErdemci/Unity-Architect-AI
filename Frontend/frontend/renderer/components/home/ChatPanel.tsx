@@ -7,7 +7,6 @@ import {
   History,
   Trash2,
   AlertTriangle,
-  X,
   Bot
 } from 'lucide-react';
 import { Message, UserData, FileEntry, GenerationMode } from './types';
@@ -99,32 +98,10 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   deleteFile,
 }) => {
   const { t } = useLang();
-  const [agyBannerDismissed, setAgyBannerDismissed] = useState<boolean>(() => {
-    try { return sessionStorage.getItem('agyBannerDismissed') === '1'; } catch { return false; }
-  });
-  const isAgyModel = effectiveProvider === 'subscription' && !!modelName && (modelName.startsWith('gemini-') || modelName.startsWith('agy-'));
-  const dismissAgyBanner = () => {
-    setAgyBannerDismissed(true);
-    try { sessionStorage.setItem('agyBannerDismissed', '1'); } catch {}
-  };
-  const agyBanner = isAgyModel && !agyBannerDismissed && (
-    <div className="flex items-start gap-2 px-3 py-2 mx-4 mt-3 rounded-lg bg-yellow-500/15 border border-yellow-500/40 text-yellow-100 text-[11px] leading-relaxed">
-      <AlertTriangle size={14} className="shrink-0 mt-0.5 text-yellow-400" />
-      <span className="flex-1">{t('chat.agyNotice')}</span>
-      <button
-        onClick={dismissAgyBanner}
-        className="shrink-0 text-yellow-300/70 hover:text-yellow-100 transition-colors"
-        aria-label="Kapat"
-      >
-        <X size={14} />
-      </button>
-    </div>
-  );
 
   if (!activeConvId) {
     return (
       <div className="flex flex-col h-full">
-        {agyBanner}
         <div className="flex-1 flex flex-col items-center justify-center text-slate-600 gap-3">
           <Bot size={32} className="opacity-20" />
           <p className="text-[11px] text-center">
@@ -138,7 +115,6 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   if (messages.length === 0 && !loading) {
     return (
       <div className="flex flex-col h-full">
-        {agyBanner}
         <div className="flex-1 flex items-center justify-center">
           <Bot size={20} className="opacity-10 text-blue-500" />
         </div>
@@ -149,19 +125,6 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   return (
     <div className="flex-1 overflow-y-auto px-4 py-6 custom-scrollbar scroll-smooth">
       <div className="max-w-4xl mx-auto space-y-6">
-        {isAgyModel && !agyBannerDismissed && (
-          <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-yellow-500/15 border border-yellow-500/40 text-yellow-100 text-[11px] leading-relaxed">
-            <AlertTriangle size={14} className="shrink-0 mt-0.5 text-yellow-400" />
-            <span className="flex-1">{t('chat.agyNotice')}</span>
-            <button
-              onClick={dismissAgyBanner}
-              className="shrink-0 text-yellow-300/70 hover:text-yellow-100 transition-colors"
-              aria-label="Kapat"
-            >
-              <X size={14} />
-            </button>
-          </div>
-        )}
         {messages.map((msg, msgIdx) => (
           <div key={msg.id} className={`chat-message-enter ${msg.role === 'user' ? 'flex justify-end' : ''}`}>
             {msg.role === 'assistant' ? (

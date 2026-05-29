@@ -378,10 +378,12 @@ export function AnimatedChatInput({
                     containerClassName="w-full"
                     disabled={disabled}
                     className={cn(
-                        "w-full px-3 py-2 resize-none bg-transparent border-none text-[13px] focus:outline-none min-h-[40px]",
+                        "w-full px-3 py-2 resize-none bg-transparent border-none text-[13px] focus:outline-none min-h-[40px] custom-scrollbar",
                         disabled ? "text-orange-500/50 cursor-not-allowed italic" : "text-white/90 placeholder:text-white/20"
                     )}
-                    style={{ overflow: "hidden" }}
+                    // maxHeight (200px) aşıldığında textarea içinde mouse/trackpad ile
+                    // scroll yapılabilsin diye overflow-y: auto (önceden hidden'dı → metin kilitleniyordu)
+                    style={{ overflowY: "auto" }}
                     showRing={false}
                 />
             </div>

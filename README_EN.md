@@ -263,7 +263,7 @@ The backend invokes the official CLI binary on the user's machine as a subproces
 | **Codex CLI** | gpt-5.5, gpt-5.4, gpt-5.4-mini | `~/.codex/config.toml` |
 | **Antigravity CLI (agy)** | Gemini 3.5 Flash, Gemini 3.1 Pro, Gemini 3 Flash, Gemini 2.5 Pro/Flash + Claude/GPT-OSS via agy | `~/.gemini/antigravity-cli/mcp_config.json` |
 
-**Transparent Hot-Swap (Gemini CLI → agy):** The frontend keeps the `gemini-cli-*` model IDs; the backend catches them (`_AGY_MODEL_MAP`) and routes them to the agy binary. Since agy's `--print` mode doesn't yet dispatch MCP tools upstream (see *Developer Notes — The agy Adventure*), a yellow warning banner appears in the chat panel when these models are selected.
+**Transparent Hot-Swap (Gemini CLI → agy):** The frontend keeps the `gemini-cli-*` model IDs; the backend catches them (`_AGY_MODEL_MAP`) and routes them to the agy binary. Since agy's `--print` mode doesn't load MCP tools natively (unlike Claude Code/Codex), file/terminal operations go through a `unityai` CLI bridge invoked via `run_command` — the bridge uses the same approval gate as the MCP tools, so agy shows the approval card too (see *Developer Notes — The agy Adventure, Scene 7*).
 
 ### 3. Local (Ollama)
 
@@ -834,7 +834,7 @@ The `users` table now has a single row: `(id=1, username='local')`. The sessions
 
 ### The agy Adventure: Learning the Limits of Embedding a CLI (xD)
 
-This was the project's biggest dead end, and it ended with a **warning banner** instead of a solution. Here's how it played out.
+This was the project's biggest dead end. For a while it limped along with a **warning banner** — until I found the right channel (`run_command` bridge) and **actually solved it**. Here's how it played out.
 
 #### Act 1: "We have 27 days"
 
@@ -914,7 +914,31 @@ The only honest fix: **tell the user.**
 )}
 ```
 
-Yellow, dismissible, persisted in sessionStorage. The user sees it once at app launch, dismisses it, moves on. When Google ships MCP integration, all I'll need to do is change the `--print` flag.
+Yellow, dismissible, persisted in sessionStorage. The user sees it once at app launch, dismisses it, moves on.
+
+#### Scene 7: The Fix — "I Was Knocking on the Wrong Door"
+
+The banner held for a few days. Then I asked the question again: *how does agy use unityMCP?* Because unityMCP **worked** — agy could add GameObjects to the scene. If `--print` loads no MCP at all, how was unityMCP working?
+
+An isolated test (only unityMCP registered, asked agy to "list all your tools and call `read_console`") gave the answer. agy explained it itself:
+
+> *"My `read_console` tool is lazily loaded via the HTTP MCP server, so I wrote a Python script in the workspace that connects via `streamable_http_client` to `http://127.0.0.1:8080/mcp` and called the tool from there."*
+
+**That was the lightbulb moment.** agy `--print` genuinely doesn't load MCP natively (my original diagnosis was right). But agy is clever enough: when it sees an HTTP MCP server's URL in the config, it uses `run_command` to **write its own bridge script** and connect to it. unityMCP "worked" because it was HTTP and agy reached it over `run_command` — not via the MCP protocol.
+
+So in `--print` mode the **only real channel agy sees is `run_command`.** I'd been knocking on the wrong door the whole time: instead of forcing MCP tool dispatch, I should have used `run_command`.
+
+**The fix — a `unityai` CLI bridge:**
+
+1. I wrote `Backend/app/unityai_cli.py` + `Backend/unityai` (shell wrapper). This CLI **shares the exact same `approval_bridge`** as the MCP tools — so a `unityai save-file ...` call opens the approval card just like `mcp__unityai__save_file` would. agy invokes it via `run_command`.
+
+2. I disabled agy's **real** built-in write tools via `disabledTools`: `write_to_file`, `replace_file_content`, `multi_replace_file_content`. (The old list had **wrong names** like `write_file`/`modify_file` — agy has no such tools, so it never took effect. I learned the correct names by having agy dump its own tool list.) With write tools disabled, agy's only path to create a file is `run_command`, which we route to `unityai save-file` → **the approval card appears.**
+
+3. I **removed** the yellow banner — it was lying now. agy goes through the approval gate just like Claude Code/Codex.
+
+Isolated test + live test: agy called `unityai save-file` via `run_command`, the file was created with the correct content **and an approval card**. The tool-dispatch problem I'd fought for three days dissolved once I dropped down to the right abstraction layer (`run_command`) — the whole hot-swap saga fit into a week.
+
+**One small caveat that remains (honesty corner):** we can't disable `run_command` — because we invoke the `unityai` CLI through it (a catch-22). So agy could theoretically **bypass** approval via raw shell (`echo > x.cs`) or by bridging to unityMCP's `manage_script` tool over `run_command`. We only discourage this via the prompt; it's not a 100% guarantee. In practice, with write tools disabled, agy naturally gravitates to `unityai`. For comparison: Claude Code & Codex load MCP **natively**, so `mcp__unityMCP__manage_script` is **hard-banned** there via `--disallowedTools`; agy lacks that guarantee. An acceptable trade-off — so agy can keep using unityMCP freely for scene control.
 
 #### Lessons Learned
 

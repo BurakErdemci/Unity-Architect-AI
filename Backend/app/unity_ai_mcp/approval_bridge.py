@@ -63,9 +63,9 @@ async def request_approval(
         logger.warning(f"[approval_bridge] Backend'e ulaşılamadı — {tool_name} otomatik onaylanıyor")
         return {"approved": True, "auto": True}
 
-    # Kullanıcı cevabını bekle — 120 × 0.5s = 60 saniye
+    # Kullanıcı cevabını bekle — 360 × 0.5s = 180 saniye (diff incelemek için makul süre)
     logger.info(f"[approval_bridge] Kullanıcı cevabı bekleniyor (gate: {gate_id})")
-    for i in range(120):
+    for i in range(360):
         await asyncio.sleep(0.5)
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
@@ -80,4 +80,4 @@ async def request_approval(
             continue
 
     logger.warning(f"[approval_bridge] Zaman aşımı (gate: {gate_id})")
-    return {"approved": False, "error": "Zaman aşımı (60s)"}
+    return {"approved": False, "error": "Zaman aşımı (180s)"}

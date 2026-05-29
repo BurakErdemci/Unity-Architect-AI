@@ -67,6 +67,7 @@ def create_config_router(db):
         models = {
             "local": [],
             "cloud": [
+                {"id": "claude-opus-4-8",          "name": "Claude 4.8 Opus",    "provider": "anthropic", "openrouter_id": "anthropic/claude-opus-4-8"},
                 {"id": "claude-sonnet-4-6",       "name": "Claude 4.6 Sonnet",  "provider": "anthropic", "openrouter_id": "anthropic/claude-sonnet-4-6"},
                 {"id": "claude-opus-4-7",          "name": "Claude 4.7 Opus",    "provider": "anthropic", "openrouter_id": "anthropic/claude-opus-4-7"},
                 {"id": "claude-opus-4-6",          "name": "Claude 4.6 Opus",    "provider": "anthropic", "openrouter_id": "anthropic/claude-opus-4-6"},
@@ -88,6 +89,7 @@ def create_config_router(db):
                 {"id": "kimi-k2.5",                "name": "Kimi K2.5",          "provider": "moonshot",  "openrouter_id": "moonshotai/kimi-k2.5"},
             ],
             "subscription": [
+                {"id": "claude-opus-4-8",      "name": "Claude 4.8 Opus (CLI)",         "provider": "subscription"},
                 {"id": "claude-sonnet-4-6",    "name": "Claude 4.6 Sonnet (CLI)",       "provider": "subscription"},
                 {"id": "claude-opus-4-7",      "name": "Claude 4.7 Opus (CLI)",         "provider": "subscription"},
                 {"id": "claude-haiku-4-5",     "name": "Claude 4.5 Haiku (CLI)",        "provider": "subscription"},

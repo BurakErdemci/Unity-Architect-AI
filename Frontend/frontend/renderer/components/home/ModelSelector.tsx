@@ -35,7 +35,7 @@ const CLI_GROUPS = [
     key: 'claude',
     label: 'Claude',
     color: 'orange',
-    ids: ['claude-sonnet-4-6', 'claude-opus-4-7', 'claude-haiku-4-5'],
+    ids: ['claude-opus-4-8', 'claude-sonnet-4-6', 'claude-opus-4-7', 'claude-haiku-4-5'],
   },
   {
     key: 'codex',

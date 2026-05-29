@@ -36,9 +36,13 @@ class BaseCLIProvider(AIProvider):
     }
 
     # agy CLI'ın kendi yerleşik araçlarının isimleri (onaysız çalışmayı engellemek amacıyla devre dışı bırakılır)
+    # agy'nin GERÇEK built-in yazma araçları (agy'nin kendi raporundan doğrulandı).
+    # Bunları kapatınca agy dosya yazmak için tek yol olarak run_command'a düşer,
+    # biz de onu 'unityai save-file' CLI'ına yönlendiririz → onay kartı çıkar.
+    # run_command, view_file, list_dir AÇIK bırakılır (unityai CLI'ı çağırmak +
+    # okuma için gerekli; okuma onay gerektirmez).
     _AGY_DISABLED_TOOLS = [
-        "write_file", "modify_file", "run_terminal_command",
-        "list_directory", "read_file", "grep_search", "view_image"
+        "write_to_file", "replace_file_content", "multi_replace_file_content",
     ]
 
     def __init__(self, binary_name: str = "claude"):
@@ -152,16 +156,41 @@ class BaseCLIProvider(AIProvider):
                         env=_env,
                         cwd=workspace,
                     )
+                    # agy --print HİÇBİR MCP yüklemez (test edildi). agy'nin gördüğü tek
+                    # köprü built-in run_command. Yazma araçları (write_to_file vb.)
+                    # _AGY_DISABLED_TOOLS ile kapalı → agy yazmak için 'unityai' CLI'ını
+                    # run_command ile çağırmak zorunda kalır → onay kartı çıkar.
+                    backend_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+                    unityai_cli = os.path.join(backend_dir, "unityai").replace("unityaıPython", "unityaiPython")
                     mcp_hint = (
                         "IMPORTANT: You MUST respond in Turkish (Türkçe) at all times.\n\n"
+                        "You have a command-line tool 'unityai' for file WRITES, DELETES and shell.\n"
+                        "Your own write_to_file/replace_file_content tools are DISABLED on purpose —\n"
+                        "the ONLY way to create, edit, delete a file or run shell is via run_command\n"
+                        "calling 'unityai' with its ABSOLUTE PATH:\n"
+                        f"  {unityai_cli}\n\n"
                         "CRITICAL RULES — follow exactly:\n"
-                        "1. To CREATE or EDIT any file: use mcp__unityai__save_file\n"
-                        "   FORBIDDEN: python3 -c, printf, echo, cat, tee, heredoc, shell redirection\n"
-                        "2. To DELETE a file: use mcp__unityai__delete_file\n"
-                        "3. To READ a file: use mcp__unityai__read_file\n"
-                        "4. To LIST a directory: use mcp__unityai__list_directory\n"
-                        "5. For shell commands (git, npm, etc.): use mcp__unityai__run_terminal_command\n\n"
-                        "SCOPE: Only work in the current workspace. Never create test files unprompted.\n\n"
+                        "1. CREATE or EDIT a file — pipe the content via stdin (handles multiline):\n"
+                        f"   run_command: {unityai_cli} save-file --path \"<rel/path>\" --content-stdin <<'UNITYAI_EOF'\n"
+                        "   ...full file content here...\n"
+                        "   UNITYAI_EOF\n"
+                        "   FORBIDDEN for writing files: python3 -c, printf, echo, cat, tee, or shell\n"
+                        "   redirection (>). These bypass user approval. ALWAYS use unityai save-file.\n"
+                        f"2. DELETE a file:    run_command: {unityai_cli} delete-file --path \"<rel/path>\"\n"
+                        f"3. SHELL commands (git, npm, mkdir, rm, mv, etc.):\n"
+                        f"   run_command: {unityai_cli} bash --command \"<shell command>\"\n"
+                        "4. To READ a file or LIST a directory you MAY use your own view_file / list_dir.\n\n"
+                        "Every write, delete and shell command MUST go through unityai so the user can\n"
+                        "approve it in the IDE. SCOPE: Only the current workspace. No unprompted test files.\n\n"
+                        "REPLY STYLE — keep your text answer SHORT and clean:\n"
+                        "- NEVER paste the file's full content/code block in your reply. The IDE approval\n"
+                        "  card already shows the code and diff to the user.\n"
+                        "- NEVER explain the approval mechanics (do not say 'onayınızı bekliyor',\n"
+                        "  'onay verdikten sonra', 'komutu çalıştırdım' etc.).\n"
+                        "- Do NOT repeat yourself or describe the same file twice.\n"
+                        "- After a file/shell action, reply with ONE short Turkish sentence stating what\n"
+                        "  you did (e.g. 'TestScripts.cs oluşturuldu.'). Add a brief note only if it gives\n"
+                        "  real extra value.\n\n"
                     )
                     stdin_payload = (mcp_hint + enriched_prompt).encode("utf-8")
                     process.stdin.write(stdin_payload)
@@ -201,59 +230,20 @@ class BaseCLIProvider(AIProvider):
                     line = await asyncio.wait_for(_stdout_reader.readline(), timeout=15.0)
                 except asyncio.TimeoutError:
                     _now = asyncio.get_event_loop().time()
+                    # Onay beklerken CLI uzun süre stdout üretmez — bu normal.
+                    # Tek satırlık watchdog; detaylı DIAG dump'ları kaldırıldı (log flood'a
+                    # yol açıyordu: codex session jsonl + devasa MCP tool şemaları her 15s).
                     logger.warning(
-                        f"[CLIProvider:{self.binary_name}][TIMEOUT] "
-                        f"15s'de stdout yok | toplam={_now-_start:.0f}s | "
-                        f"pid={process.pid} | rc={process.returncode} | stderr={len(stderr_buffer)}"
+                        f"[CLIProvider:{self.binary_name}][WAIT] "
+                        f"{_now-_start:.0f}s stdout yok (onay/işlem bekleniyor olabilir) | "
+                        f"pid={process.pid} | rc={process.returncode}"
                     )
-                    # lsof: process'in hangi dosyaları/soketleri açtığını göster
-                    try:
-                        import subprocess as _sp
-                        lsof = _sp.run(
-                            ["lsof", "-p", str(process.pid), "-F", "n"],
-                            capture_output=True, text=True, timeout=3
-                        )
-                        open_files = [
-                            l[1:] for l in lsof.stdout.splitlines()
-                            if l.startswith("n") and l[1:] not in ("/dev/null", "")
-                        ]
-                        logger.warning(f"[DIAG][LSOF pid={process.pid}] {open_files[:20]}")
-                    except Exception as _le:
-                        logger.warning(f"[DIAG][LSOF] çalıştırılamadı: {_le}")
-                    # Codex CLI ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl yazar
-                    if self.binary_name.startswith("gpt-"):
-                        try:
-                            import glob as _glob
-                            codex_sessions = sorted(
-                                _glob.glob(os.path.expanduser("~/.codex/sessions/*/*/*/rollout-*.jsonl")),
-                                key=os.path.getmtime, reverse=True
-                            )
-                            if codex_sessions:
-                                with open(codex_sessions[0], "r", errors="ignore") as _cf:
-                                    tail = _cf.readlines()[-20:]
-                                logger.warning(f"[DIAG][CODEX_SESSION] {codex_sessions[0]}:\n{''.join(tail)}")
-                            else:
-                                logger.warning("[DIAG][CODEX_SESSION] hiç session dosyası bulunamadı")
-                        except Exception as _ce:
-                            logger.warning(f"[DIAG][CODEX_SESSION] okunamadı: {_ce}")
-                    # Claude CLI kendi log dosyasını ~/.claude/logs/'a yazar — son satırları oku
-                    if self.binary_name.startswith("claude"):
-                        try:
-                            import glob as _glob
-                            claude_logs = sorted(
-                                _glob.glob(os.path.expanduser("~/.claude/logs/*.log")),
-                                key=os.path.getmtime, reverse=True
-                            )
-                            if claude_logs:
-                                with open(claude_logs[0], "r", errors="ignore") as _lf:
-                                    tail = _lf.readlines()[-30:]
-                                logger.warning(f"[DIAG][CLAUDE_LOG] {claude_logs[0]}:\n{''.join(tail)}")
-                        except Exception as _cle:
-                            logger.warning(f"[DIAG][CLAUDE_LOG] okunamadı: {_cle}")
                     if process.returncode is not None:
                         logger.error(f"[CLIProvider:{self.binary_name}] Process bitti rc={process.returncode}")
                         break
-                    _hard_timeout = 300 if _is_agy else 120
+                    # Onay (approval) beklerken CLI uzun süre sessiz kalabilir; hard-kill
+                    # bu süreyi kapsamalı (approval_bridge 180s bekliyor). 300s tüm provider'lar.
+                    _hard_timeout = 300
                     if _now - _start > _hard_timeout:
                         logger.error(f"[CLIProvider:{self.binary_name}] {_hard_timeout}s timeout — kill")
                         process.kill()
