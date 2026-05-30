@@ -6,9 +6,11 @@ a = Analysis(
     ['app/main.py'],
     pathex=['app'],
     binaries=[],
-    datas=[
-        ('app/knowledge/unity_kb.json', 'knowledge'),
-    ],
+    # NOT: Launcher scriptleri (run_mcp_server.sh, unityai) PyInstaller datas'ı ile
+    # GÖMÜLMEZ — PyInstaller 6.x datas'ı _internal/ altına koyuyor, oysa scriptlerin
+    # frozen 'backend' binary'sinin YANINDA (Backend kökünde) olması gerekiyor.
+    # Bu yüzden electron-builder.yml extraResources ile doğrudan Backend köküne kopyalanır.
+    datas=[],
     hiddenimports=[
         # uvicorn — otomatik bulunamayan modüller
         'uvicorn.logging',
@@ -55,6 +57,18 @@ a = Analysis(
         'grpc',
         'grpc._cython',
         'grpc._cython.cygrpc',
+        # Frozen binary subcommand dispatch hedefleri (main.py bunları çağırır):
+        #   backend mcp-server  → unity_ai_mcp.server.main
+        #   backend unityai     → unityai_cli.main
+        'unity_ai_mcp.server',
+        'unity_ai_mcp.approval_bridge',
+        'unity_ai_mcp.tools.file_tools',
+        'unity_ai_mcp.tools.bash_tool',
+        'unityai_cli',
+        # FastMCP (MCP server transport)
+        'mcp',
+        'mcp.server',
+        'mcp.server.fastmcp',
     ],
     hookspath=[],
     hooksconfig={},

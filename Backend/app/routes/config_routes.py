@@ -132,4 +132,20 @@ def create_config_router(db):
 
         return models
 
+    @router.get("/cli-availability")
+    async def cli_availability(x_session_token: str = Header(alias="X-Session-Token", default="")):
+        """CLI sağlayıcılarının (claude/codex/agy) kullanıcı PC'sinde kurulu olup
+        olmadığını döner. Bunlar gömülü DEĞİL — kullanıcının kurmuş olması gerekir.
+        Frontend, kurulu olmayan bir CLI modeli seçilince uyarı gösterir."""
+        import shutil
+        from providers.agy_provider import AgyProvider
+
+        # _agy_binary() yaygın kurulum yollarına da bakar; "agy" dönerse sadece PATH'e kalmış demektir.
+        agy_ok = AgyProvider._agy_binary() != "agy" or bool(shutil.which("agy"))
+        return {
+            "claude": bool(shutil.which("claude")),
+            "codex": bool(shutil.which("codex")),
+            "agy": agy_ok,
+        }
+
     return router

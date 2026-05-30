@@ -1,5 +1,42 @@
 import logging
 import os
+import sys
+
+# ── PATH augmentasyonu (GUI-launched app fix) ─────────────────────────────
+# Finder/dmg'den açılan macOS uygulamaları minimal PATH alır (/usr/bin:/bin) —
+# kullanıcının CLI'ları (claude/codex → /opt/homebrew/bin, agy → ~/.local/bin)
+# bu PATH'te olmadığı için bulunamaz ve spawn patlar (terminalden açınca çalışıyordu).
+# Yaygın kurulum dizinlerini PATH'e ekle ki hem shutil.which (cli-availability)
+# hem de CLI subprocess spawn'ları çalışsın.
+_extra_paths = [
+    os.path.expanduser("~/.local/bin"),
+    "/opt/homebrew/bin", "/opt/homebrew/sbin",
+    "/usr/local/bin", "/usr/local/sbin",
+    os.path.expanduser("~/.npm-global/bin"),
+    os.path.expanduser("~/bin"),
+]
+_cur_path = os.environ.get("PATH", "").split(os.pathsep)
+os.environ["PATH"] = os.pathsep.join(
+    [p for p in _extra_paths if p and p not in _cur_path] + _cur_path
+)
+
+# ── Frozen binary subcommand dispatch ─────────────────────────────────────
+# Paketlenmiş app'te venv/python yok; launcher scriptleri donmuş 'backend'
+# binary'sini alt-komutlarla çağırır:
+#   backend mcp-server [--workspace X]  → unity_ai_mcp.server.main (Claude/Codex MCP)
+#   backend unityai <save-file|...>     → unityai_cli.main (agy köprüsü)
+# FastAPI/uvicorn app'i kurmadan erken dön — bu komutlar HTTP server başlatmaz.
+if len(sys.argv) > 1 and sys.argv[1] in ("mcp-server", "unityai"):
+    _sub_mode = sys.argv[1]
+    sys.argv = [sys.argv[0]] + sys.argv[2:]
+    if _sub_mode == "mcp-server":
+        from unity_ai_mcp.server import main as _sub_main
+        _sub_main()
+        sys.exit(0)
+    else:  # unityai
+        from unityai_cli import main as _sub_main
+        sys.exit(_sub_main())
+
 from contextlib import asynccontextmanager
 from pathlib import Path
 from dotenv import load_dotenv
@@ -136,8 +173,10 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", "8000"))
     # MCP server subprocess'leri bu URL'yi kullanır
     os.environ["ANTIGRAVITY_URL"] = f"http://{host}:{port}"
+    # app objesini doğrudan ver — string "main:app" frozen binary'de import edilemiyor
+    # ("Could not import module 'main'"). reload=False olduğu için obje geçişi sorunsuz.
     uvicorn.run(
-        "main:app",
+        app,
         host=host,
         port=port,
         reload=False

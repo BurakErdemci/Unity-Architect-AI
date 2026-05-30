@@ -1,5 +1,6 @@
 import os
 import json
+import shutil
 import logging
 from .cli_base import BaseCLIProvider
 
@@ -8,13 +9,29 @@ logger = logging.getLogger(__name__)
 
 class AgyProvider(BaseCLIProvider):
 
+    @staticmethod
+    def _agy_binary() -> str:
+        """agy CLI'ını kullanıcının PC'sinde bulur (gömülü değil — dış kurulum).
+        PATH'te yoksa yaygın kurulum yollarına bakar, son çare 'agy'."""
+        found = shutil.which("agy")
+        if found:
+            return found
+        for cand in (
+            os.path.expanduser("~/.local/bin/agy"),
+            "/opt/homebrew/bin/agy",
+            "/usr/local/bin/agy",
+        ):
+            if os.path.exists(cand):
+                return cand
+        return "agy"  # PATH'e güven (subprocess başlatılınca çözülür)
+
     def _build_cmd(self, prompt: str, thinking_level: str = "medium", workspace: str = None) -> list:
         full_id = self.binary_name
         # Tüm agy modelleri: Gemini, Claude Sonnet/Opus, GPT-OSS
         # Prompt stdin'den geçecek (ARG_MAX güvenliği) — cmd'ye dahil edilmez
         self._pending_agy_model = self._AGY_MODEL_MAP.get(full_id, "Gemini 3.5 Flash (High)")
         cmd = [
-            "/Users/burakemreerdemci/.local/bin/agy",
+            self._agy_binary(),
             "--print",
             "--dangerously-skip-permissions",
             "--print-timeout", "180s",

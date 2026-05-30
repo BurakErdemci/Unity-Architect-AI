@@ -195,6 +195,15 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                                 setIsModelDropdownOpen(false);
                                 if (user) await axios.post(`${API}/save-ai-config`, { ...newCfg, user_id: user.id });
                                 showToast(`${m.name} seçildi.`, 'info');
+                                // CLI'ler gömülü değil — kullanıcının PC'sinde kurulu olmalı. Kurulu değilse uyar.
+                                try {
+                                  const cliKey = group.key === 'gemini' ? 'agy' : group.key; // Antigravity CLI grubu agy'yi kullanır
+                                  const res = await axios.get(`${API}/cli-availability`);
+                                  if (res.data && res.data[cliKey] === false) {
+                                    const cliName = cliKey === 'agy' ? 'Antigravity (agy)' : cliKey === 'codex' ? 'Codex' : 'Claude Code';
+                                    showToast(`${cliName} CLI bu bilgisayarda bulunamadı. Bu modeli kullanmak için önce CLI'ı kurman gerekiyor.`, 'warning');
+                                  }
+                                } catch { /* availability kontrolü best-effort, sessizce geç */ }
                               }}
                               className={`w-full text-left pl-6 pr-3 py-1.5 text-[11px] flex flex-col rounded-lg hover:bg-purple-600/10 ${aiConfig.model_name === m.id ? 'text-purple-400' : 'text-slate-400'}`}
                             >

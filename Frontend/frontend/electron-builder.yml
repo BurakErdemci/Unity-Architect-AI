@@ -14,6 +14,12 @@ extraResources:
     to: Backend
     filter:
       - "**/*"
+  # Launcher scriptleri frozen 'backend' binary'sinin yanına (Backend kökü) —
+  # paketlenmiş app'te MCP/agy köprüsü bunlar üzerinden binary'yi çağırır.
+  - from: ../../Backend/run_mcp_server.sh
+    to: Backend/run_mcp_server.sh
+  - from: ../../Backend/unityai
+    to: Backend/unityai
 mac:
   category: public.app-category.developer-tools
   # identity: null → imzasız build (test dağıtımı için)

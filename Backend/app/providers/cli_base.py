@@ -1,5 +1,6 @@
 import os
 import re
+import sys
 import logging
 import asyncio
 import json
@@ -49,6 +50,23 @@ class BaseCLIProvider(AIProvider):
         self.binary_name = binary_name
         self._pending_agy_model = "Gemini 3.5 Flash (High)"
 
+    def _backend_dir(self) -> str:
+        """Backend kökünü döndürür (run_mcp_server.sh + unityai orada yaşar).
+        Frozen build: sys.executable = .../Backend/backend → dirname = .../Backend.
+        Dev: bu dosya .../Backend/app/providers/cli_base.py → 3x dirname."""
+        if getattr(sys, "frozen", False):
+            return os.path.dirname(sys.executable)
+        return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+    @staticmethod
+    def _ensure_exec(path: str) -> None:
+        """Launcher'ın çalıştırılabilir olduğundan emin ol — paket kopyalama exec bit'i düşürebilir."""
+        try:
+            if os.path.exists(path):
+                os.chmod(path, 0o755)
+        except OSError:
+            pass
+
     def _get_file_tree(self, workspace: str, max_files: int = 80) -> str:
         """Workspace dosya ağacını string olarak döner (Codex context'i için)."""
         lines = []
@@ -77,8 +95,9 @@ class BaseCLIProvider(AIProvider):
         Gemini CLI için MCP kaydını günceller.
         Döndürür: Claude config dosyasının tam yolu.
         """
-        backend_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        backend_dir = self._backend_dir()
         launcher = os.path.join(backend_dir, "run_mcp_server.sh").replace("unityaıPython", "unityaiPython")
+        self._ensure_exec(launcher)
         backend_url = os.environ.get("UNITYAI_URL", os.environ.get("ANTIGRAVITY_URL", "http://localhost:8000"))
         local_app_token = os.environ.get("LOCAL_APP_TOKEN", "")
         unityai_env = {"UNITYAI_URL": backend_url}
@@ -160,8 +179,9 @@ class BaseCLIProvider(AIProvider):
                     # köprü built-in run_command. Yazma araçları (write_to_file vb.)
                     # _AGY_DISABLED_TOOLS ile kapalı → agy yazmak için 'unityai' CLI'ını
                     # run_command ile çağırmak zorunda kalır → onay kartı çıkar.
-                    backend_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+                    backend_dir = self._backend_dir()
                     unityai_cli = os.path.join(backend_dir, "unityai").replace("unityaıPython", "unityaiPython")
+                    self._ensure_exec(unityai_cli)
                     mcp_hint = (
                         "IMPORTANT: You MUST respond in Turkish (Türkçe) at all times.\n\n"
                         "You have a command-line tool 'unityai' for file WRITES, DELETES and shell.\n"
@@ -270,6 +290,7 @@ class BaseCLIProvider(AIProvider):
                 _is_json_provider = (
                     self.binary_name.startswith("claude") or
                     self.binary_name.startswith("gemini") or
+                    self.binary_name.startswith("agy-") or
                     self.binary_name.startswith("gpt-")
                 )
                 if _is_json_provider:

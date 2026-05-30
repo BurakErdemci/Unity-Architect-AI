@@ -26,55 +26,41 @@ class DatabaseManager:
         if env_key:
             return Fernet(env_key.encode("utf-8"))
 
-        # 2. OS keystore — Windows Credential Manager / macOS Keychain
-        #    Key asla DB dizinine yazılmaz, OS'un güvenli deposunda tutulur
-        try:
-            import keyring
-            _KR_SERVICE = "unity-architect-ai"
-            _KR_USER = "fernet-key"
-
-            stored = keyring.get_password(_KR_SERVICE, _KR_USER)
-            if stored:
-                return Fernet(stored.encode("utf-8"))
-
-            # Eski dosya tabanlı key varsa keystore'a migrate et
-            db_dir = os.path.dirname(self.db_path) or "."
-            legacy_path = os.path.join(db_dir, "api_key_fernet.key")
-            if os.path.exists(legacy_path):
-                with open(legacy_path, "rb") as f:
-                    key = f.read().strip()
-                keyring.set_password(_KR_SERVICE, _KR_USER, key.decode("utf-8"))
-                try:
-                    os.remove(legacy_path)
-                except OSError:
-                    pass
-                return Fernet(key)
-
-            # İlk kurulum: yeni key üret, keystore'a kaydet
-            key = Fernet.generate_key()
-            keyring.set_password(_KR_SERVICE, _KR_USER, key.decode("utf-8"))
-            return Fernet(key)
-
-        except Exception:
-            pass
-
-        # 3. Fallback: keyring kullanılamıyorsa dosya tabanlı (eski davranış)
+        # 2. DB dizinindeki kalıcı anahtar dosyası (PRIMARY).
+        #    NOT: keyring (macOS Keychain) PRIMARY olarak KULLANILMAZ — imzasız/
+        #    paketlenmiş binary her build'de farklı ad-hoc imza aldığı için Keychain
+        #    item'ını okuyamayıp her açılışta yeni anahtar üretiyordu; bu yüzden
+        #    DB'de duran şifreli API key'ler çözülemiyor ve "API key not valid"
+        #    hatası veriyordu. Dosya tabanlı anahtar aynı DB dizininde kaldığı
+        #    sürece deterministik ve kod imzasından bağımsızdır.
         db_dir = os.path.dirname(self.db_path) or "."
         os.makedirs(db_dir, exist_ok=True)
         key_path = os.path.join(db_dir, "api_key_fernet.key")
 
         if os.path.exists(key_path):
             with open(key_path, "rb") as f:
-                key = f.read().strip()
-        else:
-            key = Fernet.generate_key()
-            with open(key_path, "wb") as f:
-                f.write(key)
-            try:
-                os.chmod(key_path, 0o600)
-            except OSError:
-                pass
+                return Fernet(f.read().strip())
 
+        # 2b. İlk kurulum: eski keyring anahtarı varsa onu dosyaya TAŞI ki daha
+        #     önce o anahtarla şifrelenmiş kayıtlar çözülmeye devam etsin; yoksa
+        #     yeni anahtar üret.
+        key = None
+        try:
+            import keyring
+            stored = keyring.get_password("unity-architect-ai", "fernet-key")
+            if stored:
+                key = stored.encode("utf-8")
+        except Exception:
+            pass
+        if key is None:
+            key = Fernet.generate_key()
+
+        with open(key_path, "wb") as f:
+            f.write(key)
+        try:
+            os.chmod(key_path, 0o600)
+        except OSError:
+            pass
         return Fernet(key)
 
     def _encrypt_api_key(self, api_key: str) -> str:
