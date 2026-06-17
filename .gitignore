@@ -36,6 +36,10 @@ Backend/build/
 *.sqlite
 *.sqlite3
 
+# uv araç zinciri — installer'a gömülür ama repoya konmaz (~66MB).
+# Tekrar build için: pwsh Backend/vendor/fetch_uv.ps1
+Backend/vendor/uv/
+
 # Local notes
 LOCAL_REFACTOR_NOTES.md
 ROADMAP.md

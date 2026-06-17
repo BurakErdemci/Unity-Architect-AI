@@ -26,6 +26,20 @@ extraResources:
     to: Backend/run_mcp_server.cmd
   - from: ../../Backend/unityai.cmd
     to: Backend/unityai.cmd
+  # Unity MCP sunucu kaynağı + Unity paketi (uvx --from ve install_package bunları kullanır)
+  - from: ../../unity-mcp/Server
+    to: unity-mcp/Server
+    filter:
+      - "**/*"
+  - from: ../../unity-mcp/MCPForUnity
+    to: unity-mcp/MCPForUnity
+    filter:
+      - "**/*"
+  # uv araç zinciri gömülü — kullanıcının PC'sinde uv kurulu olmasa da MCP çalışsın
+  - from: ../../Backend/vendor/uv
+    to: uv
+    filter:
+      - "**/*"
 mac:
   category: public.app-category.developer-tools
   # identity: null → imzasız build (test dağıtımı için)

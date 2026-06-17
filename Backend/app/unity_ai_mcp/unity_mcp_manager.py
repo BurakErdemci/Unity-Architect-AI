@@ -29,9 +29,16 @@ class UnityMCPManager:
         self._starting = False  # Çift başlatmayı önler
         self._health_cache_ts = 0.0   # is_running() HTTP probe cache (perf)
         self._health_cache_val = False
-        self.project_root = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "..")
-        )
+        import sys
+        if getattr(sys, "frozen", False):
+            # Frozen build: backend.exe = .../resources/Backend/backend.exe →
+            # paket kökü (resources) = backend.exe'nin iki üst dizini. unity-mcp ve uv
+            # buraya extraResources ile kopyalanır.
+            self.project_root = os.path.dirname(os.path.dirname(sys.executable))
+        else:
+            self.project_root = os.path.abspath(
+                os.path.join(os.path.dirname(__file__), "..", "..", "..")
+            )
         self.server_dir = os.path.join(self.project_root, "unity-mcp", "Server")
         self.local_mcp_source = os.path.join(self.project_root, "unity-mcp", "MCPForUnity")
         self.unity_mcp_repo = f"file:{self.local_mcp_source}"
@@ -95,8 +102,15 @@ class UnityMCPManager:
             return False
 
     def _get_uvx(self) -> str:
-        """uvx binary'sini bulur (PATH önce, sonra yaygın kurulum dizinleri)."""
+        """uvx binary'sini bulur (gömülü > PATH > yaygın kurulum dizinleri)."""
         import shutil, sys
+        # Paketlenmiş app: uv installer'a gömülü (resources/uv/). Kullanıcının PC'sinde
+        # uv kurulu olmasa da MCP çalışsın diye önce burayı dene.
+        bundled = os.path.join(
+            self.project_root, "uv", "uvx.exe" if sys.platform == "win32" else "uvx"
+        )
+        if os.path.isfile(bundled):
+            return bundled
         found = shutil.which("uvx")
         if found:
             return found
@@ -139,7 +153,12 @@ class UnityMCPManager:
             "--project-scoped-tools",
         ]
 
-        log_path = os.path.join(self.project_root, "Backend", "unity_mcp_server.log")
+        # Log yazılabilir kullanıcı dizinine — project_root paketlenmiş app'te
+        # Program Files'ı gösterebilir (yazma korumalı → PermissionError → start_server
+        # patlıyordu). DB/app_data ile aynı kök.
+        log_dir = os.path.join(os.path.expanduser("~"), ".unity_architect_ai")
+        os.makedirs(log_dir, exist_ok=True)
+        log_path = os.path.join(log_dir, "unity_mcp_server.log")
         try:
             log_file = open(log_path, "a", encoding="utf-8")
             mcp_env = {**os.environ, "LOCAL_APP_TOKEN": os.environ.get("LOCAL_APP_TOKEN", "")}
