@@ -63,9 +63,9 @@ export const SettingsModal = ({
   };
   const MODEL_HINTS: Record<string, { label: string; value: string }[]> = {
     anthropic: [
+      { label: "Fable 5", value: "claude-fable-5" },
       { label: `Opus 4.8 (${t('hint.strongest')})`, value: "claude-opus-4-8" },
       { label: `Sonnet 4.6 (${t('hint.recommended')})`, value: "claude-sonnet-4-6" },
-      { label: "Opus 4.7", value: "claude-opus-4-7" },
       { label: "Opus 4.6", value: "claude-opus-4-6" },
       { label: "Haiku 4.5", value: "claude-haiku-4-5" },
     ],
@@ -80,7 +80,8 @@ export const SettingsModal = ({
       { label: "Kimi K2 Thinking", value: "moonshotai/kimi-k2-thinking" },
       { label: "GPT-5.5 (Frontier)", value: "openai/gpt-5.5" },
       { label: "GPT-5.5 Pro (Elite)", value: "openai/gpt-5.5-pro" },
-      { label: "Claude Opus 4.7 (Elite)", value: "anthropic/claude-opus-4-7" },
+      { label: "Claude Fable 5 (Elite)", value: "anthropic/claude-fable-5" },
+      { label: "Claude Opus 4.8", value: "anthropic/claude-opus-4-8" },
       { label: "Claude Sonnet 4.6", value: "anthropic/claude-sonnet-4-6" },
       { label: "Gemini 3 Flash", value: "google/gemini-3-flash-preview" },
     ],
@@ -104,8 +105,9 @@ export const SettingsModal = ({
       { label: "DeepSeek R1 (Reasoning)", value: "deepseek-reasoner" },
     ],
     subscription: [
+      { label: "Claude Fable 5", value: "claude-fable-5" },
+      { label: `Claude Opus 4.8 (${t('hint.strongest')})`, value: "claude-opus-4-8" },
       { label: `Claude Sonnet 4.6 (${t('hint.recommended')})`, value: "claude-sonnet-4-6" },
-      { label: `Claude Opus 4.7 (${t('hint.strongest')})`, value: "claude-opus-4-7" },
       { label: `Claude Haiku 4.5 (${t('hint.fast')})`, value: "claude-haiku-4-5" },
       { label: "Codex GPT-5.5 (Frontier)", value: "gpt-5.5" },
       { label: "Codex GPT-5.4", value: "gpt-5.4" },

@@ -245,7 +245,7 @@ The backend issues requests via the provider's official SDK or through the OpenR
 
 | Provider | Example Models | Notes |
 |---|---|---|
-| **Anthropic** | claude-opus-4-7, claude-sonnet-4-6, claude-haiku-4-5, claude-opus-4-6 | Extended Thinking, tool use |
+| **Anthropic** | claude-fable-5, claude-opus-4-8, claude-sonnet-4-6, claude-haiku-4-5, claude-opus-4-6 | Extended Thinking, tool use |
 | **Google** | gemini-3.1-pro-preview, gemini-3-flash-preview, gemini-3.1-flash-lite-preview, gemini-2.5-pro, gemini-2.5-flash, gemini-2.5-flash-lite | Thinking stream, tool use |
 | **OpenAI** | gpt-5.5-pro, gpt-5.5, gpt-5.4, gpt-5.4-mini, gpt-5.4-nano | Function calling, vision |
 | **Groq** | llama-3.3-70b-versatile | Low-latency inference (LPU) |
@@ -259,7 +259,7 @@ The backend invokes the official CLI binary on the user's machine as a subproces
 
 | CLI Tool | Models | Config File |
 |---|---|---|
-| **Claude Code** | claude-sonnet-4-6, claude-opus-4-7, claude-haiku-4-5 | `~/.claude.json` |
+| **Claude Code** | claude-fable-5, claude-opus-4-8, claude-sonnet-4-6, claude-haiku-4-5 | `~/.claude.json` |
 | **Codex CLI** | gpt-5.5, gpt-5.4, gpt-5.4-mini | `~/.codex/config.toml` |
 | **Antigravity CLI (agy)** | Gemini 3.5 Flash, Gemini 3.1 Pro, Gemini 3 Flash, Gemini 2.5 Pro/Flash + Claude/GPT-OSS via agy | `~/.gemini/antigravity-cli/mcp_config.json` |
 

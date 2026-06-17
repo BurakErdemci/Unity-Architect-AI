@@ -67,9 +67,9 @@ def create_config_router(db):
         models = {
             "local": [],
             "cloud": [
+                {"id": "claude-fable-5",           "name": "Claude Fable 5",     "provider": "anthropic", "openrouter_id": "anthropic/claude-fable-5"},
                 {"id": "claude-opus-4-8",          "name": "Claude 4.8 Opus",    "provider": "anthropic", "openrouter_id": "anthropic/claude-opus-4-8"},
                 {"id": "claude-sonnet-4-6",       "name": "Claude 4.6 Sonnet",  "provider": "anthropic", "openrouter_id": "anthropic/claude-sonnet-4-6"},
-                {"id": "claude-opus-4-7",          "name": "Claude 4.7 Opus",    "provider": "anthropic", "openrouter_id": "anthropic/claude-opus-4-7"},
                 {"id": "claude-opus-4-6",          "name": "Claude 4.6 Opus",    "provider": "anthropic", "openrouter_id": "anthropic/claude-opus-4-6"},
                 {"id": "claude-haiku-4-5",         "name": "Claude 4.5 Haiku",   "provider": "anthropic", "openrouter_id": "anthropic/claude-haiku-4-5"},
                 {"id": "llama-3.3-70b-versatile",  "name": "Llama 3.3 70B",      "provider": "groq",      "openrouter_id": "meta-llama/llama-3.3-70b-instruct"},
@@ -89,9 +89,9 @@ def create_config_router(db):
                 {"id": "kimi-k2.5",                "name": "Kimi K2.5",          "provider": "moonshot",  "openrouter_id": "moonshotai/kimi-k2.5"},
             ],
             "subscription": [
+                {"id": "claude-fable-5",       "name": "Claude Fable 5 (CLI)",          "provider": "subscription"},
                 {"id": "claude-opus-4-8",      "name": "Claude 4.8 Opus (CLI)",         "provider": "subscription"},
                 {"id": "claude-sonnet-4-6",    "name": "Claude 4.6 Sonnet (CLI)",       "provider": "subscription"},
-                {"id": "claude-opus-4-7",      "name": "Claude 4.7 Opus (CLI)",         "provider": "subscription"},
                 {"id": "claude-haiku-4-5",     "name": "Claude 4.5 Haiku (CLI)",        "provider": "subscription"},
                 {"id": "gpt-5.5",              "name": "Codex (GPT-5.5)",               "provider": "subscription"},
                 {"id": "gpt-5.4",              "name": "Codex (GPT-5.4)",               "provider": "subscription"},

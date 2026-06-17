@@ -242,8 +242,10 @@ class AnthropicProvider(AIProvider):
         raw_name = model_name.lower() if model_name else ""
         if "sonnet-4-6" in raw_name or "sonnet" in raw_name:
             self.model_name = "claude-4-6-sonnet"
-        elif "opus-4-7" in raw_name or "opus" in raw_name:
-            self.model_name = "claude-4-7-opus"
+        elif "fable" in raw_name:
+            self.model_name = "claude-fable-5"
+        elif "opus" in raw_name:
+            self.model_name = "claude-opus-4-8"
         elif "haiku-4-5" in raw_name or "haiku" in raw_name:
             self.model_name = "claude-4-5-haiku"
         else:
