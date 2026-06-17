@@ -455,10 +455,10 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                 except Exception as e:
                     logger.warning(f"Görsel işlenemedi: {e}")
 
-        # Sistem talimatını oluştur
-        system_msg = f"{SYSTEM_PROMPT}\n{self._get_architect_wisdom()}"
-        
-        messages = [{"role": "system", "content": system_msg}]
+        # Anthropic API: sistem talimatı messages listesine DEĞİL, create()'in
+        # system= parametresine gider (aşağıda system_instruction olarak geçiliyor).
+        # messages'a "system" rolü koymak API 400 döndürür.
+        messages = []
 
         for iteration in range(MAX_ITERATIONS):
             logger.info(f"  🔄 Anthropic Agentic Loop iterasyon {iteration + 1}")
@@ -497,7 +497,7 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                 response = await client.messages.create(
                     model=self.model_name,
                     max_tokens=4096,
-                    system=system_instruction,
+                    system=system_instruction + self._get_architect_wisdom(),
                     messages=messages,
                     tools=anthropic_tools
                 )

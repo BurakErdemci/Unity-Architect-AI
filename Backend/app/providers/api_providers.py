@@ -117,7 +117,11 @@ class OllamaProvider(AIProvider):
     def __init__(self, model_name: str = "qwen2.5-coder:7b"):
         self.model_name = model_name if model_name else "qwen2.5-coder:7b"
 
-    def analyze_code(self, prompt: str, max_tokens: int = 4096) -> str:
+    def analyze_code(self, prompt: str, max_tokens: int = 4096,
+                     images: Optional[List[str]] = None,
+                     thinking_level: str = "medium", cwd: Optional[str] = None) -> str:
+        # images/thinking_level/cwd: AIProvider arayüzüyle imza uyumu için kabul edilir
+        # ama Ollama chat akışında kullanılmaz (agentic loop'tan gelen TypeError fix'i).
         try:
             response = ollama.chat(
                 model=self.model_name,
