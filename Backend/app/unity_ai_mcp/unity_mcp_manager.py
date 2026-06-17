@@ -43,6 +43,41 @@ class UnityMCPManager:
         self.local_mcp_source = os.path.join(self.project_root, "unity-mcp", "MCPForUnity")
         self.unity_mcp_repo = f"file:{self.local_mcp_source}"
 
+    def _ensure_writable_resources(self) -> None:
+        """Frozen build: bundled Server/MCPForUnity Program Files altında (yazılamaz).
+        - uvx, paketi --from kaynağının içine egg-info yazarak derler → 'Erişim engellendi'
+        - Unity, paket dizinine ~UnityDirMonSyncFile~ yazar → 'Couldn't create'
+        Bu yüzden ikisini de yazılabilir kullanıcı dizinine kopyalar ve server_dir /
+        local_mcp_source / unity_mcp_repo yollarını oraya yöneltir. Idempotent (mtime'a
+        göre yeniden kopyalar). Asla exception fırlatmaz."""
+        import sys
+        if not getattr(sys, "frozen", False):
+            return  # Dev: kaynak repo zaten yazılabilir
+        import shutil
+        base = os.path.join(os.path.expanduser("~"), ".unity_architect_ai", "unity-mcp")
+        targets = [("Server", "pyproject.toml", "server_dir"),
+                   ("MCPForUnity", "package.json", "local_mcp_source")]
+        for sub, marker, attr in targets:
+            src = os.path.join(self.project_root, "unity-mcp", sub)
+            dst = os.path.join(base, sub)
+            try:
+                if not os.path.isdir(src):
+                    continue
+                need = not os.path.isdir(dst)
+                if not need:
+                    s, d = os.path.join(src, marker), os.path.join(dst, marker)
+                    need = (not os.path.isfile(d)) or (
+                        os.path.isfile(s) and os.path.getmtime(s) > os.path.getmtime(d)
+                    )
+                if need:
+                    if os.path.isdir(dst):
+                        shutil.rmtree(dst, ignore_errors=True)
+                    shutil.copytree(src, dst)
+                setattr(self, attr, dst)
+            except Exception as e:
+                logger.warning(f"[UnityMCP] {sub} yazılabilir dizine kopyalanamadı: {e}")
+        self.unity_mcp_repo = f"file:{self.local_mcp_source}"
+
     # ─── Subprocess Yönetimi ─────────────────────────────────────────────────
 
     def is_running(self) -> bool:
@@ -142,6 +177,7 @@ class UnityMCPManager:
             return True
         self._starting = True
 
+        self._ensure_writable_resources()  # frozen: Server'ı yazılabilir dizine taşı
         uvx = self._get_uvx()
         cmd = [
             uvx,
@@ -321,6 +357,7 @@ class UnityMCPManager:
         """
         if not workspace_path:
             return False
+        self._ensure_writable_resources()  # frozen: MCPForUnity'yi yazılabilir dizine taşı
         manifest_path = os.path.join(workspace_path, "Packages", "manifest.json")
         if not os.path.exists(manifest_path):
             logger.error(f"[UnityMCP] manifest.json bulunamadı: {manifest_path}")
@@ -357,6 +394,16 @@ class UnityMCPManager:
         auto_start_val = "true" if auto_start else "false"
         timestamp = int(time.time())
 
+        # Unity MCP eklentisi sistem PATH'inde uv/uvx arıyor; kullanıcının PC'sinde uv
+        # kurulu olmasa da bizim gömülü uvx'imizi kullansın diye eklentinin uvx yol
+        # override'ını (EditorPrefs "MCPForUnity.UvxPath") set ediyoruz. C# string için
+        # ileri eğik çizgi kullanılır (kaçış gerektirmez; .NET Windows'ta da kabul eder).
+        uvx_path = self._get_uvx()
+        uvx_override = ""
+        if os.path.isabs(uvx_path) and os.path.isfile(uvx_path):
+            uvx_cs = uvx_path.replace("\\", "/")
+            uvx_override = f'            EditorPrefs.SetString("MCPForUnity.UvxPath", "{uvx_cs}");\n'
+
         script = f"""\
 // Unity Architect AI — MCP bağlantı yapılandırması (güncelleme: {timestamp})
 // Bu dosya Unity Architect AI tarafından oluşturulmuştur. Silmeyin.
@@ -374,7 +421,7 @@ namespace UnityArchitectAI
             EditorPrefs.SetString("MCPForUnity.HttpUrl", "http://127.0.0.1:{self.mcp_port}");
             EditorPrefs.SetBool("MCPForUnity.AutoStartOnLoad", {auto_start_val});
             EditorPrefs.SetBool("MCPForUnity.ResumeHttpAfterReload", {auto_start_val});
-        }}
+{uvx_override}        }}
     }}
 }}
 #endif

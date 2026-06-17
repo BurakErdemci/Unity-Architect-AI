@@ -177,8 +177,25 @@ def get_unity_paths(workspace_path: str = None):
             mbe_path = os.path.join(base_unity, "MonoBleedingEdge")
             managed_path = os.path.join(base_unity, "Managed")
             
+        # csc konumu Unity sürümüne göre değişir. Windows'ta MonoBleedingEdge/bin/csc.exe
+        # genelde YOK; gerçek Roslyn derleyicisi lib/mono/.../Roslyn altında. Adayları
+        # sırayla dene, ilk var olanı kullan. (Mac: lint_csharp'ın posix dalı bin/csc'yi
+        # Roslyn'e yönlendirdiği için orada eski davranışı koru.)
+        if os_name == "Windows":
+            csc_candidates = [
+                os.path.join(mbe_path, "bin", "Roslyn", "csc.exe"),
+                os.path.join(mbe_path, "lib", "mono", "msbuild", "Current", "bin", "Roslyn", "csc.exe"),
+                os.path.join(mbe_path, "bin", "csc.exe"),
+                os.path.join(base_unity, "Tools", "Roslyn", "csc.exe"),
+                os.path.join(mbe_path, "lib", "mono", "4.5", "csc.exe"),
+            ]
+            csc = next((c for c in csc_candidates if os.path.exists(c)),
+                       os.path.join(mbe_path, "bin", "csc.exe"))
+        else:
+            csc = os.path.join(mbe_path, "bin", "csc")
+
         return {
-            "csc": os.path.join(mbe_path, "bin", "csc" + (".exe" if os_name == "Windows" else "")),
+            "csc": csc,
             "managed": managed_path,
             "fallback_csc": "csc.exe" if os_name == "Windows" else "/Library/Frameworks/Mono.framework/Versions/Current/Commands/csc"
         }
@@ -310,18 +327,51 @@ def lint_csharp(code: str, workspace_path: str, filename: str, full_project: boo
         # Mac fix: Use mono directly if csc is a broken script (only if csc is in a standard /bin/csc folder)
         mono_path = csc_path.replace("/bin/csc", "/bin/mono")
         csc_exe = csc_path.replace("/bin/csc", "/lib/mono/msbuild/Current/bin/Roslyn/csc.exe")
-        
-        if os.name == 'posix' and "/bin/csc" in csc_path and os.path.exists(mono_path) and os.path.exists(csc_exe):
-            cmd = [mono_path, csc_exe, "-target:library", "-noconfig", "-nologo", "-langversion:preview", f"-out:{out_tmp_path}"] + refs + sources
+
+        # Windows fix: Unity'nin MonoBleedingEdge altındaki Roslyn csc.exe bir Mono
+        # assembly'sidir; doğrudan çalıştırılınca "System.Text.Encoding.CodePages
+        # yüklenemedi" verir. mono.exe ile çalıştırmak gerekir (Mac'teki mantığın eşi).
+        win_mono = ""
+        if os.name == "nt":
+            _i = csc_path.find("MonoBleedingEdge")
+            if _i != -1:
+                _cand = os.path.join(csc_path[:_i + len("MonoBleedingEdge")], "bin", "mono.exe")
+                if os.path.exists(_cand):
+                    win_mono = _cand
+
+        # Derleyiciyi çalıştıran komut öneki (mono gerekiyorsa mono + csc.exe)
+        if win_mono:
+            runner = [win_mono, csc_path]
+        elif os.name == 'posix' and "/bin/csc" in csc_path and os.path.exists(mono_path) and os.path.exists(csc_exe):
+            runner = [mono_path, csc_exe]
         else:
-            cmd = [csc_path, "-target:library", "-noconfig", "-nologo", "-langversion:preview", f"-out:{out_tmp_path}"] + refs + sources
-        
-        print(f"[LINTER_CMD] Executing C# compiler command: {' '.join(cmd[:10])}... (total args: {len(cmd)})", flush=True)
-        
+            runner = [csc_path]
+
+        compile_args = ["-target:library", "-noconfig", "-nologo", "-langversion:preview", f"-out:{out_tmp_path}"] + refs + sources
+
+        # Windows: full_project'te yüzlerce -r: referansı komut satırı uzunluk sınırını
+        # aşar (WinError 206). csc'nin response dosyası desteğiyle (@file.rsp) çöz.
+        rsp_path = None
+        if os.name == "nt":
+            def _q(a: str) -> str:
+                if a.startswith("-r:"):   return '-r:"' + a[3:] + '"'
+                if a.startswith("-out:"): return '-out:"' + a[5:] + '"'
+                if a.startswith("-"):     return a
+                return '"' + a + '"'
+            with tempfile.NamedTemporaryFile(suffix=".rsp", delete=False, mode="w", encoding="utf-8") as rsp:
+                rsp.write("\n".join(_q(a) for a in compile_args))
+                rsp_path = rsp.name
+            cmd = runner + ["@" + rsp_path]
+        else:
+            cmd = runner + compile_args
+
+        print(f"[LINTER_CMD] Executing C# compiler command: {' '.join(cmd)} (args: {len(compile_args)})", flush=True)
+
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         stdout, stderr = process.communicate()
-        
+
         if os.path.exists(out_tmp_path): os.remove(out_tmp_path)
+        if rsp_path and os.path.exists(rsp_path): os.remove(rsp_path)
 
         # 4. Parse
         errors = []
