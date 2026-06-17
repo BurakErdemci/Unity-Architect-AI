@@ -67,16 +67,20 @@ class CodexProvider(BaseCLIProvider):
         Her çağrıda URL güncellenir (backend dinamik port kullanır).
         """
         import subprocess as sp
+        # codex CLI Windows'ta .cmd shim → çıplak isimle CreateProcess patlar (WinError 2).
+        if not self._cli_installed("codex"):
+            logger.warning("[CLIProvider] codex CLI bulunamadı, MCP kaydı atlandı.")
+            return
         try:
             from unity_ai_mcp.unity_mcp_manager import unity_mcp_manager
 
             # Önce var olan kayıtları sil (URL güncel olmayabilir, eski isim kalmış olabilir)
             for old_name in ("unityai", "antigravity"):
-                sp.run(["codex", "mcp", "remove", old_name], capture_output=True, timeout=5)
+                sp.run(self._resolve_exec(["codex", "mcp", "remove", old_name]), capture_output=True, timeout=5)
             # unityMCP global config'te stale kalırsa Codex kapalı 8080'e bağlanmaya
             # çalışıp tüm run'ı "Transport channel closed" ile düşürebiliyor.
             sp.run(
-                ["codex", "mcp", "remove", "unityMCP"],
+                self._resolve_exec(["codex", "mcp", "remove", "unityMCP"]),
                 capture_output=True, timeout=5,
             )
 
@@ -90,19 +94,19 @@ class CodexProvider(BaseCLIProvider):
 
             # Yeni kaydı ekle
             sp.run(
-                [
+                self._resolve_exec([
                     "codex", "mcp", "add", "unityai",
                     *env_args,
                     "--", launcher, "--workspace", workspace,
-                ],
+                ]),
                 capture_output=True, timeout=5, check=True,
             )
             if unity_mcp_manager.is_running():
                 sp.run(
-                    [
+                    self._resolve_exec([
                         "codex", "mcp", "add", "unityMCP",
                         "--url", f"http://127.0.0.1:{unity_mcp_manager.mcp_port}/mcp",
-                    ],
+                    ]),
                     capture_output=True, timeout=5, check=True,
                 )
         except Exception as e:

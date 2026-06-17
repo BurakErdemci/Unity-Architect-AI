@@ -27,6 +27,8 @@ class UnityMCPManager:
         self.process: Optional[subprocess.Popen] = None
         self.mcp_port = 8080
         self._starting = False  # Çift başlatmayı önler
+        self._health_cache_ts = 0.0   # is_running() HTTP probe cache (perf)
+        self._health_cache_val = False
         self.project_root = os.path.abspath(
             os.path.join(os.path.dirname(__file__), "..", "..", "..")
         )
@@ -37,13 +39,40 @@ class UnityMCPManager:
     # ─── Subprocess Yönetimi ─────────────────────────────────────────────────
 
     def is_running(self) -> bool:
-        """Port 8080'i dinleyen bir süreç varsa True döner (bizim veya Unity'nin başlattığı)."""
+        """Unity MCP server'ımız GERÇEKTEN ayakta mı?
+
+        ÖNEMLİ: 8080 çok yaygın bir port — sadece "biri dinliyor mu" kontrolü yanıltıcıydı:
+        alakasız bir servis (örn. başka bir dev server) 8080'deyse toggle yanlışlıkla
+        sarıya dönüyor ve CLI config'lerine unityMCP ekleniyordu. Bu yüzden:
+          1. Kendi başlattığımız subprocess canlıysa → kesin bizimki.
+          2. Değilse → 8080'de gerçekten MCP server mı var, /health (200) ile kimlik doğrula.
+        Sonuç 2sn cache'lenir (status endpoint sık polling yapıyor)."""
+        if self.process and self.process.poll() is None:
+            return True
+        import time
+        now = time.monotonic()
+        if now - self._health_cache_ts < 2.0:
+            return self._health_cache_val
+        self._health_cache_val = self._probe_mcp_health_sync()
+        self._health_cache_ts = now
+        return self._health_cache_val
+
+    def _probe_mcp_health_sync(self) -> bool:
+        """8080 açık VE gerçekten MCP server mı (/health 200) — senkron, kısa timeout."""
         import socket
         try:
-            with socket.create_connection(("127.0.0.1", self.mcp_port), timeout=0.5):
-                return True
+            with socket.create_connection(("127.0.0.1", self.mcp_port), timeout=0.3):
+                pass
         except OSError:
-            return False
+            return False  # port hiç dinlenmiyor
+        import urllib.request
+        try:
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{self.mcp_port}/health", timeout=0.6
+            ) as r:
+                return r.status == 200
+        except Exception:
+            return False  # port dolu ama MCP server değil (alakasız servis)
 
     def is_unity_running(self) -> bool:
         """Unity Editor süreci çalışıyor mu kontrol eder."""
@@ -66,13 +95,24 @@ class UnityMCPManager:
             return False
 
     def _get_uvx(self) -> str:
-        """uvx binary'sini bulur."""
+        """uvx binary'sini bulur (PATH önce, sonra yaygın kurulum dizinleri)."""
+        import shutil, sys
+        found = shutil.which("uvx")
+        if found:
+            return found
         home = os.path.expanduser("~")
-        candidates = [
-            os.path.join(home, ".local", "bin", "uvx"),
-            "/usr/local/bin/uvx",
-            "uvx",
-        ]
+        if sys.platform == "win32":
+            candidates = [
+                os.path.join(home, ".local", "bin", "uvx.exe"),
+                os.path.join(os.environ.get("APPDATA", ""), "uv", "bin", "uvx.exe"),
+                "uvx",
+            ]
+        else:
+            candidates = [
+                os.path.join(home, ".local", "bin", "uvx"),
+                "/usr/local/bin/uvx",
+                "uvx",
+            ]
         for p in candidates:
             if os.path.isfile(p):
                 return p
@@ -135,20 +175,38 @@ class UnityMCPManager:
         # -sTCP:LISTEN olmadan Unity Editor gibi CLIENT bağlantıları da listede çıkar
         # ve onları öldürmek tüm Unity'yi kapatır.
         if self.is_running():
-            import signal
+            import signal, sys
             try:
-                result = subprocess.run(
-                    ["lsof", "-ti", f":{self.mcp_port}", "-sTCP:LISTEN"],
-                    capture_output=True, text=True
-                )
-                pids = [p for p in result.stdout.strip().split() if p]
-                for pid in pids:
-                    try:
-                        os.kill(int(pid), signal.SIGTERM)
-                    except ProcessLookupError:
-                        pass
-                if pids:
-                    logger.info(f"[UnityMCP] Port {self.mcp_port} LISTEN temizlendi (PID'ler: {pids})")
+                if sys.platform == "win32":
+                    # Windows: netstat ile LISTENING port sahibini bul, taskkill /T ile öldür.
+                    result = subprocess.run(
+                        ["netstat", "-ano", "-p", "TCP"],
+                        capture_output=True, text=True
+                    )
+                    pids = set()
+                    for line in result.stdout.splitlines():
+                        parts = line.split()
+                        if (len(parts) >= 5 and parts[3] == "LISTENING"
+                                and parts[1].endswith(f":{self.mcp_port}")):
+                            pids.add(parts[4])
+                    for pid in pids:
+                        subprocess.run(["taskkill", "/PID", pid, "/T", "/F"],
+                                       capture_output=True)
+                    if pids:
+                        logger.info(f"[UnityMCP] Port {self.mcp_port} LISTEN temizlendi (PID'ler: {sorted(pids)})")
+                else:
+                    result = subprocess.run(
+                        ["lsof", "-ti", f":{self.mcp_port}", "-sTCP:LISTEN"],
+                        capture_output=True, text=True
+                    )
+                    pids = [p for p in result.stdout.strip().split() if p]
+                    for pid in pids:
+                        try:
+                            os.kill(int(pid), signal.SIGTERM)
+                        except ProcessLookupError:
+                            pass
+                    if pids:
+                        logger.info(f"[UnityMCP] Port {self.mcp_port} LISTEN temizlendi (PID'ler: {pids})")
             except Exception as e:
                 logger.warning(f"[UnityMCP] Port temizlenemedi: {e}")
 

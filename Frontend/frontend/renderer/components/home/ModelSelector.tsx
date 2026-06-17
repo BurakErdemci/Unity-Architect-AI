@@ -1,11 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   ChevronDown,
   Sparkles,
   Cpu,
   ChevronRight,
-  Key
+  Key,
+  AlertTriangle
 } from 'lucide-react';
 import { ModelAvatar } from './ModelAvatar';
 import { AIConfig, AvailableModels, UserData } from './types';
@@ -72,6 +73,28 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
   const { t } = useLang();
   const activeGroup = CLI_GROUPS.find(g => g.ids.includes(aiConfig.model_name))?.key ?? null;
   const [expandedCliGroup, setExpandedCliGroup] = useState<string | null>(activeGroup);
+
+  // CLI binary'leri gömülü değil — kullanıcının PC'sinde kurulu olmalı. Açılır menü
+  // açıldığında hangi CLI'ların kurulu olduğunu çek ki kurulu olmayanları işaretleyelim.
+  const [cliAvail, setCliAvail] = useState<Record<string, boolean> | null>(null);
+  useEffect(() => {
+    if (!isModelDropdownOpen || !API) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await axios.get(`${API}/cli-availability`);
+        if (!cancelled) setCliAvail(res.data || {});
+      } catch { /* best-effort; yüklenemezse uyarı gösterme */ }
+    })();
+    return () => { cancelled = true; };
+  }, [isModelDropdownOpen, API]);
+
+  // group.key → availability anahtarı (Antigravity CLI grubu agy binary'sini kullanır).
+  const isGroupInstalled = (groupKey: string): boolean => {
+    if (!cliAvail) return true; // henüz yüklenmedi → uyarı gösterme
+    const availKey = groupKey === 'gemini' ? 'agy' : groupKey;
+    return cliAvail[availKey] !== false;
+  };
 
   return (
     <div className="relative">
@@ -177,13 +200,24 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                       if (groupModels.length === 0) return null;
                       const isOpen = expandedCliGroup === group.key;
                       const isGroupActive = groupModels.some(m => m.id === aiConfig.model_name);
+                      const installed = isGroupInstalled(group.key);
                       return (
                         <div key={group.key}>
                           <button
                             onClick={() => setExpandedCliGroup(isOpen ? null : group.key)}
                             className={`w-full text-left px-3 py-2 text-[12px] flex items-center justify-between rounded-lg hover:bg-slate-800/60 ${isGroupActive ? 'text-purple-400' : 'text-slate-300'}`}
                           >
-                            <span className="font-semibold">{group.label}</span>
+                            <span className="font-semibold flex items-center gap-1.5">
+                              {group.label}
+                              {!installed && (
+                                <span
+                                  title="Bu CLI bu bilgisayarda kurulu değil. Kullanmak için önce kurman gerekiyor."
+                                  className="flex items-center gap-1 text-amber-300 bg-amber-500/20 border border-amber-500/50 rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
+                                >
+                                  <AlertTriangle size={12} className="text-amber-400" /> kurulu değil
+                                </span>
+                              )}
+                            </span>
                             <ChevronDown size={12} className={`text-slate-500 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
                           </button>
                           {isOpen && groupModels.map(m => (

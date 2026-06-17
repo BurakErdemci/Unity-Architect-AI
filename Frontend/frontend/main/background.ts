@@ -1,5 +1,6 @@
 import path from 'path'
 import fs from 'fs'
+import os from 'os'
 import net from 'net'
 import { randomUUID } from 'crypto'
 import { app, ipcMain, dialog } from 'electron'
@@ -21,6 +22,28 @@ let pyBackendProcess: ChildProcess | null = null
 let backendPort: number | null = null
 const BACKEND_HOST = '127.0.0.1'
 
+// --- DOSYA LOGLAMA (paketlenmiş app'te konsol görünmez) ---
+// Logları hem temp hem userData altına yazar; başka PC'de teşhis için kalıcı.
+const logFilePath = path.join(os.tmpdir(), 'unity-architect-ai.log')
+function fileLog(level: string, args: any[]) {
+  try {
+    const line = `[${new Date().toISOString()}] [${level}] ` +
+      args.map(a => (typeof a === 'string' ? a : (a instanceof Error ? `${a.message}\n${a.stack}` : (() => { try { return JSON.stringify(a) } catch { return String(a) } })()))).join(' ') + '\n'
+    fs.appendFileSync(logFilePath, line)
+  } catch { /* log yazılamadı, sessizce geç */ }
+}
+{
+  const origLog = console.log.bind(console)
+  const origErr = console.error.bind(console)
+  const origWarn = console.warn.bind(console)
+  console.log = (...a: any[]) => { fileLog('INFO', a); try { origLog(...a) } catch {} }
+  console.error = (...a: any[]) => { fileLog('ERROR', a); try { origErr(...a) } catch {} }
+  console.warn = (...a: any[]) => { fileLog('WARN', a); try { origWarn(...a) } catch {} }
+  process.on('uncaughtException', (e) => fileLog('UNCAUGHT', [e]))
+  process.on('unhandledRejection', (e) => fileLog('UNHANDLED_REJECTION', [e as any]))
+  fileLog('INFO', [`=== APP BAŞLADI === isProd=${isProd} resourcesPath=${process.resourcesPath} platform=${process.platform}`])
+}
+
 // --- TERMINAL YÖNETİMİ ---
 const ptyProcesses: Map<string, pty.IPty> = new Map();
 
@@ -37,33 +60,38 @@ ipcMain.handle('terminal-spawn', (event, { id, cwd }) => {
     }
   }
 
-  // CWD ve Env Hazırlığı
-  let finalCwd = cwd || process.env.HOME || '.';
+  // CWD ve Env Hazırlığı — HOME Windows'ta yok, USERPROFILE/os.homedir()'a düş
+  const homeDir = process.env.HOME || process.env.USERPROFILE || os.homedir();
+  let finalCwd = cwd || homeDir || '.';
   if (typeof finalCwd === 'string' && finalCwd.startsWith('~')) {
-    finalCwd = path.join(process.env.HOME || '', finalCwd.slice(1));
+    finalCwd = path.join(homeDir || '', finalCwd.slice(1));
   }
-  if (finalCwd && !fs.existsSync(finalCwd)) finalCwd = process.env.HOME || '.';
+  if (finalCwd && !fs.existsSync(finalCwd)) finalCwd = homeDir || '.';
 
   console.log(`[Terminal] Profesyonel Başlatma: ${shell} @ ${finalCwd}`);
 
   try {
-    const os = require('os');
+    // Windows'ta PowerShell kendi ortamını kurar; Unix env değişkenleri (LANG, SHELL,
+    // USER...) yalnızca POSIX shell'ler için anlamlı. Windows'ta sadece PATH/HOME geçir.
+    const ptyEnv: Record<string, string> = isWin
+      ? { ...process.env as Record<string, string> }
+      : {
+          ...process.env as Record<string, string>,
+          HOME:      process.env.HOME      || homeDir,
+          USER:      process.env.USER      || os.userInfo().username,
+          LOGNAME:   process.env.LOGNAME   || os.userInfo().username,
+          SHELL:     shell,
+          PATH:      process.env.PATH      || '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin',
+          LANG:      'en_US.UTF-8',
+          TERM:      'xterm-256color',
+          COLORTERM: 'truecolor',
+        };
     const ptyProcess = pty.spawn(shell, [], {
       name: 'xterm-256color',
       cols: 80,
       rows: 24,
       cwd: finalCwd,
-      env: {
-        ...process.env,
-        HOME:      process.env.HOME      || os.homedir(),
-        USER:      process.env.USER      || os.userInfo().username,
-        LOGNAME:   process.env.LOGNAME   || os.userInfo().username,
-        SHELL:     shell,
-        PATH:      process.env.PATH      || '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin',
-        LANG:      'en_US.UTF-8',
-        TERM:      'xterm-256color',
-        COLORTERM: 'truecolor',
-      }
+      env: ptyEnv,
     });
 
     ptyProcesses.set(id, ptyProcess);
@@ -452,7 +480,7 @@ async function startPythonBackend() {
     stdio: ['ignore', 'pipe', 'pipe'],
     cwd: backendDir,
     detached: false, // process group ile başlat — kapanırken tüm child'lar ölsün
-    env: { ...process.env, PYTHONUNBUFFERED: '1', PORT: String(selectedPort), LOCAL_APP_TOKEN: localAppToken },
+    env: { ...process.env, PYTHONUNBUFFERED: '1', PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8', PORT: String(selectedPort), LOCAL_APP_TOKEN: localAppToken },
   });
 
   const safeLog = (...args: any[]) => { try { console.log(...args) } catch { /* EIO — socket kapandı */ } }
@@ -624,11 +652,22 @@ if (!gotTheLock) {
 
   const killBackend = () => {
     if (pyBackendProcess) {
-      // Tüm process grubunu öldür (uvicorn reload child'ları dahil)
-      try {
-        process.kill(-pyBackendProcess.pid!, 'SIGKILL')
-      } catch {
-        pyBackendProcess.kill('SIGKILL')
+      const pid = pyBackendProcess.pid
+      if (process.platform === 'win32' && pid) {
+        // Windows: negatif PID (process group) yok — taskkill /T tüm child ağacını öldürür
+        // (PyInstaller bootloader + uvicorn worker'ları dahil). Aksi halde orphan kalır.
+        try {
+          spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore' })
+        } catch {
+          try { pyBackendProcess.kill() } catch { /* zaten ölmüş */ }
+        }
+      } else {
+        // POSIX: tüm process grubunu öldür (uvicorn reload child'ları dahil)
+        try {
+          process.kill(-pid!, 'SIGKILL')
+        } catch {
+          pyBackendProcess.kill('SIGKILL')
+        }
       }
       pyBackendProcess = null
     }

@@ -61,5 +61,17 @@ class MemoryManager:
             return True
         return False
 
+def _resolve_app_data_dir() -> str:
+    """
+    app_data dizinini yazılabilir bir kullanıcı klasörüne çözer.
+    os.getcwd() paketlenmiş app'te install dizinini (ör. C:\\Program Files\\...)
+    gösterir ve oraya yazmak PermissionError verir. DB ile aynı kökü kullanırız.
+    """
+    override = os.environ.get("APP_DATA_DIR")
+    if override:
+        return override
+    return os.path.join(str(Path.home()), ".unity_architect_ai", "app_data")
+
+
 # Singleton instance
-memory_manager = MemoryManager(os.path.join(os.getcwd(), "app_data"))
+memory_manager = MemoryManager(_resolve_app_data_dir())

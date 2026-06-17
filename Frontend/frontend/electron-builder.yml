@@ -16,10 +16,16 @@ extraResources:
       - "**/*"
   # Launcher scriptleri frozen 'backend' binary'sinin yanına (Backend kökü) —
   # paketlenmiş app'te MCP/agy köprüsü bunlar üzerinden binary'yi çağırır.
+  # macOS/Linux: .sh + unityai (bash); Windows: .cmd. Hepsi paketlenir, OS'e göre
+  # Python tarafı (cli_base._launcher_path) doğru olanı seçer.
   - from: ../../Backend/run_mcp_server.sh
     to: Backend/run_mcp_server.sh
   - from: ../../Backend/unityai
     to: Backend/unityai
+  - from: ../../Backend/run_mcp_server.cmd
+    to: Backend/run_mcp_server.cmd
+  - from: ../../Backend/unityai.cmd
+    to: Backend/unityai.cmd
 mac:
   category: public.app-category.developer-tools
   # identity: null → imzasız build (test dağıtımı için)

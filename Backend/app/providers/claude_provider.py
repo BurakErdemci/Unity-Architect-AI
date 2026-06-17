@@ -64,19 +64,25 @@ class ClaudeCodeProvider(BaseCLIProvider):
         import subprocess as sp
         from unity_ai_mcp.unity_mcp_manager import unity_mcp_manager
 
+        # claude CLI Windows'ta .cmd shim → çıplak isimle CreateProcess patlar (WinError 2).
+        # Tüm sp.run çağrılarını platforma uygun tam yola çöz.
+        if not self._cli_installed("claude"):
+            logger.warning("[CLIProvider] claude CLI bulunamadı, MCP kaydı atlandı.")
+            return
+
         # unityai (stdio)
         try:
-            sp.run(["claude", "mcp", "remove", "unityai", "--scope", "user"],
+            sp.run(self._resolve_exec(["claude", "mcp", "remove", "unityai", "--scope", "user"]),
                    capture_output=True, timeout=5)
             sp.run(
-                [
+                self._resolve_exec([
                     "claude", "mcp", "add", "unityai",
                     "--scope", "user",
                     "-e", f"UNITYAI_URL={backend_url}",
                     *(["-e", f"LOCAL_APP_TOKEN={os.environ.get('LOCAL_APP_TOKEN', '')}"] if os.environ.get("LOCAL_APP_TOKEN") else []),
                     "-e", f"WORKSPACE={workspace}",
                     "--", launcher, "--workspace", workspace,
-                ],
+                ]),
                 capture_output=True, timeout=5, check=True,
             )
             logger.info("[CLIProvider] Claude unityai MCP kaydedildi (user scope).")
@@ -85,16 +91,16 @@ class ClaudeCodeProvider(BaseCLIProvider):
 
         # unityMCP (http) — sadece Unity MCP server çalışıyorsa
         try:
-            sp.run(["claude", "mcp", "remove", "unityMCP", "--scope", "user"],
+            sp.run(self._resolve_exec(["claude", "mcp", "remove", "unityMCP", "--scope", "user"]),
                    capture_output=True, timeout=5)
             if unity_mcp_manager.is_running():
                 sp.run(
-                    [
+                    self._resolve_exec([
                         "claude", "mcp", "add", "unityMCP",
                         "--scope", "user",
                         "--transport", "http",
                         f"http://localhost:{unity_mcp_manager.mcp_port}/mcp",
-                    ],
+                    ]),
                     capture_output=True, timeout=5, check=True,
                 )
                 logger.info("[CLIProvider] Claude unityMCP kaydedildi (user scope).")

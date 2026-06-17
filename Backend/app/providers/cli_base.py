@@ -1,6 +1,7 @@
 import os
 import re
 import sys
+import shutil
 import logging
 import asyncio
 import json
@@ -58,6 +59,38 @@ class BaseCLIProvider(AIProvider):
             return os.path.dirname(sys.executable)
         return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+    def _launcher_path(self, name: str) -> str:
+        """Platforma uygun launcher yolunu döndürür.
+        name: 'run_mcp_server' → Windows'ta run_mcp_server.cmd, diğer OS'te run_mcp_server.sh.
+              'unityai'        → Windows'ta unityai.cmd, diğer OS'te unityai (bash)."""
+        backend_dir = self._backend_dir()
+        if sys.platform == "win32":
+            fname = f"{name}.cmd"
+        else:
+            fname = "run_mcp_server.sh" if name == "run_mcp_server" else name
+        return os.path.join(backend_dir, fname)
+
+    @staticmethod
+    def _resolve_exec(cmd: List[str]) -> List[str]:
+        """cmd[0]'i (CLI ismi) PATH'te tam yola çözer ve Windows'a uygun spawn listesi döner.
+        Windows'ta npm CLI'ları (claude/codex/agy) .cmd/.bat shim olarak kurulur;
+        CreateProcess bunları ne çıplak isimle bulur (WinError 2) ne de doğrudan çalıştırabilir
+        → cmd.exe /c ile sarılmalı. .exe / POSIX binary ise doğrudan çalıştırılır."""
+        if not cmd:
+            return cmd
+        resolved = shutil.which(cmd[0]) or cmd[0]
+        rest = list(cmd[1:])
+        if sys.platform == "win32" and resolved.lower().endswith((".cmd", ".bat")):
+            return ["cmd", "/c", resolved, *rest]
+        return [resolved, *rest]
+
+    @staticmethod
+    def _cli_installed(name: str) -> bool:
+        """CLI binary'si PATH'te (Windows'ta PATHEXT ile .cmd/.exe dahil) bulunabiliyor mu?"""
+        if os.path.isabs(name):
+            return os.path.exists(name)
+        return shutil.which(name) is not None
+
     @staticmethod
     def _ensure_exec(path: str) -> None:
         """Launcher'ın çalıştırılabilir olduğundan emin ol — paket kopyalama exec bit'i düşürebilir."""
@@ -95,8 +128,7 @@ class BaseCLIProvider(AIProvider):
         Gemini CLI için MCP kaydını günceller.
         Döndürür: Claude config dosyasının tam yolu.
         """
-        backend_dir = self._backend_dir()
-        launcher = os.path.join(backend_dir, "run_mcp_server.sh").replace("unityaıPython", "unityaiPython")
+        launcher = self._launcher_path("run_mcp_server")
         self._ensure_exec(launcher)
         backend_url = os.environ.get("UNITYAI_URL", os.environ.get("ANTIGRAVITY_URL", "http://localhost:8000"))
         local_app_token = os.environ.get("LOCAL_APP_TOKEN", "")
@@ -159,6 +191,17 @@ class BaseCLIProvider(AIProvider):
             _env = {**os.environ, "NO_COLOR": "1", "TERM": "xterm-256color",
                     "COLUMNS": "220", "LINES": "50"}
 
+            # CLI binary bu PC'de kurulu mu? Değilse korkunç traceback yerine temiz uyarı ver.
+            if not self._cli_installed(cmd[0]):
+                _labels = {"agy": "Antigravity (agy)", "claude": "Claude Code", "codex": "Codex"}
+                _label = _labels.get(os.path.basename(cmd[0]).lower(), cmd[0])
+                logger.warning(f"[CLIProvider:{self.binary_name}] CLI bulunamadı (PATH'te yok): {cmd[0]}")
+                yield {"type": "error", "content": f"⚠️ {_label} CLI bu bilgisayarda kurulu değil (PATH'te bulunamadı). Lütfen kurun veya farklı bir model seçin."}
+                return
+
+            # cmd[0]'i tam yola çöz + Windows .cmd/.bat ise cmd.exe ile sar (WinError 2 fix).
+            spawn_cmd = self._resolve_exec(cmd)
+
             logger.info(f"[CLIProvider:{self.binary_name}][CMD] {' '.join(cmd)}")
             logger.info(f"[CLIProvider:{self.binary_name}][CWD] {workspace}")
             logger.info(f"[CLIProvider:{self.binary_name}][ENV] LOCAL_APP_TOKEN={'set' if _env.get('LOCAL_APP_TOKEN') else 'unset'} UNITYAI_URL={_env.get('UNITYAI_URL', _env.get('ANTIGRAVITY_URL', 'unset'))}")
@@ -168,7 +211,7 @@ class BaseCLIProvider(AIProvider):
                 async with BaseCLIProvider._AGY_LOCK:
                     self._set_agy_model(self._pending_agy_model, workspace)
                     process = await asyncio.create_subprocess_exec(
-                        *cmd,
+                        *spawn_cmd,
                         stdin=asyncio.subprocess.PIPE,
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE,
@@ -179,8 +222,7 @@ class BaseCLIProvider(AIProvider):
                     # köprü built-in run_command. Yazma araçları (write_to_file vb.)
                     # _AGY_DISABLED_TOOLS ile kapalı → agy yazmak için 'unityai' CLI'ını
                     # run_command ile çağırmak zorunda kalır → onay kartı çıkar.
-                    backend_dir = self._backend_dir()
-                    unityai_cli = os.path.join(backend_dir, "unityai").replace("unityaıPython", "unityaiPython")
+                    unityai_cli = self._launcher_path("unityai")
                     self._ensure_exec(unityai_cli)
                     mcp_hint = (
                         "IMPORTANT: You MUST respond in Turkish (Türkçe) at all times.\n\n"
@@ -217,14 +259,25 @@ class BaseCLIProvider(AIProvider):
                     await process.stdin.drain()
                     process.stdin.close()
             else:
+                # Windows .cmd shim (cmd /c): cmd.exe komut satırındaki çok satırlı arg'ı
+                # ilk newline'da keser → claude/codex prompt'u (son arg) bozulur. Bu durumda
+                # prompt'u argv yerine stdin'den ver (claude --print ve codex exec stdin'i okur).
+                _stdin_prompt = None
+                if spawn_cmd[:2] == ["cmd", "/c"] and len(spawn_cmd) > 3:
+                    _stdin_prompt = spawn_cmd.pop()  # son eleman = prompt metni
                 process = await asyncio.create_subprocess_exec(
-                    *cmd,
-                    stdin=asyncio.subprocess.DEVNULL,
+                    *spawn_cmd,
+                    stdin=(asyncio.subprocess.PIPE if _stdin_prompt is not None
+                           else asyncio.subprocess.DEVNULL),
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                     env=_env,
                     cwd=workspace,
                 )
+                if _stdin_prompt is not None:
+                    process.stdin.write(_stdin_prompt.encode("utf-8"))
+                    await process.stdin.drain()
+                    process.stdin.close()
             _stdout_reader = process.stdout
             logger.info(f"[CLIProvider:{self.binary_name}] PID={process.pid} başlatıldı")
 

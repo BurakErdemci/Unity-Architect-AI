@@ -172,9 +172,14 @@ export default function Home() {
   }, [ipc, showToast]);
 
   // --- UI State ---
-  const [lang, setLangState] = useState<Lang>(() =>
-    typeof window !== 'undefined' ? ((localStorage.getItem('app-lang') as Lang) || 'tr') : 'tr'
-  );
+  // Hydration uyumu: ilk render hem build/SSR hem istemcide DETERMINISTIK 'tr' olmalı.
+  // localStorage'ı render sırasında okumak (SSR 'tr' vs istemci 'en') hydration mismatch
+  // yaratıyordu ("Hoş geldin" vs "Welcome"). Bu yüzden kayıtlı dili mount SONRASI okuyoruz.
+  const [lang, setLangState] = useState<Lang>('tr');
+  useEffect(() => {
+    const stored = localStorage.getItem('app-lang') as Lang | null;
+    if (stored === 'tr' || stored === 'en') setLangState(stored);
+  }, []);
   const setLang = (l: Lang) => { setLangState(l); localStorage.setItem('app-lang', l); };
   const t = (key: string) => translations[lang][key] ?? key;
   const [thinkingLevel, setThinkingLevel] = useState<'off' | 'low' | 'medium' | 'high'>('medium');

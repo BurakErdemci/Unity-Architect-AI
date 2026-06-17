@@ -2,19 +2,41 @@ import logging
 import os
 import sys
 
+# ── UTF-8 stdio (Windows fix) ─────────────────────────────────────────────
+# Windows'ta GUI/subprocess olarak spawn edilen Python, stdout/stderr için locale
+# code page'i (cp1252) kullanır → Türkçe karakter (ş, ğ, ı...) yazınca UnicodeEncodeError
+# ile çöker. Bu HTTP loglarını, MCP stdio JSON-RPC'sini ve unityai CLI çıktısını etkiler.
+# Her şeyden (subcommand dispatch, logging, print) ÖNCE stdio'yu UTF-8'e sabitle.
+if sys.platform == "win32":
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
 # ── PATH augmentasyonu (GUI-launched app fix) ─────────────────────────────
-# Finder/dmg'den açılan macOS uygulamaları minimal PATH alır (/usr/bin:/bin) —
-# kullanıcının CLI'ları (claude/codex → /opt/homebrew/bin, agy → ~/.local/bin)
+# GUI'den (Finder/dmg, Explorer/NSIS) açılan uygulamalar minimal PATH alır —
+# kullanıcının CLI'ları (claude/codex/gemini/agy npm-global veya ~/.local/bin'de)
 # bu PATH'te olmadığı için bulunamaz ve spawn patlar (terminalden açınca çalışıyordu).
 # Yaygın kurulum dizinlerini PATH'e ekle ki hem shutil.which (cli-availability)
 # hem de CLI subprocess spawn'ları çalışsın.
-_extra_paths = [
-    os.path.expanduser("~/.local/bin"),
-    "/opt/homebrew/bin", "/opt/homebrew/sbin",
-    "/usr/local/bin", "/usr/local/sbin",
-    os.path.expanduser("~/.npm-global/bin"),
-    os.path.expanduser("~/bin"),
-]
+if sys.platform == "win32":
+    _appdata = os.environ.get("APPDATA", os.path.expanduser("~\\AppData\\Roaming"))
+    _localappdata = os.environ.get("LOCALAPPDATA", os.path.expanduser("~\\AppData\\Local"))
+    _extra_paths = [
+        os.path.join(_appdata, "npm"),                              # npm -g (claude/codex/gemini)
+        os.path.join(os.path.expanduser("~"), ".local", "bin"),     # uv/pipx (agy, uvx)
+        os.path.join(_localappdata, "Microsoft", "WindowsApps"),    # winget shims
+        os.path.join(_localappdata, "Programs"),
+    ]
+else:
+    _extra_paths = [
+        os.path.expanduser("~/.local/bin"),
+        "/opt/homebrew/bin", "/opt/homebrew/sbin",
+        "/usr/local/bin", "/usr/local/sbin",
+        os.path.expanduser("~/.npm-global/bin"),
+        os.path.expanduser("~/bin"),
+    ]
 _cur_path = os.environ.get("PATH", "").split(os.pathsep)
 os.environ["PATH"] = os.pathsep.join(
     [p for p in _extra_paths if p and p not in _cur_path] + _cur_path
@@ -97,22 +119,37 @@ def _resolve_db_path() -> str:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Backend başlarken: 8080'de orphan süreç varsa temizle (geçen oturumdan kalmış olabilir)
+    # Sadece LISTEN state'indeki server process'lerini temizle — Unity Editor client
+    # olarak bağlıysa onun PID'si de listede çıkar ve öldürmek Unity'yi kapatır.
     try:
         import subprocess, signal, os as _os
-        # Sadece LISTEN state'indeki server process'lerini temizle —
-        # Unity Editor client olarak bağlıysa onun PID'si de listede çıkar
-        # ve öldürmek Unity'yi kapatır.
-        result = subprocess.run(
-            ["lsof", "-ti", ":8080", "-sTCP:LISTEN"],
-            capture_output=True, text=True, timeout=3
-        )
-        pids = [p for p in result.stdout.strip().split() if p]
-        for pid in pids:
-            try:
-                _os.kill(int(pid), signal.SIGTERM)
+        if sys.platform == "win32":
+            # Windows: netstat -ano ile LISTENING port sahibini bul, taskkill /T ile ağacı öldür.
+            result = subprocess.run(
+                ["netstat", "-ano", "-p", "TCP"],
+                capture_output=True, text=True, timeout=3
+            )
+            pids = set()
+            for line in result.stdout.splitlines():
+                parts = line.split()
+                if len(parts) >= 5 and parts[3] == "LISTENING" and parts[1].endswith(":8080"):
+                    pids.add(parts[4])
+            for pid in pids:
+                subprocess.run(["taskkill", "/PID", pid, "/T", "/F"],
+                               capture_output=True, timeout=5)
                 logger.info(f"[Startup] Orphan MCP süreci temizlendi (PID: {pid})")
-            except ProcessLookupError:
-                pass
+        else:
+            result = subprocess.run(
+                ["lsof", "-ti", ":8080", "-sTCP:LISTEN"],
+                capture_output=True, text=True, timeout=3
+            )
+            pids = [p for p in result.stdout.strip().split() if p]
+            for pid in pids:
+                try:
+                    _os.kill(int(pid), signal.SIGTERM)
+                    logger.info(f"[Startup] Orphan MCP süreci temizlendi (PID: {pid})")
+                except ProcessLookupError:
+                    pass
     except Exception as e:
         logger.debug(f"[Startup] Port temizleme atlandı: {e}")
 
