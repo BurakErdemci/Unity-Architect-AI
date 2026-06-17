@@ -60,8 +60,11 @@ async def request_approval(
             await asyncio.sleep(1.0)
 
     if not posted:
-        logger.warning(f"[approval_bridge] Backend'e ulaşılamadı — {tool_name} otomatik onaylanıyor")
-        return {"approved": True, "auto": True}
+        logger.warning(f"[approval_bridge] Backend'e ulaşılamadı — {tool_name} reddediliyor")
+        return {
+            "approved": False,
+            "error": "Onay servisine ulaşılamadı; işlem güvenlik nedeniyle reddedildi.",
+        }
 
     # Kullanıcı cevabını bekle — 360 × 0.5s = 180 saniye (diff incelemek için makul süre)
     logger.info(f"[approval_bridge] Kullanıcı cevabı bekleniyor (gate: {gate_id})")

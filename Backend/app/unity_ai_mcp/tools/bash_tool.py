@@ -8,6 +8,7 @@ import subprocess
 from mcp.server.fastmcp import FastMCP
 
 from unity_ai_mcp.approval_bridge import request_approval
+from unity_ai_mcp.tools.file_tools import _resolve
 
 _SAFE_PREFIXES = (
     "ls", "ll", "find ", "grep ", "cat ", "head ", "tail ",
@@ -75,7 +76,7 @@ def register_bash_tool(mcp: FastMCP, get_workspace: callable):
             # Boş içerikli test dosyaları → reddet, write_file kullanmasını söyle
             if not new_content.strip():
                 return "❌ Boş dosya oluşturma reddedildi. Dosya içeriğiyle birlikte mcp__unityai__save_file kullan."
-            abs_path = os.path.join(workspace, path) if not os.path.isabs(path) else path
+            abs_path = _resolve(path, workspace)
             original = ""
             if os.path.exists(abs_path):
                 try:

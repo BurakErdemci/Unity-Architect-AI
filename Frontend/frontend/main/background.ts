@@ -310,9 +310,13 @@ ipcMain.handle('create-file', async (_event, filePath: string, workspacePath?: s
   return { success: true, path: fullPath }
 })
 
-ipcMain.handle('delete-file', async (_event, relativePath, workspacePath) => {
+ipcMain.handle('delete-file', async (_event, relativePath: string, workspacePath?: string) => {
   try {
-    const fullPath = path.join(workspacePath, relativePath);
+    if (!workspacePath) return { success: false, error: 'Workspace path eksik.' };
+    const fullPath = path.isAbsolute(relativePath) ? relativePath : path.join(workspacePath, relativePath);
+    if (!isAllowedWorkspacePath(fullPath, workspacePath)) {
+      return { success: false, error: 'Dosya workspace dışında.' };
+    }
     const exists = fs.existsSync(fullPath);
     if (exists) {
       fs.unlinkSync(fullPath);

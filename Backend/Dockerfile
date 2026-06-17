@@ -15,6 +15,7 @@ COPY app/ ./
 # SQLite DB volume
 VOLUME /data
 ENV DB_PATH=/data/unity_master_v3.db
+ENV REQUIRE_LOCAL_APP_TOKEN=1
 
 EXPOSE 8000
 

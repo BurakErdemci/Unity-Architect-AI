@@ -66,6 +66,14 @@ from dotenv import load_dotenv
 # .env'yi diğer modüller import edilmeden önce yükle
 load_dotenv(Path(__file__).parent.parent / ".env")
 
+_REQUIRE_LOCAL_APP_TOKEN = os.environ.get("REQUIRE_LOCAL_APP_TOKEN", "").lower() in {
+    "1", "true", "yes", "on",
+}
+if _REQUIRE_LOCAL_APP_TOKEN and not os.environ.get("LOCAL_APP_TOKEN"):
+    raise RuntimeError(
+        "LOCAL_APP_TOKEN is required when REQUIRE_LOCAL_APP_TOKEN is enabled."
+    )
+
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware

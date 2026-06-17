@@ -11,9 +11,14 @@ logger = logging.getLogger(__name__)
 # Güvenlik: Sadece workspace içinde çalış
 def _validate_path(file_path: str, workspace_path: str) -> str:
     """Dosya yolunun workspace içinde olduğunu doğrular."""
-    resolved = Path(file_path).resolve()
-    workspace = Path(workspace_path).resolve()
-    if not str(resolved).startswith(str(workspace)):
+    workspace = Path(workspace_path).expanduser().resolve(strict=False)
+    target = Path(file_path).expanduser()
+    if not target.is_absolute():
+        target = workspace / target
+    resolved = target.resolve(strict=False)
+    try:
+        resolved.relative_to(workspace)
+    except ValueError:
         raise PermissionError(f"Güvenlik: {file_path} workspace dışında.")
     return str(resolved)
 
@@ -170,6 +175,6 @@ def run_command(command: str, workspace_path: str) -> dict:
             "summary": f"Komut çıktı verdi (Kod {process.returncode})" if any_output else f"Komut tamamlandı (Kod {process.returncode})"
         }
     except subprocess.TimeoutExpired:
-        return {"success": False, "error": "Komut zaman aşımına uğradı (30s)."}
+        return {"success": False, "error": "Komut zaman aşımına uğradı (300s)."}
     except Exception as e:
         return {"success": False, "error": f"Komut çalıştırma hatası: {str(e)}"}

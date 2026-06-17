@@ -55,8 +55,8 @@ describe('IPC Whitelist — izinsiz kanallar engellenir', () => {
 })
 
 describe('IPC Whitelist — Set doğruluğu', () => {
-  it('tam olarak 19 kanal içerir', () => {
-    expect(ALLOWED_INVOKE_CHANNELS.size).toBe(19)
+  it('tam olarak 21 kanal içerir', () => {
+    expect(ALLOWED_INVOKE_CHANNELS.size).toBe(21)
   })
 
   it('her kanal benzersiz', () => {
@@ -66,7 +66,9 @@ describe('IPC Whitelist — Set doğruluğu', () => {
 
   it('dosya kanallarının hepsi whitelist\'te', () => {
     const expected = ['get-backend-base-url', 'open-file-dialog', 'open-folder-dialog', 'read-directory',
-      'read-file', 'write-file', 'file-exists', 'write-multiple-files']
+      'read-file', 'write-file', 'file-exists', 'write-multiple-files',
+      'create-file', 'create-folder', 'rename-entry', 'delete-entry', 'move-entry',
+      'save-file-dialog', 'export-text-file', 'import-text-file', 'delete-file']
     for (const ch of expected) {
       expect(ALLOWED_INVOKE_CHANNELS.has(ch)).toBe(true)
     }
@@ -74,5 +76,11 @@ describe('IPC Whitelist — Set doğruluğu', () => {
 
   it('app-token-get kanalı whitelist\'te', () => {
     expect(ALLOWED_INVOKE_CHANNELS.has('app-token-get')).toBe(true)
+  })
+
+  it('terminal kanalları whitelist\'te', () => {
+    for (const ch of ['terminal-spawn', 'terminal-write', 'terminal-resize']) {
+      expect(ALLOWED_INVOKE_CHANNELS.has(ch)).toBe(true)
+    }
   })
 })

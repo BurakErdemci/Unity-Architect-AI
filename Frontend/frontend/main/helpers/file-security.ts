@@ -41,9 +41,11 @@ function safeResolve(filePath: string): string {
  */
 export function isAllowedUnityScriptPath(filePath: string, workspacePath: string): boolean {
   try {
+    if (!filePath || !workspacePath) return false
+
     // Eğer yol absolute değilse, önce workspace ile birleştirip öyle kontrol etmeliyiz
     const absoluteFilePath = path.isAbsolute(filePath) ? filePath : path.resolve(workspacePath, filePath)
-    
+
     const resolvedFile = safeResolve(absoluteFilePath)
     const resolvedWorkspace = safeResolve(workspacePath)
     const relativePath = path.relative(resolvedWorkspace, resolvedFile)
@@ -53,7 +55,12 @@ export function isAllowedUnityScriptPath(filePath: string, workspacePath: string
       return false
     }
 
-    // Sadece .cs dosyalarına yazma izni ver
+    const parts = relativePath.split(path.sep).filter(Boolean)
+    if (parts.length < 3 || parts[0] !== 'Assets' || parts[1] !== 'Scripts') {
+      return false
+    }
+
+    // Sadece Assets/Scripts altındaki .cs dosyalarına yazma izni ver
     return path.extname(resolvedFile).toLowerCase() === '.cs'
   } catch {
     return false

@@ -101,11 +101,13 @@ def register_file_tools(mcp: FastMCP, get_workspace: callable):
 
 
 def _resolve(path: str, workspace: str) -> str:
-    p = Path(path)
+    workspace_resolved = Path(workspace).expanduser().resolve(strict=False)
+    p = Path(path).expanduser()
     if not p.is_absolute():
-        p = Path(workspace) / p
-    resolved = p.resolve()
-    workspace_resolved = Path(workspace).resolve()
-    if not str(resolved).startswith(str(workspace_resolved)):
+        p = workspace_resolved / p
+    resolved = p.resolve(strict=False)
+    try:
+        resolved.relative_to(workspace_resolved)
+    except ValueError:
         raise PermissionError(f"Güvenlik: {path} workspace dışında.")
     return str(resolved)
