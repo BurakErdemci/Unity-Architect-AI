@@ -141,9 +141,14 @@ class UnityMCPManager:
         import shutil, sys
         # Paketlenmiş app: uv installer'a gömülü (resources/uv/). Kullanıcının PC'sinde
         # uv kurulu olmasa da MCP çalışsın diye önce burayı dene.
-        bundled = os.path.join(
-            self.project_root, "uv", "uvx.exe" if sys.platform == "win32" else "uvx"
-        )
+        # Windows tek arch (flat: uv/uvx.exe). macOS iki arch (darwin-arm64/ + darwin-x64/)
+        # bundle ettiği için çalışma-anı mimarisine göre alt-dizin seçilir.
+        if sys.platform == "win32":
+            bundled = os.path.join(self.project_root, "uv", "uvx.exe")
+        else:
+            import platform as _plat
+            arch = "arm64" if _plat.machine() in ("arm64", "aarch64") else "x64"
+            bundled = os.path.join(self.project_root, "uv", f"darwin-{arch}", "uvx")
         if os.path.isfile(bundled):
             return bundled
         found = shutil.which("uvx")
