@@ -370,6 +370,16 @@ ipcMain.handle('move-entry', async (_event, sourcePath: string, targetDir: strin
   return { success: true, newPath }
 })
 
+// Bir klasörün hâlâ var olup olmadığını kontrol eder (workspace silinmiş mi?).
+ipcMain.handle('path-exists', async (_event, targetPath: string) => {
+  try {
+    if (!targetPath) return false
+    return fs.existsSync(targetPath) && fs.statSync(targetPath).isDirectory()
+  } catch {
+    return false
+  }
+})
+
 ipcMain.handle('app-token-get', () => localAppToken)
 ipcMain.handle('get-backend-base-url', () => getBackendBaseUrl())
 

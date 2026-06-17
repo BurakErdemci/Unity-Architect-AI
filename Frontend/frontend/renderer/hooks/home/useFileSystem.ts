@@ -63,6 +63,17 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
   }, [API, user]);
 
   const selectWorkspace = useCallback(async (path: string) => {
+    // Klasör hâlâ var mı? (silinmiş/taşınmış workspace'i otomatik yüklemeyi engelle)
+    if (ipc) {
+      const exists = await ipc.invoke('path-exists', path);
+      if (!exists) {
+        showToast('Önceki çalışma klasörü bulunamadı. Lütfen yeni bir klasör seçin.', 'warning');
+        // Geçersiz yolu temizle ki bir daha otomatik yüklenmeye çalışılmasın
+        setLastWorkspacePath(null);
+        setWorkspacePath(null);
+        return;
+      }
+    }
     setWorkspacePath(path);
     setRootFolderPath(path);
     if (ipc) {

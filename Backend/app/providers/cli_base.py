@@ -174,6 +174,15 @@ class BaseCLIProvider(AIProvider):
                            interactive: bool = False) -> AsyncGenerator[Dict[str, Any], None]:
         try:
             workspace = cwd or os.getcwd()
+            # Güvenlik ağı: seçili workspace klasörü silinmiş/taşınmış olabilir.
+            # Bu durumda .mcp.json yazımı FileNotFoundError ile çöküp sohbeti
+            # sessizce boş bırakıyordu — kullanıcıya net mesaj ver, çakma.
+            if not os.path.isdir(workspace):
+                yield {"type": "error", "content": (
+                    "📁 Çalışma klasörü bulunamadı (silinmiş veya taşınmış olabilir). "
+                    "Lütfen sol üstten yeni bir proje klasörü seçin."
+                )}
+                return
             self._write_mcp_config(workspace)
 
             # Codex için prompt'a gerçek dosya ağacını ekle (hallucination'ı önler)
