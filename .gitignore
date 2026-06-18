@@ -40,6 +40,9 @@ Backend/build/
 # Tekrar build için: pwsh Backend/vendor/fetch_uv.ps1
 Backend/vendor/uv/
 
+# Ham demo videoları (büyük) — repoya GIF'ler konur (docs/media/*.gif), mp4 değil
+*.mp4
+
 # Local notes
 LOCAL_REFACTOR_NOTES.md
 ROADMAP.md

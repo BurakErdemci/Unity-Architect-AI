@@ -16,6 +16,12 @@
 
 [Turkish README](./README.md)
 
+<br/>
+
+![Unity Architect AI Demo](docs/media/demo.gif)
+
+*Develop with natural language in the code editor, then control the Unity Editor live — all from a single window.*
+
 </div>
 
 ---

@@ -16,6 +16,12 @@
 
 [English README](./README_EN.md)
 
+<br/>
+
+![Unity Architect AI Demo](docs/media/demo.gif)
+
+*Kod editöründe doğal dille geliştir, ardından Unity Editor'ü canlı olarak kontrol et — tek pencereden.*
+
 </div>
 
 ---
