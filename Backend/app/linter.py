@@ -211,7 +211,11 @@ def lint_csharp(code: str, workspace_path: str, filename: str, full_project: boo
     csc_path = paths["csc"] if os.path.exists(paths["csc"]) else paths["fallback_csc"]
     
     if not os.path.exists(csc_path):
-        return [{"line": 1, "column": 1, "message": "C# Compiler (csc) not found.", "severity": "warning"}]
+        return [{"line": 1, "column": 1,
+                 "message": ("Unity bulunamadı — C# hata denetimi (linter) devre dışı. "
+                             "csc derleyicisi Unity Editor ile birlikte gelir; bu makinede "
+                             "Unity kurulu/bağlı değil. Kod yazma ve düzenleme normal çalışır."),
+                 "severity": "warning"}]
 
     unity_managed_path = paths["managed"]
 
