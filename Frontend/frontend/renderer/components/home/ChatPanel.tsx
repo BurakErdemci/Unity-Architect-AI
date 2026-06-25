@@ -33,8 +33,6 @@ interface ChatPanelProps {
   thinkingLevel: 'low' | 'medium' | 'high' | 'off';
   workspacePath: string | null;
   handleExportToUnity: (code: string) => void;
-  pendingPlan: { content: string; originalMessage: string; mode: GenerationMode } | null;
-  setPendingPlan: (val: any) => void;
   pendingGenFiles: { files: PendingFile[]; messageId: number } | null;
   setPendingGenFiles: (val: any) => void;
   pendingFix: { data: DiffData; messageId?: number; applied?: boolean; gateId?: string } | null;
@@ -45,7 +43,6 @@ interface ChatPanelProps {
   analyzeProject: (silent?: boolean) => void;
   openFile: (path: string) => void;
   sendMessage: (msg: string) => void;
-  onConfirmPlan: (msg: string, mode: GenerationMode) => void;
   currentPlan: AgentTask[];
   messagesEndRef: React.RefObject<HTMLDivElement>;
   ipc: any;
@@ -75,8 +72,6 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   thinkingLevel,
   workspacePath,
   handleExportToUnity,
-  pendingPlan,
-  setPendingPlan,
   pendingGenFiles,
   setPendingGenFiles,
   pendingFix,
@@ -87,7 +82,6 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   analyzeProject,
   openFile,
   sendMessage,
-  onConfirmPlan,
   currentPlan,
   messagesEndRef,
   ipc,
@@ -193,25 +187,6 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                       <button onClick={() => sendMessage('Tam Sistemi Üret')} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600/20 border border-blue-500/30 text-blue-300 text-[12px] font-medium hover:bg-blue-600/35 transition-colors"> ✅ {t('chat.generateFull')} </button>
                       <button onClick={() => sendMessage('Basit Versiyon')} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-700/40 border border-slate-600/30 text-slate-300 text-[12px] font-medium hover:bg-slate-700/60 transition-colors"> ⚡ {t('chat.simpleVersion')} </button>
                     </div>
-                  )}
-
-                  {/* Plan Approval Card */}
-                  {pendingPlan && msgIdx === messages.length - 1 && msg.role === 'assistant' && (
-                    <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className="mt-3 rounded-xl border border-blue-500/20 bg-blue-950/10 overflow-hidden">
-                      <div className="flex items-center justify-between px-4 py-2.5 border-b border-blue-500/10">
-                        <span className="text-[11px] font-semibold text-blue-300">{t('chat.approve')}</span>
-                        <span className="text-[10px] text-slate-600">{pendingPlan.mode === 'step' ? t('chat.stepByStep') : t('chat.planMode')}</span>
-                      </div>
-                      <div className="flex gap-2 px-4 py-3">
-                        <button
-                          onClick={() => onConfirmPlan(pendingPlan.originalMessage, pendingPlan.mode)}
-                          className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-[12px] font-semibold transition-colors"
-                        >
-                          Başlat
-                        </button>
-                        <button onClick={() => setPendingPlan(null)} className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-400 rounded-lg text-[12px] font-semibold transition-colors"> İptal </button>
-                      </div>
-                    </motion.div>
                   )}
 
                   {/* File Creation Approval */}

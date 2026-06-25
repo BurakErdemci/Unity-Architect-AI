@@ -72,4 +72,4 @@ export interface ExportModalState {
   exportResult: { success: boolean; message: string } | null;
 }
 
-export type GenerationMode = 'auto' | 'step' | 'plan';
+export type GenerationMode = 'auto' | 'step';

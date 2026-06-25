@@ -24,7 +24,6 @@ export const useChat = (
   const [contextUsage, setContextUsage] = useState({ percent: 0, should_compact: false, message_count: 0 });
   const [isCompacting, setIsCompacting] = useState(false);
   const [isAnalyzingProject, setIsAnalyzingProject] = useState(false);
-  const [pendingPlan, setPendingPlan] = useState<{ content: string; originalMessage: string; mode: GenerationMode } | null>(null);
   const [pendingFix, setPendingFix] = useState<{ data: any; messageId?: number; applied?: boolean } | null>(null);
   const [pendingCommand, setPendingCommand] = useState<{ command: string; gateId: string; messageId: number } | null>(null);
   const [pendingQuestion, setPendingQuestion] = useState<{ questions: any[]; gateId: string; messageId: number } | null>(null);
@@ -245,54 +244,6 @@ export const useChat = (
     } catch (err) { showToast('Geçmiş temizlenemedi', 'error'); }
   }, [activeConvId, showToast]);
 
-  const confirmPlan = useCallback(async (
-    originalMsg: string, 
-    mode: GenerationMode, 
-    lang: string, 
-    code: string, 
-    setPendingGenFiles: (val: any) => void,
-    setPendingDelete: (val: any) => void
-  ) => {
-    setPendingPlan(null);
-    setLoading(true);
-    try {
-      const res = await axios.post(`${API}/chat`, {
-        conversation_id: activeConvId, message: originalMsg, language: lang, user_id: user?.id,
-        editor_code: code || '', use_thinking: false, generation_mode: mode, generation_confirmed: true,
-      }, { timeout: 900000 });
-      
-      const aiMsgId = Date.now() + 5;
-      const aiMsg: Message = {
-        id: aiMsgId, role: 'assistant', content: res.data.content, smells: res.data.static_results?.smells || [],
-        timestamp: new Date().toISOString(),
-        thinking: res.data.thinking || null, thinking_duration_ms: res.data.thinking_duration_ms || null,
-        tool_calls: res.data.tool_calls || []
-      };
-      setMessages(prev => [...prev, aiMsg]);
-
-      
-      if (res.data.content) {
-        const { parseGeneratedFiles } = await import('../../components/home/export-utils');
-        const genFiles = parseGeneratedFiles(res.data.content);
-        if (genFiles.length > 0) {
-          const withPaths: PendingFile[] = [];
-          for (const f of genFiles) {
-            const suggestedPath = suggestFilePath(f.name);
-            const exists = await ipc?.invoke('read-file', suggestedPath, workspacePath);
-            withPaths.push({ name: f.name, code: f.code, suggestedPath, originalCode: (exists && exists.content) ? exists.content : "" });
-          }
-
-          if (mode === 'step') {
-            setPendingGenFiles({ files: withPaths, messageId: aiMsgId });
-          } else {
-            for (const f of withPaths) if (ipc && workspacePath) await ipc.invoke('write-file', f.suggestedPath, f.code, workspacePath);
-            refreshFileTree();
-          }
-        }
-      }
-    } catch (err) { showToast('Plan başlatılamadı', 'error'); } finally { setLoading(false); }
-  }, [API, activeConvId, aiConfig.provider_type, refreshFileTree, suggestFilePath, user?.id, workspacePath, showToast]);
-
   const analyzeProject = useCallback(async (silent = false) => {
     if (!user || !API) return;
 
@@ -367,7 +318,6 @@ export const useChat = (
     contextUsage, setContextUsage,
     isCompacting, setIsCompacting,
     isAnalyzingProject, setIsAnalyzingProject,
-    pendingPlan, setPendingPlan,
     pendingFix, setPendingFix,
     pendingCommand, setPendingCommand,
     pendingQuestion, setPendingQuestion,
@@ -392,7 +342,7 @@ export const useChat = (
       setPendingQuestion(null);
       setLoading(false);
     },
-    clearHistory, confirmPlan, analyzeProject, exportMemory, importMemory, compactConversation,
+    clearHistory, analyzeProject, exportMemory, importMemory, compactConversation,
     approveCommand: async (gateId: string, approved: boolean) => {
       try {
         await fetch(`${API}/command-approval/${gateId}`, {

@@ -329,10 +329,6 @@ export default function Home() {
     chat.sendMessage(input, fs.code, lang, chat.generationMode, thinkingLevel, fs.setPendingGenFiles, fs.setPendingDelete, images, effortMax, ultracode);
   };
 
-  const handleConfirmPlan = useCallback((originalMsg: string, mode: any) => {
-    chat.confirmPlan(originalMsg, mode, lang, fs.code, fs.setPendingGenFiles, fs.setPendingDelete);
-  }, [chat.confirmPlan, lang, fs.code, fs.setPendingGenFiles, fs.setPendingDelete]);
-
   const langCtxValue = { lang, setLang, t: (k: string) => translations[lang][k] ?? k };
 
   if (backendError) {
@@ -529,9 +525,9 @@ export default function Home() {
               messages={chat.messages} activeConvId={chat.activeConvId} user={auth.user} loading={chat.loading} clearHistory={chat.clearHistory} lang={lang}
               effectiveProvider={ai.effectiveProvider}
               modelName={ai.aiConfig?.model_name}
-              thinkingLevel={thinkingLevel} workspacePath={fs.workspacePath} handleExportToUnity={fs.handleExportToUnity} pendingPlan={chat.pendingPlan} setPendingPlan={chat.setPendingPlan}
+              thinkingLevel={thinkingLevel} workspacePath={fs.workspacePath} handleExportToUnity={fs.handleExportToUnity}
               pendingGenFiles={fs.pendingGenFiles} setPendingGenFiles={fs.setPendingGenFiles} pendingFix={chat.pendingFix} setPendingFix={chat.setPendingFix} openedFilePath={fs.openedFilePath}
-              setCode={fs.setCode} refreshFileTree={fs.refreshFileTree} analyzeProject={chat.analyzeProject} openFile={fs.openFile} sendMessage={handleSendMessage} onConfirmPlan={handleConfirmPlan}
+              setCode={fs.setCode} refreshFileTree={fs.refreshFileTree} analyzeProject={chat.analyzeProject} openFile={fs.openFile} sendMessage={handleSendMessage}
               currentPlan={chat.currentPlan} messagesEndRef={chatEndRef} ipc={ipc} showToast={showToast as any} diffFile={diffFile} setDiffFile={setDiffFile}
               pendingDelete={fs.pendingDelete} setPendingDelete={fs.setPendingDelete} pendingCommand={chat.pendingCommand} setPendingCommand={chat.setPendingCommand} onApproveCommand={chat.approveCommand} pendingQuestion={chat.pendingQuestion} setPendingQuestion={chat.setPendingQuestion} onAnswerQuestion={chat.answerQuestion} deleteFile={fs.deleteFile} setIsTerminalOpen={setIsTerminalOpen}
             />

@@ -147,15 +147,20 @@ class AgentRunner:
                 yield event
         elif self.provider_type == "subscription":
             # claude-* → kalıcı interaktif SDK session (native onay + AskUserQuestion + skill/slash).
-            # codex/agy → mevcut ephemeral CLI yolu.
+            # codex (gpt-*) → kalıcı app-server session (native onay). agy → ephemeral CLI (ertelendi).
             _name = (self.model_name or "claude").lower()
             _is_codex = _name.startswith("gpt-")
             _is_agy = _name.startswith(("gemini", "agy-"))
-            if not _is_codex and not _is_agy:
-                async for event in self._run_claude_session(user_message):
+            if _is_codex:
+                # codex → kalıcı app-server session (native onay + bağlam sürekliliği)
+                async for event in self._run_codex_session(user_message):
+                    yield event
+            elif _is_agy:
+                # agy → şimdilik ephemeral CLI yolu (kalıcı-session ertelendi)
+                async for event in self._run_cli(user_message):
                     yield event
             else:
-                async for event in self._run_cli(user_message):
+                async for event in self._run_claude_session(user_message):
                     yield event
         else:
             # Diğer provider'lar için basit fallback (function calling yok)
@@ -951,6 +956,41 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
         except Exception as e:
             logger.exception("[ClaudeSession] stream hatası")
             yield AgentEvent("error", {"message": f"Claude session hatası: {e}"})
+
+    # ═══════════════════════════════════════════════
+    # CODEX KALICI SESSION (codex app-server, native onay)
+    # ═══════════════════════════════════════════════
+    async def _run_codex_session(self, user_message: str) -> AsyncGenerator[AgentEvent, None]:
+        """
+        Codex'i sohbet başına KALICI app-server session olarak sürer (claude muadili).
+        - Bağlam turlar arası korunur (thread; DB geçmişi her turda prompt'a basılmaz).
+        - Onay native: item/commandExecution|fileChange/requestApproval → command_gates
+          → frontend onay kartı (Claude SDK yoluyla AYNI kartlar, yeni UI yok).
+        - Abonelik (ChatGPT) auth — API key gerekmez.
+        """
+        from providers.codex_session import get_session
+
+        session = get_session(
+            self.conversation_id,
+            model=self.model_name,
+            cwd=self.workspace_path or ".",
+        )
+        # Oto mod → onay otomatik accept; Adım/Plan modu → her mutasyonda onay kartı.
+        session.auto_approve = (self.generation_mode == "auto")
+
+        # İlk turda proje bağlamını ekle; sonraki turlarda thread zaten hatırlıyor.
+        message = user_message
+        if self.context and not session._ctx_injected:
+            message = f"{user_message}\n\n[PROJE BAĞLAMI]\n{self.context}"
+            session._ctx_injected = True
+
+        try:
+            async for ev in session.stream(message):
+                etype = ev.pop("type", "text")
+                yield AgentEvent(etype, ev)
+        except Exception as e:
+            logger.exception("[CodexSession] stream hatası")
+            yield AgentEvent("error", {"message": f"Codex session hatası: {e}"})
 
     def _summarize_result(self, tool_name: str, result: dict) -> str:
         """Tool sonucunu kısa özetle."""

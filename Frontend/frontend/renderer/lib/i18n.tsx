@@ -33,8 +33,6 @@ const tr = {
   // GenerationModeSelector
   'mode.auto': 'Otomatik',
   'mode.autoDesc': 'AI direkt üretir, dosyalar otomatik oluşturulur',
-  'mode.plan': 'Plan Modu',
-  'mode.planDesc': 'Önce plan gösterir, onaylayınca üretir',
   'mode.step': 'Adım Adım',
   'mode.stepDesc': 'Her dosya için ayrı onay ister',
   // ChatPanel
@@ -45,7 +43,6 @@ const tr = {
   'chat.simpleVersion': 'Basit Versiyon',
   'chat.approve': 'Onaylıyor musun?',
   'chat.stepByStep': 'Adım Adım',
-  'chat.planMode': 'Plan Modu',
   'chat.agyNotice': 'Antigravity CLI: dosya yazma ve terminal komutları onay alınmadan otomatik çalışır (Google MCP onay entegrasyonu henüz hazır değil).',
   // SettingsModal
   'settings.title': 'AI Yapılandırması',
@@ -163,8 +160,6 @@ const en: Record<keyof typeof tr, string> = {
   // GenerationModeSelector
   'mode.auto': 'Auto',
   'mode.autoDesc': 'AI generates directly, files are created automatically',
-  'mode.plan': 'Plan Mode',
-  'mode.planDesc': 'Shows a plan first, generates on approval',
   'mode.step': 'Step by Step',
   'mode.stepDesc': 'Asks for approval for each file separately',
   // ChatPanel
@@ -175,7 +170,6 @@ const en: Record<keyof typeof tr, string> = {
   'chat.simpleVersion': 'Simple Version',
   'chat.approve': 'Do you approve?',
   'chat.stepByStep': 'Step by Step',
-  'chat.planMode': 'Plan Mode',
   'chat.agyNotice': 'Antigravity CLI: file writes and terminal commands run automatically without approval (Google MCP approval integration not yet available).',
   // SettingsModal
   'settings.title': 'AI Configuration',

@@ -1,9 +1,9 @@
 import { AnimatePresence, motion } from 'framer-motion';
-import { ChevronDown, Cpu, Hand, ListChecks } from 'lucide-react';
+import { ChevronDown, Cpu, Hand } from 'lucide-react';
 import { useRef, useState, useEffect } from 'react';
 import { useLang } from '../../lib/i18n';
 
-export type GenerationMode = 'auto' | 'plan' | 'step';
+export type GenerationMode = 'auto' | 'step';
 
 interface Mode {
   id: GenerationMode;
@@ -21,7 +21,6 @@ export const GenerationModeSelector = ({ value, onChange }: GenerationModeSelect
   const { t } = useLang();
   const MODES: Mode[] = [
     { id: 'auto', icon: <Cpu size={14} />, label: t('mode.auto'), description: t('mode.autoDesc') },
-    { id: 'plan', icon: <ListChecks size={14} />, label: t('mode.plan'), description: t('mode.planDesc') },
     { id: 'step', icon: <Hand size={14} />, label: t('mode.step'), description: t('mode.stepDesc') },
   ];
   const [open, setOpen] = useState(false);
