@@ -173,6 +173,14 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"[Shutdown] Unity MCP durdurulamadı: {e}")
 
+    # Canlı Claude SDK session'larını kapat (subprocess sızdırma önlemi)
+    try:
+        from providers.claude_sdk_session import close_all_sessions
+        await close_all_sessions()
+        logger.info("[Shutdown] Claude SDK session'ları kapatıldı.")
+    except Exception as e:
+        logger.warning(f"[Shutdown] Claude session'ları kapatılamadı: {e}")
+
 
 db_path = _resolve_db_path()
 app = FastAPI(title="Unity Architect AI", lifespan=lifespan)

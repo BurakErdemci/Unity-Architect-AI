@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useCallback, useTransition } from "react";
+import { useEffect, useRef, useCallback, useTransition, useMemo } from "react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 import {
@@ -72,6 +72,7 @@ interface CommandSuggestion {
     label: string;
     description: string;
     prefix: string;
+    isSkill?: boolean;  // backend 'skills' listesinde mi (palette'te rozet için)
 }
 
 interface TextareaProps
@@ -140,7 +141,9 @@ export function AnimatedChatInput({
     placeholder = "Ask zap a question...",
     className,
     disabled = false,
-    disabledPlaceholder = "Bu bölüm bakımda..."
+    disabledPlaceholder = "Bu bölüm bakımda...",
+    slashCommands = [],
+    skills = []
 }: {
     value: string;
     setValue: (val: string) => void;
@@ -153,6 +156,8 @@ export function AnimatedChatInput({
     className?: string;
     disabled?: boolean;
     disabledPlaceholder?: string;
+    slashCommands?: string[];  // backend'den gelen Claude Code slash komutları (isimler, '/'siz)
+    skills?: string[];         // slash komutlarının skill olan alt kümesi (rozet için)
 }) {
     // Typing state is INTERNAL — does not propagate to parent on every keystroke.
     const [internalValue, setInternalValue] = useState(value);
@@ -231,19 +236,41 @@ export function AnimatedChatInput({
         }
     }, [value]);
 
-    const commandSuggestions: CommandSuggestion[] = [
-        { icon: <span>🧠</span>, label: 'Compact', description: 'Sohbeti özetle ve hafızaya al', prefix: '/compact' },
-    ];
+    // Built-in (app) komutu + backend'den gelen Claude Code slash komutları
+    const commandSuggestions: CommandSuggestion[] = useMemo(() => {
+        const builtin: CommandSuggestion[] = [
+            { icon: <span>🧠</span>, label: 'Compact', description: 'Sohbeti özetle ve hafızaya al', prefix: '/compact' },
+        ];
+        const skillSet = new Set(skills || []);
+        const dynamic: CommandSuggestion[] = (slashCommands || []).map(name => ({
+            icon: <span>{skillSet.has(name) ? '✨' : '/'}</span>,
+            label: name,
+            description: '',
+            prefix: '/' + name,
+            isSkill: skillSet.has(name),
+        }));
+        return [...builtin, ...dynamic];
+    }, [slashCommands, skills]);
+
+    // Yazdıkça filtrele: '/' sonrası metin prefix/label içinde geçenler (perf için ilk 50)
+    const filteredSuggestions = useMemo(() => {
+        if (!internalValue.startsWith('/')) return [];
+        const q = internalValue.slice(1).toLowerCase();
+        const list = q
+            ? commandSuggestions.filter(c =>
+                c.prefix.toLowerCase().includes(q) || c.label.toLowerCase().includes(q))
+            : commandSuggestions;
+        return list.slice(0, 50);
+    }, [internalValue, commandSuggestions]);
 
     useEffect(() => {
-        if (internalValue.startsWith('/') && !internalValue.includes(' ')) {
+        if (internalValue.startsWith('/') && !internalValue.includes(' ') && filteredSuggestions.length > 0) {
             setShowCommandPalette(true);
-            const matchingSuggestionIndex = commandSuggestions.findIndex(cmd => cmd.prefix.startsWith(internalValue));
-            setActiveSuggestion(matchingSuggestionIndex);
+            setActiveSuggestion(0);
         } else {
             setShowCommandPalette(false);
         }
-    }, [internalValue]);
+    }, [internalValue, filteredSuggestions.length]);
 
     useEffect(() => {
         const handleClickOutside = (event: MouseEvent) => {
@@ -261,14 +288,14 @@ export function AnimatedChatInput({
         if (showCommandPalette) {
             if (e.key === 'ArrowDown') {
                 e.preventDefault();
-                setActiveSuggestion(prev => prev < commandSuggestions.length - 1 ? prev + 1 : 0);
+                setActiveSuggestion(prev => prev < filteredSuggestions.length - 1 ? prev + 1 : 0);
             } else if (e.key === 'ArrowUp') {
                 e.preventDefault();
-                setActiveSuggestion(prev => prev > 0 ? prev - 1 : commandSuggestions.length - 1);
+                setActiveSuggestion(prev => prev > 0 ? prev - 1 : filteredSuggestions.length - 1);
             } else if (e.key === 'Tab' || e.key === 'Enter') {
                 e.preventDefault();
-                if (activeSuggestion >= 0) {
-                    const selectedCommand = commandSuggestions[activeSuggestion];
+                if (activeSuggestion >= 0 && filteredSuggestions[activeSuggestion]) {
+                    const selectedCommand = filteredSuggestions[activeSuggestion];
                     setInternalValue(selectedCommand.prefix + ' ');
                     setShowCommandPalette(false);
                 }
@@ -334,8 +361,8 @@ export function AnimatedChatInput({
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0, y: 5 }}
                     >
-                        <div className="py-1 bg-black">
-                            {commandSuggestions.map((suggestion, index) => (
+                        <div className="py-1 bg-black max-h-[280px] overflow-y-auto">
+                            {filteredSuggestions.map((suggestion, index) => (
                                 <div
                                     key={suggestion.prefix}
                                     className={cn(
@@ -349,7 +376,10 @@ export function AnimatedChatInput({
                                 >
                                     <div className="w-5 h-5 flex items-center justify-center text-white/60">{suggestion.icon}</div>
                                     <div className="font-medium text-[11px]">{suggestion.label}</div>
-                                    <div className="text-white/40 text-[10px] ml-1">{suggestion.prefix}</div>
+                                    {suggestion.isSkill && (
+                                        <span className="text-[8px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded bg-violet-500/15 text-violet-300 border border-violet-500/20">skill</span>
+                                    )}
+                                    <div className="text-white/40 text-[10px] ml-auto">{suggestion.prefix}</div>
                                 </div>
                             ))}
                         </div>

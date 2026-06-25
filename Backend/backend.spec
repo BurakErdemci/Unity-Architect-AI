@@ -2,16 +2,24 @@
 # PyInstaller spec — Unity Architect AI backend
 # Kullanım: cd Backend && pyinstaller backend.spec
 
+from PyInstaller.utils.hooks import collect_all
+
+# claude-agent-sdk: wheel kendi CLI binary'sini ve data dosyalarını getiriyor →
+# data + binary + submodule'leri topla (yoksa frozen build'de session açılmaz).
+_cas_datas, _cas_binaries, _cas_hidden = collect_all('claude_agent_sdk')
+
 a = Analysis(
     ['app/main.py'],
     pathex=['app'],
-    binaries=[],
+    binaries=_cas_binaries,
     # NOT: Launcher scriptleri (run_mcp_server.sh, unityai) PyInstaller datas'ı ile
     # GÖMÜLMEZ — PyInstaller 6.x datas'ı _internal/ altına koyuyor, oysa scriptlerin
     # frozen 'backend' binary'sinin YANINDA (Backend kökünde) olması gerekiyor.
     # Bu yüzden electron-builder.yml extraResources ile doğrudan Backend köküne kopyalanır.
-    datas=[],
+    datas=_cas_datas,
     hiddenimports=[
+        # Claude Agent SDK (kalıcı interaktif session)
+        'claude_agent_sdk',
         # uvicorn — otomatik bulunamayan modüller
         'uvicorn.logging',
         'uvicorn.loops',
@@ -69,7 +77,7 @@ a = Analysis(
         'mcp',
         'mcp.server',
         'mcp.server.fastmcp',
-    ],
+    ] + _cas_hidden,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

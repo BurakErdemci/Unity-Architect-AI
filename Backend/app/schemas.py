@@ -51,6 +51,10 @@ class ChatRequest(BaseModel):
     generation_confirmed: bool = False
     generation_mode: str = "auto"  # auto | plan | step
     images: Optional[List[str]] = None
+    # Claude-only (subscription + model_name "claude-" ile başlar). Diğer sağlayıcılarda
+    # yok sayılır. effort_level → ClaudeAgentOptions.effort; ultracode → mesaj keyword'ü.
+    effort_level: str = "medium"  # low | medium | high | max
+    ultracode: bool = False
 
 
 class WorkspaceRequest(BaseModel):

@@ -13,10 +13,11 @@ import { Message, UserData, FileEntry, GenerationMode } from './types';
 import { ModelAvatar } from './ModelAvatar';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { ThinkingBlock } from './ThinkingBlock';
-import { ToolBlock } from './ToolBlock';
+import { ToolGroup } from './ToolGroup';
 import { FileCreationApproval, PendingFile } from './FileCreationApproval';
 import { FileDeleteApproval } from './FileDeleteApproval';
 import { CommandApproval } from './CommandApproval';
+import { QuestionApproval } from './QuestionApproval';
 import { DiffViewer, DiffData } from './DiffViewer';
 import AgentPlan, { Task as AgentTask } from '../ui/agent-plan';
 
@@ -56,6 +57,9 @@ interface ChatPanelProps {
   pendingCommand: { command: string; gateId: string; messageId: number } | null;
   setPendingCommand: (val: any | null) => void;
   onApproveCommand: (gateId: string, approved: boolean) => Promise<void>;
+  pendingQuestion: { questions: any[]; gateId: string; messageId: number } | null;
+  setPendingQuestion: (val: any | null) => void;
+  onAnswerQuestion: (gateId: string, answers: Record<string, string>) => Promise<void>;
   deleteFile: (path: string) => Promise<void>;
   setIsTerminalOpen: (val: boolean) => void;
 }
@@ -95,6 +99,9 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   pendingCommand,
   setPendingCommand,
   onApproveCommand,
+  pendingQuestion,
+  setPendingQuestion,
+  onAnswerQuestion,
   deleteFile,
 }) => {
   const { t } = useLang();
@@ -156,21 +163,9 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                     <ThinkingBlock thinking={msg.thinking!} durationMs={msg.thinking_duration_ms} />
                   )}
 
-                  {/* Tool Blocks */}
-                  {msg.tool_calls && msg.tool_calls.length > 0 && (
-                    <div className="flex flex-col gap-1 mb-3">
-                      {msg.tool_calls.map((tc, idx) => (
-                        <ToolBlock key={idx} tool={tc.tool} args={tc.args} summary={tc.summary} success={tc.success} />
-                      ))}
-                    </div>
-                  )}
-                  {msg.tools && msg.tools.length > 0 && (
-                    <div className="flex flex-col gap-1 mb-3">
-                      {msg.tools.map((tc, idx) => (
-                        <ToolBlock key={idx} tool={tc.tool} args={tc.args} summary={tc.summary} success={tc.success} />
-                      ))}
-                    </div>
-                  )}
+                  {/* Tool Blocks (3'ten fazlaysa collapse grubu) */}
+                  <ToolGroup tools={msg.tool_calls} />
+                  <ToolGroup tools={msg.tools} />
 
                   {/* Content or Loading Typing */}
                   {(msg.content === "" || !msg.content) && loading && msgIdx === messages.length - 1 ? (
@@ -266,14 +261,24 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                     <CommandApproval
                       command={pendingCommand.command}
                       onConfirm={async () => {
+                        // onApproveCommand kuyruktaki sıradaki onayı kendi gösterir → burada setPendingCommand(null) ÇAĞIRMA
                         await onApproveCommand(pendingCommand.gateId, true);
-                        setPendingCommand(null);
                         showToast('Komut onaylandı — çalışıyor...', 'success');
                       }}
                       onCancel={async () => {
                         await onApproveCommand(pendingCommand.gateId, false);
-                        setPendingCommand(null);
                         showToast('Komut iptal edildi', 'info');
+                      }}
+                    />
+                  )}
+
+                  {/* AskUserQuestion (A/B/C seçim kartı) */}
+                  {pendingQuestion && pendingQuestion.messageId === msg.id && (
+                    <QuestionApproval
+                      questions={pendingQuestion.questions}
+                      onSubmit={async (answers) => {
+                        // onAnswerQuestion kuyruktaki sıradaki soruyu kendi gösterir
+                        await onAnswerQuestion(pendingQuestion.gateId, answers);
                       }}
                     />
                   )}

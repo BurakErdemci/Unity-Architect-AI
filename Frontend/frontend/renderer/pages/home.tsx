@@ -183,12 +183,29 @@ export default function Home() {
   const setLang = (l: Lang) => { setLangState(l); localStorage.setItem('app-lang', l); };
   const t = (key: string) => translations[lang][key] ?? key;
   const [thinkingLevel, setThinkingLevel] = useState<'off' | 'low' | 'medium' | 'high'>('medium');
+  // Claude-only kontroller (max effort + ultracode). Sadece subscription + claude-* modelde.
+  const [effortMax, setEffortMax] = useState(false);
+  const [ultracode, setUltracode] = useState(false);
+  const isClaudeSub = ai.effectiveProvider === 'subscription' && (ai.aiConfig?.model_name || '').startsWith('claude-');
+  // Claude dışına geçilince stale 'max'/ultracode değerleri başka sağlayıcıya gitmesin
+  useEffect(() => {
+    if (!isClaudeSub) { setEffortMax(false); setUltracode(false); }
+  }, [isClaudeSub]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isChatOpen, setIsChatOpen] = useState(true);
   const [sidebarTab, setSidebarTab] = useState<'chats' | 'files'>('chats');
   const [isEditorFocused, setIsEditorFocused] = useState(false);
   const [isTerminalOpen, setIsTerminalOpen] = useState(false);
   const [projectProblems, setProjectProblems] = useState<Record<string, any[]>>({});
+  // Chat'te '/' autocomplete için Claude Code slash komutları + skill'ler (backend'den)
+  const [slashCommands, setSlashCommands] = useState<string[]>([]);
+  const [skills, setSkills] = useState<string[]>([]);
+  useEffect(() => {
+    if (!API) return;
+    axios.get(`${API}/slash-commands`, { headers: { 'X-Session-Token': auth.user?.sessionToken } })
+      .then(r => { setSlashCommands(r.data?.commands || []); setSkills(r.data?.skills || []); })
+      .catch(() => {});
+  }, [API, chat.loading]);  // mesaj bitince session başlamış olur → liste dolar, yeniden çek
   const chatEndRef = useRef<HTMLDivElement>(null);
   const lintTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const openedFileRef = useRef<string | null>(null);
@@ -309,7 +326,7 @@ export default function Home() {
         }
       }
     }
-    chat.sendMessage(input, fs.code, lang, chat.generationMode, thinkingLevel, fs.setPendingGenFiles, fs.setPendingDelete, images);
+    chat.sendMessage(input, fs.code, lang, chat.generationMode, thinkingLevel, fs.setPendingGenFiles, fs.setPendingDelete, images, effortMax, ultracode);
   };
 
   const handleConfirmPlan = useCallback((originalMsg: string, mode: any) => {
@@ -516,7 +533,7 @@ export default function Home() {
               pendingGenFiles={fs.pendingGenFiles} setPendingGenFiles={fs.setPendingGenFiles} pendingFix={chat.pendingFix} setPendingFix={chat.setPendingFix} openedFilePath={fs.openedFilePath}
               setCode={fs.setCode} refreshFileTree={fs.refreshFileTree} analyzeProject={chat.analyzeProject} openFile={fs.openFile} sendMessage={handleSendMessage} onConfirmPlan={handleConfirmPlan}
               currentPlan={chat.currentPlan} messagesEndRef={chatEndRef} ipc={ipc} showToast={showToast as any} diffFile={diffFile} setDiffFile={setDiffFile}
-              pendingDelete={fs.pendingDelete} setPendingDelete={fs.setPendingDelete} pendingCommand={chat.pendingCommand} setPendingCommand={chat.setPendingCommand} onApproveCommand={chat.approveCommand} deleteFile={fs.deleteFile} setIsTerminalOpen={setIsTerminalOpen}
+              pendingDelete={fs.pendingDelete} setPendingDelete={fs.setPendingDelete} pendingCommand={chat.pendingCommand} setPendingCommand={chat.setPendingCommand} onApproveCommand={chat.approveCommand} pendingQuestion={chat.pendingQuestion} setPendingQuestion={chat.setPendingQuestion} onAnswerQuestion={chat.answerQuestion} deleteFile={fs.deleteFile} setIsTerminalOpen={setIsTerminalOpen}
             />
           </div>
 
@@ -525,10 +542,13 @@ export default function Home() {
               thinkingLevel={thinkingLevel} setThinkingLevel={setThinkingLevel} generationMode={chat.generationMode} setGenerationMode={chat.setGenerationMode}
               isAnalyzingProject={chat.isAnalyzingProject} activeConvId={chat.activeConvId} analyzeProject={chat.analyzeProject}
               exportMemory={chat.exportMemory} importMemory={chat.importMemory} compactConversation={chat.compactConversation} isCompacting={chat.isCompacting} contextUsage={chat.contextUsage}
+              isClaudeSubscription={isClaudeSub} effortMax={effortMax} setEffortMax={setEffortMax} ultracode={ultracode} setUltracode={setUltracode}
             />
             <div className="mt-3">
               <AnimatedChatInput
                 value={chat.chatInput} setValue={chat.setChatInput} onSendMessage={handleSendMessage} isLoading={chat.loading}
+                slashCommands={slashCommands}
+                skills={skills}
                 onStop={chat.stopMessage}
                 onFileDrop={(entry) => chat.setChatInput(prev => prev + ` [File Attached: ${entry.path}]`)}
                 onCommand={(cmd) => {

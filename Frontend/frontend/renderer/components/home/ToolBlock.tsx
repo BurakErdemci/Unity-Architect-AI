@@ -12,33 +12,35 @@ interface ToolBlockProps {
 export const ToolBlock = ({ tool, args, summary, success }: ToolBlockProps) => {
   const [open, setOpen] = useState(false);
 
-  // Tool ismine göre ikon ve etiket belirle
+  // Tool ismine göre ikon ve etiket belirle (Claude Code built-in + eski MCP isimleri)
+  const TOOL_META: Record<string, { icon: any; label: string }> = {
+    // Claude Code built-in araçları (SDK session)
+    Read:      { icon: FileSearch, label: 'Dosya okuyor' },
+    Glob:      { icon: Search,     label: 'Dosya arıyor' },
+    Grep:      { icon: Search,     label: 'Kod içinde arıyor' },
+    Bash:      { icon: Wrench,     label: 'Komut çalıştırıyor' },
+    Edit:      { icon: FileEdit,   label: 'Dosya düzenliyor' },
+    MultiEdit: { icon: FileEdit,   label: 'Dosya düzenliyor' },
+    Write:     { icon: FileEdit,   label: 'Dosya yazıyor' },
+    TodoWrite: { icon: Wrench,     label: 'Plan yapıyor' },
+    WebSearch: { icon: Search,     label: "Web'de arıyor" },
+    WebFetch:  { icon: Search,     label: 'Sayfa getiriyor' },
+    // eski MCP isimleri (geçmiş sohbet kayıtları)
+    read_file:         { icon: FileSearch, label: 'Dosya okundu' },
+    search_in_project: { icon: Search,     label: 'Projede arandı' },
+    list_directory:    { icon: FolderOpen, label: 'Klasör listelendi' },
+    write_file:        { icon: FileEdit,   label: 'Dosya yazıldı' },
+    find_files:        { icon: Search,     label: 'Dosyalar arandı' },
+  };
+
   let Icon = Wrench;
   let label = tool;
-  
-  if (tool === 'read_file') {
-    Icon = FileSearch;
-    label = 'Dosya okundu';
-  } else if (tool === 'search_in_project') {
-    Icon = Search;
-    label = 'Projede arandı';
-  } else if (tool === 'list_directory') {
-    Icon = FolderOpen;
-    label = 'Klasör listelendi';
-  } else if (tool === 'write_file') {
-    Icon = FileEdit;
-    label = 'Dosya yazıldı';
-  } else if (tool === 'find_files') {
-    Icon = Search;
-    label = 'Dosyalar arandı';
-  }
-
-  // Eğer tool bitmediyse "okunuyor...", bittiyse "okundu" yazsın
-  if (!summary) {
-    label = label.replace('okundu', 'okunuyor...')
-                 .replace('arandı', 'aranıyor...')
-                 .replace('listelendi', 'listeleniyor...')
-                 .replace('yazıldı', 'yazılıyor...');
+  const meta = TOOL_META[tool];
+  if (meta) {
+    Icon = meta.icon;
+    label = meta.label;
+  } else if (tool.startsWith('mcp__')) {
+    label = 'Unity aracı: ' + tool.replace('mcp__unityMCP__', '').replace('mcp__', '');
   }
 
   const isSuccess = success ?? true;

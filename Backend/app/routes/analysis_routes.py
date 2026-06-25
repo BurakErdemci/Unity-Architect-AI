@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import json
 import logging
 import re
@@ -94,7 +95,17 @@ def create_analysis_router(db):
         KOD: {request.code}
         STATİK BULGULAR: {static_results['smells']}
         """
-            final_suggestion = await asyncio.to_thread(provider.analyze_code, prompt)
+            # CLI/abonelik provider'da analyze_code async generator döner → delta'ları topla;
+            # API/SDK provider'da sync string döner → to_thread. (Guard yoksa CLI yolunda
+            # to_thread bir generator objesi döndürür ve save_analysis'e çöp gider.)
+            if inspect.isasyncgenfunction(provider.analyze_code):
+                _parts: list = []
+                async for ev in provider.analyze_code(prompt, 2048):
+                    if isinstance(ev, dict) and ev.get("type") == "delta":
+                        _parts.append(ev.get("text", ""))
+                final_suggestion = "".join(_parts)
+            else:
+                final_suggestion = await asyncio.to_thread(provider.analyze_code, prompt)
 
         title = static_results.get("stats", {}).get("class_name", "Analiz")
         db.save_analysis(user_id, title, intent, request.code, final_suggestion, static_results["smells"])

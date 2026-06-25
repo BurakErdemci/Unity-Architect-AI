@@ -206,6 +206,3 @@ class AgyProvider(BaseCLIProvider):
             logger.info(f"[CLIProvider] Global settings.json güncellendi: {backend_url} → {workspace}")
         except Exception as e:
             logger.warning(f"[CLIProvider] Global settings.json yazılamadı: {e}")
-
-    # Backward-compat alias: eski kod _register_agy_mcp'yi de çağırabilir
-    _register_agy_mcp = _register_mcp

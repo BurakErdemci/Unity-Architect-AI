@@ -77,6 +77,9 @@ class AgentRunner:
         thinking_level: str = "medium",
         conversation_id: Optional[int] = None,
         images: Optional[List[str]] = None,
+        generation_mode: str = "auto",
+        effort_level: str = "medium",
+        ultracode: bool = False,
     ):
         self.provider_type = provider_type
         self.api_key = api_key
@@ -87,8 +90,12 @@ class AgentRunner:
         self.thinking_level = thinking_level
         self.conversation_id = conversation_id
         self.images = images
+        self.generation_mode = generation_mode  # auto | plan | step
+        # Claude-only (subscription + claude-* model): effort_level → --effort,
+        # ultracode → mesaja keyword enjeksiyonu. Diğer sağlayıcılarda yok sayılır.
+        self.effort_level = effort_level
+        self.ultracode = ultracode
         self.use_thinking = thinking_level != "off"
-        self._pending_approval_event: "AgentEvent | None" = None
 
     def _get_architect_wisdom(self) -> str:
         """
@@ -111,52 +118,19 @@ class AgentRunner:
         self, tool_name: str, tool_args: dict
     ) -> tuple[dict, list]:
         """
-        Tool'u çalıştırır. run_command ise ve tehlikeli ise önce onay ister.
-        Döndürür: (result_dict, extra_events_to_yield)
+        Tool'u çalıştırır ve (result_dict, extra_events) döndürür.
+
+        NOT: Tehlikeli run_command onayı çağıran API yollarında (_run_gemini /
+        _run_anthropic / _run_openai) ZATEN inline yapılıyor (onaylanmazsa orada
+        'continue' edilir, buraya hiç gelmez). Eskiden burada İKİNCİ kez sorulması
+        onaylanan komutlarda çift-onaya yol açıyordu; o yüzden bu metot artık
+        yalnızca aracı çalıştırır. İmza (tuple) geriye-uyum için korunur
+        (çağrılar 'result, _ = ...' biçiminde).
         """
-        extra_events = []
-
-        if tool_name == "run_command":
-            command = tool_args.get("command", "")
-            if _is_dangerous_command(command):
-                approved = await self._request_command_approval(command)
-                if self._pending_approval_event:
-                    extra_events.append(self._pending_approval_event)
-                    self._pending_approval_event = None
-
-                if not approved:
-                    result = {
-                        "success": False,
-                        "stdout": "",
-                        "stderr": "",
-                        "exit_code": -1,
-                        "summary": "❌ Kullanıcı tarafından reddedildi."
-                    }
-                    return result, extra_events
-
         result = await asyncio.to_thread(
             execute_tool, tool_name, tool_args, self.workspace_path, self.conversation_id
         )
-        return result, extra_events
-
-    async def _request_command_approval(self, command: str) -> bool:
-        """Native tool (run_command) için onay ister — Gemini/Anthropic/OpenAI yolu."""
-        gate_id = uuid.uuid4().hex[:10]
-        event = asyncio.Event()
-        _APPROVAL_GATES[gate_id] = event
-        _APPROVAL_RESULTS[gate_id] = False
-        self._pending_approval_event = AgentEvent("command_approval_needed", {
-            "command": command,
-            "gate_id": gate_id,
-        })
-        try:
-            await asyncio.wait_for(event.wait(), timeout=60.0)
-            return _APPROVAL_RESULTS.get(gate_id, False)
-        except asyncio.TimeoutError:
-            return False
-        finally:
-            _APPROVAL_GATES.pop(gate_id, None)
-            _APPROVAL_RESULTS.pop(gate_id, None)
+        return result, []
 
     async def run(self, user_message: str) -> AsyncGenerator[AgentEvent, None]:
         """
@@ -172,8 +146,17 @@ class AgentRunner:
             async for event in self._run_openai(user_message):
                 yield event
         elif self.provider_type == "subscription":
-            async for event in self._run_cli(user_message):
-                yield event
+            # claude-* → kalıcı interaktif SDK session (native onay + AskUserQuestion + skill/slash).
+            # codex/agy → mevcut ephemeral CLI yolu.
+            _name = (self.model_name or "claude").lower()
+            _is_codex = _name.startswith("gpt-")
+            _is_agy = _name.startswith(("gemini", "agy-"))
+            if not _is_codex and not _is_agy:
+                async for event in self._run_claude_session(user_message):
+                    yield event
+            else:
+                async for event in self._run_cli(user_message):
+                    yield event
         else:
             # Diğer provider'lar için basit fallback (function calling yok)
             async for event in self._run_simple(user_message):
@@ -883,6 +866,91 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
             yield AgentEvent("pending_delete", {"path": f["path"]})
 
         yield AgentEvent("done", {"iterations": 1})
+
+    # ═══════════════════════════════════════════════
+    # CLAUDE KALICI SESSION (claude-agent-sdk, native onay)
+    # ═══════════════════════════════════════════════
+    async def _run_claude_session(self, user_message: str) -> AsyncGenerator[AgentEvent, None]:
+        """
+        Claude Code'u sohbet başına KALICI interaktif session olarak sürer.
+        - Bağlam turlar arası korunur (DB geçmişi prompt'a basılmaz; session hatırlar).
+        - Onay native: can_use_tool → command_gates → frontend onay kartı.
+        - AskUserQuestion (A/B/C) → question_needed event → frontend seçim kartı.
+        """
+        import json as _json
+        import subprocess as _sp
+        from providers.cli_base import BaseCLIProvider
+        from providers.claude_sdk_session import get_session, close_session, _SESSIONS
+
+        # MCP: SADECE unityMCP (Unity sahne kontrolü) session'a girsin. Eski 'unityai'
+        # (mcp__unityai__bash/save_file + kendi onay köprüsü) ARTIK GİRMESİN — terminal/yazma
+        # built-in Bash/Write üzerinden native can_use_tool onayına gitsin (Seçenek 1).
+        # NOT: setting_sources=["project","user"] KORUNUR (skill + slash komutları için şart).
+        try:
+            from unity_ai_mcp.unity_mcp_manager import unity_mcp_manager
+            mcp_servers_cfg = {}
+            if unity_mcp_manager.is_running():
+                mcp_servers_cfg["unityMCP"] = {"url": f"http://localhost:{unity_mcp_manager.mcp_port}/mcp"}
+            # Temiz .mcp.json yaz (unityai YOK) — eski/bayat kayıtların üstüne yaz
+            if self.workspace_path and os.path.isdir(self.workspace_path):
+                with open(os.path.join(self.workspace_path, ".mcp.json"), "w", encoding="utf-8") as f:
+                    _json.dump({"mcpServers": mcp_servers_cfg}, f, indent=2)
+            # Önceki sürümlerin user-scope'a yazdığı unityai kaydını temizle
+            # (_resolve_exec @staticmethod — provider örneği yaratmaya gerek yok)
+            _sp.run(BaseCLIProvider._resolve_exec(["claude", "mcp", "remove", "unityai", "--scope", "user"]),
+                    capture_output=True, timeout=5)
+        except Exception as e:
+            logger.warning(f"[ClaudeSession] MCP temizleme/yazma hatası: {e}")
+
+        model = self.model_name if (self.model_name or "").startswith("claude-") else None
+
+        # Max effort (Claude-only) → ClaudeAgentOptions.effort="max" (--effort max).
+        # effort connect-time KİLİTLİ (SDK'da set_effort yok). Cache'li session'ın effort'u
+        # farklıysa close+recreate gerekir: bu, o sohbetteki CANLI session'ı sıfırlar (DB
+        # bağlam özeti aşağıda yeniden enjekte edilir). Böylece toggle gerçekten etki eder.
+        desired_effort = "max" if self.effort_level == "max" else None
+        _existing = _SESSIONS.get(self.conversation_id)
+        if _existing is not None and _existing.effort != desired_effort:
+            logger.info(f"[ClaudeSession] effort değişti ({_existing.effort}→{desired_effort}); "
+                        f"session yeniden kuruluyor (canlı bağlam sıfırlanır, DB özeti korunur)")
+            await close_session(self.conversation_id)
+
+        session = get_session(
+            self.conversation_id,
+            model=model,
+            cwd=self.workspace_path or ".",
+            permission_mode="default",
+            setting_sources=["project", "user"],  # skill + slash komutları için ZORUNLU
+            effort=desired_effort,                 # Claude-only; None ise CLI varsayılanı
+            # Savunma: eski unityai araçları bir şekilde yüklenirse bile kapalı kalsın;
+            # .cs yazan onaysız unityMCP aracı da kapalı (built-in Write native onaydan geçer).
+            disallowed_tools=[
+                "mcp__unityMCP__manage_script",
+                "mcp__unityai__bash",
+                "mcp__unityai__save_file",
+            ],
+        )
+
+        # Oto mod → onay sormadan otomatik izin; Adım/Plan modu → her işlemde onay kartı.
+        # Session kalıcı olduğu için mod her turda güncellenir (kullanıcı ortada değiştirebilir).
+        session.auto_approve = (self.generation_mode == "auto")
+
+        # İlk turda proje bağlamını ekle; sonraki turlarda session zaten hatırlıyor.
+        message = user_message
+        if self.context and not session.session_id:
+            message = f"{user_message}\n\n[PROJE BAĞLAMI]\n{self.context}"
+        # Ultracode (Claude-only): SDK'da option YOK → tek yol mesaja keyword enjeksiyonu.
+        # CLI bu kelimeyi görünce çok-ajanlı ultracode akışını tetikler (belgesiz; sürüme bağlı).
+        if self.ultracode:
+            message = f"{message}\n\nultracode"
+
+        try:
+            async for ev in session.stream(message):
+                etype = ev.pop("type", "text")
+                yield AgentEvent(etype, ev)
+        except Exception as e:
+            logger.exception("[ClaudeSession] stream hatası")
+            yield AgentEvent("error", {"message": f"Claude session hatası: {e}"})
 
     def _summarize_result(self, tool_name: str, result: dict) -> str:
         """Tool sonucunu kısa özetle."""

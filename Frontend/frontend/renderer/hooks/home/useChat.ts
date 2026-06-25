@@ -27,11 +27,18 @@ export const useChat = (
   const [pendingPlan, setPendingPlan] = useState<{ content: string; originalMessage: string; mode: GenerationMode } | null>(null);
   const [pendingFix, setPendingFix] = useState<{ data: any; messageId?: number; applied?: boolean } | null>(null);
   const [pendingCommand, setPendingCommand] = useState<{ command: string; gateId: string; messageId: number } | null>(null);
+  const [pendingQuestion, setPendingQuestion] = useState<{ questions: any[]; gateId: string; messageId: number } | null>(null);
   const [generationMode, setGenerationMode] = useState<GenerationMode>('step');
   const [editingId, setEditingId] = useState<number | null>(null);
   const [tempTitle, setTempTitle] = useState('');
   
   const abortControllerRef = useRef<AbortController | null>(null);
+  // Paralel araç çağrılarında (ör. Bash + Write, ya da iki Write) birden fazla
+  // onay/soru aynı anda gelebilir. Tek state'te tutarsak ikincisi birincisini EZER
+  // ve ezilen gate 300sn bekleyip tıkanır ("düşünüyor"da kalır). Bu yüzden bekleyen
+  // ek onay/soruları kuyruğa alıp tek tek gösteririz; biri çözülünce sıradaki açılır.
+  const pendingCommandQueueRef = useRef<Array<{ command: string; gateId: string; messageId: number }>>([]);
+  const pendingQuestionQueueRef = useRef<Array<{ questions: any[]; gateId: string; messageId: number }>>([]);
 
   const fetchConversations = useCallback(async (userId: number) => {
     if (!API) return;
@@ -97,10 +104,17 @@ export const useChat = (
     thinkingLevel: 'low' | 'medium' | 'high' | 'off',
     setPendingGenFiles: (val: any) => void,
     setPendingDelete: (val: any) => void,
-    images?: string[]
+    images?: string[],
+    effortMax: boolean = false,   // Claude-only; "max" effort
+    ultracode: boolean = false    // Claude-only; mesaja keyword enjekte edilir
   ) => {
     if (loading || !user || !API) return;
     setLoading(true);
+    // Yeni tur: önceki turdan kalmış olabilecek bekleyen onay/soru ve kuyrukları temizle
+    pendingCommandQueueRef.current = [];
+    pendingQuestionQueueRef.current = [];
+    setPendingCommand(null);
+    setPendingQuestion(null);
 
     let targetConvId = activeConvId;
     if (!targetConvId) {
@@ -134,7 +148,10 @@ export const useChat = (
           editor_code: code || '',
           thinking_level: thinkingLevel,
           generation_mode: genMode, generation_confirmed: false,
-          images: images
+          images: images,
+          // Claude-only: backend yalnızca claude-subscription yolunda dikkate alır
+          effort_level: effortMax ? 'max' : 'medium',
+          ultracode: !!ultracode,
         }),
       });
 
@@ -172,7 +189,15 @@ export const useChat = (
                 return msg;
               }));
               if (data.type === 'context_usage') setContextUsage({ percent: data.percent, should_compact: data.should_compact, message_count: data.message_count });
-              if (data.type === 'command_approval_needed') setPendingCommand({ command: data.command, gateId: data.gate_id, messageId: aiMsgId });
+              if (data.type === 'command_approval_needed') {
+                const item = { command: data.command, gateId: data.gate_id, messageId: aiMsgId };
+                // Zaten gösterilen bir onay varsa sıraya al (paralel araçlarda ezilmesin)
+                setPendingCommand(prev => { if (prev) { pendingCommandQueueRef.current.push(item); return prev; } return item; });
+              }
+              if (data.type === 'question_needed') {
+                const item = { questions: data.questions || [], gateId: data.gate_id, messageId: aiMsgId };
+                setPendingQuestion(prev => { if (prev) { pendingQuestionQueueRef.current.push(item); return prev; } return item; });
+              }
               if (data.type === 'pending_delete' && data.path) setPendingDelete({ path: data.path, messageId: aiMsgId });
               if (data.type === 'refresh_file_tree') refreshFileTree();
               if (data.type === 'done') refreshFileTree();
@@ -345,6 +370,7 @@ export const useChat = (
     pendingPlan, setPendingPlan,
     pendingFix, setPendingFix,
     pendingCommand, setPendingCommand,
+    pendingQuestion, setPendingQuestion,
     generationMode, setGenerationMode,
     editingId, setEditingId,
     tempTitle, setTempTitle,
@@ -352,17 +378,43 @@ export const useChat = (
     selectConversation, deleteConversation, saveRename,
     sendMessage, stopMessage: () => {
       abortControllerRef.current?.abort();
-      fetch(`${API}/mcp-abort-all`, { method: 'POST' }).catch(() => {});
+      // Claude SDK turunu gerçekten iptal et (bekleyen onay/soru gate'lerini çöz + interrupt)
+      if (activeConvId && user) {
+        fetch(`${API}/chat-stop/${activeConvId}`, {
+          method: 'POST',
+          headers: { 'X-Session-Token': user.sessionToken },
+        }).catch(() => {});
+      }
+      // Bekleyen onay/soru kartlarını ve kuyrukları temizle (backend gate'leri reddetti)
+      pendingCommandQueueRef.current = [];
+      pendingQuestionQueueRef.current = [];
+      setPendingCommand(null);
+      setPendingQuestion(null);
+      setLoading(false);
     },
     clearHistory, confirmPlan, analyzeProject, exportMemory, importMemory, compactConversation,
     approveCommand: async (gateId: string, approved: boolean) => {
       try {
         await fetch(`${API}/command-approval/${gateId}`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', 'X-Session-Token': user?.sessionToken ?? '' },
           body: JSON.stringify({ approved }),
         });
       } catch (err) { console.warn('approveCommand fetch failed', err); }
+      // Çözüldü → kuyrukta sıradaki onayı göster (yoksa kapat)
+      setPendingCommand(pendingCommandQueueRef.current.shift() || null);
+    },
+    // AskUserQuestion (A/B/C) cevabı: { "<soru metni>": "<seçilen label>" }
+    answerQuestion: async (gateId: string, answers: Record<string, string>) => {
+      try {
+        await fetch(`${API}/question-answer/${gateId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Session-Token': user?.sessionToken ?? '' },
+          body: JSON.stringify({ answers }),
+        });
+      } catch (err) { console.warn('answerQuestion fetch failed', err); }
+      // Çözüldü → kuyrukta sıradaki soruyu göster (yoksa kapat)
+      setPendingQuestion(pendingQuestionQueueRef.current.shift() || null);
     },
   };
 };

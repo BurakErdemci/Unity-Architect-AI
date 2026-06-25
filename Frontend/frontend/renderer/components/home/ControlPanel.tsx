@@ -1,12 +1,14 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useLang } from '../../lib/i18n';
-import { 
-  Brain, 
-  Sparkles, 
-  ChevronDown, 
+import {
+  Brain,
+  Sparkles,
+  ChevronDown,
   Download,
-  Upload
+  Upload,
+  Gauge,
+  Rocket
 } from 'lucide-react';
 import { GenerationModeSelector, GenerationMode } from './GenerationModeSelector';
 
@@ -23,6 +25,12 @@ interface ControlPanelProps {
   compactConversation: () => Promise<void>;
   isCompacting: boolean;
   contextUsage?: { percent: number; message_count: number; should_compact?: boolean };
+  // Claude-only (subscription + claude-* model). Diğer sağlayıcılarda gizlenir.
+  isClaudeSubscription?: boolean;
+  effortMax?: boolean;
+  setEffortMax?: (v: boolean) => void;
+  ultracode?: boolean;
+  setUltracode?: (v: boolean) => void;
 }
 
 export const ControlPanel: React.FC<ControlPanelProps> = ({
@@ -37,7 +45,12 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
   importMemory,
   compactConversation,
   isCompacting,
-  contextUsage
+  contextUsage,
+  isClaudeSubscription = false,
+  effortMax = false,
+  setEffortMax,
+  ultracode = false,
+  setUltracode
 }) => {
   const { t } = useLang();
   const [showMemoryMenu, setShowMemoryMenu] = useState(false);
@@ -63,6 +76,9 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
           <span className="capitalize">
             Thinking {thinkingLevel === 'off' ? t('thinking.off') : thinkingLevel}
           </span>
+          {/* Aktif Claude eklentileri menü kapalıyken de görünür */}
+          {isClaudeSubscription && effortMax && <Gauge size={10} className="text-orange-400" />}
+          {isClaudeSubscription && ultracode && <Rocket size={10} className="text-cyan-400" />}
           <ChevronDown size={10} className={`opacity-50 transition-transform duration-200 ${showThinkingMenu ? 'rotate-180' : ''}`} />
         </button>
 
@@ -75,7 +91,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
                 initial={{ opacity: 0, y: 10, scale: 0.95 }}
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                className="absolute bottom-10 left-0 w-36 bg-[#0a0a0f] border border-slate-800 rounded-xl shadow-2xl z-50 p-1.5 overflow-hidden"
+                className="absolute bottom-10 left-0 w-48 bg-[#0a0a0f] border border-slate-800 rounded-xl shadow-2xl z-50 p-1.5 overflow-hidden"
               >
                 {[
                   { id: 'off', label: t('thinking.off'), color: 'text-slate-500' },
@@ -97,6 +113,34 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
                     {thinkingLevel === lvl.id && <div className={`w-1.5 h-1.5 rounded-full bg-current shadow-[0_0_8px_currentColor]`} />}
                   </button>
                 ))}
+
+                {/* Claude-only: Max Effort + Ultracode (aç/kapa — menüyü kapatmaz) */}
+                {isClaudeSubscription && (
+                  <>
+                    <div className="my-1 mx-1 h-px bg-slate-800" />
+                    <div className="px-2 pt-0.5 pb-1 text-[8px] font-semibold uppercase tracking-wider text-slate-600">Claude</div>
+                    <button
+                      onClick={() => setEffortMax?.(!effortMax)}
+                      title={t('effort.maxTitle')}
+                      className={`w-full text-left px-3 py-2 rounded-lg text-[10px] transition-all hover:bg-white/5 flex items-center justify-between ${
+                        effortMax ? 'text-orange-400 bg-white/5' : 'text-slate-400'
+                      }`}
+                    >
+                      <span className="flex items-center gap-1.5 font-medium"><Gauge size={11} />{t('effort.max')}</span>
+                      <span className={`w-1.5 h-1.5 rounded-full ${effortMax ? 'bg-current shadow-[0_0_8px_currentColor]' : 'bg-slate-700'}`} />
+                    </button>
+                    <button
+                      onClick={() => setUltracode?.(!ultracode)}
+                      title={t('ultracode.title')}
+                      className={`w-full text-left px-3 py-2 rounded-lg text-[10px] transition-all hover:bg-white/5 flex items-center justify-between ${
+                        ultracode ? 'text-cyan-400 bg-white/5' : 'text-slate-400'
+                      }`}
+                    >
+                      <span className="flex items-center gap-1.5 font-medium"><Rocket size={11} />Ultracode</span>
+                      <span className={`w-1.5 h-1.5 rounded-full ${ultracode ? 'bg-current shadow-[0_0_8px_currentColor]' : 'bg-slate-700'}`} />
+                    </button>
+                  </>
+                )}
               </motion.div>
             </>
           )}
@@ -104,7 +148,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
       </div>
 
       <div className="w-px h-3 bg-slate-800" />
-      
+
       {/* Projeyi Öğren & Hafıza Menüsü */}
       <div className="relative flex items-center">
         <button
