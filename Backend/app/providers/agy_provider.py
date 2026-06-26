@@ -36,6 +36,14 @@ class AgyProvider(BaseCLIProvider):
             "--dangerously-skip-permissions",
             "--print-timeout", "180s",
         ]
+        # Kalıcı bağlam: önceki turda yakalanan agy conversation UUID'si varsa resume et
+        # (agy bağlamı diskten yükler → geçmişi prompt'a basmayız). _resume_uuid'i
+        # agent_runner._run_agy_session, analyze_code'dan ÖNCE bu örneğe set eder.
+        # NOT: önceden-üretilmiş UUID ÇALIŞMAZ — yalnızca agy'nin kendi yarattığı,
+        # diskte VAR olan UUID resume edilir (yoksa sessizce yok sayılır).
+        resume_uuid = getattr(self, "_resume_uuid", None)
+        if resume_uuid:
+            cmd += [f"--conversation={resume_uuid}"]
         if workspace:
             cmd = [cmd[0], "--add-dir", workspace] + cmd[1:]
         return cmd

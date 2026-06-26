@@ -94,6 +94,9 @@ def create_conversation_router(db, progress_store):
             await _close_claude(conv_id)
             from providers.codex_session import close_session as _close_codex
             await _close_codex(conv_id)
+            # agy disk-resume durumunu da temizle (UUID→sohbet eşlemesi)
+            from providers.agy_session import close_session as _close_agy
+            await _close_agy(conv_id)
         except Exception as e:
             logger.warning(f"[delete] session kapatma hatası: {e}")
         # Fiziksel hafıza dosyasını sil

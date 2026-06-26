@@ -506,7 +506,11 @@ class BaseCLIProvider(AIProvider):
                 stderr_full = "\n".join(stderr_buffer)
                 logger.error(f"[CLIProvider:{self.binary_name}][FAILED] rc={process.returncode}\nSTDERR:\n{stderr_full}")
                 yield {"type": "error", "content": f"❌ CLI hata (rc={process.returncode}): {stderr_full[:500] or '(boş)'}"}
-            elif line_count == 0:
+            elif line_count == 0 and not _is_agy:
+                # NOT: agy --print stdout'u non-TTY'de SESSİZCE kaybolur (repo bug #76) —
+                # bu agy için NORMALDİR (yanıt conversation .db'sinden okunur, bkz.
+                # agent_runner._run_agy_session). Bu yüzden agy'de boş stdout'u hata SAYMA;
+                # diğer CLI'larda (claude/codex) boş stdout gerçek başarısızlıktır.
                 stderr_full = "\n".join(stderr_buffer)
                 logger.error(f"[CLIProvider:{self.binary_name}][NO_OUTPUT] Stdout boş!\nSTDERR:\n{stderr_full}")
                 yield {"type": "error", "content": f"⚠️ Çıktı yok. Hata: {stderr_full[:500]}"}

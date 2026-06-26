@@ -179,7 +179,9 @@ async def lifespan(app: FastAPI):
         await _close_claude_all()
         from providers.codex_session import close_all_sessions as _close_codex_all
         await _close_codex_all()
-        logger.info("[Shutdown] Claude/Codex SDK session'ları kapatıldı.")
+        from providers.agy_session import close_all_sessions as _close_agy_all
+        await _close_agy_all()
+        logger.info("[Shutdown] Claude/Codex/agy session'ları kapatıldı.")
     except Exception as e:
         logger.warning(f"[Shutdown] session'lar kapatılamadı: {e}")
 

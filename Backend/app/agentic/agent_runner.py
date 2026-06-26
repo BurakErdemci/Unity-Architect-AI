@@ -156,8 +156,8 @@ class AgentRunner:
                 async for event in self._run_codex_session(user_message):
                     yield event
             elif _is_agy:
-                # agy → şimdilik ephemeral CLI yolu (kalıcı-session ertelendi)
-                async for event in self._run_cli(user_message):
+                # agy → kalıcı-bağlamlı session (disk-resume + conversation-db okuma)
+                async for event in self._run_agy_session(user_message):
                     yield event
             else:
                 async for event in self._run_claude_session(user_message):
@@ -797,15 +797,26 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
             yield AgentEvent("error", {"message": str(e)})
 
     # ═══════════════════════════════════════════════
-    # CLI PROVIDER (Claude Code, Codex — Ephemeral Snapshot)
+    # AGY KALICI SESSION (disk-resume + conversation-db okuma)
     # ═══════════════════════════════════════════════
-    async def _run_cli(self, user_message: str) -> AsyncGenerator[AgentEvent, None]:
+    async def _run_agy_session(self, user_message: str) -> AsyncGenerator[AgentEvent, None]:
         """
-        CLIProvider'ı ephemeral snapshot modunda çalıştırır.
-        CLI özgürce yazar → değişiklikler yakalanır → revert → onaya sunulur.
-        Onaylanan dosyalar mevcut frontend write mekanizmasıyla uygulanır.
+        agy'yi (Antigravity CLI) sohbet başına KALICI-bağlamlı sürer.
+        agy'nin Codex/Claude gibi canlı server'ı YOK → kalıcılık agy'nin KENDİ
+        disk-resume'uyla sağlanır:
+        - Tur 1: --conversation VERİLMEZ; agy yeni UUID yaratır, tur sonrası
+          conversations/ içinde beliren yeni .db adından UUID'i yakalarız.
+        - Sonraki turlar: --conversation=<UUID> → agy bağlamı diskten yükler,
+          DB geçmişini prompt'a BASMAYIZ (sadece yeni mesaj).
+        - Onay/yazma: mevcut unityai köprüsü (cli_base) AYNEN — native onay yok.
+        - agy --print stdout'u non-TTY'de kaybolduğu için (bug #76) asistanın
+          yanıt metnini conversation .db'sinden (step_type==15) okuruz.
+        Ephemeral dosya-değişiklik akışı (kod blokları) korunur.
         """
         from ai_providers import AIProviderManager
+        from providers.agy_session import (
+            get_session, snapshot_db_names, detect_new_uuid, read_new_response,
+        )
 
         provider = AIProviderManager.get_provider({
             "provider_type": self.provider_type,
@@ -813,9 +824,22 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
             "api_key": getattr(self, "api_key", ""),
         })
 
-        # Bağlamı prompt'a ekle
-        context_block = f"\n\n[PROJE BAĞLAMI]\n{self.context}" if self.context else ""
-        enriched_prompt = user_message + context_block
+        sess = get_session(self.conversation_id)
+        sess.auto_approve = (getattr(self, "generation_mode", "auto") == "auto")
+
+        # Resume: önceki turda yakalanan UUID varsa --conversation ile besle.
+        provider._resume_uuid = sess.agy_uuid
+
+        # Bağlam: yalnızca resume EDEMİYORKEN (UUID yok) prompt'a ekle. UUID varsa
+        # agy bağlamı diskten yükler → geçmişi yeniden basmayız.
+        if self.context and not sess.agy_uuid:
+            enriched_prompt = f"{user_message}\n\n[PROJE BAĞLAMI]\n{self.context}"
+        else:
+            enriched_prompt = user_message
+
+        # Tur 1 (UUID yok): yeni yaratılacak .db'yi tespit edebilmek için önceki
+        # db kümesini fotoğrafla.
+        db_before = snapshot_db_names() if not sess.agy_uuid else None
 
         final_text = ""
         ephemeral_files = []
@@ -852,11 +876,37 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                 yield AgentEvent("error", {"message": event.get("content", "")})
                 return
 
+        # Tur bitti (process çıktı) → ilk turda yaratılan UUID'i yakala.
+        if not sess.agy_uuid and db_before is not None:
+            new_uuid = detect_new_uuid(db_before)
+            if new_uuid:
+                sess.agy_uuid = new_uuid
+                logger.info(f"[AgySession] conv={self.conversation_id} agy UUID yakalandı: {new_uuid}")
+            else:
+                logger.warning(f"[AgySession] conv={self.conversation_id} yeni agy conversation .db bulunamadı (resume kurulamadı)")
+
+        # Asistan yanıt metnini conversation .db'sinden oku (stdout bug #76 workaround).
+        # final_text agy'de genelde boş (stdout kaybolur) → db'den gelen prose'u kullan.
+        if sess.agy_uuid and not final_text:
+            prose, new_idx = read_new_response(sess.agy_uuid, sess.last_step_idx)
+            if not prose:
+                # nadiren db flush gecikebilir → tek kısa retry
+                await asyncio.sleep(0.4)
+                prose, new_idx = read_new_response(sess.agy_uuid, sess.last_step_idx)
+            sess.last_step_idx = new_idx
+            if prose:
+                final_text = prose
+
         # Ephemeral değişiklikleri encode et
         # Silinen dosyalar → pending_delete event'i olarak ayrıca gönder
         # Değiştirilen/eklenen dosyalar → // path: code block (parseGeneratedFiles yakalar)
         modified = [f for f in ephemeral_files if not f.get("deleted")]
         deleted  = [f for f in ephemeral_files if f.get("deleted")]
+
+        # agy ne bir yanıt metni ne de dosya değişikliği ürettiyse (örn. gerçek bir
+        # agy hatası ya da boş tur) — boş kart yerine kısa bir not göster.
+        if not final_text and not modified and not deleted:
+            final_text = "⚠️ agy bu tur için bir yanıt veya değişiklik üretmedi."
 
         response_parts = [final_text] if final_text else []
         for f in modified:
