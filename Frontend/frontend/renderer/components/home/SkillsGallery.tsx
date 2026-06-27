@@ -6,12 +6,15 @@ export interface CommandMeta {
   name: string;
   description?: string;
   argumentHint?: string;
+  insert?: string;        // tıklanınca girdiye yazılacak metin (Codex skill'leri: defaultPrompt)
+  displayName?: string;   // Codex skill'lerinin insanca adı (varsa name yerine gösterilir)
 }
 
 interface Props {
   meta: CommandMeta[];
   skills: string[];          // yetkili skill isim listesi (system/init'ten; cold-start'ta boş olabilir)
-  onSelect: (name: string, needsArgs: boolean) => void;
+  provider?: string;         // 'claude' | 'codex' | ... — gösterim/insert davranışı için
+  onSelect: (insertText: string) => void;
   onClose: () => void;
 }
 
@@ -24,9 +27,10 @@ interface Group { key: string; label: string; icon: React.ReactNode; items: Comm
  * tamamlar) — yanlışlıkla yıkıcı komut tetiklenmesini önlemek için doğrudan
  * gönderilmez. Skill'ler ✨ ile en üstte; eklentiler prefix'e göre gruplanır.
  */
-export const SkillsGallery: React.FC<Props> = ({ meta, skills, onSelect, onClose }) => {
+export const SkillsGallery: React.FC<Props> = ({ meta, skills, provider, onSelect, onClose }) => {
   const [query, setQuery] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
+  const isClaude = provider !== 'codex';  // Codex skill'leri '/' ile çağrılmaz (defaultPrompt/$ ile)
 
   useEffect(() => { inputRef.current?.focus(); }, []);
 
@@ -103,14 +107,16 @@ export const SkillsGallery: React.FC<Props> = ({ meta, skills, onSelect, onClose
               </div>
               {g.items.map(c => {
                 const needsArgs = !!(c.argumentHint && c.argumentHint.trim());
+                const insertText = c.insert || ('/' + c.name + ' ');
+                const label = isClaude ? '/' + c.name : (c.displayName || c.name);
                 return (
                   <button
                     key={c.name}
-                    onClick={() => onSelect(c.name, needsArgs)}
+                    onClick={() => onSelect(insertText)}
                     className="w-full text-left flex flex-col gap-0.5 px-2.5 py-1.5 rounded-lg hover:bg-white/[0.06] transition-colors group"
                   >
                     <div className="flex items-baseline gap-2">
-                      <span className="text-[12px] font-medium text-white/85 group-hover:text-white">/{c.name}</span>
+                      <span className="text-[12px] font-medium text-white/85 group-hover:text-white">{label}</span>
                       {needsArgs && (
                         <span className="text-[9px] text-amber-300/70 font-mono">{c.argumentHint}</span>
                       )}

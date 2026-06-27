@@ -542,6 +542,13 @@ if (!gotTheLock) {
 
     ; (async () => {
       await app.whenReady()
+
+      // Windows görev çubuğu ikonu: AppUserModelId set edilmezse taskbar default
+      // Electron ikonunu gösterir (window/exe ikonundan bağımsız). appId ile eşle.
+      if (process.platform === 'win32') {
+        app.setAppUserModelId('com.unityarchitect.ai')
+      }
+
       try {
         await startPythonBackend()
       } catch (err) {
@@ -549,9 +556,16 @@ if (!gotTheLock) {
         backendPort = null
       }
 
+      // Pencere ikonu: prod'da paketlenmiş resources/icon.ico, dev'de proje resources'ı.
+      // (Set edilmezse dev'de + bazı Windows durumlarında eski Electron ikonu görünür.)
+      const iconPath = isProd
+        ? path.join(process.resourcesPath, 'icon.ico')
+        : path.join(__dirname, '..', 'resources', 'icon.ico')
+
       const mainWindow = createWindow('main', {
         width: 1280,
         height: 850,
+        icon: iconPath,
         webPreferences: {
           preload: path.join(__dirname, 'preload.js'),
         },

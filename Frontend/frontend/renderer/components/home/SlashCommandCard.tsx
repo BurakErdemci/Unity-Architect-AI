@@ -94,8 +94,9 @@ function parseSlashOutput(text: string): Parsed {
       stats.push({ label: kv[1].trim(), value: kv[2].trim() });
       continue;
     }
-    // İlk açıklama satırı → alt başlık
-    if (!subtitle && /subscription|using|cost|usage/i.test(line) && !line.endsWith('?') && line.length < 120) {
+    // İlk açıklama satırı → alt başlık (bar/kv/soru olmayan ilk kısa satır;
+    // Claude'da "You are currently using…", Codex'te "ChatGPT … Codex kullanımı")
+    if (!subtitle && !line.endsWith('?') && line.length < 120) {
       subtitle = line;
       continue;
     }

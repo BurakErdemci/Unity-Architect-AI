@@ -3,6 +3,7 @@ import axios from 'axios';
 import { Message, Conversation, UserData, AIConfig, GenerationMode } from '../../components/home/types';
 import { PendingFile } from '../../components/home/FileCreationApproval';
 import { Task } from '../../components/ui/agent-plan';
+import { confirmDialog } from '../../components/ui/ConfirmDialog';
 
 const ipc = typeof window !== 'undefined' ? (window as any).ipc : null;
 
@@ -64,7 +65,8 @@ export const useChat = (
 
   const deleteConversation = useCallback(async (e: React.MouseEvent, convId: number) => {
     e.stopPropagation();
-    if (!user || !confirm("Bu sohbet silinsin mi?")) return;
+    if (!user) return;
+    if (!(await confirmDialog("Bu sohbet silinsin mi?"))) return;
     try {
       await axios.delete(`${API}/conversations/${convId}`);
       if (activeConvId === convId) {
@@ -133,9 +135,17 @@ export const useChat = (
     setChatInput('');
 
     // Özel kart render edilen slash komutları → asistan mesajını etiketle.
+    //   /usage   → Claude (Claude Code) + Codex (app-server rateLimits kartı)
+    //   /context → yalnızca Claude (Codex/agy'de yok)
     // NOT: /cost bu Claude Code sürümünde YOK (abonelikte session cost /usage'a dahil).
     const _trimmed = messageContent.trim().toLowerCase();
-    const slashCard = _trimmed === '/usage' ? 'usage' : _trimmed === '/context' ? 'context' : undefined;
+    const _m = (aiConfig?.model_name || '').toLowerCase();
+    const _isSub = aiConfig?.provider_type === 'subscription';
+    const _isCodex = _isSub && _m.startsWith('gpt-');
+    const _isClaude = _isSub && !_m.startsWith('gpt-') && !(_m.startsWith('gemini') || _m.startsWith('agy-'));
+    let slashCard: string | undefined;
+    if (_trimmed === '/usage' && (_isClaude || _isCodex)) slashCard = 'usage';
+    else if (_trimmed === '/context' && _isClaude) slashCard = 'context';
 
     const aiMsgId = Date.now() + 1;
     let currentAiMsg: Message = { id: aiMsgId, role: 'assistant', content: '', smells: [], timestamp: new Date().toISOString(), thinking: null, tool_calls: [], slashCommand: slashCard };

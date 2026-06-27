@@ -10,6 +10,10 @@ files:
       - package.json
       - app
 extraResources:
+  # Pencere ikonu runtime'da erişilebilir olsun (BrowserWindow icon → görev çubuğu).
+  # Exe/installer ikonu zaten buildResources/resources/icon.ico'dan otomatik gömülür.
+  - from: resources/icon.ico
+    to: icon.ico
   - from: ../../Backend/dist/backend
     to: Backend
     filter:

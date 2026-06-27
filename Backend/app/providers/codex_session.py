@@ -24,6 +24,7 @@ import logging
 import os
 import sys
 import uuid
+from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, List, Optional, Set
 
 from agentic.command_gates import APPROVAL_GATES, APPROVAL_RESULTS
@@ -67,6 +68,139 @@ def _resolve_codex_appserver_cmd() -> List[str]:
     # Fallback: .cmd shim'i cmd.exe ile sar (Windows WinError 2 fix)
     from providers.cli_base import BaseCLIProvider
     return BaseCLIProvider._resolve_exec(["codex", "app-server"])
+
+
+# ── Codex skill kataloğu (Skills galerisi için) ──────────────────────────────
+# codex app-server `skills/list` metodundan dolar (initialize + initialized yeter,
+# thread/turn YOK → sıfır inference). Claude'un _COMMANDS_META muadili.
+_CODEX_SKILLS_CACHE: List[Dict] = []
+_CODEX_WARMUP_LOCK = asyncio.Lock()
+
+
+def get_codex_skills_meta() -> List[Dict]:
+    return list(_CODEX_SKILLS_CACHE)
+
+
+def _parse_codex_skills(result: Optional[dict]) -> List[Dict]:
+    """skills/list result'ını [{name, description, displayName, insert}] yapar.
+    insert: galeride tıklanınca girdiye yazılacak metin (Codex skill'leri
+    defaultPrompt ile çağrılır; yoksa `$<isim>`)."""
+    out: List[Dict] = []
+    seen = set()
+    if not isinstance(result, dict):
+        return out
+    try:
+        for group in (result.get("data") or []):
+            for sk in (group.get("skills") or []):
+                if not isinstance(sk, dict) or sk.get("enabled") is False:
+                    continue
+                name = sk.get("name")
+                if not name or name in seen:
+                    continue
+                seen.add(name)
+                iface = sk.get("interface") or {}
+                desc = (iface.get("shortDescription") or sk.get("description") or "").strip()
+                insert = (iface.get("defaultPrompt") or f"${name} ").strip()
+                out.append({
+                    "name": name,
+                    "description": desc,
+                    "displayName": (iface.get("displayName") or "").strip(),
+                    "insert": insert,
+                })
+    except Exception as e:
+        logger.warning(f"[_parse_codex_skills] parse hatası: {e}")
+    return out
+
+
+async def fetch_codex_skills(cwd: Optional[str] = None, force: bool = False) -> List[Dict]:
+    """Throwaway codex app-server açıp skills/list ile skill kataloğunu çeker.
+    initialize + initialized yeter (thread/turn YOK → sıfır token). Sonuç cache'lenir."""
+    global _CODEX_SKILLS_CACHE
+    async with _CODEX_WARMUP_LOCK:
+        if _CODEX_SKILLS_CACHE and not force:
+            return list(_CODEX_SKILLS_CACHE)
+
+        spawn = _resolve_codex_appserver_cmd()
+        env = {**os.environ, "NO_COLOR": "1"}
+        proc = None
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *spawn,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+                env=env,
+                cwd=(cwd if (cwd and os.path.isdir(cwd)) else None),
+            )
+
+            req_id = 0
+
+            async def send(method, params=None, notify=False):
+                nonlocal req_id
+                obj: Dict[str, Any] = {"jsonrpc": "2.0", "method": method}
+                rid = None
+                if not notify:
+                    req_id += 1
+                    rid = req_id
+                    obj["id"] = rid
+                if params is not None:
+                    obj["params"] = params
+                proc.stdin.write((json.dumps(obj) + "\n").encode("utf-8"))
+                await proc.stdin.drain()
+                return rid
+
+            await send("initialize", {"clientInfo": {"name": "unity-architect", "version": "0.1.0"}})
+            await send("initialized", notify=True)
+            skills_id = await send("skills/list", {})
+
+            result = None
+
+            async def read_until():
+                nonlocal result
+                while True:
+                    line = await proc.stdout.readline()
+                    if not line:
+                        return
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        msg = json.loads(line)
+                    except Exception:
+                        continue
+                    if msg.get("id") == skills_id and ("result" in msg or "error" in msg):
+                        result = msg.get("result")
+                        return
+
+            try:
+                await asyncio.wait_for(read_until(), timeout=20)
+            except asyncio.TimeoutError:
+                logger.warning("[fetch_codex_skills] skills/list zaman aşımı")
+
+            meta = _parse_codex_skills(result)
+            if meta:
+                _CODEX_SKILLS_CACHE = meta
+            logger.info(f"[fetch_codex_skills] {len(meta)} Codex skill yakalandı")
+            return list(_CODEX_SKILLS_CACHE)
+        except Exception as e:
+            logger.warning(f"[fetch_codex_skills] hata: {e}")
+            return list(_CODEX_SKILLS_CACHE)
+        finally:
+            if proc is not None:
+                try:
+                    if proc.stdin and not proc.stdin.is_closing():
+                        proc.stdin.close()
+                except Exception:
+                    pass
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
+                try:
+                    # transport'ları düzgün kapat → "I/O operation on closed pipe" gürültüsü olmasın
+                    await asyncio.wait_for(proc.wait(), timeout=5)
+                except Exception:
+                    pass
 
 
 def _describe_approval(method: str, params: dict) -> str:
@@ -376,6 +510,67 @@ class CodexSession:
         logger.info(f"[CodexSession:{self.conversation_id}] tur iptal edildi (cancel_turn)")
 
     # ── Mesaj akışı: bir tur gönder, event dict'leri yield et ────────────
+    async def usage_card_text(self) -> str:
+        """`/usage` için: canlı app-server'dan account/rateLimits + account/read çekip
+        /usage kartının parse ettiği formatta metin üretir (model turu YOK → sıfır token).
+        Claude'un /usage'ına benzer: pencere başına 'X% used · resets <tarih>'."""
+        if not self._started:
+            await self.start()
+        try:
+            rl_resp = await self._request("account/rateLimits/read", {}, timeout=15)
+        except Exception as e:
+            return f"Codex kullanım bilgisi alınamadı: {e}"
+        try:
+            acc_resp = await self._request("account/read", {}, timeout=10)
+        except Exception:
+            acc_resp = {}
+
+        rl = (((rl_resp or {}).get("result") or {}).get("rateLimits")) or {}
+        acc = (((acc_resp or {}).get("result") or {}).get("account")) or {}
+
+        acct_type = acc.get("type") or "ChatGPT"
+        if acct_type.lower() == "chatgpt":
+            acct_type = "ChatGPT"
+        # NOT: planType (account/read='go', rateLimits='plus') tutarsız/yanlış geliyor →
+        # yanlış plan göstermemek için plan adını yazmıyoruz.
+        head = f"{acct_type} aboneliğiyle Codex kullanımı"
+        lines = [head]
+
+        def _fmt_window(w) -> Optional[str]:
+            if not isinstance(w, dict):
+                return None
+            pct = w.get("usedPercent")
+            if pct is None:
+                return None
+            mins = w.get("windowDurationMins") or 0
+            if mins and mins < 1440:
+                label = f"{mins // 60} saatlik pencere" if mins >= 60 else f"{mins} dakikalık pencere"
+            elif mins:
+                label = f"{mins // 1440} günlük pencere"
+            else:
+                label = "Kullanım penceresi"
+            resets = w.get("resetsAt")
+            reset_str = ""
+            if isinstance(resets, (int, float)):
+                try:
+                    reset_str = " · resets " + datetime.fromtimestamp(resets).strftime("%d.%m %H:%M")
+                except Exception:
+                    reset_str = ""
+            return f"{label}: {pct}% used{reset_str}"
+
+        for w in (rl.get("primary"), rl.get("secondary")):
+            ln = _fmt_window(w)
+            if ln:
+                lines.append(ln)
+
+        credits = rl.get("credits") or {}
+        if credits.get("hasCredits"):
+            lines.append(f"Kredi bakiyesi: {credits.get('balance', '0')}")
+
+        if len(lines) == 1:
+            lines.append("Şu anda raporlanacak kullanım penceresi yok.")
+        return "\n".join(lines)
+
     async def stream(self, message: str) -> AsyncGenerator[dict, None]:
         if not self._started:
             await self.start()

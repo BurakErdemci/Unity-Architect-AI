@@ -60,6 +60,15 @@ class AgentEvent:
         return f"data: {payload}\n\n"
 
 
+# conversation_id → son tur'u işleyen subscription CLI'ı ('claude'|'codex'|'agy').
+# CLI değişince (örn. Claude→Codex) hedef provider'ın bayat session'ı kapatılır →
+# bir sonraki turda tam transcript yeniden enjekte edilir (kaldığı yerden devam).
+_LAST_SUB_PROVIDER: Dict[int, str] = {}
+
+# Yeni CLI'a geçmiş enjekte edilirken kullanılan başlık (context = tam transcript).
+_HANDOFF_HEADER = "[ÖNCEKİ KONUŞMA BAĞLAMI]"
+
+
 class AgentRunner:
     """
     Tek bir kullanıcı isteğini agentic loop ile çalıştırır.
@@ -114,6 +123,24 @@ class AgentRunner:
                     logger.warning(f"Wisdom dosyası okunamadı ({p}): {e}")
         return ""
 
+    async def _reset_session_for(self, provider: str) -> None:
+        """CLI değişiminde hedef provider'ın bu sohbete ait canlı session'ını kapatır.
+        Böylece bir sonraki tur 'ilk tur' sayılır ve tam transcript (self.context)
+        yeniden enjekte edilir → yeni CLI aradaki turları da görüp kaldığı yerden devam eder."""
+        if self.conversation_id is None:
+            return
+        try:
+            if provider == "codex":
+                from providers.codex_session import close_session
+            elif provider == "agy":
+                from providers.agy_session import close_session
+            else:
+                from providers.claude_sdk_session import close_session
+            await close_session(self.conversation_id)
+            logger.info(f"[handoff] {provider} session resetlendi (CLI değişimi) → tam transcript yeniden enjekte edilecek")
+        except Exception as e:
+            logger.warning(f"[handoff] {provider} session reset hatası: {e}")
+
     async def _execute_tool_with_approval(
         self, tool_name: str, tool_args: dict
     ) -> tuple[dict, list]:
@@ -147,16 +174,28 @@ class AgentRunner:
                 yield event
         elif self.provider_type == "subscription":
             # claude-* → kalıcı interaktif SDK session (native onay + AskUserQuestion + skill/slash).
-            # codex (gpt-*) → kalıcı app-server session (native onay). agy → ephemeral CLI (ertelendi).
+            # codex (gpt-*) → kalıcı app-server session (native onay). agy → disk-resume CLI.
             _name = (self.model_name or "claude").lower()
-            _is_codex = _name.startswith("gpt-")
-            _is_agy = _name.startswith(("gemini", "agy-"))
-            if _is_codex:
-                # codex → kalıcı app-server session (native onay + bağlam sürekliliği)
+            if _name.startswith("gpt-"):
+                _cur = "codex"
+            elif _name.startswith(("gemini", "agy-")):
+                _cur = "agy"
+            else:
+                _cur = "claude"
+
+            # CLI'lar arası "kaldığı yerden devam": provider değiştiyse hedef CLI'ın
+            # (varsa) bayat session'ını kapat → ilk-tur enjeksiyonu tetiklenir, tam
+            # transcript (self.context) yeniden verilir → aradaki turları da görür.
+            if self.conversation_id is not None:
+                _prev = _LAST_SUB_PROVIDER.get(self.conversation_id)
+                if _prev and _prev != _cur:
+                    await self._reset_session_for(_cur)
+                _LAST_SUB_PROVIDER[self.conversation_id] = _cur
+
+            if _cur == "codex":
                 async for event in self._run_codex_session(user_message):
                     yield event
-            elif _is_agy:
-                # agy → kalıcı-bağlamlı session (disk-resume + conversation-db okuma)
+            elif _cur == "agy":
                 async for event in self._run_agy_session(user_message):
                     yield event
             else:
@@ -833,7 +872,7 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
         # Bağlam: yalnızca resume EDEMİYORKEN (UUID yok) prompt'a ekle. UUID varsa
         # agy bağlamı diskten yükler → geçmişi yeniden basmayız.
         if self.context and not sess.agy_uuid:
-            enriched_prompt = f"{user_message}\n\n[PROJE BAĞLAMI]\n{self.context}"
+            enriched_prompt = f"{user_message}\n\n{_HANDOFF_HEADER}\n{self.context}"
         else:
             enriched_prompt = user_message
 
@@ -999,7 +1038,7 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
         # İlk turda proje bağlamını ekle; sonraki turlarda session zaten hatırlıyor.
         message = user_message
         if self.context and not session.session_id:
-            message = f"{user_message}\n\n[PROJE BAĞLAMI]\n{self.context}"
+            message = f"{user_message}\n\n{_HANDOFF_HEADER}\n{self.context}"
         # Ultracode (Claude-only): SDK'da option YOK → tek yol mesaja keyword enjeksiyonu.
         # CLI bu kelimeyi görünce çok-ajanlı ultracode akışını tetikler (belgesiz; sürüme bağlı).
         if self.ultracode:
@@ -1034,10 +1073,22 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
         # Oto mod → onay otomatik accept; Adım/Plan modu → her mutasyonda onay kartı.
         session.auto_approve = (self.generation_mode == "auto")
 
+        # /usage → canlı app-server'dan kullanım kartı metni (model turu YOK → sıfır token).
+        # Ham user_message'a bakılır (bağlam wrapping'inden ÖNCE).
+        if user_message.strip().lower() == "/usage":
+            try:
+                text = await session.usage_card_text()
+            except Exception as e:
+                text = f"Codex kullanım bilgisi alınamadı: {e}"
+            yield AgentEvent("text", {"content": text})
+            yield AgentEvent("response", {"content": text})
+            yield AgentEvent("done", {"session_id": session.thread_id})
+            return
+
         # İlk turda proje bağlamını ekle; sonraki turlarda thread zaten hatırlıyor.
         message = user_message
         if self.context and not session._ctx_injected:
-            message = f"{user_message}\n\n[PROJE BAĞLAMI]\n{self.context}"
+            message = f"{user_message}\n\n{_HANDOFF_HEADER}\n{self.context}"
             session._ctx_injected = True
 
         try:

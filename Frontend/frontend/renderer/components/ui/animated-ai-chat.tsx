@@ -146,7 +146,8 @@ export function AnimatedChatInput({
     disabledPlaceholder = "Bu bölüm bakımda...",
     slashCommands = [],
     skills = [],
-    commandMeta = []
+    commandMeta = [],
+    galleryProvider = 'claude'
 }: {
     value: string;
     setValue: (val: string) => void;
@@ -161,7 +162,8 @@ export function AnimatedChatInput({
     disabledPlaceholder?: string;
     slashCommands?: string[];  // backend'den gelen Claude Code slash komutları (isimler, '/'siz)
     skills?: string[];         // slash komutlarının skill olan alt kümesi (rozet için)
-    commandMeta?: CommandMeta[];  // {name, description, argumentHint} — Skills galerisi için
+    commandMeta?: CommandMeta[];  // {name, description, argumentHint, insert?} — Skills galerisi için
+    galleryProvider?: string;     // 'claude' | 'codex' | 'agy' — galeri gösterim/insert davranışı
 }) {
     // Typing state is INTERNAL — does not propagate to parent on every keystroke.
     const [internalValue, setInternalValue] = useState(value);
@@ -178,13 +180,12 @@ export function AnimatedChatInput({
     const galleryRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
-    // Galeriden komut seçimi: '/<isim> ' girdiye yazılır, kullanıcı (gerekirse arg
-    // ekleyip) Enter'a basar — yıkıcı komutların kazara tetiklenmemesi için otomatik
-    // GÖNDERİLMEZ.
-    const handleSelectCommand = (name: string, _needsArgs: boolean) => {
-        const next = '/' + name + ' ';
-        setInternalValue(next);
-        setValue(next);
+    // Galeriden seçim: hazır metin (Claude: '/<isim> '; Codex: skill defaultPrompt'u)
+    // girdiye yazılır, kullanıcı (gerekirse düzenleyip) Enter'a basar — yıkıcı komutların
+    // kazara tetiklenmemesi için otomatik GÖNDERİLMEZ.
+    const handleSelectCommand = (insertText: string) => {
+        setInternalValue(insertText);
+        setValue(insertText);
         setShowSkillsGallery(false);
         setShowCommandPalette(false);
         setTimeout(() => { textareaRef.current?.focus(); adjustHeight(); }, 0);
@@ -415,6 +416,7 @@ export function AnimatedChatInput({
                     <SkillsGallery
                         meta={commandMeta}
                         skills={skills}
+                        provider={galleryProvider}
                         onSelect={handleSelectCommand}
                         onClose={() => setShowSkillsGallery(false)}
                     />
@@ -501,18 +503,20 @@ export function AnimatedChatInput({
                     >
                         <PlusIcon className="w-3.5 h-3.5" />
                     </button>
-                    <button
-                        type="button"
-                        data-gallery-button
-                        onClick={() => { setShowSkillsGallery(v => !v); setShowCommandPalette(false); }}
-                        className={cn(
-                            "p-2 rounded-lg transition-colors",
-                            showSkillsGallery ? "text-violet-300 bg-violet-500/10" : "text-white/40 hover:text-white/90 hover:bg-white/5"
-                        )}
-                        title="Skills & Komutlar"
-                    >
-                        <Sparkles className="w-3.5 h-3.5" />
-                    </button>
+                    {commandMeta.length > 0 && (
+                        <button
+                            type="button"
+                            data-gallery-button
+                            onClick={() => { setShowSkillsGallery(v => !v); setShowCommandPalette(false); }}
+                            className={cn(
+                                "p-2 rounded-lg transition-colors",
+                                showSkillsGallery ? "text-violet-300 bg-violet-500/10" : "text-white/40 hover:text-white/90 hover:bg-white/5"
+                            )}
+                            title="Skills & Komutlar"
+                        >
+                            <Sparkles className="w-3.5 h-3.5" />
+                        </button>
+                    )}
                 </div>
                 
                 {isLoading ? (

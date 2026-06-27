@@ -3,6 +3,7 @@ import axios from 'axios';
 import { FileEntry, ExportModalState, UserData } from '../../components/home/types';
 import { PendingFile } from '../../components/home/FileCreationApproval';
 import { splitCodeIntoFiles } from '../../components/home/export-utils';
+import { confirmDialog } from '../../components/ui/ConfirmDialog';
 
 const ipc = typeof window !== 'undefined' ? (window as any).ipc : null;
 
@@ -158,7 +159,7 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
 
   const handleTreeDelete = useCallback(async (entry: FileEntry) => {
     setTreeContextMenu(null);
-    if (!window.confirm(`"${entry.name}" silinsin mi?`)) return;
+    if (!(await confirmDialog(`"${entry.name}" silinsin mi?`))) return;
     await ipc.invoke('delete-entry', entry.path, workspacePath);
     refreshFileTree();
   }, [refreshFileTree, workspacePath]);

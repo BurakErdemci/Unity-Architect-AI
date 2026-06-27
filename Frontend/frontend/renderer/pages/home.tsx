@@ -200,13 +200,23 @@ export default function Home() {
   // Chat'te '/' autocomplete için Claude Code slash komutları + skill'ler (backend'den)
   const [slashCommands, setSlashCommands] = useState<string[]>([]);
   const [skills, setSkills] = useState<string[]>([]);
-  const [commandMeta, setCommandMeta] = useState<{ name: string; description?: string; argumentHint?: string }[]>([]);
+  const [commandMeta, setCommandMeta] = useState<{ name: string; description?: string; argumentHint?: string; insert?: string; displayName?: string }[]>([]);
+  // Hangi provider'ın komut/skill kataloğu çekilecek? (backend buna göre kaynak seçer)
+  //   gpt-* → codex (app-server skills/list), gemini/agy-* → agy (boş, headless),
+  //   diğer subscription → claude (Claude Code slash + skill). subscription değilse katalog yok.
+  const slashProvider = (() => {
+    if (ai.effectiveProvider !== 'subscription') return 'other';
+    const m = (ai.aiConfig?.model_name || '').toLowerCase();
+    if (m.startsWith('gpt-')) return 'codex';
+    if (m.startsWith('gemini') || m.startsWith('agy-')) return 'agy';
+    return 'claude';
+  })();
   useEffect(() => {
-    if (!API) return;
-    axios.get(`${API}/slash-commands`, { headers: { 'X-Session-Token': auth.user?.sessionToken } })
+    if (!API || slashProvider === 'other') { setSlashCommands([]); setSkills([]); setCommandMeta([]); return; }
+    axios.get(`${API}/slash-commands`, { params: { provider: slashProvider }, headers: { 'X-Session-Token': auth.user?.sessionToken } })
       .then(r => { setSlashCommands(r.data?.commands || []); setSkills(r.data?.skills || []); setCommandMeta(r.data?.meta || []); })
       .catch(() => {});
-  }, [API, chat.loading]);  // mesaj bitince session başlamış olur → liste dolar, yeniden çek
+  }, [API, chat.loading, slashProvider]);  // mesaj bitince session dolar + provider değişince yeniden çek
   const chatEndRef = useRef<HTMLDivElement>(null);
   const lintTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const openedFileRef = useRef<string | null>(null);
@@ -547,6 +557,7 @@ export default function Home() {
                 slashCommands={slashCommands}
                 skills={skills}
                 commandMeta={commandMeta}
+                galleryProvider={slashProvider}
                 onStop={chat.stopMessage}
                 onFileDrop={(entry) => chat.setChatInput(prev => prev + ` [File Attached: ${entry.path}]`)}
                 onCommand={(cmd) => {
