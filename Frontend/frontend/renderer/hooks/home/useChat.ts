@@ -132,8 +132,13 @@ export const useChat = (
     setMessages(prev => [...prev, userMsg]);
     setChatInput('');
 
+    // Özel kart render edilen slash komutları → asistan mesajını etiketle.
+    // NOT: /cost bu Claude Code sürümünde YOK (abonelikte session cost /usage'a dahil).
+    const _trimmed = messageContent.trim().toLowerCase();
+    const slashCard = _trimmed === '/usage' ? 'usage' : _trimmed === '/context' ? 'context' : undefined;
+
     const aiMsgId = Date.now() + 1;
-    let currentAiMsg: Message = { id: aiMsgId, role: 'assistant', content: '', smells: [], timestamp: new Date().toISOString(), thinking: null, tool_calls: [] };
+    let currentAiMsg: Message = { id: aiMsgId, role: 'assistant', content: '', smells: [], timestamp: new Date().toISOString(), thinking: null, tool_calls: [], slashCommand: slashCard };
     setMessages(prev => [...prev, currentAiMsg]);
 
     try {

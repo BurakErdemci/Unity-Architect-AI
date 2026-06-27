@@ -12,6 +12,7 @@ import {
 import { Message, UserData, FileEntry, GenerationMode } from './types';
 import { ModelAvatar } from './ModelAvatar';
 import { MarkdownRenderer } from './MarkdownRenderer';
+import { SlashCommandCard } from './SlashCommandCard';
 import { ThinkingBlock } from './ThinkingBlock';
 import { ToolGroup } from './ToolGroup';
 import { FileCreationApproval, PendingFile } from './FileCreationApproval';
@@ -126,7 +127,16 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   return (
     <div className="flex-1 overflow-y-auto px-4 py-6 custom-scrollbar scroll-smooth">
       <div className="max-w-4xl mx-auto space-y-6">
-        {messages.map((msg, msgIdx) => (
+        {messages.map((msg, msgIdx) => {
+          // /usage, /context → özel kart. Canlı turda mesaj etiketli gelir (slashCommand);
+          // geçmişten yüklenende etiket yok → bir önceki kullanıcı mesajından tespit et.
+          let slashCmd: string | undefined = msg.slashCommand;
+          if (!slashCmd && msg.role === 'assistant' && msgIdx > 0) {
+            const prevC = (messages[msgIdx - 1]?.role === 'user' ? messages[msgIdx - 1].content : '').trim().toLowerCase();
+            if (prevC === '/usage') slashCmd = 'usage';
+            else if (prevC === '/context') slashCmd = 'context';
+          }
+          return (
           <div key={msg.id} className={`chat-message-enter ${msg.role === 'user' ? 'flex justify-end' : ''}`}>
             {msg.role === 'assistant' ? (
               <div className="flex gap-2.5 max-w-full group">
@@ -171,12 +181,14 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                       </div>
                       {thinkingLevel !== 'off' && <span className="text-[11px] text-violet-400 animate-pulse">{t('chat.thinking')}</span>}
                     </div>
+                  ) : slashCmd ? (
+                    <SlashCommandCard command={slashCmd} text={msg.content} workspacePath={workspacePath} />
                   ) : (
                     <div className="prose prose-invert max-w-none text-[13px] leading-relaxed prose-p:my-2 prose-headings:my-3 prose-ul:my-2 prose-li:my-0.5 prose-pre:bg-slate-900 prose-pre:border prose-pre:border-slate-800 prose-a:text-emerald-400">
-                      <MarkdownRenderer 
-                        content={msg.content.replace('<!-- SCOPE_WARNING_ACTIVE -->', '')} 
-                        workspacePath={workspacePath} 
-                        onExportToUnity={handleExportToUnity} 
+                      <MarkdownRenderer
+                        content={msg.content.replace('<!-- SCOPE_WARNING_ACTIVE -->', '')}
+                        workspacePath={workspacePath}
+                        onExportToUnity={handleExportToUnity}
                       />
                     </div>
                   )}
@@ -326,7 +338,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
               </div>
             )}
           </div>
-        ))}
+          );
+        })}
 
         {/* AgentPlan Indicator */}
         {loading && currentPlan.length > 0 && (

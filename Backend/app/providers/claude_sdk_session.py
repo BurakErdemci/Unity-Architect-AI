@@ -33,6 +33,10 @@ _SESSIONS: Dict[int, "ClaudeSDKSession"] = {}
 _SLASH_COMMANDS_CACHE: List[str] = []
 # Aktif skill isimleri (slash_commands'ın alt kümesi; frontend'de "skill" rozeti için).
 _SKILLS_CACHE: List[str] = []
+# Komut meta'sı: [{name, description, argumentHint}] — Skills galerisi (açıklamalı katalog)
+# için. get_server_info().commands'tan warmup'ta dolar; isim-listesinden FARKLI olarak
+# açıklama da taşır (system/init yalnızca isim verir, açıklama vermez).
+_COMMANDS_META: List[Dict] = []
 # Eşzamanlı /slash-commands isteklerinde tek warmup subprocess'i aç (çift spawn önleme).
 _WARMUP_LOCK = asyncio.Lock()
 
@@ -45,6 +49,10 @@ def get_skills() -> List[str]:
     return list(_SKILLS_CACHE)
 
 
+def get_commands_meta() -> List[Dict]:
+    return list(_COMMANDS_META)
+
+
 async def warmup_slash_commands(cwd: Optional[str] = None,
                                 setting_sources: Optional[List[str]] = None) -> List[str]:
     """İlk mesaj atılmadan kurulu TÜM slash komut + skill'leri yakala (cold-start fix).
@@ -54,7 +62,7 @@ async def warmup_slash_commands(cwd: Optional[str] = None,
     Throwaway client kullanılır (conversation _SESSIONS'a DOKUNULMAZ); mcp_servers /
     can_use_tool VERİLMEZ (hızlı + yan etkisiz). Sonuç global cache'lere yazılır.
     """
-    global _SLASH_COMMANDS_CACHE, _SKILLS_CACHE
+    global _SLASH_COMMANDS_CACHE, _SKILLS_CACHE, _COMMANDS_META
     async with _WARMUP_LOCK:
         if _SLASH_COMMANDS_CACHE:
             return list(_SLASH_COMMANDS_CACHE)  # başka bir istek doldurmuş
@@ -68,19 +76,27 @@ async def warmup_slash_commands(cwd: Optional[str] = None,
         )
         client = ClaudeSDKClient(options=opts)
         cmds: List[str] = []
+        meta: List[Dict] = []
         try:
             await client.__aenter__()
             info = await client.get_server_info() or {}
-            # get_server_info → komutlar 'commands' anahtarında (dict listesi);
-            # system/init'teki 'slash_commands' (string listesi) anahtarından FARKLI.
+            # get_server_info → komutlar 'commands' anahtarında (dict listesi: name +
+            # description + argumentHint). system/init'teki 'slash_commands' (string
+            # listesi) anahtarından FARKLI ve AÇIKLAMA taşır → Skills galerisi bundan beslenir.
             # NOT: get_server_info'da 'skills' anahtarı YOK (yalnızca 'agents' = subagent
             # tipleri var; bunlar skill değil). Gerçek skill listesi canlı session'ın
             # system/init mesajından gelir → _SKILLS_CACHE'i burada DOLDURMUYORUZ.
             for c in (info.get("commands") or []):
                 if isinstance(c, dict) and c.get("name"):
                     cmds.append(c["name"])
+                    meta.append({
+                        "name": c["name"],
+                        "description": (c.get("description") or "").strip(),
+                        "argumentHint": (c.get("argumentHint") or "").strip(),
+                    })
                 elif isinstance(c, str):  # eski CLI string verebilir
                     cmds.append(c)
+                    meta.append({"name": c, "description": "", "argumentHint": ""})
         except Exception as e:
             logger.warning(f"[warmup_slash_commands] hata: {e}")
         finally:
@@ -91,6 +107,8 @@ async def warmup_slash_commands(cwd: Optional[str] = None,
 
         if cmds:
             _SLASH_COMMANDS_CACHE = cmds
+        if meta:
+            _COMMANDS_META = meta
         logger.info(f"[warmup_slash_commands] {len(cmds)} komut yakalandı (skill'ler ilk mesajda dolar)")
         return list(_SLASH_COMMANDS_CACHE)
 

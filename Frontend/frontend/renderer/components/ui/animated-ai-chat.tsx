@@ -12,9 +12,11 @@ import {
     SendIcon,
     XIcon,
     Square,
+    Sparkles,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import * as React from "react"
+import { SkillsGallery, CommandMeta } from "../home/SkillsGallery";
 
 interface UseAutoResizeTextareaProps {
     minHeight: number;
@@ -143,7 +145,8 @@ export function AnimatedChatInput({
     disabled = false,
     disabledPlaceholder = "Bu bölüm bakımda...",
     slashCommands = [],
-    skills = []
+    skills = [],
+    commandMeta = []
 }: {
     value: string;
     setValue: (val: string) => void;
@@ -158,6 +161,7 @@ export function AnimatedChatInput({
     disabledPlaceholder?: string;
     slashCommands?: string[];  // backend'den gelen Claude Code slash komutları (isimler, '/'siz)
     skills?: string[];         // slash komutlarının skill olan alt kümesi (rozet için)
+    commandMeta?: CommandMeta[];  // {name, description, argumentHint} — Skills galerisi için
 }) {
     // Typing state is INTERNAL — does not propagate to parent on every keystroke.
     const [internalValue, setInternalValue] = useState(value);
@@ -169,8 +173,22 @@ export function AnimatedChatInput({
         maxHeight: 200,
     });
     const [inputFocused, setInputFocused] = useState(false);
+    const [showSkillsGallery, setShowSkillsGallery] = useState(false);
     const commandPaletteRef = useRef<HTMLDivElement>(null);
+    const galleryRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+
+    // Galeriden komut seçimi: '/<isim> ' girdiye yazılır, kullanıcı (gerekirse arg
+    // ekleyip) Enter'a basar — yıkıcı komutların kazara tetiklenmemesi için otomatik
+    // GÖNDERİLMEZ.
+    const handleSelectCommand = (name: string, _needsArgs: boolean) => {
+        const next = '/' + name + ' ';
+        setInternalValue(next);
+        setValue(next);
+        setShowSkillsGallery(false);
+        setShowCommandPalette(false);
+        setTimeout(() => { textareaRef.current?.focus(); adjustHeight(); }, 0);
+    };
 
     const processFile = (file: File) => {
         if (file.type.startsWith('image/')) {
@@ -278,6 +296,10 @@ export function AnimatedChatInput({
             const commandButton = document.querySelector('[data-command-button]');
             if (commandPaletteRef.current && !commandPaletteRef.current.contains(target) && !commandButton?.contains(target)) {
                 setShowCommandPalette(false);
+            }
+            const galleryButton = document.querySelector('[data-gallery-button]');
+            if (galleryRef.current && !galleryRef.current.contains(target) && !galleryButton?.contains(target)) {
+                setShowSkillsGallery(false);
             }
         };
         document.addEventListener('mousedown', handleClickOutside);
@@ -387,6 +409,18 @@ export function AnimatedChatInput({
                 )}
             </AnimatePresence>
 
+            {/* Skills & Komutlar galerisi (açıklamalı, aranabilir katalog) */}
+            {showSkillsGallery && (
+                <div ref={galleryRef}>
+                    <SkillsGallery
+                        meta={commandMeta}
+                        skills={skills}
+                        onSelect={handleSelectCommand}
+                        onClose={() => setShowSkillsGallery(false)}
+                    />
+                </div>
+            )}
+
             <div className="p-3">
                 <Textarea
                     ref={textareaRef}
@@ -459,13 +493,25 @@ export function AnimatedChatInput({
                         className="hidden" 
                         multiple 
                     />
-                    <button 
+                    <button
                         type="button"
                         onClick={() => fileInputRef.current?.click()}
                         className="p-2 rounded-lg text-white/40 hover:text-white/90 hover:bg-white/5 transition-colors"
                         title="Resim Ekle"
                     >
                         <PlusIcon className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                        type="button"
+                        data-gallery-button
+                        onClick={() => { setShowSkillsGallery(v => !v); setShowCommandPalette(false); }}
+                        className={cn(
+                            "p-2 rounded-lg transition-colors",
+                            showSkillsGallery ? "text-violet-300 bg-violet-500/10" : "text-white/40 hover:text-white/90 hover:bg-white/5"
+                        )}
+                        title="Skills & Komutlar"
+                    >
+                        <Sparkles className="w-3.5 h-3.5" />
                     </button>
                 </div>
                 

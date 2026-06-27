@@ -945,7 +945,13 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
             from unity_ai_mcp.unity_mcp_manager import unity_mcp_manager
             mcp_servers_cfg = {}
             if unity_mcp_manager.is_running():
-                mcp_servers_cfg["unityMCP"] = {"url": f"http://localhost:{unity_mcp_manager.mcp_port}/mcp"}
+                # "type": "http" ZORUNLU — yoksa Claude Code bunu stdio sunucu sanıp
+                # 'command' arar, bulamayınca "invalid MCP server config" ile ATLAR
+                # (Unity araçları manage_scene/manage_gameobject vb. görünmez).
+                mcp_servers_cfg["unityMCP"] = {
+                    "type": "http",
+                    "url": f"http://localhost:{unity_mcp_manager.mcp_port}/mcp",
+                }
             # Temiz .mcp.json yaz (unityai YOK) — eski/bayat kayıtların üstüne yaz
             if self.workspace_path and os.path.isdir(self.workspace_path):
                 with open(os.path.join(self.workspace_path, ".mcp.json"), "w", encoding="utf-8") as f:

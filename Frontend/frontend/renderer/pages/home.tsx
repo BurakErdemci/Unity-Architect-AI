@@ -200,10 +200,11 @@ export default function Home() {
   // Chat'te '/' autocomplete için Claude Code slash komutları + skill'ler (backend'den)
   const [slashCommands, setSlashCommands] = useState<string[]>([]);
   const [skills, setSkills] = useState<string[]>([]);
+  const [commandMeta, setCommandMeta] = useState<{ name: string; description?: string; argumentHint?: string }[]>([]);
   useEffect(() => {
     if (!API) return;
     axios.get(`${API}/slash-commands`, { headers: { 'X-Session-Token': auth.user?.sessionToken } })
-      .then(r => { setSlashCommands(r.data?.commands || []); setSkills(r.data?.skills || []); })
+      .then(r => { setSlashCommands(r.data?.commands || []); setSkills(r.data?.skills || []); setCommandMeta(r.data?.meta || []); })
       .catch(() => {});
   }, [API, chat.loading]);  // mesaj bitince session başlamış olur → liste dolar, yeniden çek
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -545,6 +546,7 @@ export default function Home() {
                 value={chat.chatInput} setValue={chat.setChatInput} onSendMessage={handleSendMessage} isLoading={chat.loading}
                 slashCommands={slashCommands}
                 skills={skills}
+                commandMeta={commandMeta}
                 onStop={chat.stopMessage}
                 onFileDrop={(entry) => chat.setChatInput(prev => prev + ` [File Attached: ${entry.path}]`)}
                 onCommand={(cmd) => {
