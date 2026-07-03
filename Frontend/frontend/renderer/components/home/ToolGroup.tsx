@@ -3,7 +3,7 @@ import { motion } from 'framer-motion';
 import { ChevronRight, Layers } from 'lucide-react';
 import { ToolBlock } from './ToolBlock';
 
-interface ToolItem { tool: string; args: any; summary?: string; success?: boolean; }
+interface ToolItem { tool: string; args?: any; summary?: string; success?: boolean; output?: string; id?: string; }
 
 /**
  * Araç çağrılarını gösterir. 3 veya azsa düz liste; fazlaysa "N adım" collapse grubu
@@ -17,7 +17,7 @@ export const ToolGroup = ({ tools }: { tools?: ToolItem[] }) => {
     return (
       <div className="flex flex-col gap-1 mb-3">
         {tools.map((tc, idx) => (
-          <ToolBlock key={idx} tool={tc.tool} args={tc.args} summary={tc.summary} success={tc.success} />
+          <ToolBlock key={idx} tool={tc.tool} args={tc.args} summary={tc.summary} success={tc.success} output={tc.output} />
         ))}
       </div>
     );
@@ -42,7 +42,7 @@ export const ToolGroup = ({ tools }: { tools?: ToolItem[] }) => {
       {open && (
         <div className="flex flex-col gap-1 mt-1.5 pl-2 border-l border-slate-800">
           {tools.map((tc, idx) => (
-            <ToolBlock key={idx} tool={tc.tool} args={tc.args} summary={tc.summary} success={tc.success} />
+            <ToolBlock key={idx} tool={tc.tool} args={tc.args} summary={tc.summary} success={tc.success} output={tc.output} />
           ))}
         </div>
       )}

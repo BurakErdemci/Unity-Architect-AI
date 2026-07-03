@@ -974,7 +974,9 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
         import json as _json
         import subprocess as _sp
         from providers.cli_base import BaseCLIProvider
-        from providers.claude_sdk_session import get_session, close_session, _SESSIONS
+        from providers.claude_sdk_session import (
+            get_session, close_session, _SESSIONS, SessionBusyError,
+        )
 
         # MCP: SADECE unityMCP (Unity sahne kontrolü) session'a girsin. Eski 'unityai'
         # (mcp__unityai__bash/save_file + kendi onay köprüsü) ARTIK GİRMESİN — terminal/yazma
@@ -1015,8 +1017,7 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                         f"session yeniden kuruluyor (canlı bağlam sıfırlanır, DB özeti korunur)")
             await close_session(self.conversation_id)
 
-        session = get_session(
-            self.conversation_id,
+        _session_kwargs = dict(
             model=model,
             cwd=self.workspace_path or ".",
             permission_mode="default",
@@ -1031,26 +1032,47 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
             ],
         )
 
-        # Oto mod → onay sormadan otomatik izin; Adım/Plan modu → her işlemde onay kartı.
-        # Session kalıcı olduğu için mod her turda güncellenir (kullanıcı ortada değiştirebilir).
-        session.auto_approve = (self.generation_mode == "auto")
+        # Sıkışmış/kopuk session'da bir kez otomatik reset + yeniden dene: "Durdur"
+        # sonrası ya da CLI çökmesi sonrası kullanıcı mesajı asla "düşünüyor"da kalmaz.
+        for _attempt in (1, 2):
+            session = get_session(self.conversation_id, **_session_kwargs)
 
-        # İlk turda proje bağlamını ekle; sonraki turlarda session zaten hatırlıyor.
-        message = user_message
-        if self.context and not session.session_id:
-            message = f"{user_message}\n\n{_HANDOFF_HEADER}\n{self.context}"
-        # Ultracode (Claude-only): SDK'da option YOK → tek yol mesaja keyword enjeksiyonu.
-        # CLI bu kelimeyi görünce çok-ajanlı ultracode akışını tetikler (belgesiz; sürüme bağlı).
-        if self.ultracode:
-            message = f"{message}\n\nultracode"
+            # Oto mod → onay sormadan otomatik izin; Adım/Plan modu → her işlemde onay kartı.
+            # Session kalıcı olduğu için mod her turda güncellenir (kullanıcı ortada değiştirebilir).
+            session.auto_approve = (self.generation_mode == "auto")
 
-        try:
-            async for ev in session.stream(message):
-                etype = ev.pop("type", "text")
-                yield AgentEvent(etype, ev)
-        except Exception as e:
-            logger.exception("[ClaudeSession] stream hatası")
-            yield AgentEvent("error", {"message": f"Claude session hatası: {e}"})
+            # İlk turda proje bağlamını ekle; sonraki turlarda session zaten hatırlıyor.
+            message = user_message
+            if self.context and not session.session_id:
+                message = f"{user_message}\n\n{_HANDOFF_HEADER}\n{self.context}"
+            # Ultracode (Claude-only): SDK'da option YOK → tek yol mesaja keyword enjeksiyonu.
+            # CLI bu kelimeyi görünce çok-ajanlı ultracode akışını tetikler (belgesiz; sürüme bağlı).
+            if self.ultracode:
+                message = f"{message}\n\nultracode"
+
+            _yielded = 0
+            try:
+                async for ev in session.stream(message):
+                    _yielded += 1
+                    etype = ev.pop("type", "text")
+                    yield AgentEvent(etype, ev)
+                return
+            except Exception as e:
+                # Event akmadan patladıysa (busy/kopuk) güvenle resetleyip tekrar dene;
+                # akış ortasında patladıysa retry çift metin basar → direkt hata göster.
+                if _attempt == 1 and _yielded == 0:
+                    logger.warning(f"[ClaudeSession] session sıkışmış/kopuk ({e}) → reset + retry")
+                    yield AgentEvent("status", {
+                        "detail": "⚠️ Claude session yanıt vermedi — yeniden başlatılıyor…",
+                    })
+                    try:
+                        await close_session(self.conversation_id)
+                    except Exception:
+                        logger.exception("[ClaudeSession] reset sırasında close hatası")
+                    continue
+                logger.exception("[ClaudeSession] stream hatası")
+                yield AgentEvent("error", {"message": f"Claude session hatası: {e}"})
+                return
 
     # ═══════════════════════════════════════════════
     # CODEX KALICI SESSION (codex app-server, native onay)

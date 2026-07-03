@@ -229,6 +229,8 @@ export default function Home() {
   useEffect(() => {
     console.log("[Linter Debug] Triggered", { API, user: !!auth.user, path: fs.openedFilePath });
     if (!API || !auth.user || !fs.openedFilePath) return;
+    // C# linter yalnızca .cs için — artık md/json/shader gibi dosyalar da açılabiliyor.
+    if (!fs.openedFilePath.toLowerCase().endsWith('.cs')) return;
     
     if (lintTimeoutRef.current) clearTimeout(lintTimeoutRef.current);
 
@@ -541,6 +543,7 @@ export default function Home() {
               setCode={fs.setCode} refreshFileTree={fs.refreshFileTree} analyzeProject={chat.analyzeProject} openFile={fs.openFile} sendMessage={handleSendMessage}
               currentPlan={chat.currentPlan} messagesEndRef={chatEndRef} ipc={ipc} showToast={showToast as any} diffFile={diffFile} setDiffFile={setDiffFile}
               pendingDelete={fs.pendingDelete} setPendingDelete={fs.setPendingDelete} pendingCommand={chat.pendingCommand} setPendingCommand={chat.setPendingCommand} onApproveCommand={chat.approveCommand} pendingQuestion={chat.pendingQuestion} setPendingQuestion={chat.setPendingQuestion} onAnswerQuestion={chat.answerQuestion} deleteFile={fs.deleteFile} setIsTerminalOpen={setIsTerminalOpen}
+              activity={chat.activity}
             />
           </div>
 

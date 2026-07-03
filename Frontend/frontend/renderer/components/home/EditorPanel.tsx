@@ -5,6 +5,22 @@ import { Plus, Activity, Cpu, Sparkles } from 'lucide-react';
 import { defineUnityTheme, THEME_NAME } from './monaco-theme';
 import { useLang } from '../../lib/i18n';
 
+// Açık dosyanın uzantısına göre Monaco dili — .md/.json/.yaml vb. artık editörde
+// açılabildiği için csharp'a sabitlemek yanlış vurgu yapıyordu.
+const MONACO_LANG: Record<string, string> = {
+  '.cs': 'csharp', '.md': 'markdown', '.json': 'json', '.asmdef': 'json',
+  '.xml': 'xml', '.uxml': 'xml', '.yaml': 'yaml', '.yml': 'yaml',
+  '.txt': 'plaintext', '.shader': 'cpp', '.hlsl': 'cpp', '.cginc': 'cpp',
+  '.compute': 'cpp', '.uss': 'css',
+};
+
+function monacoLangFor(filePath: string | null): string {
+  if (!filePath) return 'csharp';
+  const dot = filePath.lastIndexOf('.');
+  if (dot < 0) return 'plaintext';
+  return MONACO_LANG[filePath.slice(dot).toLowerCase()] ?? 'plaintext';
+}
+
 interface EditorPanelProps {
   code: string;
   setCode: (code: string) => void;
@@ -158,6 +174,7 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
             <Editor
               height="100%"
               defaultLanguage="csharp"
+              language={monacoLangFor(openedFilePath)}
               theme={THEME_NAME}
               value={code}
               onChange={(val) => setCode(val || '')}

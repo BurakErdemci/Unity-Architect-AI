@@ -9,7 +9,7 @@ import {
   AlertTriangle,
   Bot
 } from 'lucide-react';
-import { Message, UserData, FileEntry, GenerationMode } from './types';
+import { Message, UserData, FileEntry, GenerationMode, ChatActivity } from './types';
 import { ModelAvatar } from './ModelAvatar';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { SlashCommandCard } from './SlashCommandCard';
@@ -60,6 +60,8 @@ interface ChatPanelProps {
   onAnswerQuestion: (gateId: string, answers: Record<string, string>) => Promise<void>;
   deleteFile: (path: string) => Promise<void>;
   setIsTerminalOpen: (val: boolean) => void;
+  // Canlı aktivite (status event'leri): "🤖 Subagent çalışıyor · 45.2k token" gibi.
+  activity?: ChatActivity | null;
 }
 
 export const ChatPanel: React.FC<ChatPanelProps> = ({
@@ -98,8 +100,13 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   setPendingQuestion,
   onAnswerQuestion,
   deleteFile,
+  activity,
 }) => {
   const { t } = useLang();
+
+  // 12400 → "12.4k" (aktivite satırı + usage özeti için)
+  const fmtTok = (n?: number | null) =>
+    typeof n === 'number' && n > 0 ? (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`) : null;
 
   if (!activeConvId) {
     return (
@@ -179,7 +186,14 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                         <div className="typing-dot h-2 w-2 bg-blue-500 rounded-full" />
                         <div className="typing-dot h-2 w-2 bg-blue-500 rounded-full" />
                       </div>
-                      {thinkingLevel !== 'off' && <span className="text-[11px] text-violet-400 animate-pulse">{t('chat.thinking')}</span>}
+                      {activity ? (
+                        <span className="text-[11px] text-violet-300">
+                          {activity.detail}
+                          {fmtTok(activity.tokens) && <span className="text-slate-500"> · {fmtTok(activity.tokens)} token</span>}
+                        </span>
+                      ) : (
+                        thinkingLevel !== 'off' && <span className="text-[11px] text-violet-400 animate-pulse">{t('chat.thinking')}</span>
+                      )}
                     </div>
                   ) : slashCmd ? (
                     <SlashCommandCard command={slashCmd} text={msg.content} workspacePath={workspacePath} />
@@ -192,6 +206,15 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                       />
                     </div>
                   )}
+
+                  {/* Tur istatistiği: süre + token (backend turn_usage event'i) */}
+                  {msg.usage && (msg.usage.output_tokens || msg.usage.duration_ms) ? (
+                    <div className="mt-1.5 text-[10.5px] text-slate-600 select-none">
+                      {msg.usage.duration_ms ? `⏱ ${Math.max(1, Math.round(msg.usage.duration_ms / 1000))}sn` : null}
+                      {fmtTok(msg.usage.input_tokens) ? ` · ↑${fmtTok(msg.usage.input_tokens)}` : null}
+                      {fmtTok(msg.usage.output_tokens) ? ` · ↓${fmtTok(msg.usage.output_tokens)} token` : null}
+                    </div>
+                  ) : null}
 
                   {/* Scope Warning Buttons */}
                   {msg.content.includes('SCOPE_WARNING_ACTIVE') && msgIdx === messages.length - 1 && !loading && (
@@ -340,6 +363,20 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           </div>
           );
         })}
+
+        {/* Canlı aktivite şeridi: metin akmaya başladıktan sonra da Claude'un çalıştığı
+            görünür kalsın (typing bubble yalnızca içerik boşken görünüyor). */}
+        {loading && activity && messages.length > 0 && !!messages[messages.length - 1]?.content && (
+          <div className="flex items-center gap-2 mb-6 pl-8 text-[11.5px] text-slate-400">
+            <div className="flex items-center gap-1">
+              <div className="typing-dot h-1.5 w-1.5 bg-violet-400 rounded-full" />
+              <div className="typing-dot h-1.5 w-1.5 bg-violet-400 rounded-full" />
+              <div className="typing-dot h-1.5 w-1.5 bg-violet-400 rounded-full" />
+            </div>
+            <span className="text-violet-300">{activity.detail}</span>
+            {fmtTok(activity.tokens) && <span className="text-slate-500">· {fmtTok(activity.tokens)} token</span>}
+          </div>
+        )}
 
         {/* AgentPlan Indicator */}
         {loading && currentPlan.length > 0 && (

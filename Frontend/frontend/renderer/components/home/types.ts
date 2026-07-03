@@ -25,6 +25,17 @@ export interface Conversation {
   updated_at: string;
 }
 
+// Chat'teki araç chip'i: args = araç girdisi (PARAMETRELER), output = araç sonucu (ÇIKTI),
+// id = tool_use_id (sonucu doğru chip'e bağlamak için).
+export interface ToolCallEntry {
+  tool: string;
+  args?: any;
+  summary?: string;
+  success?: boolean;
+  output?: string;
+  id?: string;
+}
+
 export interface Message {
   id: number;
   role: 'user' | 'assistant';
@@ -35,10 +46,19 @@ export interface Message {
   is_refined?: boolean;
   thinking?: string | null;
   thinking_duration_ms?: number | null;
-  tool_calls?: { tool: string; args: any; summary?: string; success?: boolean }[];
-  tools?: { tool: string; args: any; summary?: string; success?: boolean }[];
+  tool_calls?: ToolCallEntry[];
+  tools?: ToolCallEntry[];
   images?: string[];
   slashCommand?: string;  // 'usage' | 'cost' — özel kart olarak render edilen slash komutu yanıtı
+  // Tur sonu istatistiği (backend turn_usage event'i) — mesaj altında küçük özet satırı
+  usage?: { input_tokens?: number; output_tokens?: number; cost_usd?: number | null; duration_ms?: number | null };
+}
+
+// Canlı aktivite göstergesi (backend status event'leri): Claude'un o an ne yaptığı +
+// tur boyunca üretilen token. loading sırasında ChatPanel'de spinner satırı olarak görünür.
+export interface ChatActivity {
+  detail: string;
+  tokens?: number;
 }
 
 export interface FileEntry {

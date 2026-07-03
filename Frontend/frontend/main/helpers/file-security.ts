@@ -36,6 +36,17 @@ function safeResolve(filePath: string): string {
 }
 
 /**
+ * Uygulama içinden okunup yazılabilen metin dosyası uzantıları.
+ * Dosya ağacı (read-directory) ile aynı liste — md/txt gibi dokümanlar da
+ * (örn. CLAUDE.md, README.md) editörde açılıp düzenlenebilsin diye.
+ * Çalıştırılabilir/binary türler bilerek dışarıda.
+ */
+export const TEXT_FILE_EXTENSIONS = [
+  '.cs', '.shader', '.json', '.txt', '.md', '.xml', '.yaml', '.yml',
+  '.compute', '.asmdef', '.cginc', '.hlsl', '.uss', '.uxml',
+]
+
+/**
  * Yazma/okuma izni sadece workspace içindeki Assets/Scripts/*.cs dosyalarına verilir.
  * Path traversal, symlink ve dışarı çıkış girişimlerini engeller.
  */
@@ -90,7 +101,8 @@ export function isAllowedWorkspacePath(targetPath: string, workspacePath: string
 }
 
 /**
- * Dosya okuma izni sadece workspace içindeki .cs dosyaları için verilir.
+ * Dosya okuma izni workspace içindeki metin dosyaları (TEXT_FILE_EXTENSIONS) için verilir
+ * — dosya ağacının listelediği her tür (md, json, shader…) editörde de açılabilir.
  * Symlink çözümü dahildir.
  */
 export function isAllowedWorkspaceReadFile(filePath: string, workspacePath: string): boolean {
@@ -99,7 +111,32 @@ export function isAllowedWorkspaceReadFile(filePath: string, workspacePath: stri
       return false
     }
 
-    return path.extname(safeResolve(filePath)).toLowerCase() === '.cs'
+    return TEXT_FILE_EXTENSIONS.includes(path.extname(safeResolve(filePath)).toLowerCase())
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Dosya yazma izni: workspace içi + metin beyaz listesi.
+ * - .cs için eski kural KORUNUR (yalnızca Assets/Scripts altı — AI kod üretimi oraya akar).
+ * - Diğer metin türleri (md, txt, json, shader…) workspace içinde her yere yazılabilir
+ *   (örn. kök dizinde CLAUDE.md oluşturma). Path traversal/symlink koruması aynen.
+ */
+export function isAllowedWorkspaceWriteFile(filePath: string, workspacePath: string): boolean {
+  try {
+    if (!filePath || !workspacePath) return false
+
+    const absoluteFilePath = path.isAbsolute(filePath) ? filePath : path.resolve(workspacePath, filePath)
+    const ext = path.extname(safeResolve(absoluteFilePath)).toLowerCase()
+
+    if (ext === '.cs') {
+      return isAllowedUnityScriptPath(filePath, workspacePath)
+    }
+    if (!TEXT_FILE_EXTENSIONS.includes(ext)) {
+      return false
+    }
+    return isAllowedWorkspacePath(absoluteFilePath, workspacePath)
   } catch {
     return false
   }

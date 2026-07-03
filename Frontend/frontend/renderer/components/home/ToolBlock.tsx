@@ -1,15 +1,16 @@
 import { AnimatePresence, motion } from 'framer-motion';
-import { ChevronRight, Wrench, FileSearch, Search, FolderOpen, FileEdit } from 'lucide-react';
+import { ChevronRight, Wrench, FileSearch, Search, FolderOpen, FileEdit, Bot } from 'lucide-react';
 import { useState } from 'react';
 
 interface ToolBlockProps {
   tool: string;
-  args: any;
+  args?: any;
   summary?: string;
   success?: boolean;
+  output?: string;
 }
 
-export const ToolBlock = ({ tool, args, summary, success }: ToolBlockProps) => {
+export const ToolBlock = ({ tool, args, summary, success, output }: ToolBlockProps) => {
   const [open, setOpen] = useState(false);
 
   // Tool ismine göre ikon ve etiket belirle (Claude Code built-in + eski MCP isimleri)
@@ -23,6 +24,7 @@ export const ToolBlock = ({ tool, args, summary, success }: ToolBlockProps) => {
     MultiEdit: { icon: FileEdit,   label: 'Dosya düzenliyor' },
     Write:     { icon: FileEdit,   label: 'Dosya yazıyor' },
     TodoWrite: { icon: Wrench,     label: 'Plan yapıyor' },
+    Subagent:  { icon: Bot,        label: 'Subagent' },
     WebSearch: { icon: Search,     label: "Web'de arıyor" },
     WebFetch:  { icon: Search,     label: 'Sayfa getiriyor' },
     // eski MCP isimleri (geçmiş sohbet kayıtları)
@@ -75,11 +77,34 @@ export const ToolBlock = ({ tool, args, summary, success }: ToolBlockProps) => {
             transition={{ duration: 0.2 }}
             className="overflow-hidden"
           >
-            <div className="mt-2 pl-3 border-l border-slate-800 max-h-[250px] overflow-y-auto bg-slate-900/30 p-2 rounded-r-md">
-              <div className="text-[10px] text-slate-400 font-mono mb-1">PARAMETRELER:</div>
-              <pre className="text-[11px] text-slate-300 whitespace-pre-wrap font-mono m-0">
-                {JSON.stringify(args, null, 2)}
-              </pre>
+            <div className="mt-2 pl-3 border-l border-slate-800 max-h-[300px] overflow-y-auto bg-slate-900/30 p-2 rounded-r-md space-y-2">
+              {(() => {
+                const hasArgs = args != null && (typeof args !== 'object' || Object.keys(args).length > 0);
+                const hasOutput = !!(output && output.trim());
+                if (!hasArgs && !hasOutput) {
+                  return <div className="text-[10.5px] text-slate-500 font-mono">Bu adım için detay kaydedilmedi.</div>;
+                }
+                return (
+                  <>
+                    {hasArgs && (
+                      <div>
+                        <div className="text-[10px] text-slate-400 font-mono mb-1">PARAMETRELER:</div>
+                        <pre className="text-[11px] text-slate-300 whitespace-pre-wrap font-mono m-0 break-all">
+                          {JSON.stringify(args, null, 2)}
+                        </pre>
+                      </div>
+                    )}
+                    {hasOutput && (
+                      <div>
+                        <div className={`text-[10px] font-mono mb-1 ${isSuccess ? 'text-emerald-500/80' : 'text-red-400'}`}>ÇIKTI:</div>
+                        <pre className="text-[11px] text-slate-300 whitespace-pre-wrap font-mono m-0 break-all">
+                          {output}
+                        </pre>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
             </div>
           </motion.div>
         )}

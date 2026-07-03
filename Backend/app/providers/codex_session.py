@@ -450,6 +450,8 @@ class CodexSession:
                 return
             # Araç başlangıcı (commandExecution / fileChange / mcp tool vb.)
             await out_q.put({"type": "tool_call", "tool": itype or "codex",
+                             "tool_id": item.get("id"),
+                             "arguments": self._item_args(item),
                              "summary": self._item_summary(item)})
 
         elif method == "item/completed":
@@ -468,11 +470,14 @@ class CodexSession:
                 if txt:
                     await out_q.put({"type": "thinking", "text": txt})
                 return
-            # Araç sonucu
+            # Araç sonucu — çıktı (komut stdout'u / değişiklik dökümü) chip'in ÇIKTI paneline
             exit_code = item.get("exitCode")
             success = (exit_code in (0, None)) and item.get("status") not in ("declined", "failed")
             await out_q.put({"type": "tool_result", "tool": itype or "codex",
-                             "success": success, "summary": self._item_summary(item)})
+                             "tool_id": item.get("id"),
+                             "success": success,
+                             "summary": self._item_summary(item),
+                             "output": self._item_output(item)})
 
         elif method == "turn/completed":
             await out_q.put({"type": "response", "content": self._final_text})
@@ -490,6 +495,35 @@ class CodexSession:
             if v:
                 return v if isinstance(v, str) else json.dumps(v, ensure_ascii=False)[:160]
         return item.get("type", "")
+
+    @staticmethod
+    def _item_args(item: dict) -> dict:
+        """Chip'in PARAMETRELER paneli için item'ın anlamlı girdi alanları (kırpılmış)."""
+        out: Dict[str, Any] = {}
+        for k in ("command", "cwd", "path", "name", "arguments", "changes", "title"):
+            v = item.get(k)
+            if v in (None, "", [], {}):
+                continue
+            if isinstance(v, str) and len(v) > 1200:
+                v = v[:1200] + f"… [+{len(v) - 1200} karakter]"
+            elif not isinstance(v, (str, int, float, bool)):
+                v = json.dumps(v, ensure_ascii=False)[:1200]
+            out[k] = v
+        return out
+
+    @staticmethod
+    def _item_output(item: dict) -> str:
+        """Chip'in ÇIKTI paneli için item sonucu (komut çıktısı / araç sonucu)."""
+        for k in ("aggregatedOutput", "output", "stdout", "result", "error"):
+            v = item.get(k)
+            if not v:
+                continue
+            txt = v if isinstance(v, str) else json.dumps(v, ensure_ascii=False, indent=2)
+            txt = txt.strip()
+            if len(txt) > 3000:
+                txt = txt[:3000] + "\n… [çıktı kırpıldı]"
+            return txt
+        return ""
 
     # ── İptal (Durdur) ───────────────────────────────────────────────────
     async def cancel_turn(self):

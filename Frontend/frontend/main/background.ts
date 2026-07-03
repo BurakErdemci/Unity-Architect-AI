@@ -9,9 +9,10 @@ import { createWindow } from './helpers'
 import { spawn, ChildProcess } from 'child_process'
 import axios from 'axios'
 import {
-  isAllowedUnityScriptPath,
   isAllowedWorkspacePath,
   isAllowedWorkspaceReadFile,
+  isAllowedWorkspaceWriteFile,
+  TEXT_FILE_EXTENSIONS,
 } from './helpers/file-security'
 import * as pty from 'node-pty'
 
@@ -211,11 +212,10 @@ ipcMain.handle('read-directory', async (_event, dirPath: string, workspacePath?:
     if (!isAllowedWorkspacePath(fullPath, workspacePath)) {
       return []
     }
-    const allowedExtensions = ['.cs', '.shader', '.json', '.txt', '.md', '.xml', '.yaml', '.yml', '.compute', '.asmdef', '.cginc', '.hlsl', '.uss', '.uxml'];
     const entries = fs.readdirSync(fullPath, { withFileTypes: true })
     const items = entries
       .filter(e => !e.name.startsWith('.'))
-      .filter(e => e.isDirectory() || allowedExtensions.includes(path.extname(e.name).toLowerCase()))
+      .filter(e => e.isDirectory() || TEXT_FILE_EXTENSIONS.includes(path.extname(e.name).toLowerCase()))
       .map(e => ({
         name: e.name,
         path: path.join(fullPath, e.name),
@@ -245,15 +245,14 @@ ipcMain.handle('read-file', async (_event, filePath: string, workspacePath?: str
 
 ipcMain.handle('write-file', async (_event, filePath: string, content: string, workspacePath?: string) => {
   try {
-    const isMarkdown = filePath.toLowerCase().endsWith('.md');
     const isAbsolute = path.isAbsolute(filePath);
-    
+
     if (!workspacePath && !isAbsolute) return { success: false, error: 'Workspace path eksik.' };
-    
+
     const fullPath = isAbsolute ? filePath : path.join(workspacePath!, filePath);
 
-    if (!isAllowedUnityScriptPath(fullPath, workspacePath || "")) {
-      return { success: false, error: 'Dosya yalnızca seçili workspace içindeki .cs dosyalarına yazılabilir.' }
+    if (!isAllowedWorkspaceWriteFile(fullPath, workspacePath || "")) {
+      return { success: false, error: 'Dosya yalnızca seçili workspace içindeki kod/metin dosyalarına yazılabilir (.cs için Assets/Scripts altı).' }
     }
     const dir = path.dirname(fullPath)
     if (!fs.existsSync(dir)) {
@@ -269,7 +268,7 @@ ipcMain.handle('write-file', async (_event, filePath: string, content: string, w
 ipcMain.handle('file-exists', async (_event, filePath: string, workspacePath?: string) => {
   if (!workspacePath) return false;
   const fullPath = path.isAbsolute(filePath) ? filePath : path.join(workspacePath, filePath);
-  if (!isAllowedUnityScriptPath(fullPath, workspacePath)) {
+  if (!isAllowedWorkspaceWriteFile(fullPath, workspacePath)) {
     return false
   }
   return fs.existsSync(fullPath)
@@ -282,8 +281,8 @@ ipcMain.handle('write-multiple-files', async (_event, files: { path: string; con
   for (const file of files) {
     try {
       const fullPath = path.isAbsolute(file.path) ? file.path : path.join(workspacePath, file.path);
-      if (!isAllowedUnityScriptPath(fullPath, workspacePath)) {
-        results.push({ path: fullPath, success: false, error: 'Dosya yalnızca seçili workspace içindeki .cs dosyalarına yazılabilir.' })
+      if (!isAllowedWorkspaceWriteFile(fullPath, workspacePath)) {
+        results.push({ path: fullPath, success: false, error: 'Dosya yalnızca seçili workspace içindeki kod/metin dosyalarına yazılabilir (.cs için Assets/Scripts altı).' })
         continue
       }
       const dir = path.dirname(fullPath)

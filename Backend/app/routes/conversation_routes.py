@@ -96,6 +96,14 @@ def _is_batch_continuation_msg(msg: str) -> bool:
 def create_conversation_router(db, progress_store):
     router = APIRouter()
 
+    # Claude session'ı: SSE koptuktan sonra (Durdur / pencere kapatma) biten turun
+    # asistan metnini kaybetmemek için DB'ye yazma köprüsü (provider→DB tek yönlü).
+    try:
+        from providers.claude_sdk_session import set_db_saver
+        set_db_saver(lambda cid, text: db.add_message(cid, "assistant", text))
+    except Exception as e:
+        logger.warning(f"[conversation_routes] db saver kaydedilemedi: {e}")
+
     @router.get("/chat-progress/{conv_id}")
     async def get_chat_progress(conv_id: int, x_session_token: str = Header(alias="X-Session-Token")):
         require_conversation_owner(db, x_session_token, conv_id)
@@ -148,7 +156,15 @@ def create_conversation_router(db, progress_store):
 
     @router.post("/conversations/{conv_id}/compact")
     async def compact_conversation(conv_id: int, x_session_token: str = Header(alias="X-Session-Token")):
-        """Sohbeti özetle ve hafızaya kaydet (Claude Code /compact gibi)."""
+        """Sohbeti özetle ve hafızaya kaydet (Claude Code /compact muadili).
+
+        Sağlamlık garantileri (buton ASLA sessizce takılmaz):
+        - AI özetleme 120 sn ile sınırlı; başarısız/boş dönerse mekanik özet fallback'i
+          devreye girer → compact her koşulda tamamlanır.
+        - DB compact'lendikten sonra bu sohbetin CANLI CLI session'ları (Claude/Codex/agy)
+          resetlenir → bir sonraki turda küçük (özetlenmiş) bağlam enjekte edilir; yani
+          bağlam Claude Code'daki /compact gibi GERÇEKTEN küçülür (yalnız app DB'si değil).
+        """
         import time as _time
         user_id, _ = require_conversation_owner(db, x_session_token, conv_id)
 
@@ -162,14 +178,8 @@ def create_conversation_router(db, progress_store):
 
         provider_type, model_name, _, _ = db.get_ai_config(user_id)
         api_key = (db.get_api_key(user_id, provider_type) or "")
+        workspace_path = db.get_last_workspace(user_id) or ""
         logger.info(f"[Compact] Provider: {provider_type}/{model_name}")
-
-        try:
-            provider = AIProviderManager.get_provider(
-                {"provider_type": provider_type, "model_name": model_name, "api_key": api_key}
-            )
-        except ValueError:
-            raise HTTPException(400, "AI provider bağlanamıyor. API key kontrol edin.")
 
         history_text = "\n".join(
             f"{'Kullanıcı' if m['role'] == 'user' else 'AI'}: {m['content'][:500]}"
@@ -185,34 +195,57 @@ SOHBET:
 
 ÖZET:"""
 
-        logger.info(f"[Compact] AI özetleme başlıyor... (async_gen={inspect.isasyncgenfunction(provider.analyze_code)})")
-        t0 = _time.time()
-        try:
+        async def _ai_summary() -> str:
+            provider = AIProviderManager.get_provider(
+                {"provider_type": provider_type, "model_name": model_name, "api_key": api_key}
+            )
             if inspect.isasyncgenfunction(provider.analyze_code):
-                summary = ""
-                async for ev in provider.analyze_code(compact_prompt, 800):
+                s = ""
+                async for ev in provider.analyze_code(compact_prompt, 800,
+                                                      cwd=workspace_path or None):
                     if not isinstance(ev, dict):
                         continue
                     if ev.get("type") == "final":
-                        summary = ev.get("text", "")
-                        break
+                        return ev.get("text", "") or s
                     elif ev.get("type") == "delta":
-                        summary += ev.get("text", "")
-            else:
-                summary = await asyncio.to_thread(provider.analyze_code, compact_prompt, 800)
+                        s += ev.get("text", "")
+                return s
+            return await asyncio.to_thread(provider.analyze_code, compact_prompt, 800)
 
-            elapsed = round(_time.time() - t0, 1)
-            logger.info(f"[Compact] Özet alındı: {len(summary)} karakter | {elapsed}s")
-
-            if not summary.strip():
-                raise ValueError("AI boş özet döndürdü.")
-
-            db.compact_conversation(conv_id, summary)
-            logger.info(f"[Compact] DB güncellendi — mesajlar silindi, özet kaydedildi.")
-            return {"status": "success", "summary": summary}
+        t0 = _time.time()
+        summary = ""
+        try:
+            summary = (await asyncio.wait_for(_ai_summary(), timeout=120)) or ""
+            logger.info(f"[Compact] AI özeti: {len(summary)} kr | {round(_time.time() - t0, 1)}s")
         except Exception as exc:
-            logger.error(f"[Compact] Hata: {exc}")
-            raise HTTPException(500, "Özetleme yapılamadı.")
+            logger.warning(f"[Compact] AI özetleme başarısız ({exc}) → mekanik özete düşülüyor")
+
+        if not summary.strip():
+            # Mekanik fallback: AI'sız kaba özet — compact yine de çalışsın.
+            tail = [
+                f"- {'Kullanıcı' if m['role'] == 'user' else 'AI'}: {(m.get('content') or '')[:220]}"
+                for m in messages[-12:] if (m.get("content") or "").strip()
+            ]
+            summary = ("(Otomatik kayıt — AI özeti alınamadı)\nSohbetin son mesajları:\n"
+                       + "\n".join(tail))
+
+        db.compact_conversation(conv_id, summary)
+
+        # Canlı session'ları resetle → sonraki tur, özetlenmiş küçük bağlamla başlar.
+        try:
+            from providers.claude_sdk_session import close_session as _close_claude
+            await _close_claude(conv_id)
+            from providers.codex_session import close_session as _close_codex
+            await _close_codex(conv_id)
+            from providers.agy_session import close_session as _close_agy
+            await _close_agy(conv_id)
+            from agentic.agent_runner import _LAST_SUB_PROVIDER
+            _LAST_SUB_PROVIDER.pop(conv_id, None)
+        except Exception as e:
+            logger.warning(f"[Compact] session reset hatası (kritik değil): {e}")
+
+        logger.info("[Compact] DB güncellendi + canlı session'lar resetlendi.")
+        return {"status": "success", "summary": summary}
 
     @router.post("/conversations/{conv_id}/analyze-project")
     async def analyze_project_architecture(conv_id: int, x_session_token: str = Header(alias="X-Session-Token")):

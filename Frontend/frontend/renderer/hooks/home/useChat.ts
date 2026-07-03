@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef } from 'react';
 import axios from 'axios';
-import { Message, Conversation, UserData, AIConfig, GenerationMode } from '../../components/home/types';
+import { Message, Conversation, UserData, AIConfig, GenerationMode, ChatActivity } from '../../components/home/types';
 import { PendingFile } from '../../components/home/FileCreationApproval';
 import { Task } from '../../components/ui/agent-plan';
 import { confirmDialog } from '../../components/ui/ConfirmDialog';
@@ -28,6 +28,9 @@ export const useChat = (
   const [pendingFix, setPendingFix] = useState<{ data: any; messageId?: number; applied?: boolean } | null>(null);
   const [pendingCommand, setPendingCommand] = useState<{ command: string; gateId: string; messageId: number } | null>(null);
   const [pendingQuestion, setPendingQuestion] = useState<{ questions: any[]; gateId: string; messageId: number } | null>(null);
+  // Canlı aktivite: Claude'un o an ne yaptığı (düşünüyor/araç/subagent) + token sayacı.
+  // Backend status event'lerinden beslenir; done/error/stop'ta temizlenir.
+  const [activity, setActivity] = useState<ChatActivity | null>(null);
   const [generationMode, setGenerationMode] = useState<GenerationMode>('step');
   const [editingId, setEditingId] = useState<number | null>(null);
   const [tempTitle, setTempTitle] = useState('');
@@ -53,6 +56,12 @@ export const useChat = (
     try {
       const res = await axios.get(`${API}/conversations/${convId}/messages`);
       setMessages(res.data);
+      // Bağlam halkası/compact butonu eski sohbet açılınca da görünsün: backend'in
+      // tur sonunda gönderdiği context_usage ile aynı formül (total_chars / 200k).
+      const msgs: Message[] = res.data || [];
+      const totalChars = msgs.reduce((s, m) => s + (m.content?.length || 0), 0);
+      const pct = Math.min(100, Math.round((totalChars / 200000) * 100));
+      setContextUsage({ percent: pct, should_compact: pct >= 85, message_count: msgs.length });
     } catch (err) { console.error("Mesaj hatası:", err); }
   }, [API]);
 
@@ -188,20 +197,57 @@ export const useChat = (
                   if (data.type === 'thinking') updated.thinking = (updated.thinking || '') + (data.text || '');
                   else if (data.type === 'text') updated.content += data.content;
                   else if (data.type === 'response') updated.content = data.content || updated.content;
+                  else if (data.type === 'error' && data.message) {
+                    // Hata artık chat'te GÖRÜNÜR (eskiden sessizce yutuluyordu → "boş baloncuk")
+                    updated.content += (updated.content ? '\n\n' : '') + `❌ ${data.message}`;
+                  }
+                  else if (data.type === 'turn_usage') {
+                    updated.usage = { input_tokens: data.input_tokens, output_tokens: data.output_tokens, cost_usd: data.cost_usd, duration_ms: data.duration_ms };
+                  }
                   else if (data.type === 'tool_call') {
                     const args = typeof data.arguments === 'string' ? JSON.parse(data.arguments) : data.arguments;
-                    (updated.tool_calls ||= []).push({ tool: data.tool, args: args });
-                    
+                    (updated.tool_calls ||= []).push({ tool: data.tool, args: args, summary: data.summary || undefined, id: data.tool_id || undefined });
                   }
-                  else if (data.type === 'tool_result' && updated.tool_calls?.length) {
-                    const last = updated.tool_calls[updated.tool_calls.length - 1];
-                    if (last.tool === data.tool) { last.summary = data.summary; last.success = data.success; }
+                  else if (data.type === 'tool_result') {
+                    updated.tool_calls ||= [];
+                    // 1) tool_id ile birebir eşle (en güvenilir); 2) sondan geriye ilk
+                    // sonuçsuz aynı-isimli chip; 3) hiçbiri yoksa ayrı chip (örn. arka plan görevi).
+                    let tc = data.tool_id ? updated.tool_calls.find(t => t.id === data.tool_id) : undefined;
+                    if (!tc) {
+                      for (let i = updated.tool_calls.length - 1; i >= 0; i--) {
+                        const c = updated.tool_calls[i];
+                        if (c.tool === data.tool && c.success === undefined) { tc = c; break; }
+                      }
+                    }
+                    if (tc) {
+                      tc.summary = data.summary ?? tc.summary;
+                      tc.success = data.success;
+                      if (data.output) tc.output = data.output;
+                    } else {
+                      updated.tool_calls.push({ tool: data.tool, summary: data.summary, success: data.success, output: data.output || undefined });
+                    }
                   }
                   currentAiMsg = updated;
                   return updated;
                 }
                 return msg;
               }));
+              // Canlı aktivite göstergesi: status event'leri + türev sinyaller.
+              if (data.type === 'status') {
+                setActivity(prev => ({
+                  detail: data.detail || prev?.detail || 'Çalışıyor…',
+                  tokens: (typeof data.tokens === 'number' && data.tokens > 0) ? data.tokens : prev?.tokens,
+                }));
+              } else if (data.type === 'thinking') {
+                setActivity(prev => ({ detail: '🧠 Düşünüyor…', tokens: prev?.tokens }));
+              } else if (data.type === 'text') {
+                setActivity(prev => ({ detail: '✍️ Yazıyor…', tokens: prev?.tokens }));
+              } else if (data.type === 'tool_call' && data.tool !== 'TodoWrite') {
+                const s = data.summary ? ` — ${String(data.summary).slice(0, 60)}` : '';
+                setActivity(prev => ({ detail: `🔧 ${data.tool}${s}`, tokens: prev?.tokens }));
+              } else if (data.type === 'done' || data.type === 'error' || data.type === 'response') {
+                setActivity(null);
+              }
               if (data.type === 'context_usage') setContextUsage({ percent: data.percent, should_compact: data.should_compact, message_count: data.message_count });
               if (data.type === 'command_approval_needed') {
                 const item = { command: data.command, gateId: data.gate_id, messageId: aiMsgId };
@@ -247,7 +293,7 @@ export const useChat = (
       fetchConversations(user.id);
     } catch (err: any) {
       if (err?.name !== 'AbortError') setMessages(prev => [...prev, { id: Date.now() + 2, role: 'assistant', content: '❌ Hata oluştu.', smells: [], timestamp: new Date().toISOString() }]);
-    } finally { setLoading(false); }
+    } finally { setLoading(false); setActivity(null); }
   }, [API, activeConvId, aiConfig.provider_type, createNewConversation, fetchConversations, loading, suggestFilePath, user, workspacePath]);
 
   const clearHistory = useCallback(async () => {
@@ -310,18 +356,27 @@ export const useChat = (
   }, [API, activeConvId, showToast, user]);
 
   const compactConversation = useCallback(async () => {
-    if (!activeConvId || !API) return;
+    if (!activeConvId || !API || !user) return;
     setIsCompacting(true);
+    showToast('Sohbet özetleniyor…', 'info');
     try {
-      const res = await axios.post(`${API}/conversations/${activeConvId}/compact`);
+      // Timeout ŞART: backend'de AI özetleme takılırsa buton sonsuza dek kilitli
+      // kalıyordu ("basınca bir şey olmuyor" bug'ı). Backend 120s'de fallback'e düşer.
+      const res = await axios.post(`${API}/conversations/${activeConvId}/compact`, {}, {
+        headers: { 'X-Session-Token': user.sessionToken }, timeout: 150000,
+      });
       if (res.data.status === 'success') {
-        const msgRes = await axios.get(`${API}/conversations/${activeConvId}/messages`);
-        setMessages(msgRes.data);
-        setContextUsage({ percent: 5, should_compact: false, message_count: 1 });
-        showToast('Sohbet özetlendi!', 'success');
+        if (res.data.summary) {
+          const msgRes = await axios.get(`${API}/conversations/${activeConvId}/messages`);
+          setMessages(msgRes.data);
+          setContextUsage({ percent: 5, should_compact: false, message_count: 1 });
+          showToast('Sohbet özetlendi! Yeni turlar küçük bağlamla devam edecek.', 'success');
+        } else {
+          showToast(res.data.message || 'Sohbet zaten kısa.', 'info');
+        }
       }
-    } catch { showToast('Özetleme hatası.', 'error'); } finally { setIsCompacting(false); }
-  }, [API, activeConvId, showToast]);
+    } catch { showToast('Özetleme hatası — tekrar deneyin.', 'error'); } finally { setIsCompacting(false); }
+  }, [API, activeConvId, showToast, user]);
 
   return {
     conversations, setConversations,
@@ -336,6 +391,7 @@ export const useChat = (
     pendingFix, setPendingFix,
     pendingCommand, setPendingCommand,
     pendingQuestion, setPendingQuestion,
+    activity,
     generationMode, setGenerationMode,
     editingId, setEditingId,
     tempTitle, setTempTitle,
@@ -355,6 +411,7 @@ export const useChat = (
       pendingQuestionQueueRef.current = [];
       setPendingCommand(null);
       setPendingQuestion(null);
+      setActivity(null);
       setLoading(false);
     },
     clearHistory, analyzeProject, exportMemory, importMemory, compactConversation,
