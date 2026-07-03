@@ -142,8 +142,16 @@ describe('isAllowedWorkspaceReadFile — dosya okuma sınırı', () => {
     expect(isAllowedWorkspaceReadFile(`${WS}/Assets/Scripts/Player.cs`, WS)).toBe(true)
   })
 
-  it('workspace içindeki .txt dosyasını reddeder', () => {
-    expect(isAllowedWorkspaceReadFile(`${WS}/Assets/Scripts/notes.txt`, WS)).toBe(false)
+  it('workspace içindeki .txt/.md gibi metin dosyalarını kabul eder', () => {
+    // Yeni davranış: TEXT_FILE_EXTENSIONS listesindeki tüm türler okunabilir
+    // (dosya ağacı ne listeliyorsa editörde de açılabilsin).
+    expect(isAllowedWorkspaceReadFile(`${WS}/Assets/Scripts/notes.txt`, WS)).toBe(true)
+    expect(isAllowedWorkspaceReadFile(`${WS}/README.md`, WS)).toBe(true)
+  })
+
+  it('binary/çalıştırılabilir türleri (.exe/.dll) reddeder', () => {
+    expect(isAllowedWorkspaceReadFile(`${WS}/Assets/tool.exe`, WS)).toBe(false)
+    expect(isAllowedWorkspaceReadFile(`${WS}/Assets/lib.dll`, WS)).toBe(false)
   })
 
   it('workspace dışındaki .cs dosyasını reddeder', () => {
