@@ -1006,11 +1006,17 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
 
         model = self.model_name if (self.model_name or "").startswith("claude-") else None
 
-        # Max effort (Claude-only) → ClaudeAgentOptions.effort="max" (--effort max).
+        # Effort seçicisi (Claude'da tek birleşik kontrol) → ClaudeAgentOptions.effort (--effort).
+        # Frontend artık effort_level olarak DOĞRUDAN seçilen seviyeyi (low/medium/high/xhigh/max)
+        # gönderiyor; ayrı Max toggle KALDIRILDI. Geriye dönük: effort_level tanınmazsa
+        # thinking_level'a düşer. off→low (Fable/Claude'da düşünme kapatılamaz; en sığ seviye).
         # effort connect-time KİLİTLİ (SDK'da set_effort yok). Cache'li session'ın effort'u
         # farklıysa close+recreate gerekir: bu, o sohbetteki CANLI session'ı sıfırlar (DB
-        # bağlam özeti aşağıda yeniden enjekte edilir). Böylece toggle gerçekten etki eder.
-        desired_effort = "max" if self.effort_level == "max" else None
+        # bağlam özeti aşağıda yeniden enjekte edilir). Böylece seçim gerçekten etki eder.
+        _EFFORT_MAP = {"off": "low", "low": "low", "medium": "medium",
+                       "high": "high", "xhigh": "xhigh", "max": "max"}
+        desired_effort = _EFFORT_MAP.get(self.effort_level) \
+            or _EFFORT_MAP.get(self.thinking_level) or "medium"
         _existing = _SESSIONS.get(self.conversation_id)
         if _existing is not None and _existing.effort != desired_effort:
             logger.info(f"[ClaudeSession] effort değişti ({_existing.effort}→{desired_effort}); "

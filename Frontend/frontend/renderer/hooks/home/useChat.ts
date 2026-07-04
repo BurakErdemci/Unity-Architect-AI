@@ -111,11 +111,10 @@ export const useChat = (
     code: string, 
     lang: string, 
     genMode: GenerationMode, 
-    thinkingLevel: 'low' | 'medium' | 'high' | 'off',
+    thinkingLevel: 'off' | 'low' | 'medium' | 'high' | 'xhigh' | 'max',
     setPendingGenFiles: (val: any) => void,
     setPendingDelete: (val: any) => void,
     images?: string[],
-    effortMax: boolean = false,   // Claude-only; "max" effort
     ultracode: boolean = false    // Claude-only; mesaja keyword enjekte edilir
   ) => {
     if (loading || !user || !API) return;
@@ -169,11 +168,14 @@ export const useChat = (
         body: JSON.stringify({
           conversation_id: targetConvId, message: messageContent, language: lang, user_id: user.id,
           editor_code: code || '',
-          thinking_level: thinkingLevel,
+          // thinking_level: Claude-dışı sağlayıcıların düşünme-flag'i (off/low/medium/high).
+          // Claude-özel xhigh/max seviyeleri onlar için anlamsız → high'a indir.
+          thinking_level: (['off', 'low', 'medium', 'high'].includes(thinkingLevel) ? thinkingLevel : 'high'),
           generation_mode: genMode, generation_confirmed: false,
           images: images,
-          // Claude-only: backend yalnızca claude-subscription yolunda dikkate alır
-          effort_level: effortMax ? 'max' : 'medium',
+          // effort_level: Claude effort skalası — birleşik seçicinin tam değeri (low..max).
+          // Backend yalnızca claude-subscription yolunda dikkate alır.
+          effort_level: thinkingLevel,
           ultracode: !!ultracode,
         }),
       });

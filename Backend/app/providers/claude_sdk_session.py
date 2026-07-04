@@ -316,6 +316,13 @@ class ClaudeSDKSession:
         # tool_use_id → araç adı: ToolResultBlock geldiğinde çıktıyı doğru chip'e
         # bağlamak için (frontend tool_id ile eşleştirir). pop-on-use → küçük kalır.
         self._tool_names: Dict[str, str] = {}
+        # API stall teşhisi: CLI'dan son mesajın geldiği an + son bilinen limit durumu.
+        # Heartbeat bunlarla "neden bekliyoruz"u kullanıcıya SÖYLER (kör bekleme yerine).
+        self._last_cli_msg_at: float = time.time()
+        # Son İÇERİK ilerlemesi (ping/keepalive HARİÇ). Fable derin düşünürken dakikalarca
+        # içerik gelmez ama ping akar → iki zaman ayrışınca "derin düşünme" teşhisi konur.
+        self._last_progress_at: float = time.time()
+        self._rate_limit: Optional[Dict[str, Any]] = None
 
     # ── Yaşam döngüsü ────────────────────────────────────────────────────
     async def start(self):
@@ -615,11 +622,40 @@ class ClaudeSDKSession:
     # ── Mesaj çevirici + tur durum makinesi ──────────────────────────────
     async def _on_message(self, msg):
         from claude_agent_sdk import (
-            AssistantMessage, ResultMessage, StreamEvent, SystemMessage,
+            AssistantMessage, RateLimitEvent, ResultMessage, StreamEvent, SystemMessage,
             TaskNotificationMessage, TaskProgressMessage, TaskStartedMessage,
             TaskUpdatedMessage, TERMINAL_TASK_STATUSES,
             TextBlock, ThinkingBlock, ToolResultBlock, ToolUseBlock, UserMessage,
         )
+
+        self._last_cli_msg_at = time.time()
+        # ping/keepalive stream-event'leri ilerleme SAYILMAZ (Fable düşünürken sırf ping akar)
+        if not (isinstance(msg, StreamEvent) and (msg.event or {}).get("type") == "ping"):
+            self._last_progress_at = time.time()
+
+        # Kullanım limiti sinyali — eskiden sessizce düşüyordu; kullanıcı limit
+        # yüzünden bekleyen turu "dondu" sanıyordu. Artık açıkça gösterilir.
+        if isinstance(msg, RateLimitEvent):
+            info = msg.rate_limit_info
+            self._rate_limit = {"status": info.status, "resets_at": info.resets_at,
+                                "type": info.rate_limit_type, "utilization": info.utilization}
+            if info.status == "rejected":
+                when = ""
+                if info.resets_at:
+                    try:
+                        from datetime import datetime as _dt
+                        when = " — " + _dt.fromtimestamp(info.resets_at).strftime("%H:%M") + "'de sıfırlanır"
+                    except Exception:
+                        pass
+                await self._emit({"type": "status",
+                                  "detail": f"🚦 Claude kullanım limiti DOLDU ({info.rate_limit_type or 'pencere'}){when}. CLI sıfırlanmayı bekliyor; Durdur ile iptal edebilirsin.",
+                                  "tokens": self._turn_tokens})
+            elif info.status == "allowed_warning":
+                pct = f" (%{int(info.utilization * 100)})" if isinstance(info.utilization, (int, float)) else ""
+                await self._emit({"type": "status",
+                                  "detail": f"⚠️ Claude kullanım limitine yaklaşılıyor{pct}",
+                                  "tokens": self._turn_tokens, "heartbeat": True})
+            return
 
         # Task yaşam döngüsü — SystemMessage ALT SINIFLARI, önce bunlar kontrol edilir.
         if isinstance(msg, TaskStartedMessage):
@@ -679,6 +715,16 @@ class ClaudeSDKSession:
         if isinstance(msg, AssistantMessage):
             if getattr(msg, "parent_tool_use_id", None):
                 return  # subagent iç trafiği ana transcript'e karışmasın
+            _api_err = getattr(msg, "error", None)
+            if _api_err:
+                _err_tr = {
+                    "rate_limit": "kullanım limiti", "server_error": "sunucu hatası (Anthropic)",
+                    "billing_error": "faturalama sorunu", "authentication_failed": "oturum/auth hatası",
+                    "invalid_request": "geçersiz istek",
+                }.get(_api_err, _api_err)
+                await self._emit({"type": "status",
+                                  "detail": f"⚠️ Claude API: {_err_tr} — CLI otomatik yeniden deniyor…",
+                                  "tokens": self._turn_tokens})
             if not self._turn_active:
                 # Tur kapandıktan SONRA gelen asistan mesajı = otonom devam turu
                 # (watchdog/stop sonrası geciken task bitişi). "Hayalet tur" aç ki
@@ -838,10 +884,18 @@ class ClaudeSDKSession:
                 try:
                     ev = await asyncio.wait_for(out_q.get(), timeout=20.0)
                 except asyncio.TimeoutError:
-                    # Kalp atışı: SSE'yi canlı tut + kullanıcıya "çalışıyor" göster.
+                    # Kalp atışı: SSE'yi canlı tut + kullanıcıya NEDEN beklediğini söyle.
                     hb: Dict[str, Any] = {"type": "status", "heartbeat": True,
                                           "tokens": self._turn_tokens}
-                    if self._active_tasks:
+                    stall = int(time.time() - self._last_cli_msg_at)
+                    if self._rate_limit and self._rate_limit.get("status") == "rejected":
+                        hb["detail"] = "🚦 Kullanım limiti doldu — sıfırlanma bekleniyor (Durdur ile iptal edebilirsin)"
+                    elif stall >= 90:
+                        # CLI'dan uzun süredir hiç mesaj yok → model düşünüyor olabilir ama
+                        # limit/yoğunluk backoff'u da olabilir. Kör "düşünüyor" yerine dürüst bilgi.
+                        hb["detail"] = (f"⏳ Claude API {stall // 60} dk {stall % 60} sn'dir sessiz — "
+                                        "uzun düşünme ya da limit/yoğunluk (otomatik yeniden deneniyor)")
+                    elif self._active_tasks:
                         hb["detail"] = f"⏳ {len(self._active_tasks)} arka plan görevi sürüyor"
                     yield hb
                     continue

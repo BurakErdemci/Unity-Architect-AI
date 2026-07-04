@@ -27,6 +27,8 @@ export const ModelAvatar = ({
     bg = "bg-gradient-to-br from-[#3B82F6] to-[#1E3A8A]";
   } else if (normalizedProvider.includes("moonshot") || normalizedProvider.includes("openrouter")) {
     bg = "bg-gradient-to-br from-[#7C3AED] to-[#4C1D95]";
+  } else if (normalizedProvider.includes("z-ai") || normalizedProvider.includes("glm") || normalizedProvider.includes("zhipu")) {
+    bg = "bg-gradient-to-br from-[#14B8A6] to-[#0F766E]";
   } else if (normalizedProvider.includes("groq")) {
     bg = "bg-gradient-to-br from-[#F55036] to-[#D33C25]";
   } else if (normalizedProvider.includes("ollama")) {

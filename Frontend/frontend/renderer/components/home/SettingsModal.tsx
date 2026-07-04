@@ -7,16 +7,17 @@ import { useLang, type Lang } from "../../lib/i18n";
 
 
 const DEFAULT_MODELS: Record<string, string> = {
-  anthropic: "claude-sonnet-4-6",
+  anthropic: "claude-sonnet-5",
   openai: "gpt-5.4",
-  openrouter: "moonshotai/kimi-k2.6",
+  openrouter: "z-ai/glm-5.2",
   google: "gemini-3-flash-preview",
   groq: "llama-3.3-70b-versatile",
-  deepseek: "deepseek-chat",
-  moonshot: "kimi-k2.6",
+  deepseek: "deepseek-v4-pro",
+  moonshot: "kimi-k2.7-code",
+  "z-ai": "glm-5.2",
   ollama: "qwen2.5-coder:7b",
   kb: "unity-kb-v1",
-  subscription: "claude-sonnet-4-6",
+  subscription: "claude-sonnet-5",
 };
 
 
@@ -63,10 +64,10 @@ export const SettingsModal = ({
   };
   const MODEL_HINTS: Record<string, { label: string; value: string }[]> = {
     anthropic: [
+      { label: `Sonnet 5 (${t('hint.recommended')})`, value: "claude-sonnet-5" },
       { label: "Fable 5", value: "claude-fable-5" },
       { label: `Opus 4.8 (${t('hint.strongest')})`, value: "claude-opus-4-8" },
-      { label: `Sonnet 4.6 (${t('hint.recommended')})`, value: "claude-sonnet-4-6" },
-      { label: "Opus 4.6", value: "claude-opus-4-6" },
+      { label: "Sonnet 4.6", value: "claude-sonnet-4-6" },
       { label: "Haiku 4.5", value: "claude-haiku-4-5" },
     ],
     openai: [
@@ -76,33 +77,35 @@ export const SettingsModal = ({
       { label: "GPT-5.4 Mini", value: "gpt-5.4-mini" },
     ],
     openrouter: [
-      { label: `Kimi K2.6 (${t('hint.recommended')})`, value: "moonshotai/kimi-k2.6" },
-      { label: "Kimi K2 Thinking", value: "moonshotai/kimi-k2-thinking" },
+      { label: `GLM 5.2 (${t('hint.recommended')})`, value: "z-ai/glm-5.2" },
+      { label: "Kimi K2.7 Code", value: "moonshotai/kimi-k2.7-code" },
+      { label: "DeepSeek V4 Pro", value: "deepseek/deepseek-v4-pro" },
+      { label: "DeepSeek V4 Flash", value: "deepseek/deepseek-v4-flash" },
       { label: "GPT-5.5 (Frontier)", value: "openai/gpt-5.5" },
       { label: "GPT-5.5 Pro (Elite)", value: "openai/gpt-5.5-pro" },
-      { label: "Claude Fable 5 (Elite)", value: "anthropic/claude-fable-5" },
+      { label: "Claude Sonnet 5", value: "anthropic/claude-sonnet-5" },
       { label: "Claude Opus 4.8", value: "anthropic/claude-opus-4-8" },
-      { label: "Claude Sonnet 4.6", value: "anthropic/claude-sonnet-4-6" },
       { label: "Gemini 3 Flash", value: "google/gemini-3-flash-preview" },
     ],
     google: [
       { label: `Gemini 3 Flash (${t('hint.recommended')})`, value: "gemini-3-flash-preview" },
       { label: "Gemini 3.1 Pro", value: "gemini-3.1-pro-preview" },
       { label: "Gemini 3.1 Flash Lite", value: "gemini-3.1-flash-lite-preview" },
-      { label: "Gemini 2.5 Pro", value: "gemini-2.5-pro" },
-      { label: "Gemini 2.5 Flash", value: "gemini-2.5-flash" },
     ],
     moonshot: [
-      { label: `Kimi K2.6 (${t('hint.newest')})`, value: "kimi-k2.6" },
-      { label: "Kimi K2", value: "kimi-k2" },
+      { label: `Kimi K2.7 Code (${t('hint.newest')})`, value: "kimi-k2.7-code" },
+      { label: "Kimi K2.6", value: "kimi-k2.6" },
+    ],
+    "z-ai": [
+      { label: `GLM 5.2 (${t('hint.recommended')})`, value: "glm-5.2" },
     ],
     groq: [
       { label: `Llama 3.3 70B (${t('hint.recommended')})`, value: "llama-3.3-70b-versatile" },
       { label: `Llama 3.1 8B (${t('hint.fast')})`, value: "llama-3.1-8b-instant" },
     ],
     deepseek: [
-      { label: "DeepSeek Chat", value: "deepseek-chat" },
-      { label: "DeepSeek R1 (Reasoning)", value: "deepseek-reasoner" },
+      { label: `DeepSeek V4 Pro (${t('hint.recommended')})`, value: "deepseek-v4-pro" },
+      { label: "DeepSeek V4 Flash", value: "deepseek-v4-flash" },
     ],
     subscription: [
       { label: "Claude Fable 5", value: "claude-fable-5" },
@@ -154,6 +157,7 @@ export const SettingsModal = ({
                 <option value="openai">{t('settings.providerOpenai')}</option>
                 <option value="deepseek">{t('settings.providerDeepseek')}</option>
                 <option value="moonshot">{t('settings.providerMoonshot')}</option>
+                <option value="z-ai">{t('settings.providerZai')}</option>
                 <option value="openrouter">{t('settings.providerOpenrouter')}</option>
                 <option value="subscription">{t('settings.providerSubscription')}</option>
               </select>

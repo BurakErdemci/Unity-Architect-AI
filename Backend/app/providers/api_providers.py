@@ -244,7 +244,9 @@ class AnthropicProvider(AIProvider):
         self.client = anthropic.Anthropic(api_key=api_key)
 
         raw_name = model_name.lower() if model_name else ""
-        if "sonnet-4-6" in raw_name or "sonnet" in raw_name:
+        if "sonnet-5" in raw_name:
+            self.model_name = "claude-sonnet-5"
+        elif "sonnet-4-6" in raw_name or "sonnet" in raw_name:
             self.model_name = "claude-4-6-sonnet"
         elif "fable" in raw_name:
             self.model_name = "claude-fable-5"

@@ -182,14 +182,18 @@ export default function Home() {
   }, []);
   const setLang = (l: Lang) => { setLangState(l); localStorage.setItem('app-lang', l); };
   const t = (key: string) => translations[lang][key] ?? key;
-  const [thinkingLevel, setThinkingLevel] = useState<'off' | 'low' | 'medium' | 'high'>('medium');
-  // Claude-only kontroller (max effort + ultracode). Sadece subscription + claude-* modelde.
-  const [effortMax, setEffortMax] = useState(false);
+  // Tek birleşik effort/thinking skalası. Claude: low→max; diğerleri: off/low/medium/high.
+  const [thinkingLevel, setThinkingLevel] = useState<'off' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'>('medium');
+  // Claude-only kontrol (ultracode). Sadece subscription + claude-* modelde.
   const [ultracode, setUltracode] = useState(false);
   const isClaudeSub = ai.effectiveProvider === 'subscription' && (ai.aiConfig?.model_name || '').startsWith('claude-');
-  // Claude dışına geçilince stale 'max'/ultracode değerleri başka sağlayıcıya gitmesin
+  // Claude dışına geçilince: ultracode kapansın; xhigh/max yalnız Claude'da geçerli →
+  // diğer sağlayıcıların anlamadığı seviyeler gitmesin diye high'a indir.
   useEffect(() => {
-    if (!isClaudeSub) { setEffortMax(false); setUltracode(false); }
+    if (!isClaudeSub) {
+      setUltracode(false);
+      setThinkingLevel(prev => (prev === 'xhigh' || prev === 'max') ? 'high' : prev);
+    }
   }, [isClaudeSub]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isChatOpen, setIsChatOpen] = useState(true);
@@ -339,7 +343,7 @@ export default function Home() {
         }
       }
     }
-    chat.sendMessage(input, fs.code, lang, chat.generationMode, thinkingLevel, fs.setPendingGenFiles, fs.setPendingDelete, images, effortMax, ultracode);
+    chat.sendMessage(input, fs.code, lang, chat.generationMode, thinkingLevel, fs.setPendingGenFiles, fs.setPendingDelete, images, ultracode);
   };
 
   const langCtxValue = { lang, setLang, t: (k: string) => translations[lang][k] ?? k };
@@ -552,7 +556,7 @@ export default function Home() {
               thinkingLevel={thinkingLevel} setThinkingLevel={setThinkingLevel} generationMode={chat.generationMode} setGenerationMode={chat.setGenerationMode}
               isAnalyzingProject={chat.isAnalyzingProject} activeConvId={chat.activeConvId} analyzeProject={chat.analyzeProject}
               exportMemory={chat.exportMemory} importMemory={chat.importMemory} compactConversation={chat.compactConversation} isCompacting={chat.isCompacting} contextUsage={chat.contextUsage}
-              isClaudeSubscription={isClaudeSub} effortMax={effortMax} setEffortMax={setEffortMax} ultracode={ultracode} setUltracode={setUltracode}
+              isClaudeSubscription={isClaudeSub} ultracode={ultracode} setUltracode={setUltracode}
             />
             <div className="mt-3">
               <AnimatedChatInput

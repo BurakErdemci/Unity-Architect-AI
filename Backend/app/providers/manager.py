@@ -27,7 +27,9 @@ class AIProviderManager:
         elif p_type == "openrouter" and api_key:
             return OpenAICompatibleProvider(api_key=api_key, base_url="https://openrouter.ai/api/v1", model_name=m_name or "openai/gpt-5.5")
         elif p_type == "moonshot" and api_key:
-            return OpenAICompatibleProvider(api_key=api_key, base_url="https://api.moonshot.cn/v1", model_name=m_name or "kimi-k3")
+            return OpenAICompatibleProvider(api_key=api_key, base_url="https://api.moonshot.cn/v1", model_name=m_name or "kimi-k2.7-code")
+        elif p_type == "z-ai" and api_key:
+            return OpenAICompatibleProvider(api_key=api_key, base_url="https://api.z.ai/api/paas/v4", model_name=m_name or "glm-5.2")
         elif p_type == "subscription":
             # m_name burada binary adıdır (claude, codex, agy vb.)
             name = m_name or "claude"
@@ -40,7 +42,7 @@ class AIProviderManager:
         elif p_type == "ollama":
             return OllamaProvider(model_name=m_name)
 
-        cloud_providers = ("anthropic", "google", "openai", "deepseek", "groq", "openrouter", "moonshot")
+        cloud_providers = ("anthropic", "google", "openai", "deepseek", "groq", "openrouter", "moonshot", "z-ai")
         if p_type in cloud_providers and not api_key:
             raise ValueError(
                 f"⚠️ {p_type.capitalize()} için API key girilmedi. "

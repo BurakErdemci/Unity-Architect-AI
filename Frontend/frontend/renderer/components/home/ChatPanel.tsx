@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { useLang } from '../../lib/i18n';
 import {
@@ -31,7 +31,7 @@ interface ChatPanelProps {
   lang: string;
   effectiveProvider: string;
   modelName?: string;
-  thinkingLevel: 'low' | 'medium' | 'high' | 'off';
+  thinkingLevel: 'off' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
   workspacePath: string | null;
   handleExportToUnity: (code: string) => void;
   pendingGenFiles: { files: PendingFile[]; messageId: number } | null;
@@ -107,6 +107,23 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   // 12400 → "12.4k" (aktivite satırı + usage özeti için)
   const fmtTok = (n?: number | null) =>
     typeof n === 'number' && n > 0 ? (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`) : null;
+
+  // Backend'den BAĞIMSIZ, saniyede tikleyen sayaç: token/aktivite metni uzunca
+  // değişmese bile (örn. büyük bir dosya okunurken) kullanıcı "hala çalışıyor mu
+  // yoksa dondu mu" diye soruyordu — bu sayaç ilerliyorsa süreç KESİN canlı,
+  // donarsa (donmuş sayı) gerçekten bir renderer/bağlantı sorunu var demektir.
+  const turnStartRef = useRef<number | null>(null);
+  const [elapsedSec, setElapsedSec] = useState(0);
+  useEffect(() => {
+    if (!loading) { turnStartRef.current = null; setElapsedSec(0); return; }
+    turnStartRef.current = Date.now();
+    setElapsedSec(0);
+    const iv = setInterval(() => {
+      if (turnStartRef.current) setElapsedSec(Math.floor((Date.now() - turnStartRef.current) / 1000));
+    }, 1000);
+    return () => clearInterval(iv);
+  }, [loading]);
+  const fmtElapsed = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 
   if (!activeConvId) {
     return (
@@ -190,9 +207,16 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                         <span className="text-[11px] text-violet-300">
                           {activity.detail}
                           {fmtTok(activity.tokens) && <span className="text-slate-500"> · {fmtTok(activity.tokens)} token</span>}
+                          {/* Saniyede tikleyen sayaç: ilerliyorsa süreç KESİN canlı ("dondu mu?" sorusunun cevabı) */}
+                          <span className="text-slate-600 tabular-nums"> · {fmtElapsed(elapsedSec)}</span>
                         </span>
                       ) : (
-                        thinkingLevel !== 'off' && <span className="text-[11px] text-violet-400 animate-pulse">{t('chat.thinking')}</span>
+                        thinkingLevel !== 'off' && (
+                          <span className="text-[11px] text-violet-400">
+                            <span className="animate-pulse">{t('chat.thinking')}</span>
+                            <span className="text-slate-600 tabular-nums"> · {fmtElapsed(elapsedSec)}</span>
+                          </span>
+                        )
                       )}
                     </div>
                   ) : slashCmd ? (
@@ -375,6 +399,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             </div>
             <span className="text-violet-300">{activity.detail}</span>
             {fmtTok(activity.tokens) && <span className="text-slate-500">· {fmtTok(activity.tokens)} token</span>}
+            <span className="text-slate-600 tabular-nums">· {fmtElapsed(elapsedSec)}</span>
           </div>
         )}
 
