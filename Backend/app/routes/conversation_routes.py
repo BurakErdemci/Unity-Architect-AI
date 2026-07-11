@@ -37,7 +37,7 @@ CHAT_RATE_LIMIT_WINDOW = 60        # saniye
 
 
 def _build_handoff_context(memory: str, history_messages: list,
-                           budget_chars: int = 40000, per_msg_cap: int = 6000) -> str:
+                           budget_chars: int = 20000, per_msg_cap: int = 4000) -> str:
     """CLI'lar arası 'kaldığı yerden devam' için TAM sohbet transcript'i kurar (her iki rol).
 
     Bu metin, yeni provider'ın session'ının ilk turunda enjekte edilir; CLI değişince

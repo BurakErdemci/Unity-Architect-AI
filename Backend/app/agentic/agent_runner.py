@@ -223,7 +223,7 @@ class AgentRunner:
         elif self.provider_type == "anthropic":
             async for event in self._run_anthropic(user_message):
                 yield event
-        elif self.provider_type in ("openai", "openrouter", "deepseek", "groq"):
+        elif self.provider_type in ("openai", "openrouter", "deepseek", "groq", "moonshot", "z-ai"):
             async for event in self._run_openai(user_message):
                 yield event
         elif self.provider_type == "subscription":
@@ -565,6 +565,12 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
         _turn_t0 = time.time()   # footer: tur süresi + token
         _turn_in = _turn_out = 0
 
+        # Sistem önekini tur başında BİR kez kur (deterministik) ve cache_control ile
+        # işaretle → statik system prefix 2..N. iterasyonlarda cache'ten okunur (~%90 tasarruf).
+        _sys_text = system_instruction + self._get_architect_wisdom() + self._identity_note()
+        _sys_blocks = [{"type": "text", "text": _sys_text,
+                        "cache_control": {"type": "ephemeral"}}]
+
         for iteration in range(MAX_ITERATIONS):
             logger.info(f"  🔄 Anthropic Agentic Loop iterasyon {iteration + 1}")
             
@@ -576,6 +582,11 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                     "description": t["description"],
                     "input_schema": t["parameters"]
                 })
+            # Prompt caching: son tool'a breakpoint → tüm 'tools' prefix'i (statik ve
+            # büyük ~24k tok Unity MCP şemaları) cache'lenir; tekrar turlarda ~%90 tasarruf.
+            if anthropic_tools:
+                anthropic_tools[-1] = {**anthropic_tools[-1],
+                                       "cache_control": {"type": "ephemeral"}}
 
             # İlk mesaj içeriği
             if iteration == 0:
@@ -602,7 +613,7 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                 response = await client.messages.create(
                     model=self.model_name,
                     max_tokens=4096,
-                    system=system_instruction + self._get_architect_wisdom() + self._identity_note(),
+                    system=_sys_blocks,
                     messages=messages,
                     tools=anthropic_tools
                 )
@@ -711,6 +722,10 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
             client.base_url = "https://api.deepseek.com"
         elif self.provider_type == "groq":
             client.base_url = "https://api.groq.com/openai/v1"
+        elif self.provider_type == "moonshot":
+            client.base_url = "https://api.moonshot.cn/v1"
+        elif self.provider_type == "z-ai":
+            client.base_url = "https://api.z.ai/api/paas/v4"
 
         system_instruction = f"""{SYSTEM_PROMPT}
 
@@ -740,11 +755,24 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                     "image_url": {"url": img_data} # OpenAI direkt data URL kabul eder
                 })
 
+        # Prompt caching: statik system öneki (SYSTEM_PROMPT + transcript + kimlik) tekrar
+        # turlarda cache'ten okunsun. OpenRouter cache_control breakpoint'ini DESTEKLER
+        # (OR→Anthropic/Gemini için explicit ZORUNLU). DeepSeek/OpenAI/Moonshot(Kimi)/z-ai(GLM)
+        # zaten OTOMATİK prefix-cache yapar → düz string yeterli; bilinmeyen alanı reddedebilen
+        # sağlayıcılara cache_control göndermeyerek riski sıfırlıyoruz.
+        _sys = system_instruction + self._identity_note()
+        if self.provider_type == "openrouter":
+            system_msg = {"role": "system", "content": [
+                {"type": "text", "text": _sys, "cache_control": {"type": "ephemeral"}},
+            ]}
+        else:
+            system_msg = {"role": "system", "content": _sys}
+
         messages = [
-            {"role": "system", "content": system_instruction + self._identity_note()},
+            system_msg,
             {"role": "user", "content": user_content}
         ]
-        
+
         _turn_t0 = time.time()   # footer: tur süresi + token
         _turn_in = _turn_out = 0
         for iteration in range(MAX_ITERATIONS):
