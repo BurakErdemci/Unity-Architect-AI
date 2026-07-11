@@ -8,6 +8,7 @@ import serve from 'electron-serve'
 import { createWindow } from './helpers'
 import { spawn, ChildProcess } from 'child_process'
 import axios from 'axios'
+import { autoUpdater } from 'electron-updater'
 import {
   isAllowedWorkspacePath,
   isAllowedWorkspaceReadFile,
@@ -688,6 +689,19 @@ if (!gotTheLock) {
 
       const menu = Menu.buildFromTemplate(template);
       Menu.setApplicationMenu(menu);
+
+      // --- OTOMATİK GÜNCELLEME (electron-updater → GitHub Releases) ---
+      // Prod'da açılışta public GitHub release'lerini kontrol eder; yeni sürüm
+      // varsa arka planda indirir, uygulama kapanınca kurar. Public repo → TOKEN
+      // GEREKMEZ. Hata olursa (ağ yok, release yok) sessizce loglanır, app çalışır.
+      if (isProd) {
+        autoUpdater.autoDownload = true
+        autoUpdater.on('error', (err) => console.error('[updater] hata:', err?.message || err))
+        autoUpdater.on('update-available', (info) => console.log('[updater] yeni sürüm bulundu:', info?.version))
+        autoUpdater.on('update-not-available', () => console.log('[updater] uygulama güncel'))
+        autoUpdater.on('update-downloaded', (info) => console.log('[updater] indirildi, kapanışta kurulacak:', info?.version))
+        autoUpdater.checkForUpdatesAndNotify().catch((e) => console.error('[updater] kontrol başarısız:', e?.message || e))
+      }
     })()
 
   const killBackend = () => {

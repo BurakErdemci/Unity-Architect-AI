@@ -68,4 +68,7 @@ nsis:
     - tr_TR
     - en_US
   language: 1055
-publish: null
+publish:
+  provider: github
+  owner: BurakErdemci
+  repo: Unity-Architect-AI

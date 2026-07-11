@@ -39,6 +39,9 @@ Backend/build/
 # uv araç zinciri — installer'a gömülür ama repoya konmaz (~66MB).
 # Tekrar build için: pwsh Backend/vendor/fetch_uv.ps1
 Backend/vendor/uv/
+# Video araçları (~126MB, ffmpeg+yt-dlp) — repoda tutulmaz.
+# Tekrar: pwsh Backend/vendor/fetch_video_bins.ps1
+Backend/vendor/bin/win/*.exe
 
 # Ham demo videoları (büyük) — repoya GIF'ler konur (docs/media/*.gif), mp4 değil
 *.mp4
