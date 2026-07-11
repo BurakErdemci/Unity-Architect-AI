@@ -4,12 +4,17 @@ import sys
 import shutil
 import logging
 import asyncio
+import subprocess
 import json
 from typing import Dict, Any, Optional, List, AsyncGenerator
 
 from .base import AIProvider, ThinkingResult, _strip_ansi
 
 logger = logging.getLogger(__name__)
+
+# Windows: konsol subprocess'i (özellikle agy — her tur ephemeral spawn) açılınca kısa bir
+# konsol penceresi yanıp söner. CREATE_NO_WINDOW ile gizlenir (non-Windows'ta 0 = etkisiz).
+_CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
 class BaseCLIProvider(AIProvider):
@@ -219,14 +224,6 @@ class BaseCLIProvider(AIProvider):
             if _is_agy:
                 async with BaseCLIProvider._AGY_LOCK:
                     self._set_agy_model(self._pending_agy_model, workspace)
-                    process = await asyncio.create_subprocess_exec(
-                        *spawn_cmd,
-                        stdin=asyncio.subprocess.PIPE,
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.PIPE,
-                        env=_env,
-                        cwd=workspace,
-                    )
                     # agy --print HİÇBİR MCP yüklemez (test edildi). agy'nin gördüğü tek
                     # köprü built-in run_command. Yazma araçları (write_to_file vb.)
                     # _AGY_DISABLED_TOOLS ile kapalı → agy yazmak için 'unityai' CLI'ını
@@ -263,10 +260,20 @@ class BaseCLIProvider(AIProvider):
                         "  you did (e.g. 'TestScripts.cs oluşturuldu.'). Add a brief note only if it gives\n"
                         "  real extra value.\n\n"
                     )
-                    stdin_payload = (mcp_hint + enriched_prompt).encode("utf-8")
-                    process.stdin.write(stdin_payload)
-                    await process.stdin.drain()
-                    process.stdin.close()
+                    # Prompt = mcp_hint + enriched_prompt, SON POZİSYONEL ARG olarak
+                    # verilir (stdin DEĞİL — agy 1.1.1 ham-metin stdin'i bozuk okuyup
+                    # help/derail'e düşüyor; canlı doğrulandı). stdin=DEVNULL. Uzunluk
+                    # sınırı _run_agy_session'da yönetiliyor (Windows ~32K argv limiti).
+                    agy_prompt = mcp_hint + enriched_prompt
+                    process = await asyncio.create_subprocess_exec(
+                        *spawn_cmd, agy_prompt,
+                        stdin=asyncio.subprocess.DEVNULL,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                        env=_env,
+                        cwd=workspace,
+                        creationflags=_CREATE_NO_WINDOW,
+                    )
             else:
                 # Windows .cmd shim (cmd /c): cmd.exe komut satırındaki çok satırlı arg'ı
                 # ilk newline'da keser → claude/codex prompt'u (son arg) bozulur. Bu durumda
@@ -282,6 +289,7 @@ class BaseCLIProvider(AIProvider):
                     stderr=asyncio.subprocess.PIPE,
                     env=_env,
                     cwd=workspace,
+                    creationflags=_CREATE_NO_WINDOW,
                 )
                 if _stdin_prompt is not None:
                     process.stdin.write(_stdin_prompt.encode("utf-8"))

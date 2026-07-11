@@ -115,7 +115,8 @@ export const useChat = (
     setPendingGenFiles: (val: any) => void,
     setPendingDelete: (val: any) => void,
     images?: string[],
-    ultracode: boolean = false    // Claude-only; mesaja keyword enjekte edilir
+    ultracode: boolean = false,    // Claude-only; mesaja keyword enjekte edilir
+    videos?: any[]                 // [{kind:'path',path} | {kind:'url',url}] → backend kareye çevirir
   ) => {
     if (loading || !user || !API) return;
     setLoading(true);
@@ -173,6 +174,7 @@ export const useChat = (
           thinking_level: (['off', 'low', 'medium', 'high'].includes(thinkingLevel) ? thinkingLevel : 'high'),
           generation_mode: genMode, generation_confirmed: false,
           images: images,
+          videos: videos,
           // effort_level: Claude effort skalası — birleşik seçicinin tam değeri (low..max).
           // Backend yalnızca claude-subscription yolunda dikkate alır.
           effort_level: thinkingLevel,

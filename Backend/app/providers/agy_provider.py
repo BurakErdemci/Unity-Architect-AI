@@ -26,26 +26,25 @@ class AgyProvider(BaseCLIProvider):
         return "agy"  # PATH'e güven (subprocess başlatılınca çözülür)
 
     def _build_cmd(self, prompt: str, thinking_level: str = "medium", workspace: str = None) -> list:
+        """agy komutunu kurar. Prompt cli_base tarafından SON POZİSYONEL ARG olarak
+        eklenir (stdin DEĞİL — agy 1.1.1 stdin'i bozdu: ham-metin stdin verilince
+        prompt'u görmeyip help/derail'e düşüyor; canlı doğrulandı).
+
+        agy 1.1.1 derail kuralı (canlı doğrulandı): '--print' + '--add-dir' dışındaki
+        flag'ler (--dangerously-skip-permissions, --print-timeout, --conversation)
+        modele 'kullanıcı bu flag'i soruyor' gibi görünüp built-in antigravity-guide
+        skill'ini tetikliyor → kullanıcının mesajı hiç yanıtlanmıyor. Bu yüzden:
+        - --dangerously-skip-permissions YOK → yerine settings.json toolPermission=always-proceed
+        - --print-timeout YOK → default 5dk + kendi subprocess timeout'umuz
+        - --conversation YOK → resume terk edildi; bağlam her turda prompt'a enjekte
+        """
         full_id = self.binary_name
         # Tüm agy modelleri: Gemini, Claude Sonnet/Opus, GPT-OSS
-        # Prompt stdin'den geçecek (ARG_MAX güvenliği) — cmd'ye dahil edilmez
         self._pending_agy_model = self._AGY_MODEL_MAP.get(full_id, "Gemini 3.5 Flash (High)")
-        cmd = [
-            self._agy_binary(),
-            "--print",
-            "--dangerously-skip-permissions",
-            "--print-timeout", "180s",
-        ]
-        # Kalıcı bağlam: önceki turda yakalanan agy conversation UUID'si varsa resume et
-        # (agy bağlamı diskten yükler → geçmişi prompt'a basmayız). _resume_uuid'i
-        # agent_runner._run_agy_session, analyze_code'dan ÖNCE bu örneğe set eder.
-        # NOT: önceden-üretilmiş UUID ÇALIŞMAZ — yalnızca agy'nin kendi yarattığı,
-        # diskte VAR olan UUID resume edilir (yoksa sessizce yok sayılır).
-        resume_uuid = getattr(self, "_resume_uuid", None)
-        if resume_uuid:
-            cmd += [f"--conversation={resume_uuid}"]
+        cmd = [self._agy_binary()]
         if workspace:
-            cmd = [cmd[0], "--add-dir", workspace] + cmd[1:]
+            cmd += ["--add-dir", workspace]
+        cmd += ["--print"]  # prompt cli_base'de son arg olarak eklenir
         return cmd
 
     def _set_agy_model(self, agy_model_name: str, workspace: str = ""):
@@ -58,7 +57,7 @@ class AgyProvider(BaseCLIProvider):
         except Exception:
             settings = {"colorScheme": "dark", "trustedWorkspaces": []}
         settings["model"] = agy_model_name
-        settings.pop("toolPermission", None)  # geçersiz/junk değer agy'nin TÜM ayarı (disabledTools dahil) reddetmesine yol açıyor
+        settings["toolPermission"] = "always-proceed"  # --dangerously-skip-permissions flag'i YERİNE (canlı doğrulandı: geçerli değer, flag'siz auto-approve → skill-derail'i tetiklemez)
         settings["disabledTools"] = self._AGY_DISABLED_TOOLS
         if workspace:
             trusted = settings.get("trustedWorkspaces", [])
@@ -79,7 +78,7 @@ class AgyProvider(BaseCLIProvider):
         except Exception:
             global_settings = {}
         global_settings["model"] = agy_model_name
-        global_settings.pop("toolPermission", None)  # geçersiz/junk değer agy ayar yüklemesini bozuyor
+        global_settings["toolPermission"] = "always-proceed"  # --dangerously-skip-permissions YERİNE (geçerli değer, flag'siz auto-approve)
         global_settings["disabledTools"] = self._AGY_DISABLED_TOOLS
         if workspace:
             global_trusted = global_settings.get("trustedWorkspaces", [])
@@ -173,7 +172,7 @@ class AgyProvider(BaseCLIProvider):
             settings = {"colorScheme": "dark", "trustedWorkspaces": []}
         settings.setdefault("mcpServers", {}).pop("antigravity", None)
         settings["mcpServers"]["unityai"] = dict(unityai_entry)
-        settings.pop("toolPermission", None)  # geçersiz/junk değer agy'nin TÜM ayarı (disabledTools dahil) reddetmesine yol açıyor
+        settings["toolPermission"] = "always-proceed"  # --dangerously-skip-permissions flag'i YERİNE (canlı doğrulandı: geçerli değer, flag'siz auto-approve → skill-derail'i tetiklemez)
         settings["disabledTools"] = self._AGY_DISABLED_TOOLS
         if unity_mcp_manager.is_running():
             settings["mcpServers"]["unityMCP"] = {
@@ -198,7 +197,7 @@ class AgyProvider(BaseCLIProvider):
         except Exception:
             global_settings = {}
         global_settings.setdefault("mcpServers", {})["unityai"] = dict(unityai_entry)
-        global_settings.pop("toolPermission", None)  # geçersiz/junk değer agy ayar yüklemesini bozuyor
+        global_settings["toolPermission"] = "always-proceed"  # --dangerously-skip-permissions YERİNE (geçerli değer, flag'siz auto-approve)
         global_settings["disabledTools"] = self._AGY_DISABLED_TOOLS
         if unity_mcp_manager.is_running():
             global_settings["mcpServers"]["unityMCP"] = {

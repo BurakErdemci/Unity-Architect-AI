@@ -1,6 +1,7 @@
 export const ALLOWED_INVOKE_CHANNELS = new Set([
   'get-backend-base-url',
   'open-file-dialog',
+  'open-video-dialog',
   'open-folder-dialog',
   'read-directory',
   'read-file',

@@ -158,6 +158,19 @@ ipcMain.handle('open-file-dialog', async () => {
   return { path: filePath, name: path.basename(filePath), content }
 })
 
+// Video için: içerik OKUNMAZ (video büyük) — sadece mutlak yol(lar) döner.
+// Electron 34'te File.path kaldırıldığı için renderer yolu buradan alır.
+ipcMain.handle('open-video-dialog', async () => {
+  const result = await dialog.showOpenDialog({
+    properties: ['openFile', 'multiSelections'],
+    filters: [
+      { name: 'Video', extensions: ['mp4', 'mov', 'mkv', 'webm', 'avi', 'm4v'] }
+    ]
+  })
+  if (result.canceled || result.filePaths.length === 0) return null
+  return result.filePaths.map(p => ({ path: p, name: path.basename(p) }))
+})
+
 ipcMain.handle('open-folder-dialog', async () => {
   const result = await dialog.showOpenDialog({
     properties: ['openDirectory']

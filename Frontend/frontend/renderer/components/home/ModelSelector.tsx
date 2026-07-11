@@ -42,7 +42,7 @@ const CLI_GROUPS = [
     key: 'codex',
     label: 'Codex',
     color: 'green',
-    ids: ['gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini'],
+    ids: ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini'],
   },
   {
     key: 'gemini',
@@ -153,22 +153,26 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                         <div key={m.id} className={`flex items-center gap-1 rounded-lg transition-colors hover:bg-blue-600/10 ${isActive ? 'bg-blue-600/10' : ''}`}>
                           <button
                             onClick={async () => {
-                              if (!hasKey) {
-                                setShowSettings(true);
-                                showToast(`${cloudProvider} ${t('models.keyMissing')}`, 'warning');
-                                return;
-                              }
+                              // Optimistic: tıklama HER ZAMAN modele geçer (kullanıcı beklentisi
+                              // — "Sonnet'e basınca Sonnet'e geçsin"). Key yoksa geçiş yine olur +
+                              // Ayarlar doğru provider'la açılır + gönderme send-gate ile engellenir.
                               const newCfg = { ...aiConfig, provider_type: cloudProvider, model_name: effectiveModelId };
                               setAiConfig(newCfg);
                               setIsModelDropdownOpen(false);
                               if (user) await axios.post(`${API}/save-ai-config`, { ...newCfg, user_id: user.id });
+                              if (!hasKey) {
+                                setShowSettings(true);
+                                showToast(`${orToggle ? 'OpenRouter' : m.provider} API key gerekli — Ayarlar'dan ekle.`, 'warning');
+                              }
                             }}
-                            className={`flex-1 text-left px-3 py-2 text-[12px] ${isActive ? 'text-blue-400' : 'text-slate-300'}`}
+                            className={`flex-1 text-left px-3 py-2 text-[12px] ${isActive ? 'text-blue-400' : 'text-slate-300'} ${!hasKey ? 'opacity-60' : ''}`}
                           >
                             <div className="flex flex-col">
                               <div className="flex items-center gap-1.5">
                                 <span className="font-medium">{m.name}</span>
-                                {hasKey && <Key size={10} className="text-blue-400 opacity-70" />}
+                                {hasKey
+                                  ? <Key size={10} className="text-blue-400 opacity-70" />
+                                  : <span className="text-[8px] text-amber-400/90 bg-amber-500/10 border border-amber-500/30 rounded px-1 leading-tight">key yok</span>}
                               </div>
                               <span className="text-[10px] text-slate-500">{orToggle ? 'via OpenRouter' : m.provider}</span>
                             </div>
@@ -179,7 +183,12 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                                 e.stopPropagation();
                                 setModelOrToggles({ ...modelOrToggles, [m.id]: !orToggle });
                               }}
-                              className={`mr-2 px-1.5 py-0.5 rounded text-[8px] border ${orToggle ? 'border-purple-500 text-purple-400' : 'border-slate-700 text-slate-500'}`}
+                              title={orToggle && !providersWithKeys.includes('openrouter') ? "OpenRouter key yok — Ayarlar'dan ekle" : 'OpenRouter üzerinden çağır'}
+                              className={`mr-2 px-1.5 py-0.5 rounded text-[8px] border ${
+                                orToggle
+                                  ? (providersWithKeys.includes('openrouter') ? 'border-purple-500 text-purple-400' : 'border-amber-500 text-amber-400')
+                                  : 'border-slate-700 text-slate-500'
+                              }`}
                             >
                               OR
                             </button>

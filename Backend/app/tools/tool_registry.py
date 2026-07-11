@@ -242,15 +242,72 @@ def _all_tool_definitions() -> list:
     return TOOL_DEFINITIONS + get_unity_tool_definitions()
 
 
+# Gemini function-calling şeması OpenAPI 3.0 ALT KÜMESİDİR — pydantic/FastMCP'nin ürettiği
+# $ref/$defs/anyOf/additionalProperties/title/default gibi alanları kabul etmez → 400.
+# Bu yüzden Unity MCP şemalarını Gemini'ye vermeden önce sadeleştiriyoruz.
+_GEMINI_TYPES = {"string", "number", "integer", "boolean", "array", "object"}
+
+
+def _sanitize_gemini_schema(node: Any) -> Dict[str, Any]:
+    """JSON Schema düğümünü Gemini'nin kabul ettiği alt kümeye indirger (recursive).
+    Bilinmeyen/çözülemeyen ($ref) düğümler güvenli 'string'e düşürülür (400 yerine)."""
+    if not isinstance(node, dict):
+        return {"type": "string"}
+
+    # anyOf/oneOf/allOf (Optional[X], Union) → ilk non-null tipi al, nullable işaretle
+    for key in ("anyOf", "oneOf", "allOf"):
+        if isinstance(node.get(key), list):
+            opts = [o for o in node[key] if isinstance(o, dict) and o.get("type") != "null"]
+            merged = _sanitize_gemini_schema(opts[0]) if opts else {"type": "string"}
+            if any(isinstance(o, dict) and o.get("type") == "null" for o in node[key]):
+                merged["nullable"] = True
+            if node.get("description") and "description" not in merged:
+                merged["description"] = str(node["description"])[:512]
+            return merged
+
+    out: Dict[str, Any] = {}
+    t = node.get("type")
+    if isinstance(t, list):          # ["string","null"] → string + nullable
+        if "null" in t:
+            out["nullable"] = True
+        non_null = [x for x in t if x != "null"]
+        t = non_null[0] if non_null else "string"
+    if t not in _GEMINI_TYPES:       # $ref / bilinmeyen tip → güvenli string fallback
+        t = "string"
+    out["type"] = t
+
+    if node.get("description"):
+        out["description"] = str(node["description"])[:512]
+    if isinstance(node.get("enum"), list):
+        out["enum"] = [str(e) for e in node["enum"]]
+
+    if t == "object":
+        props = node.get("properties")
+        if isinstance(props, dict) and props:
+            out["properties"] = {k: _sanitize_gemini_schema(v) for k, v in props.items()}
+            req = node.get("required")
+            if isinstance(req, list):
+                out["required"] = [r for r in req if r in out["properties"]]
+        else:
+            out["properties"] = {}
+    elif t == "array":
+        items = node.get("items")
+        out["items"] = _sanitize_gemini_schema(items) if isinstance(items, dict) else {"type": "string"}
+
+    return out
+
+
 def get_gemini_tool_declarations() -> list:
-    """Gemini API formatında tool declarations döndürür."""
+    """Gemini formatında tool declarations (built-in + Unity MCP). Şemalar Gemini'nin kabul
+    ettiği alt kümeye SANITIZE edilir (aksi halde Unity MCP şemaları 400 INVALID_ARGUMENT verir)."""
     return [
         {
             "function_declarations": [
                 {
                     "name": t["name"],
                     "description": t["description"],
-                    "parameters": t["parameters"],
+                    "parameters": _sanitize_gemini_schema(
+                        t.get("parameters") or {"type": "object", "properties": {}}),
                 }
                 for t in _all_tool_definitions()
             ]

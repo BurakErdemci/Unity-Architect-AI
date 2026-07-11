@@ -1,0 +1,267 @@
+"""Video → kareler (data-URI) + transkript. Kendi ffmpeg/yt-dlp sarmalayıcımız;
+harici repo/skill YOK. Kareler mevcut görsel hattına (self.images) katılır.
+
+stdlib-only: kare dedup için PIL yerine ffmpeg'in ürettiği 16x16 gri ham baytları
+karşılaştırırız (bkz. _frame_signature)."""
+import os
+import re
+import glob
+import uuid
+import base64
+import shutil
+import logging
+import subprocess
+from urllib.parse import urlparse
+from typing import List, Optional
+
+from providers.video_bin import ffmpeg_path, ytdlp_path
+
+logger = logging.getLogger(__name__)
+
+# Windows: ffmpeg/yt-dlp konsol penceresi flash'ını engelle (non-Windows'ta 0 = etkisiz).
+# _frame_signature kare-başına ffmpeg çağırdığı için bu olmadan onlarca pencere yanıp sönerdi.
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+_TMP_SUBDIR = os.path.join(".unity_architect_tmp", "video")
+_FRAME_CAP = 60
+
+
+class ExtractResult:
+    def __init__(self, frame_data_uris: List[str], transcript: str, meta: dict):
+        self.frame_data_uris = frame_data_uris
+        self.transcript = transcript
+        self.meta = meta
+
+
+# ── Saf yardımcılar (subprocess'siz, kolay test edilir) ─────────────────────
+def budget_fps(duration_s: float):
+    """(fps, cap) — süreye göre hedef kare yoğunluğu (claude-video mantığının sadeleştirmesi)."""
+    d = max(1.0, float(duration_s or 1.0))
+    if d <= 30:
+        return (1.0, _FRAME_CAP)
+    if d <= 180:
+        return (0.5, _FRAME_CAP)
+    if d <= 600:
+        return (0.2, _FRAME_CAP)
+    return (max(0.01, min(0.05, _FRAME_CAP / d)), _FRAME_CAP)
+
+
+def parse_vtt(vtt_text: str) -> str:
+    """WebVTT → düz, zaman-damgalı transkript. Boş/duplike/tag'li satırlar temizlenir."""
+    if not vtt_text:
+        return ""
+    out, last, cur_ts = [], None, None
+    for ln in vtt_text.splitlines():
+        s = ln.strip()
+        if not s or s == "WEBVTT" or s.startswith(("NOTE", "Kind:", "Language:")):
+            continue
+        m = re.match(r"(\d{2}:\d{2}:\d{2})[.,]\d{3}\s*-->", s)
+        if m:
+            cur_ts = m.group(1)
+            continue
+        if "-->" in s:
+            continue
+        txt = re.sub(r"<[^>]+>", "", s).strip()
+        if txt and txt != last:
+            out.append(f"[{cur_ts}] {txt}" if cur_ts else txt)
+            last = txt
+    return "\n".join(out)
+
+
+def _mad(a: bytes, b: bytes) -> float:
+    """Ortalama-mutlak-fark (0-255). Uzunluk uymazsa 'çok farklı' say."""
+    if not a or not b or len(a) != len(b):
+        return 255.0
+    return sum(abs(a[i] - b[i]) for i in range(len(a))) / len(a)
+
+
+def dedup_indices(signatures: List[bytes], threshold: float = 2.0) -> List[int]:
+    """Ardışık neredeyse-aynı imzaları eler; TUTULACAK index listesi döner."""
+    kept, prev = [], None
+    for i, sig in enumerate(signatures):
+        if prev is None or _mad(prev, sig) >= threshold:
+            kept.append(i)
+            prev = sig
+    return kept
+
+
+def frames_to_data_uris(paths: List[str]) -> List[str]:
+    """JPEG dosyalarını 'data:image/jpeg;base64,...' listesine çevirir (okunamayan atlanır)."""
+    uris = []
+    for p in paths:
+        try:
+            with open(p, "rb") as f:
+                b64 = base64.b64encode(f.read()).decode("ascii")
+            uris.append(f"data:image/jpeg;base64,{b64}")
+        except Exception as e:
+            logger.warning(f"[video_extract] kare okunamadı ({p}): {e}")
+    return uris
+
+
+def build_video_block(meta: dict, transcript: str) -> str:
+    """Ajana 'bunlar bir videonun kronolojik kareleri' diyen bağlam bloğu."""
+    name = meta.get("name") or "video"
+    n = meta.get("frame_count", 0)
+    dur = meta.get("duration_s")
+    dropped = meta.get("dropped", 0)
+    head = (f"\n\n[VİDEO] Kullanıcı bir video ekledi ('{name}'"
+            + (f", ~{int(dur)} sn" if dur else "")
+            + f"). Aşağıda bu videodan çıkarılmış {n} kare GÖRSEL olarak kronolojik "
+            "sırada ekli — bunları tek tek resim değil, bir video dizisi gibi yorumla.")
+    if dropped:
+        head += f" (Not: {dropped} benzer kare token tasarrufu için atlandı.)"
+    if transcript:
+        head += f"\n\n[VİDEO TRANSKRİPTİ]\n{transcript}"
+    return head + "\n"
+
+
+# ── Mesajdan video URL'si otomatik yakalama (ayrı UI yok) ───────────────────
+_VIDEO_HOSTS = (
+    "youtube.com", "youtu.be", "vimeo.com", "loom.com", "tiktok.com",
+    "twitter.com", "x.com", "instagram.com", "dailymotion.com",
+    "twitch.tv", "streamable.com", "facebook.com", "reddit.com", "bilibili.com",
+)
+_URL_RE = re.compile(r"https?://[^\s<>\"')]+")
+
+
+def detect_video_urls(text: str, cap: int = 4) -> List[str]:
+    """Mesaj metnindeki BİLİNEN video-host URL'lerini bulur (kullanıcı linki doğrudan
+    chate yapıştırınca çekilsin diye). Rastgele/bilinmeyen host'lar yok sayılır →
+    gereksiz indirme denemesi olmaz. Dedup + en fazla `cap` URL."""
+    if not text:
+        return []
+    seen, out = set(), []
+    for raw in _URL_RE.findall(text):
+        url = raw.rstrip(".,);]'\"")
+        try:
+            host = urlparse(url).netloc.lower()
+        except Exception:
+            continue
+        if host.startswith("www."):
+            host = host[4:]
+        if any(host == h or host.endswith("." + h) for h in _VIDEO_HOSTS):
+            if url not in seen:
+                seen.add(url)
+                out.append(url)
+                if len(out) >= cap:
+                    break
+    return out
+
+
+# ── Orkestrasyon (ffmpeg / yt-dlp subprocess) ───────────────────────────────
+def _attach_root(workspace: Optional[str]) -> str:
+    base = workspace if (workspace and os.path.isdir(workspace)) else "."
+    return os.path.join(base, _TMP_SUBDIR)
+
+
+def _run(cmd: list, timeout: int, check: bool = True):
+    return subprocess.run(cmd, capture_output=True, timeout=timeout, check=check,
+                          creationflags=_NO_WINDOW)
+
+
+def _probe_duration(video_path: str) -> float:
+    """ffprobe'a gerek kalmadan 'ffmpeg -i' stderr'inden süreyi ayıklar."""
+    try:
+        r = _run([ffmpeg_path(), "-hide_banner", "-i", video_path], timeout=30, check=False)
+        err = (r.stderr or b"").decode("utf-8", "ignore")
+        m = re.search(r"Duration:\s*(\d+):(\d+):(\d+)\.(\d+)", err)
+        if m:
+            h, mi, s, cs = map(int, m.groups())
+            return h * 3600 + mi * 60 + s + cs / 100.0
+    except Exception:
+        pass
+    return 0.0
+
+
+def _extract_frames(video_path: str, out_dir: str, fps: float, cap: int) -> List[str]:
+    """fps-örnekleme + 640px ölçekle. Dedup sonrası cap'e ineceğimiz için cap*3 ham çeker."""
+    out_pat = os.path.join(out_dir, "frame_%04d.jpg")
+    _run([ffmpeg_path(), "-hide_banner", "-loglevel", "error", "-i", video_path,
+          "-vf", f"fps={fps},scale=640:-2", "-frames:v", str(cap * 3), "-q:v", "4", out_pat],
+         timeout=300)
+    return sorted(glob.glob(os.path.join(out_dir, "frame_*.jpg")))
+
+
+def _frame_signature(frame_path: str) -> bytes:
+    """ffmpeg ile 16x16 gri ham bayt (256B) imza — PIL'siz dedup."""
+    try:
+        r = _run([ffmpeg_path(), "-hide_banner", "-loglevel", "error", "-i", frame_path,
+                  "-vf", "scale=16:16,format=gray", "-f", "rawvideo", "-"], timeout=20)
+        return (r.stdout or b"")[:256]
+    except Exception:
+        return b""
+
+
+def _download_url(url: str, out_dir: str):
+    """yt-dlp: ≤720p video + altyazı (varsa). (video_path, transcript, name) döner.
+    GÜVENLİK: url kullanıcıdan gelir → önce http/https şeması doğrulanır, sonra '--' ile
+    yt-dlp seçenek-ayrıştırması bitirilir. Bu, '-'/'--exec' gibi bir 'URL'nin flag olarak
+    sızıp komut çalıştırmasını (argv flag-smuggling / RCE) engeller."""
+    p = urlparse(url or "")
+    if p.scheme not in ("http", "https") or not p.netloc:
+        raise ValueError("desteklenmeyen video URL'si (yalnız http/https)")
+    out_tmpl = os.path.join(out_dir, "dl.%(ext)s")
+    # 1) VİDEO (kritik yol). Altyazı flag'i YOK — böylece altyazı hatası (429/yok/ağ)
+    #    videoyu DÜŞÜRMEZ. Format yatay VE dikey (Shorts) için sağlam: 1080'i her iki
+    #    yönde dener, sonra best'e düşer. ('mp4[height<=720]' dikey Shorts'ta -height 1280-
+    #    ve ayrı-stream'li modern YouTube'da eşleşmeyip exit-1 veriyordu.) Birleştirme
+    #    container'ını yt-dlp seçer (ffmpeg webm/mkv de okur).
+    _run([ytdlp_path(), "--no-playlist", "--no-warnings",
+          "-f", "bestvideo[height<=1080]+bestaudio/bestvideo[width<=1080]+bestaudio/best[height<=1080]/best",
+          "-o", out_tmpl, "--", url], timeout=600)
+    vids = [q for q in glob.glob(os.path.join(out_dir, "dl.*")) if not q.endswith(".vtt")]
+    if not vids:
+        raise RuntimeError("video indirilemedi (yt-dlp çıktısı yok)")
+    # 2) ALTYAZI (best-effort, AYRI çağrı). check=False + try/except: 429/eksik/ağ
+    #    hatası yutulur → transkript alınamasa bile kareler yine döner.
+    transcript = ""
+    try:
+        _run([ytdlp_path(), "--no-playlist", "--no-warnings", "--skip-download",
+              "--write-auto-subs", "--write-subs", "--sub-langs", "en.*,tr.*",
+              "--convert-subs", "vtt", "-o", out_tmpl, "--", url], timeout=120, check=False)
+        subs = glob.glob(os.path.join(out_dir, "dl*.vtt"))
+        if subs:
+            with open(subs[0], encoding="utf-8", errors="ignore") as f:
+                transcript = parse_vtt(f.read())
+    except Exception:
+        pass
+    return vids[0], transcript, os.path.basename(url) or "url-video"
+
+
+def extract(source: dict, workspace: Optional[str], tag: str) -> ExtractResult:
+    """Video kaynağını kare data-URI'leri + transkripte çevirir. Kendi temp'ini temizler."""
+    kind = (source or {}).get("kind")
+    tmp_root = os.path.join(_attach_root(workspace), f"{tag}_{uuid.uuid4().hex[:8]}")
+    os.makedirs(tmp_root, exist_ok=True)
+    try:
+        transcript = ""
+        if kind == "path":
+            video_path = source.get("path")
+            if not video_path or not os.path.isfile(video_path):
+                raise FileNotFoundError(f"video bulunamadı: {video_path}")
+            # GÜVENLİK: mutlak yola normalize et → ffmpeg '-i' argümanı '-' ile başlayıp
+            # flag gibi yorumlanamaz (argv flag-smuggling savunması).
+            video_path = os.path.abspath(video_path)
+            name = source.get("name") or os.path.basename(video_path)
+        elif kind == "url":
+            video_path, transcript, name = _download_url(source.get("url") or "", tmp_root)
+        else:
+            raise ValueError(f"bilinmeyen video kaynağı: {kind!r}")
+
+        duration = _probe_duration(video_path)
+        fps, cap = budget_fps(duration)
+        raw = _extract_frames(video_path, tmp_root, fps, cap)
+        if not raw:
+            raise RuntimeError("hiç kare çıkarılamadı")
+        sigs = [_frame_signature(p) for p in raw]
+        keep = dedup_indices(sigs, threshold=2.0)
+        kept = [raw[i] for i in keep][:cap]
+        dropped = len(raw) - len(kept)
+        uris = frames_to_data_uris(kept)
+        if dropped:
+            logger.info(f"[video_extract] {name}: {len(raw)} ham → {len(uris)} kare ({dropped} atlandı)")
+        meta = {"name": name, "duration_s": duration,
+                "frame_count": len(uris), "dropped": max(0, dropped)}
+        return ExtractResult(uris, transcript, meta)
+    finally:
+        shutil.rmtree(tmp_root, ignore_errors=True)

@@ -51,6 +51,9 @@ class ChatRequest(BaseModel):
     generation_confirmed: bool = False
     generation_mode: str = "auto"  # auto | plan | step
     images: Optional[List[str]] = None
+    # Video ekleri: [{"kind":"path","path":...} | {"kind":"url","url":...}]. Backend
+    # bunları kare data-URI'leri + transkripte çevirip images'a katar (video_extract).
+    videos: Optional[List[dict]] = None
     # Claude-only (subscription + model_name "claude-" ile başlar). Diğer sağlayıcılarda
     # yok sayılır. effort_level → ClaudeAgentOptions.effort; ultracode → mesaj keyword'ü.
     effort_level: str = "medium"  # low | medium | high | max

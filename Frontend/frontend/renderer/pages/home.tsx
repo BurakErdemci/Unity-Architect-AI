@@ -324,9 +324,19 @@ export default function Home() {
     }
   };
 
-  const handleSendMessage = async (msg?: string, images?: string[]) => {
+  const handleSendMessage = async (msg?: string, images?: string[], videos?: any[]) => {
     let input = (msg || chat.chatInput).trim();
-    if (!input && (!images || images.length === 0)) return;
+    if (!input && (!images || images.length === 0) && (!videos || videos.length === 0)) return;
+
+    // Send-gate: aktif bulut sağlayıcının API key'i yoksa göndermeyi engelle (net uyarı +
+    // Ayarlar). Optimistic model seçimiyle beraber → keyless modele geçilse bile sessizce
+    // yanlış sağlayıcıya düşmek yerine kullanıcı net yönlendirilir.
+    const _pt = ai.aiConfig.provider_type;
+    if (!['subscription', 'ollama', 'kb'].includes(_pt) && !ai.providersWithKeys.includes(_pt)) {
+      showToast(`Bu model için ${_pt} API key gerekli — Ayarlar'dan ekle.`, 'warning');
+      ai.setShowSettings(true);
+      return;
+    }
 
     const fileMatches = input.match(/\[File Attached: (.*?)\]/g);
     if (fileMatches && ipc) {
@@ -343,7 +353,7 @@ export default function Home() {
         }
       }
     }
-    chat.sendMessage(input, fs.code, lang, chat.generationMode, thinkingLevel, fs.setPendingGenFiles, fs.setPendingDelete, images, ultracode);
+    chat.sendMessage(input, fs.code, lang, chat.generationMode, thinkingLevel, fs.setPendingGenFiles, fs.setPendingDelete, images, ultracode, videos);
   };
 
   const langCtxValue = { lang, setLang, t: (k: string) => translations[lang][k] ?? k };

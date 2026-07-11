@@ -151,7 +151,7 @@ export function AnimatedChatInput({
 }: {
     value: string;
     setValue: (val: string) => void;
-    onSendMessage: (val: string, images?: string[]) => void;
+    onSendMessage: (val: string, images?: string[], videos?: any[]) => void;
     onCommand?: (cmd: string) => boolean;
     onStop?: () => void;
     onFileDrop?: (entry: { path: string, name: string }) => void;
@@ -167,7 +167,7 @@ export function AnimatedChatInput({
 }) {
     // Typing state is INTERNAL — does not propagate to parent on every keystroke.
     const [internalValue, setInternalValue] = useState(value);
-    const [attachments, setAttachments] = useState<{ name: string, data: string, type: 'image' | 'file', path?: string }[]>([]);
+    const [attachments, setAttachments] = useState<{ name: string, data: string, type: 'image' | 'file' | 'video', path?: string, url?: string }[]>([]);
     const [activeSuggestion, setActiveSuggestion] = useState<number>(-1);
     const [showCommandPalette, setShowCommandPalette] = useState(false);
     const { textareaRef, adjustHeight } = useAutoResizeTextarea({
@@ -209,6 +209,19 @@ export function AnimatedChatInput({
         const files = Array.from(e.target.files || []);
         files.forEach(processFile);
         if (fileInputRef.current) fileInputRef.current.value = '';
+    };
+
+    // Video YEREL dosya: Electron 34'te File.path kaldırıldı → main-process dialog
+    // mutlak yolu doğrudan döndürür (base64 YOK — video büyük).
+    const pickVideoFile = async () => {
+        const ipc = (window as any).ipc;
+        if (!ipc) return;
+        const picked = await ipc.invoke('open-video-dialog');  // [{path, name}] | null
+        if (picked && picked.length) {
+            setAttachments(prev => [...prev, ...picked.map((v: any) => ({
+                name: v.name, data: '', type: 'video' as const, path: v.path,
+            }))]);
+        }
     };
 
     const handlePaste = (e: React.ClipboardEvent) => {
@@ -346,6 +359,11 @@ export function AnimatedChatInput({
             }
             let finalMsg = internalValue;
             const images = attachments.filter(a => a.type === 'image').map(a => a.data);
+            const videos = attachments
+                .filter(a => a.type === 'video')
+                .map((a: any) => a.url ? { kind: 'url', url: a.url, name: a.name }
+                                       : (a.path ? { kind: 'path', path: a.path, name: a.name } : null))
+                .filter(Boolean);
             const fileAttachments = attachments.filter(a => a.type === 'file');
 
             if (fileAttachments.length > 0) {
@@ -359,7 +377,7 @@ export function AnimatedChatInput({
                 if (paths) finalMsg += (finalMsg ? '\n\n' : '') + paths;
             }
 
-            onSendMessage(finalMsg, images);
+            onSendMessage(finalMsg, images, videos);
             setInternalValue("");
             setValue("");
             setAttachments([]);
@@ -467,6 +485,11 @@ export function AnimatedChatInput({
                             >
                                 {file.type === 'image' ? (
                                     <img src={file.data} alt="preview" className="w-14 h-14 object-cover rounded-lg border border-white/10 shadow-md" />
+                                ) : file.type === 'video' ? (
+                                    <div className="w-14 h-14 flex flex-col items-center justify-center bg-white/5 rounded-lg border border-white/10 shadow-md px-1 overflow-hidden" title={file.name}>
+                                        <span className="text-lg leading-none mb-0.5">🎬</span>
+                                        <span className="text-[8px] text-white/50 truncate w-full text-center">{file.url ? 'URL' : file.name}</span>
+                                    </div>
                                 ) : (
                                     <div className="w-14 h-14 flex flex-col items-center justify-center bg-white/5 rounded-lg border border-white/10 shadow-md px-1 overflow-hidden">
                                         <FileUp className="w-5 h-5 text-blue-400 mb-0.5" />
@@ -503,6 +526,12 @@ export function AnimatedChatInput({
                     >
                         <PlusIcon className="w-3.5 h-3.5" />
                     </button>
+                    <button
+                        type="button"
+                        onClick={pickVideoFile}
+                        className="p-2 rounded-lg text-white/40 hover:text-white/90 hover:bg-white/5 transition-colors text-sm leading-none"
+                        title="Video Ekle (yerel dosya) — URL için linki doğrudan mesaja yapıştır"
+                    >🎬</button>
                     {commandMeta.length > 0 && (
                         <button
                             type="button"

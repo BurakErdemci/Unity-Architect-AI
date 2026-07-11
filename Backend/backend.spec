@@ -8,10 +8,20 @@ from PyInstaller.utils.hooks import collect_all
 # data + binary + submodule'leri topla (yoksa frozen build'de session açılmaz).
 _cas_datas, _cas_binaries, _cas_hidden = collect_all('claude_agent_sdk')
 
+# Video: ffmpeg + yt-dlp binary'lerini bundle'a ekle (VARSA). Yoksa build KIRILMAZ —
+# binary'ler Backend/vendor/bin/win/ altına konunca otomatik dahil olur.
+# Frozen'da _internal/bin/ altına düşer → providers/video_bin.py resolver oradan bulur.
+import os as _os
+_video_bins = []
+for _exe in ("ffmpeg.exe", "yt-dlp.exe"):
+    _vp = _os.path.join("vendor", "bin", "win", _exe)
+    if _os.path.exists(_vp):
+        _video_bins.append((_vp, "bin"))
+
 a = Analysis(
     ['app/main.py'],
     pathex=['app'],
-    binaries=_cas_binaries,
+    binaries=_cas_binaries + _video_bins,
     # NOT: Launcher scriptleri (run_mcp_server.sh, unityai) PyInstaller datas'ı ile
     # GÖMÜLMEZ — PyInstaller 6.x datas'ı _internal/ altına koyuyor, oysa scriptlerin
     # frozen 'backend' binary'sinin YANINDA (Backend kökünde) olması gerekiyor.

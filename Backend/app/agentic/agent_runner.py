@@ -40,7 +40,10 @@ from google.genai import types as gtypes
 import anthropic
 import openai
 
-from tools.tool_registry import TOOL_DEFINITIONS, execute_tool, get_openai_tool_declarations
+from tools.tool_registry import (
+    TOOL_DEFINITIONS, execute_tool, get_openai_tool_declarations,
+    get_gemini_tool_declarations, _all_tool_definitions,
+)
 from prompts import SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
@@ -66,7 +69,18 @@ class AgentEvent:
 _LAST_SUB_PROVIDER: Dict[int, str] = {}
 
 # Yeni CLI'a geçmiş enjekte edilirken kullanılan başlık (context = tam transcript).
-_HANDOFF_HEADER = "[ÖNCEKİ KONUŞMA BAĞLAMI]"
+# Guardrail cümlesi ÖZELLİKLE agy için önemli: agy --dangerously-skip-permissions ile
+# tam otonom çalışıyor ve sistem prompt append kanalı yok (Claude'daki _APP_SYSTEM_APPEND
+# muadili yok). Guardrail olmadan, "kaldığımız yeri biliyor musun?" gibi belirsiz/meta
+# sorularda agy bunu bir araştırma görevi sanıp dosya/web taramaya sapabiliyor (canlı
+# gözlendi: alakasız bir CLI-flag konusunu araştırıp kafası karışmış "Clarification
+# Required" ile bitirdi). Codex/Claude aynı bağlamla doğru yanıt verdiği için context
+# içeriği sorunlu değildi — eksik olan yalnız "doğrudan bundan cevapla" talimatıydı.
+_HANDOFF_HEADER = (
+    "[ÖNCEKİ KONUŞMA BAĞLAMI — bu geçmiş sana YETERLİ bağlamı veriyor. Kullanıcı "
+    "'kaldığımız yeri/ne yaptığımızı biliyor musun' tarzı bir şey soruyorsa, dosya "
+    "okuma/tarama/web araması YAPMADAN doğrudan bu geçmişten özetleyerek yanıtla.]"
+)
 
 
 class AgentRunner:
@@ -89,6 +103,7 @@ class AgentRunner:
         generation_mode: str = "auto",
         effort_level: str = "medium",
         ultracode: bool = False,
+        videos: Optional[List[dict]] = None,
     ):
         self.provider_type = provider_type
         self.api_key = api_key
@@ -104,6 +119,7 @@ class AgentRunner:
         # ultracode → mesaja keyword enjeksiyonu. Diğer sağlayıcılarda yok sayılır.
         self.effort_level = effort_level
         self.ultracode = ultracode
+        self.videos = videos  # [{"kind":"path"|"url", ...}] → _prepare_videos ile kareye çevrilir
         self.use_thinking = thinking_level != "off"
 
     def _get_architect_wisdom(self) -> str:
@@ -159,10 +175,48 @@ class AgentRunner:
         )
         return result, []
 
+    def _identity_note(self) -> str:
+        """Modelin kendini DOĞRU tanıması için system prompt'a eklenir. LLM'ler hangi model
+        olduklarını güvenilir bilmez (ör. GLM 'ben Claude'um' diyebilir). Sadece API
+        sağlayıcılarında; CLI/abonelik ve ollama'da kimlik zaten net."""
+        if self.provider_type in ("subscription", "ollama"):
+            return ""
+        return (f"\n\n[MODEL KİMLİĞİN] Sen '{self.model_name}' modelisin ve "
+                f"'{self.provider_type}' sağlayıcısı üzerinden çalışıyorsun. Kimliğin veya hangi "
+                f"model olduğun sorulursa BUNU söyle; farklı bir model (Claude/GPT/Gemini vb.) "
+                f"olduğunu İDDİA ETME.")
+
+    async def _prepare_videos(self, user_message: str) -> str:
+        """Videoları (yerel dosya + mesaja YAPIŞTIRILAN URL) kare data-URI'leri + transkripte
+        çevirip mevcut görsel hattına enjekte eder. Kareler self.images'a katılır (sağlayıcı
+        yolları DEĞİŞMEZ), transkript+bağlam bloğu user_message'ın başına eklenir. URL'ler
+        ayrı UI'dan değil doğrudan mesaj metninden otomatik yakalanır. Hata YUMUŞAK."""
+        from providers import video_extract
+        videos = list(self.videos or [])
+        for _u in video_extract.detect_video_urls(user_message):
+            videos.append({"kind": "url", "url": _u})
+        if not videos:
+            return user_message
+        blocks, all_uris = [], []
+        for src in videos:
+            try:
+                res = await asyncio.to_thread(
+                    video_extract.extract, src, self.workspace_path,
+                    f"vid_conv{self.conversation_id}")
+                all_uris.extend(res.frame_data_uris)
+                blocks.append(video_extract.build_video_block(res.meta, res.transcript))
+            except Exception as e:
+                logger.warning(f"[video] çıkarım hatası: {e}")
+                blocks.append(f"\n\n[VİDEO] Bir video işlenemedi ({e}). Metinle devam et.\n")
+        if all_uris:
+            self.images = (self.images or []) + all_uris
+        return ("".join(blocks) + "\n" + user_message) if blocks else user_message
+
     async def run(self, user_message: str) -> AsyncGenerator[AgentEvent, None]:
         """
         Agentic loop'u çalıştırır. Her adımda AgentEvent yield eder.
         """
+        user_message = await self._prepare_videos(user_message)
         if self.provider_type == "google":
             async for event in self._run_gemini(user_message):
                 yield event
@@ -213,13 +267,15 @@ class AgentRunner:
         client = genai.Client(api_key=self.api_key)
 
         # Tool tanımlarını Gemini formatına çevir
+        # Built-in + Unity MCP araçları (şema Gemini için sanitize edilir → 40+ Unity tool da gelir).
+        _gemini_decls = get_gemini_tool_declarations()[0]["function_declarations"]
         tools = [gtypes.Tool(function_declarations=[
             gtypes.FunctionDeclaration(
-                name=t["name"],
-                description=t["description"],
-                parameters=t["parameters"],
+                name=d["name"],
+                description=d["description"],
+                parameters=d["parameters"],
             )
-            for t in TOOL_DEFINITIONS
+            for d in _gemini_decls
         ])]
 
         system_instruction = f"""{SYSTEM_PROMPT}
@@ -250,7 +306,7 @@ Kullanıcıyla {'Türkçe' if self.language == 'tr' else 'İngilizce'} konuş.""
             thinking_config = gtypes.ThinkingConfig(thinking_budget=4096)
 
         config = gtypes.GenerateContentConfig(
-            system_instruction=system_instruction,
+            system_instruction=system_instruction + self._identity_note(),
             tools=tools,
             thinking_config=thinking_config,
         )
@@ -273,6 +329,8 @@ Kullanıcıyla {'Türkçe' if self.language == 'tr' else 'İngilizce'} konuş.""
 
         contents = [gtypes.Content(role="user", parts=parts)]
 
+        _turn_t0 = time.time()   # footer: tur süresi + token
+        _turn_in = _turn_out = 0
         for iteration in range(MAX_ITERATIONS):
             logger.info(f"  🔄 Agentic Loop iterasyon {iteration + 1}")
             
@@ -313,6 +371,11 @@ Kullanıcıyla {'Türkçe' if self.language == 'tr' else 'İngilizce'} konuş.""
                 yield AgentEvent("error", {"message": "AI yanıt üretemedi."})
                 return
 
+            _um = getattr(response, "usage_metadata", None)
+            if _um:
+                _turn_in += getattr(_um, "prompt_token_count", 0) or 0
+                _turn_out += getattr(_um, "candidates_token_count", 0) or 0
+
             candidate = response.candidates[0]
             parts = candidate.content.parts
 
@@ -328,12 +391,17 @@ Kullanıcıyla {'Türkçe' if self.language == 'tr' else 'İngilizce'} konuş.""
             if not tool_calls:
                 # Tool call yok = AI işini bitirdi, final yanıt
                 final_text = "\n".join(p.text for p in text_parts if p.text)
+                yield AgentEvent("turn_usage", {
+                    "input_tokens": _turn_in, "output_tokens": _turn_out, "cost_usd": None,
+                    "duration_ms": int((time.time() - _turn_t0) * 1000),
+                })
                 yield AgentEvent("response", {"content": final_text})
                 yield AgentEvent("done", {"iterations": iteration + 1})
                 return
 
             # Tool call'ları çalıştır
             function_response_parts = []
+            screenshot_parts = []  # Gemini: görsel tool-role Content'e KONMAZ (400) → ayrı user-content
 
             for part in tool_calls:
                 fc = part.function_call
@@ -411,7 +479,9 @@ Kullanıcıyla {'Türkçe' if self.language == 'tr' else 'İngilizce'} konuş.""
                 if screenshot_b64:
                     import base64 as _b64
                     raw_bytes = _b64.b64decode(screenshot_b64.split(",", 1)[1])
-                    function_response_parts.append(
+                    # Gemini tool-role Content'ine inline_data KONULAMAZ (400 INVALID_ARGUMENT).
+                    # Görseli ayrı user-role Content olarak biriktir (aşağıda eklenir).
+                    screenshot_parts.append(
                         gtypes.Part(inline_data=gtypes.Blob(mime_type="image/jpeg", data=raw_bytes))
                     )
 
@@ -423,6 +493,12 @@ Kullanıcıyla {'Türkçe' if self.language == 'tr' else 'İngilizce'} konuş.""
             # AI'ın yanıtını ve tool sonuçlarını geçmişe ekle
             contents.append(candidate.content)
             contents.append(gtypes.Content(role="tool", parts=function_response_parts))
+            # Screenshot(lar) → AYRI user-role Content (Gemini tool-role'a görsel kabul etmez → 400)
+            if screenshot_parts:
+                contents.append(gtypes.Content(
+                    role="user",
+                    parts=[gtypes.Part(text="(capture_unity_screenshot çıktısı — ekran görüntüsü:)")] + screenshot_parts,
+                ))
 
         # Max iterasyona ulaşıldı
         yield AgentEvent("response", {
@@ -455,7 +531,7 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
         
         # Tool formatı
         anthropic_tools = []
-        for t in TOOL_DEFINITIONS:
+        for t in _all_tool_definitions():
             # Anthropic expects input_schema instead of parameters
             anthropic_tools.append({
                 "name": t["name"],
@@ -486,13 +562,15 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
         # system= parametresine gider (aşağıda system_instruction olarak geçiliyor).
         # messages'a "system" rolü koymak API 400 döndürür.
         messages = []
+        _turn_t0 = time.time()   # footer: tur süresi + token
+        _turn_in = _turn_out = 0
 
         for iteration in range(MAX_ITERATIONS):
             logger.info(f"  🔄 Anthropic Agentic Loop iterasyon {iteration + 1}")
             
             # Tool formatı
             anthropic_tools = []
-            for t in TOOL_DEFINITIONS:
+            for t in _all_tool_definitions():
                 anthropic_tools.append({
                     "name": t["name"],
                     "description": t["description"],
@@ -524,7 +602,7 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                 response = await client.messages.create(
                     model=self.model_name,
                     max_tokens=4096,
-                    system=system_instruction + self._get_architect_wisdom(),
+                    system=system_instruction + self._get_architect_wisdom() + self._identity_note(),
                     messages=messages,
                     tools=anthropic_tools
                 )
@@ -532,8 +610,13 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                 yield AgentEvent("error", {"message": f"Claude hatası: {str(e)}"})
                 return
 
+            _u = getattr(response, "usage", None)
+            if _u:
+                _turn_in += getattr(_u, "input_tokens", 0) or 0
+                _turn_out += getattr(_u, "output_tokens", 0) or 0
+
             messages.append({"role": "assistant", "content": response.content})
-            
+
             tool_calls = [block for block in response.content if block.type == "tool_use"]
             text_blocks = [block for block in response.content if block.type == "text"]
             
@@ -544,6 +627,10 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
             if not tool_calls:
                 # Final yanıt
                 final_text = "\n".join(b.text for b in text_blocks if b.text)
+                yield AgentEvent("turn_usage", {
+                    "input_tokens": _turn_in, "output_tokens": _turn_out, "cost_usd": None,
+                    "duration_ms": int((time.time() - _turn_t0) * 1000),
+                })
                 yield AgentEvent("response", {"content": final_text})
                 yield AgentEvent("done", {"iterations": iteration + 1})
                 return
@@ -654,10 +741,12 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                 })
 
         messages = [
-            {"role": "system", "content": system_instruction},
+            {"role": "system", "content": system_instruction + self._identity_note()},
             {"role": "user", "content": user_content}
         ]
         
+        _turn_t0 = time.time()   # footer: tur süresi + token
+        _turn_in = _turn_out = 0
         for iteration in range(MAX_ITERATIONS):
             logger.info(f"  🔄 OpenAI Agentic Loop iterasyon {iteration + 1}")
             
@@ -692,8 +781,13 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                 yield AgentEvent("error", {"message": "AI yanıt vermeyi reddetti (Rate Limit/API)."})
                 return
 
+            _u = getattr(response, "usage", None)
+            if _u:
+                _turn_in += getattr(_u, "prompt_tokens", 0) or 0
+                _turn_out += getattr(_u, "completion_tokens", 0) or 0
+
             message = response.choices[0].message
-            
+
             # API formatında mesaja ekle
             msg_dict = {"role": "assistant"}
             if message.content:
@@ -711,6 +805,10 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
             if not message.tool_calls:
                 # Final yanıt
                 final_text = message.content or "Tamamlandı."
+                yield AgentEvent("turn_usage", {
+                    "input_tokens": _turn_in, "output_tokens": _turn_out, "cost_usd": None,
+                    "duration_ms": int((time.time() - _turn_t0) * 1000),
+                })
                 yield AgentEvent("response", {"content": final_text})
                 yield AgentEvent("done", {"iterations": iteration + 1})
                 return
@@ -840,16 +938,20 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
     # ═══════════════════════════════════════════════
     async def _run_agy_session(self, user_message: str) -> AsyncGenerator[AgentEvent, None]:
         """
-        agy'yi (Antigravity CLI) sohbet başına KALICI-bağlamlı sürer.
-        agy'nin Codex/Claude gibi canlı server'ı YOK → kalıcılık agy'nin KENDİ
-        disk-resume'uyla sağlanır:
-        - Tur 1: --conversation VERİLMEZ; agy yeni UUID yaratır, tur sonrası
-          conversations/ içinde beliren yeni .db adından UUID'i yakalarız.
-        - Sonraki turlar: --conversation=<UUID> → agy bağlamı diskten yükler,
-          DB geçmişini prompt'a BASMAYIZ (sadece yeni mesaj).
-        - Onay/yazma: mevcut unityai köprüsü (cli_base) AYNEN — native onay yok.
-        - agy --print stdout'u non-TTY'de kaybolduğu için (bug #76) asistanın
-          yanıt metnini conversation .db'sinden (step_type==15) okuruz.
+        agy'yi (Antigravity CLI) sohbet başına bağlamlı sürer.
+
+        agy'nin Codex/Claude gibi canlı server'ı YOK ve KENDİ disk-resume'u
+        (--conversation) agy 1.1.1'de KIRIK: resume flag'i modeli built-in
+        antigravity-guide skill'ine sokup kullanıcının mesajını hiç yanıtlatmıyor
+        (canlı doğrulandı). Bu yüzden:
+        - Resume KULLANILMAZ. Her turda tam transcript (_build_handoff_context)
+          prompt'a enjekte edilir → agy her turu "kaldığı yerden" görür.
+        - Prompt STDIN değil ARG olarak verilir (agy 1.1.1 ham-metin stdin'i de bozdu);
+          Windows argv limiti için context en-yeni-kısım korunacak şekilde sınırlanır.
+        - Auto-approve: --dangerously-skip-permissions YERİNE settings.json
+          toolPermission=always-proceed (flag skill-derail'i tetikliyordu).
+        - Yanıt metni: stdout genelde çalışır (final event); boşsa bu turun
+          conversation .db'sinden (step_type==15) fallback okunur.
         Ephemeral dosya-değişiklik akışı (kod blokları) korunur.
         """
         from ai_providers import AIProviderManager
@@ -866,19 +968,33 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
         sess = get_session(self.conversation_id)
         sess.auto_approve = (getattr(self, "generation_mode", "auto") == "auto")
 
-        # Resume: önceki turda yakalanan UUID varsa --conversation ile besle.
-        provider._resume_uuid = sess.agy_uuid
+        # RESUME TERK EDİLDİ (agy 1.1.1): --conversation flag'i modeli derail'e sokuyor
+        # (built-in antigravity-guide skill'ini tetikleyip kullanıcının mesajını hiç
+        # yanıtlamıyor; canlı doğrulandı). Bu yüzden agy'nin disk-resume'unu KULLANMAYIZ;
+        # bunun yerine HER TURDA tam transcript'i prompt'a enjekte ederiz (Claude/Codex'te
+        # ilk tur, agy'de her tur). Prompt ARG olarak gittiği için (stdin bozuk) Windows
+        # ~32K argv limitine takılmamak adına en YENİ kısmı koruyacak şekilde sınırlarız.
+        enriched_prompt = user_message
+        if self.context:
+            _CTX_CAP = 26000  # mcp_hint (~1.5K) + görsel + argv payı için güvenli sınır
+            _ctx = self.context
+            if len(_ctx) > _CTX_CAP:
+                _ctx = "…[eski geçmiş kırpıldı — en yeni kısım korundu]\n" + _ctx[-_CTX_CAP:]
+            enriched_prompt = f"{user_message}\n\n{_HANDOFF_HEADER}\n{_ctx}"
 
-        # Bağlam: yalnızca resume EDEMİYORKEN (UUID yok) prompt'a ekle. UUID varsa
-        # agy bağlamı diskten yükler → geçmişi yeniden basmayız.
-        if self.context and not sess.agy_uuid:
-            enriched_prompt = f"{user_message}\n\n{_HANDOFF_HEADER}\n{self.context}"
-        else:
-            enriched_prompt = user_message
+        # Görsel: agy'nin native görsel girişi YOK → dosyaya yaz + prompt'a yol enjekte;
+        # agy kendi Read/dosya aracıyla açar (auto modda otomatik, kullanıcıdan ek iş yok).
+        from providers._attachments import materialize_images, cleanup_dir
+        _img_paths, _att_dir = materialize_images(
+            self.images, self.workspace_path, f"agy_conv{self.conversation_id}")
+        if _img_paths:
+            _lines = "\n".join(f"- {p}" for p in _img_paths)
+            enriched_prompt += ("\n\n[EKLİ GÖRSELLER] Kullanıcı bu turda görsel ekledi. "
+                                "İncelemen için (Read/dosya aracıyla aç):\n" + _lines)
 
-        # Tur 1 (UUID yok): yeni yaratılacak .db'yi tespit edebilmek için önceki
-        # db kümesini fotoğrafla.
-        db_before = snapshot_db_names() if not sess.agy_uuid else None
+        # Her tur YENİ bir agy .db yaratır (resume yok) → bu turun yanıtını okuyabilmek
+        # için önceki db kümesini fotoğrafla, tur sonrası beliren yeni .db'yi yakala.
+        db_before = snapshot_db_names()
 
         final_text = ""
         ephemeral_files = []
@@ -913,26 +1029,30 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                 final_text = event.get("text", "")
             elif etype == "error":
                 yield AgentEvent("error", {"message": event.get("content", "")})
+                cleanup_dir(_att_dir)
                 return
 
-        # Tur bitti (process çıktı) → ilk turda yaratılan UUID'i yakala.
-        if not sess.agy_uuid and db_before is not None:
-            new_uuid = detect_new_uuid(db_before)
-            if new_uuid:
-                sess.agy_uuid = new_uuid
-                logger.info(f"[AgySession] conv={self.conversation_id} agy UUID yakalandı: {new_uuid}")
-            else:
-                logger.warning(f"[AgySession] conv={self.conversation_id} yeni agy conversation .db bulunamadı (resume kurulamadı)")
+        # agy subprocess bitti → ekli görsel temp klasörünü temizle (agy artık okumadı).
+        cleanup_dir(_att_dir)
 
-        # Asistan yanıt metnini conversation .db'sinden oku (stdout bug #76 workaround).
-        # final_text agy'de genelde boş (stdout kaybolur) → db'den gelen prose'u kullan.
-        if sess.agy_uuid and not final_text:
-            prose, new_idx = read_new_response(sess.agy_uuid, sess.last_step_idx)
+        # Tur bitti → BU turda yaratılan yeni .db'yi (UUID) yakala. Resume kullanmadığımız
+        # için her tur taze bir db üretir; UUID'i yalnızca bu turun yanıtını okumak için
+        # kullanırız (kalıcı olarak saklamayız).
+        turn_uuid = detect_new_uuid(db_before)
+        if turn_uuid:
+            logger.info(f"[AgySession] conv={self.conversation_id} agy tur UUID: {turn_uuid}")
+        else:
+            logger.warning(f"[AgySession] conv={self.conversation_id} yeni agy .db bulunamadı")
+
+        # Asistan yanıt metnini bu turun .db'sinden oku (stdout boş kalırsa fallback).
+        # Taze db → baştan (idx -1) oku. agy 1.1.1'de stdout genelde çalışıyor (final
+        # event'i doldurur); bu blok yalnız final boşsa devreye girer.
+        if turn_uuid and not final_text:
+            prose, _ = read_new_response(turn_uuid, -1)
             if not prose:
                 # nadiren db flush gecikebilir → tek kısa retry
                 await asyncio.sleep(0.4)
-                prose, new_idx = read_new_response(sess.agy_uuid, sess.last_step_idx)
-            sess.last_step_idx = new_idx
+                prose, _ = read_new_response(turn_uuid, -1)
             if prose:
                 final_text = prose
 
@@ -1038,6 +1158,19 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
             ],
         )
 
+        # Görsel: Claude Code SDK/headless satır-içi image-block'u modele SUNMUYOR
+        # (SDK ContentBlock union'ında ImageBlock yok → blok sessizce düşer). Bu yüzden
+        # agy ile aynı yol: görseli temp'e yaz + mesaja yol enjekte → Claude kendi Read
+        # aracıyla açar (Read görselleri görsel olarak modele sunar). Auto modda otomatik.
+        from providers._attachments import materialize_images, cleanup_dir
+        _img_paths, _att_dir = materialize_images(
+            self.images, self.workspace_path, f"claude_conv{self.conversation_id}")
+        _img_suffix = ""
+        if _img_paths:
+            _lines = "\n".join(f"- {p}" for p in _img_paths)
+            _img_suffix = ("\n\n[EKLİ GÖRSELLER] Kullanıcı bu turda görsel ekledi. "
+                           "İncelemen için Read aracıyla aç:\n" + _lines)
+
         # Sıkışmış/kopuk session'da bir kez otomatik reset + yeniden dene: "Durdur"
         # sonrası ya da CLI çökmesi sonrası kullanıcı mesajı asla "düşünüyor"da kalmaz.
         for _attempt in (1, 2):
@@ -1055,6 +1188,8 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
             # CLI bu kelimeyi görünce çok-ajanlı ultracode akışını tetikler (belgesiz; sürüme bağlı).
             if self.ultracode:
                 message = f"{message}\n\nultracode"
+            # Ekli görsel yolları (varsa) mesaja eklenir → Claude Read ile açar.
+            message = f"{message}{_img_suffix}"
 
             _yielded = 0
             try:
@@ -1062,6 +1197,7 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                     _yielded += 1
                     etype = ev.pop("type", "text")
                     yield AgentEvent(etype, ev)
+                cleanup_dir(_att_dir)
                 return
             except Exception as e:
                 # Event akmadan patladıysa (busy/kopuk) güvenle resetleyip tekrar dene;
@@ -1077,6 +1213,7 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                         logger.exception("[ClaudeSession] reset sırasında close hatası")
                     continue
                 logger.exception("[ClaudeSession] stream hatası")
+                cleanup_dir(_att_dir)
                 yield AgentEvent("error", {"message": f"Claude session hatası: {e}"})
                 return
 
@@ -1119,13 +1256,20 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
             message = f"{user_message}\n\n{_HANDOFF_HEADER}\n{self.context}"
             session._ctx_injected = True
 
+        # Görseller Codex'e native 'localImage' input item'ı olarak gider → dosya yolu
+        # gerekiyor. Base64'leri tura özel temp klasörüne yaz; tur sonunda temizle.
+        from providers._attachments import materialize_images, cleanup_dir
+        image_paths, _att_dir = materialize_images(
+            self.images, self.workspace_path, f"codex_conv{self.conversation_id}")
         try:
-            async for ev in session.stream(message):
+            async for ev in session.stream(message, image_paths=image_paths):
                 etype = ev.pop("type", "text")
                 yield AgentEvent(etype, ev)
         except Exception as e:
             logger.exception("[CodexSession] stream hatası")
             yield AgentEvent("error", {"message": f"Codex session hatası: {e}"})
+        finally:
+            cleanup_dir(_att_dir)
 
     def _summarize_result(self, tool_name: str, result: dict) -> str:
         """Tool sonucunu kısa özetle."""

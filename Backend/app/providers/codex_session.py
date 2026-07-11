@@ -605,7 +605,7 @@ class CodexSession:
             lines.append("Şu anda raporlanacak kullanım penceresi yok.")
         return "\n".join(lines)
 
-    async def stream(self, message: str) -> AsyncGenerator[dict, None]:
+    async def stream(self, message: str, image_paths: Optional[List[str]] = None) -> AsyncGenerator[dict, None]:
         if not self._started:
             await self.start()
 
@@ -617,10 +617,16 @@ class CodexSession:
             self._final_text = ""
             self._current_turn_id = None
 
+            # Görseller app-server'a native 'localImage' input item'ı olarak gider
+            # (şema: LocalImageUserInput → path). Yollar diske yazılmış temp dosyalar.
+            input_items = [{"type": "text", "text": message}]
+            for p in (image_paths or []):
+                input_items.append({"type": "localImage", "path": p})
+
             try:
                 resp = await self._request("turn/start", {
                     "threadId": self.thread_id,
-                    "input": [{"type": "text", "text": message}],
+                    "input": input_items,
                 }, timeout=60)
                 self._current_turn_id = (((resp or {}).get("result") or {}).get("turn") or {}).get("id")
             except Exception as e:
