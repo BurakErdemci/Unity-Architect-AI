@@ -62,12 +62,11 @@ win:
         - x64
   requestedExecutionLevel: asInvoker
 nsis:
-  oneClick: false
-  allowToChangeInstallationDirectory: true
-  installerLanguages:
-    - tr_TR
-    - en_US
-  language: 1055
+  # oneClick: kurulumda ÖNCEKİ sürümü otomatik kaldırır, yeniyi kurar ve açar →
+  # sürümler üst üste binmez (kullanıcı eskiyi elle silmek zorunda kalmaz).
+  oneClick: true
+  perMachine: false
+  allowToChangeInstallationDirectory: false
 publish:
   provider: github
   owner: BurakErdemci
