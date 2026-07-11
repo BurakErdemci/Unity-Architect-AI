@@ -12,9 +12,16 @@ _cas_datas, _cas_binaries, _cas_hidden = collect_all('claude_agent_sdk')
 # binary'ler Backend/vendor/bin/win/ altına konunca otomatik dahil olur.
 # Frozen'da _internal/bin/ altına düşer → providers/video_bin.py resolver oradan bulur.
 import os as _os
+import sys as _sys
+if _sys.platform == "win32":
+    _bin_os, _video_exes = "win", ("ffmpeg.exe", "yt-dlp.exe")
+elif _sys.platform == "darwin":
+    _bin_os, _video_exes = "mac", ("ffmpeg", "yt-dlp")
+else:
+    _bin_os, _video_exes = "linux", ("ffmpeg", "yt-dlp")
 _video_bins = []
-for _exe in ("ffmpeg.exe", "yt-dlp.exe"):
-    _vp = _os.path.join("vendor", "bin", "win", _exe)
+for _exe in _video_exes:
+    _vp = _os.path.join("vendor", "bin", _bin_os, _exe)
     if _os.path.exists(_vp):
         _video_bins.append((_vp, "bin"))
 

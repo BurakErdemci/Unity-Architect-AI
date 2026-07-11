@@ -1,0 +1,103 @@
+name: Release (Windows + macOS)
+
+# v* tag'i push edilince (ör. v2.1.0) her iki platformu build eder ve TASLAK release
+# oluşturur. Taslak → sen inceleyip "Publish release" dersin (hiçbir şey otomatik yayınlanmaz).
+# workflow_dispatch: sadece build'i test etmek için (release adımı yalnız tag'de çalışır).
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Backend bağımlılıkları + PyInstaller
+        working-directory: Backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: uv araç zinciri (Windows)
+        if: runner.os == 'Windows'
+        run: pwsh -File Backend/vendor/fetch_uv.ps1
+
+      - name: uv araç zinciri (macOS)
+        if: runner.os == 'macOS'
+        run: bash Backend/vendor/fetch_uv.sh
+
+      - name: Video ikilileri — ffmpeg + yt-dlp (Windows, best-effort)
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        run: pwsh -File Backend/vendor/fetch_video_bins.ps1
+
+      - name: Video ikilileri — ffmpeg + yt-dlp (macOS, best-effort)
+        if: runner.os == 'macOS'
+        continue-on-error: true
+        run: bash Backend/vendor/fetch_video_bins.sh
+
+      - name: Backend'i dondur (PyInstaller → Backend/dist/backend)
+        working-directory: Backend
+        run: pyinstaller backend.spec --noconfirm
+
+      - name: Frontend bağımlılıkları
+        working-directory: Frontend/frontend
+        run: npm ci
+
+      - name: Frontend build (installer + updater feed)
+        working-directory: Frontend/frontend
+        run: npm run build
+
+      - name: Artifact'ları yükle
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ matrix.os }}
+          if-no-files-found: warn
+          path: |
+            Frontend/frontend/build/*.exe
+            Frontend/frontend/build/*.blockmap
+            Frontend/frontend/build/*.dmg
+            Frontend/frontend/build/*.zip
+            Frontend/frontend/build/latest*.yml
+
+  release:
+    name: Taslak GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build artifact'larını indir
+        uses: actions/download-artifact@v4
+        with:
+          path: dist-artifacts
+          merge-multiple: true
+
+      - name: Taslak release oluştur + dosyaları yükle
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Unity Architect AI ${{ github.ref_name }}
+          body_path: RELEASE_NOTES.md
+          draft: true
+          files: dist-artifacts/**/*

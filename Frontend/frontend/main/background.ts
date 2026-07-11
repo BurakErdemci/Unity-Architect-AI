@@ -3,7 +3,7 @@ import fs from 'fs'
 import os from 'os'
 import net from 'net'
 import { randomUUID } from 'crypto'
-import { app, ipcMain, dialog } from 'electron'
+import { app, ipcMain, dialog, shell } from 'electron'
 import serve from 'electron-serve'
 import { createWindow } from './helpers'
 import { spawn, ChildProcess } from 'child_process'
@@ -690,17 +690,35 @@ if (!gotTheLock) {
       const menu = Menu.buildFromTemplate(template);
       Menu.setApplicationMenu(menu);
 
-      // --- OTOMATİK GÜNCELLEME (electron-updater → GitHub Releases) ---
-      // Prod'da açılışta public GitHub release'lerini kontrol eder; yeni sürüm
-      // varsa arka planda indirir, uygulama kapanınca kurar. Public repo → TOKEN
-      // GEREKMEZ. Hata olursa (ağ yok, release yok) sessizce loglanır, app çalışır.
+      // --- GÜNCELLEME KONTROLÜ (BİLDİR-ONLY, electron-updater → GitHub Releases) ---
+      // GÜVENLİK: Sessiz otomatik indirme/kurulum YOK. App yalnızca yeni sürümü tespit
+      // edip kullanıcıya haber verir ve resmi release sayfasını açar — kurulumu kullanıcı
+      // bilerek yapar (OS SmartScreen/Gatekeeper devrede). Böylece GitHub hesabı ele
+      // geçse bile kimsenin makinesinde otomatik kod çalışmaz. Public repo → token gerekmez.
       if (isProd) {
-        autoUpdater.autoDownload = true
+        autoUpdater.autoDownload = false
+        autoUpdater.autoInstallOnAppQuit = false
         autoUpdater.on('error', (err) => console.error('[updater] hata:', err?.message || err))
-        autoUpdater.on('update-available', (info) => console.log('[updater] yeni sürüm bulundu:', info?.version))
         autoUpdater.on('update-not-available', () => console.log('[updater] uygulama güncel'))
-        autoUpdater.on('update-downloaded', (info) => console.log('[updater] indirildi, kapanışta kurulacak:', info?.version))
-        autoUpdater.checkForUpdatesAndNotify().catch((e) => console.error('[updater] kontrol başarısız:', e?.message || e))
+        autoUpdater.on('update-available', async (info) => {
+          console.log('[updater] yeni sürüm mevcut:', info?.version)
+          try {
+            const { response } = await dialog.showMessageBox({
+              type: 'info',
+              buttons: ['İndirme sayfasını aç', 'Sonra'],
+              defaultId: 0,
+              cancelId: 1,
+              title: 'Güncelleme mevcut',
+              message: `Yeni sürüm çıktı: v${info?.version}`,
+              detail: 'Resmi indirme sayfasını açmak için "İndirme sayfasını aç"a bas. ' +
+                'Kurulumu sen onaylayacaksın — otomatik/sessiz kurulum yapılmaz.',
+            })
+            if (response === 0) {
+              await shell.openExternal('https://github.com/BurakErdemci/Unity-Architect-AI/releases/latest')
+            }
+          } catch (e) { console.error('[updater] bildirim hatası:', (e as any)?.message || e) }
+        })
+        autoUpdater.checkForUpdates().catch((e) => console.error('[updater] kontrol başarısız:', e?.message || e))
       }
     })()
 
