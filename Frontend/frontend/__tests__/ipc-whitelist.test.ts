@@ -55,8 +55,8 @@ describe('IPC Whitelist — izinsiz kanallar engellenir', () => {
 })
 
 describe('IPC Whitelist — Set doğruluğu', () => {
-  it('tam olarak 22 kanal içerir', () => {
-    expect(ALLOWED_INVOKE_CHANNELS.size).toBe(22)
+  it('tam olarak 23 kanal içerir', () => {
+    expect(ALLOWED_INVOKE_CHANNELS.size).toBe(23)
   })
 
   it('her kanal benzersiz', () => {
@@ -80,6 +80,10 @@ describe('IPC Whitelist — Set doğruluğu', () => {
 
   it('path-exists kanalı whitelist\'te', () => {
     expect(ALLOWED_INVOKE_CHANNELS.has('path-exists')).toBe(true)
+  })
+
+  it('open-video-dialog kanalı whitelist\'te', () => {
+    expect(ALLOWED_INVOKE_CHANNELS.has('open-video-dialog')).toBe(true)
   })
 
   it('terminal kanalları whitelist\'te', () => {
