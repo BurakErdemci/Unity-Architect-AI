@@ -741,6 +741,268 @@ namespace MCPForUnityTests.Editor.Tools
         }
 
         // =============================================================================
+        // Controller: Update / Remove Transition
+        // =============================================================================
+
+        [Test]
+        public void ControllerUpdateTransition_UpdatesOnlyProvidedProperties()
+        {
+            string controllerPath = $"{TempRoot}/UpdTransController_{Guid.NewGuid():N}.controller";
+            var controller = AnimatorController.CreateAnimatorControllerAtPath(controllerPath);
+            var sm = controller.layers[0].stateMachine;
+            sm.AddState("Reload Loop");
+            sm.AddState("End Reload");
+            AssetDatabase.SaveAssets();
+
+            var addResult = ToJObject(ManageAnimation.HandleCommand(new JObject
+            {
+                ["action"] = "controller_add_transition",
+                ["controllerPath"] = controllerPath,
+                ["fromState"] = "Reload Loop",
+                ["toState"] = "End Reload",
+                ["hasExitTime"] = false,
+                ["duration"] = 0.1f
+            }));
+            Assert.IsTrue(addResult.Value<bool>("success"), addResult.ToString());
+
+            // The real-world case: give an existing transition exit time + interruption source.
+            var updResult = ToJObject(ManageAnimation.HandleCommand(new JObject
+            {
+                ["action"] = "controller_update_transition",
+                ["controllerPath"] = controllerPath,
+                ["fromState"] = "Reload Loop",
+                ["toState"] = "End Reload",
+                ["hasExitTime"] = true,
+                ["exitTime"] = 0.9f,
+                ["interruptionSource"] = "Destination"
+            }));
+            Assert.IsTrue(updResult.Value<bool>("success"), updResult.ToString());
+
+            // Response contains the full final state (no second get_info needed).
+            var data = updResult["data"]["transition"];
+            Assert.IsTrue(data.Value<bool>("hasExitTime"));
+            Assert.AreEqual(0.9f, data.Value<float>("exitTime"), 0.0001f);
+            Assert.AreEqual("Destination", data.Value<string>("interruptionSource"));
+            // Unspecified field kept its old value.
+            Assert.AreEqual(0.1f, data.Value<float>("duration"), 0.0001f);
+
+            controller = AssetDatabase.LoadAssetAtPath<AnimatorController>(controllerPath);
+            var t = controller.layers[0].stateMachine.states.First(s => s.state.name == "Reload Loop").state.transitions[0];
+            Assert.IsTrue(t.hasExitTime);
+            Assert.AreEqual(0.9f, t.exitTime, 0.0001f);
+            Assert.AreEqual(TransitionInterruptionSource.Destination, t.interruptionSource);
+            Assert.AreEqual(0.1f, t.duration, 0.0001f);
+        }
+
+        [Test]
+        public void ControllerUpdateTransition_ReplacesConditions()
+        {
+            string controllerPath = $"{TempRoot}/UpdCondController_{Guid.NewGuid():N}.controller";
+            var controller = AnimatorController.CreateAnimatorControllerAtPath(controllerPath);
+            controller.AddParameter("Speed", AnimatorControllerParameterType.Float);
+            controller.AddParameter("Grounded", AnimatorControllerParameterType.Bool);
+            var sm = controller.layers[0].stateMachine;
+            sm.AddState("Idle");
+            sm.AddState("Walk");
+            AssetDatabase.SaveAssets();
+
+            ManageAnimation.HandleCommand(new JObject
+            {
+                ["action"] = "controller_add_transition",
+                ["controllerPath"] = controllerPath,
+                ["fromState"] = "Idle",
+                ["toState"] = "Walk",
+                ["conditions"] = new JArray(new JObject { ["parameter"] = "Speed", ["mode"] = "greater", ["threshold"] = 0.1f })
+            });
+
+            var updResult = ToJObject(ManageAnimation.HandleCommand(new JObject
+            {
+                ["action"] = "controller_update_transition",
+                ["controllerPath"] = controllerPath,
+                ["fromState"] = "Idle",
+                ["toState"] = "Walk",
+                ["conditions"] = new JArray(new JObject { ["parameter"] = "Grounded", ["mode"] = "if" })
+            }));
+            Assert.IsTrue(updResult.Value<bool>("success"), updResult.ToString());
+
+            controller = AssetDatabase.LoadAssetAtPath<AnimatorController>(controllerPath);
+            var t = controller.layers[0].stateMachine.states.First(s => s.state.name == "Idle").state.transitions[0];
+            Assert.AreEqual(1, t.conditions.Length);
+            Assert.AreEqual("Grounded", t.conditions[0].parameter);
+            Assert.AreEqual(AnimatorConditionMode.If, t.conditions[0].mode);
+        }
+
+        [Test]
+        public void ControllerUpdateTransition_UnknownConditionParameter_ListsAvailable()
+        {
+            string controllerPath = $"{TempRoot}/UpdBadParamController_{Guid.NewGuid():N}.controller";
+            var controller = AnimatorController.CreateAnimatorControllerAtPath(controllerPath);
+            controller.AddParameter("Speed", AnimatorControllerParameterType.Float);
+            var sm = controller.layers[0].stateMachine;
+            sm.AddState("Idle");
+            sm.AddState("Walk");
+            AssetDatabase.SaveAssets();
+
+            ManageAnimation.HandleCommand(new JObject
+            {
+                ["action"] = "controller_add_transition",
+                ["controllerPath"] = controllerPath,
+                ["fromState"] = "Idle",
+                ["toState"] = "Walk"
+            });
+
+            var updResult = ToJObject(ManageAnimation.HandleCommand(new JObject
+            {
+                ["action"] = "controller_update_transition",
+                ["controllerPath"] = controllerPath,
+                ["fromState"] = "Idle",
+                ["toState"] = "Walk",
+                ["conditions"] = new JArray(new JObject { ["parameter"] = "NoSuchParam", ["mode"] = "if" })
+            }));
+            Assert.IsFalse(updResult.Value<bool>("success"));
+            Assert.That(updResult["message"].ToString(), Does.Contain("does not exist"));
+            Assert.That(updResult["message"].ToString(), Does.Contain("Speed"));
+        }
+
+        [Test]
+        public void ControllerUpdateTransition_InvalidInterruptionSource_ListsValid()
+        {
+            string controllerPath = $"{TempRoot}/UpdBadIntController_{Guid.NewGuid():N}.controller";
+            var controller = AnimatorController.CreateAnimatorControllerAtPath(controllerPath);
+            var sm = controller.layers[0].stateMachine;
+            sm.AddState("Idle");
+            sm.AddState("Walk");
+            AssetDatabase.SaveAssets();
+
+            ManageAnimation.HandleCommand(new JObject
+            {
+                ["action"] = "controller_add_transition",
+                ["controllerPath"] = controllerPath,
+                ["fromState"] = "Idle",
+                ["toState"] = "Walk"
+            });
+
+            var updResult = ToJObject(ManageAnimation.HandleCommand(new JObject
+            {
+                ["action"] = "controller_update_transition",
+                ["controllerPath"] = controllerPath,
+                ["fromState"] = "Idle",
+                ["toState"] = "Walk",
+                ["interruptionSource"] = "Bogus"
+            }));
+            Assert.IsFalse(updResult.Value<bool>("success"));
+            Assert.That(updResult["message"].ToString(), Does.Contain("SourceThenDestination"));
+        }
+
+        [Test]
+        public void ControllerUpdateTransition_MissingTransition_ListsExisting()
+        {
+            string controllerPath = $"{TempRoot}/UpdMissController_{Guid.NewGuid():N}.controller";
+            var controller = AnimatorController.CreateAnimatorControllerAtPath(controllerPath);
+            var sm = controller.layers[0].stateMachine;
+            sm.AddState("Idle");
+            sm.AddState("Walk");
+            sm.AddState("Run");
+            AssetDatabase.SaveAssets();
+
+            ManageAnimation.HandleCommand(new JObject
+            {
+                ["action"] = "controller_add_transition",
+                ["controllerPath"] = controllerPath,
+                ["fromState"] = "Idle",
+                ["toState"] = "Walk"
+            });
+
+            var updResult = ToJObject(ManageAnimation.HandleCommand(new JObject
+            {
+                ["action"] = "controller_update_transition",
+                ["controllerPath"] = controllerPath,
+                ["fromState"] = "Idle",
+                ["toState"] = "Run",
+                ["hasExitTime"] = false
+            }));
+            Assert.IsFalse(updResult.Value<bool>("success"));
+            Assert.That(updResult["message"].ToString(), Does.Contain("Existing transitions"));
+            Assert.That(updResult["message"].ToString(), Does.Contain("Idle->Walk"));
+        }
+
+        [Test]
+        public void ControllerRemoveTransition_RemovesTransition()
+        {
+            string controllerPath = $"{TempRoot}/RemTransController_{Guid.NewGuid():N}.controller";
+            var controller = AnimatorController.CreateAnimatorControllerAtPath(controllerPath);
+            var sm = controller.layers[0].stateMachine;
+            sm.AddState("Idle");
+            sm.AddState("Walk");
+            AssetDatabase.SaveAssets();
+
+            ManageAnimation.HandleCommand(new JObject
+            {
+                ["action"] = "controller_add_transition",
+                ["controllerPath"] = controllerPath,
+                ["fromState"] = "Idle",
+                ["toState"] = "Walk"
+            });
+
+            var remResult = ToJObject(ManageAnimation.HandleCommand(new JObject
+            {
+                ["action"] = "controller_remove_transition",
+                ["controllerPath"] = controllerPath,
+                ["fromState"] = "Idle",
+                ["toState"] = "Walk"
+            }));
+            Assert.IsTrue(remResult.Value<bool>("success"), remResult.ToString());
+
+            controller = AssetDatabase.LoadAssetAtPath<AnimatorController>(controllerPath);
+            var idleState = controller.layers[0].stateMachine.states.First(s => s.state.name == "Idle").state;
+            Assert.AreEqual(0, idleState.transitions.Length);
+        }
+
+        [Test]
+        public void ControllerAnyStateTransition_UpdateAndGetInfo()
+        {
+            string controllerPath = $"{TempRoot}/AnyStateController_{Guid.NewGuid():N}.controller";
+            var controller = AnimatorController.CreateAnimatorControllerAtPath(controllerPath);
+            var sm = controller.layers[0].stateMachine;
+            sm.AddState("Death");
+            AssetDatabase.SaveAssets();
+
+            ManageAnimation.HandleCommand(new JObject
+            {
+                ["action"] = "controller_add_transition",
+                ["controllerPath"] = controllerPath,
+                ["fromState"] = "AnyState",
+                ["toState"] = "Death"
+            });
+
+            // AnyState transitions can be updated...
+            var updResult = ToJObject(ManageAnimation.HandleCommand(new JObject
+            {
+                ["action"] = "controller_update_transition",
+                ["controllerPath"] = controllerPath,
+                ["fromState"] = "AnyState",
+                ["toState"] = "Death",
+                ["canTransitionToSelf"] = false
+            }));
+            Assert.IsTrue(updResult.Value<bool>("success"), updResult.ToString());
+
+            controller = AssetDatabase.LoadAssetAtPath<AnimatorController>(controllerPath);
+            Assert.AreEqual(1, controller.layers[0].stateMachine.anyStateTransitions.Length);
+            Assert.IsFalse(controller.layers[0].stateMachine.anyStateTransitions[0].canTransitionToSelf);
+
+            // ...and get_info reports them (previously invisible).
+            var infoResult = ToJObject(ManageAnimation.HandleCommand(new JObject
+            {
+                ["action"] = "controller_get_info",
+                ["controllerPath"] = controllerPath
+            }));
+            Assert.IsTrue(infoResult.Value<bool>("success"), infoResult.ToString());
+            var layer0 = infoResult["data"]["layers"][0];
+            Assert.AreEqual(1, layer0.Value<int>("anyStateTransitionCount"));
+            Assert.AreEqual("Death", layer0["anyStateTransitions"][0].Value<string>("toState"));
+        }
+
+        // =============================================================================
         // Controller: Add Parameter
         // =============================================================================
 

@@ -126,14 +126,11 @@ namespace MCPForUnity.Editor.Tools.Animation
 
             int layerIndex = @params["layerIndex"]?.ToObject<int>() ?? 0;
             if (layerIndex < 0 || layerIndex >= controller.layers.Length)
-                return new { success = false, message = $"Layer index {layerIndex} out of range" };
+                return new { success = false, message = $"Layer index {layerIndex} out of range (controller has {controller.layers.Length} layers: 0..{controller.layers.Length - 1})" };
 
             var rootStateMachine = controller.layers[layerIndex].stateMachine;
 
-            // Check for AnyState as source
-            bool isAnyState = string.Equals(fromStateName, "AnyState", StringComparison.OrdinalIgnoreCase)
-                           || string.Equals(fromStateName, "Any", StringComparison.OrdinalIgnoreCase)
-                           || string.Equals(fromStateName, "Any State", StringComparison.OrdinalIgnoreCase);
+            bool isAnyState = ControllerTransitions.IsAnyStateName(fromStateName);
 
             AnimatorState toState = null;
             foreach (var cs in rootStateMachine.states)
@@ -142,7 +139,25 @@ namespace MCPForUnity.Editor.Tools.Animation
             }
 
             if (toState == null)
-                return new { success = false, message = $"State '{toStateName}' not found in layer {layerIndex}" };
+                return new { success = false, message = $"State '{toStateName}' not found in layer {layerIndex}. Available states: [{string.Join(", ", ControllerTransitions.StateNames(rootStateMachine))}]" };
+
+            AnimatorState fromState = null;
+            if (!isAnyState)
+            {
+                foreach (var cs in rootStateMachine.states)
+                {
+                    if (cs.state.name == fromStateName) fromState = cs.state;
+                }
+
+                if (fromState == null)
+                    return new { success = false, message = $"State '{fromStateName}' not found in layer {layerIndex}. Available states: [{string.Join(", ", ControllerTransitions.StateNames(rootStateMachine))}]" };
+            }
+
+            // Validate ALL provided properties (incl. conditions, enums, condition-parameter
+            // existence) BEFORE creating the transition — invalid input leaves the controller untouched.
+            var edit = ControllerTransitions.ValidateProperties(controller, @params, out object validationError);
+            if (edit == null)
+                return validationError;
 
             AnimatorStateTransition transition;
             if (isAnyState)
@@ -152,77 +167,36 @@ namespace MCPForUnity.Editor.Tools.Animation
             }
             else
             {
-                AnimatorState fromState = null;
-                foreach (var cs in rootStateMachine.states)
-                {
-                    if (cs.state.name == fromStateName) fromState = cs.state;
-                }
-
-                if (fromState == null)
-                    return new { success = false, message = $"State '{fromStateName}' not found in layer {layerIndex}" };
-
                 transition = fromState.AddTransition(toState);
             }
 
-            bool hasExitTime = @params["hasExitTime"]?.ToObject<bool>() ?? true;
-            transition.hasExitTime = hasExitTime;
-
-            float duration = @params["duration"]?.ToObject<float>() ?? 0.25f;
-            transition.duration = duration;
-
-            float exitTime = @params["exitTime"]?.ToObject<float>() ?? 0.75f;
-            transition.exitTime = exitTime;
-
-            // Add conditions
-            JToken conditionsToken = @params["conditions"];
-            int conditionCount = 0;
-            if (conditionsToken is JArray conditionsArray)
-            {
-                foreach (var condItem in conditionsArray)
-                {
-                    if (condItem is not JObject condObj) continue;
-
-                    string paramName = condObj["parameter"]?.ToString();
-                    if (string.IsNullOrEmpty(paramName)) continue;
-
-                    string modeStr = condObj["mode"]?.ToString()?.ToLowerInvariant() ?? "greater";
-                    float threshold = condObj["threshold"]?.ToObject<float>() ?? 0f;
-
-                    AnimatorConditionMode mode;
-                    switch (modeStr)
-                    {
-                        case "greater": mode = AnimatorConditionMode.Greater; break;
-                        case "less": mode = AnimatorConditionMode.Less; break;
-                        case "equals": mode = AnimatorConditionMode.Equals; break;
-                        case "notequal":
-                        case "not_equal": mode = AnimatorConditionMode.NotEqual; break;
-                        case "if":
-                        case "true": mode = AnimatorConditionMode.If; break;
-                        case "ifnot":
-                        case "if_not":
-                        case "false": mode = AnimatorConditionMode.IfNot; break;
-                        default: mode = AnimatorConditionMode.Greater; break;
-                    }
-
-                    transition.AddCondition(mode, threshold, paramName);
-                    conditionCount++;
-                }
-            }
+            // Historical defaults (backward compatible), then apply provided overrides.
+            transition.hasExitTime = true;
+            transition.duration = 0.25f;
+            transition.exitTime = 0.75f;
+            edit.ApplyTo(transition);
 
             EditorUtility.SetDirty(controller);
             AssetDatabase.SaveAssets();
 
+            // Per-destination index (the value update/remove accept as 'transitionIndex').
+            var sourceTransitions = isAnyState ? rootStateMachine.anyStateTransitions : fromState.transitions;
+            int newIndex = 0;
+            foreach (var t in sourceTransitions)
+            {
+                if (ReferenceEquals(t, transition)) break;
+                if (ControllerTransitions.DestinationName(t) == toStateName) newIndex++;
+            }
+
             return new
             {
                 success = true,
-                message = $"Added transition from '{fromStateName}' to '{toStateName}' with {conditionCount} conditions",
+                message = $"Added transition from '{fromStateName}' to '{toStateName}' (#{newIndex}) with {transition.conditions.Length} conditions",
                 data = new
                 {
-                    fromState = fromStateName,
-                    toState = toStateName,
-                    hasExitTime,
-                    duration,
-                    conditionCount
+                    controllerPath = AssetDatabase.GetAssetPath(controller),
+                    layerIndex,
+                    transition = ControllerTransitions.SerializeTransition(fromStateName, newIndex, transition)
                 }
             };
         }
@@ -313,30 +287,9 @@ namespace MCPForUnity.Editor.Tools.Animation
                 var states = new List<object>();
                 foreach (var cs in layer.stateMachine.states)
                 {
-                    var transitions = new List<object>();
-                    foreach (var t in cs.state.transitions)
-                    {
-                        var conditions = new List<object>();
-                        foreach (var c in t.conditions)
-                        {
-                            conditions.Add(new
-                            {
-                                parameter = c.parameter,
-                                mode = c.mode.ToString(),
-                                threshold = c.threshold
-                            });
-                        }
-
-                        transitions.Add(new
-                        {
-                            destinationState = t.destinationState?.name,
-                            hasExitTime = t.hasExitTime,
-                            exitTime = t.exitTime,
-                            duration = t.duration,
-                            conditionCount = t.conditions.Length,
-                            conditions
-                        });
-                    }
+                    // Full transition serialization (incl. interruptionSource, offset, solo/mute)
+                    // with per-destination 'index' — the same value update/remove take as transitionIndex.
+                    var transitions = ControllerTransitions.SerializeTransitionList(cs.state.name, cs.state.transitions);
 
                     states.Add(new
                     {
@@ -350,12 +303,19 @@ namespace MCPForUnity.Editor.Tools.Animation
                     });
                 }
 
+                // AnyState transitions live on the state machine, not on any state —
+                // previously they were invisible in get_info.
+                var anyStateTransitions = ControllerTransitions.SerializeTransitionList(
+                    "AnyState", layer.stateMachine.anyStateTransitions);
+
                 layers.Add(new
                 {
                     index = i,
                     name = layer.name,
                     stateCount = layer.stateMachine.states.Length,
-                    states
+                    states,
+                    anyStateTransitionCount = layer.stateMachine.anyStateTransitions.Length,
+                    anyStateTransitions
                 });
             }
 
@@ -422,7 +382,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             };
         }
 
-        private static AnimatorController LoadController(JObject @params)
+        internal static AnimatorController LoadController(JObject @params)
         {
             string controllerPath = @params["controllerPath"]?.ToString();
             if (string.IsNullOrEmpty(controllerPath))
@@ -435,7 +395,7 @@ namespace MCPForUnity.Editor.Tools.Animation
             return AssetDatabase.LoadAssetAtPath<AnimatorController>(controllerPath);
         }
 
-        private static object ControllerNotFoundError(JObject @params)
+        internal static object ControllerNotFoundError(JObject @params)
         {
             string path = @params["controllerPath"]?.ToString() ?? "(not specified)";
             return new { success = false, message = $"AnimatorController not found at '{path}'. Provide a valid 'controllerPath'." };

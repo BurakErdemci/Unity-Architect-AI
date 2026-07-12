@@ -74,6 +74,7 @@ class TestActionLists:
 
     def test_expected_controller_actions_present(self):
         expected = {"controller_create", "controller_add_state", "controller_add_transition",
+                    "controller_update_transition", "controller_remove_transition",
                     "controller_add_parameter", "controller_get_info", "controller_assign",
                     "controller_add_layer", "controller_remove_layer", "controller_set_layer_weight",
                     "controller_create_blend_tree_1d", "controller_create_blend_tree_2d", "controller_add_blend_tree_child"}
