@@ -71,7 +71,7 @@ describe('isAllowedUnityScriptPath — path traversal koruması', () => {
     expect(isAllowedUnityScriptPath('/other-project/Assets/Scripts/Hack.cs', WS)).toBe(false)
   })
 
-  it('symlink klasör altına yeni dosya yazmayı reddeder', () => {
+  it('symlink klasör altına yeni dosya yazmayı reddeder', (ctx) => {
     const workspace = path.join(tempRoot, 'workspace')
     const scriptsDir = path.join(workspace, 'Assets', 'Scripts')
     const outsideDir = path.join(tempRoot, 'outside')
@@ -79,7 +79,14 @@ describe('isAllowedUnityScriptPath — path traversal koruması', () => {
 
     fs.mkdirSync(scriptsDir, { recursive: true })
     fs.mkdirSync(outsideDir, { recursive: true })
-    fs.symlinkSync(outsideDir, linkDir, 'dir')
+    try {
+      fs.symlinkSync(outsideDir, linkDir, 'dir')
+    } catch (err: any) {
+      // Windows'ta symlink oluşturmak Developer Mode/yönetici ister (EPERM).
+      // Ortam desteklemiyorsa testi atla — davranış testi değil, ortam kısıtı.
+      if (err?.code === 'EPERM') return ctx.skip()
+      throw err
+    }
 
     const targetFile = path.join(linkDir, 'Exploit.cs')
     expect(isAllowedUnityScriptPath(targetFile, workspace)).toBe(false)

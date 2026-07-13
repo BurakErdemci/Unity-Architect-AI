@@ -421,6 +421,7 @@ export default function Home() {
         handleTreeContextMenu={fs.handleTreeContextMenu} startTreeCreate={fs.startTreeCreate}
         startRename={fs.startRename} handleTreeDelete={fs.handleTreeDelete}
         treeContextMenu={fs.treeContextMenu} setTreeContextMenu={fs.setTreeContextMenu}
+        gitStatus={fs.gitStatus}
         user={auth.user} setShowSettings={ai.setShowSettings} handleLogout={handleLogout}
       />
 

@@ -67,6 +67,7 @@ interface SidebarProps {
   setTreeCreating: (val: any) => void;
   treeContextMenu: { x: number; y: number; entry: FileEntry } | null;
   setTreeContextMenu: (val: any) => void;
+  gitStatus?: { isRepo: boolean; files: Record<string, string>; dirs: Record<string, string> };
 
   user: UserData | null;
   setShowSettings: (val: boolean) => void;

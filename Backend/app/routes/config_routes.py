@@ -18,7 +18,11 @@ def create_config_router(db):
     @router.post("/save-ai-config")
     async def save_config(req: AIConfigRequest, x_session_token: str = Header(alias="X-Session-Token")):
         user_id, _ = require_user(db, x_session_token, req.user_id)
-        if req.api_key and req.provider_type != "ollama":
+        # 'CLI_SESSION' abonelik modunun placeholder'ıdır, GERÇEK key değildir.
+        # Frontend state'inde bayat kalıp bulut modele geçişte buraya sızıyor ve
+        # kullanıcının gerçek API key'inin ÜZERİNE yazıyordu (nvidia 401 bug'ı,
+        # 2026-07-13 canlı yakalandı) → asla key olarak kaydetme.
+        if req.api_key and req.api_key != "CLI_SESSION" and req.provider_type not in ("ollama", "subscription"):
             db.save_api_key(user_id, req.provider_type, req.api_key)
         db.save_ai_config(user_id, req.provider_type, req.model_name, "")
         return {"status": "success"}

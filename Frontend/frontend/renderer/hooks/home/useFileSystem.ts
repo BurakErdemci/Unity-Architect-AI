@@ -18,6 +18,25 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
   const [code, setCode] = useState('');
   const [originalCode, setOriginalCode] = useState('');
   const [isDirty, setIsDirty] = useState(false);
+
+  // VSCode tarzı git rozetleri: mutlak yol → durum (modified/added/untracked/deleted)
+  const [gitStatus, setGitStatus] = useState<{ isRepo: boolean; files: Record<string, string>; dirs: Record<string, string> }>({ isRepo: false, files: {}, dirs: {} });
+  const refreshGitStatus = useCallback(async (ws?: string | null) => {
+    const target = ws ?? workspacePath;
+    if (!ipc || !target) return;
+    try {
+      const res = await ipc.invoke('git-status', target);
+      setGitStatus(res || { isRepo: false, files: {}, dirs: {} });
+    } catch { /* best-effort */ }
+  }, [workspacePath]);
+
+  // Periyodik tazeleme (20 sn) — dışarıda (IDE/terminal) yapılan değişiklikler de yansısın
+  useEffect(() => {
+    if (!workspacePath) { setGitStatus({ isRepo: false, files: {}, dirs: {} }); return; }
+    refreshGitStatus(workspacePath);
+    const iv = setInterval(() => refreshGitStatus(workspacePath), 20000);
+    return () => clearInterval(iv);
+  }, [workspacePath, refreshGitStatus]);
   
   // Track dirty state
   useEffect(() => {
@@ -105,7 +124,8 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
       } catch { }
     }
     setDirContents(newDirContents);
-  }, [dirContents, expandedDirs, workspacePath]);
+    refreshGitStatus(workspacePath);
+  }, [dirContents, expandedDirs, workspacePath, refreshGitStatus]);
 
   const openFolder = useCallback(async () => {
     if (!ipc) return;
@@ -335,6 +355,7 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
     setExportFileName, changeExportDir, exportSingleFile, exportMultipleFiles,
     suggestFilePath, pendingGenFiles, setPendingGenFiles,
     pendingDelete, setPendingDelete, deleteFile, handleExportToUnity,
+    gitStatus, refreshGitStatus,
     rootFolderPath: workspacePath
   };
 };

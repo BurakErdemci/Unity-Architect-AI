@@ -43,7 +43,16 @@ interface FileTreeProps {
   setTreeCreateValue: (val: string) => void;
   submitTreeCreate: () => void;
   setTreeCreating: (val: any) => void;
+  gitStatus?: { isRepo: boolean; files: Record<string, string>; dirs: Record<string, string> };
 }
+
+// VSCode renkleri: modified sarı, untracked/added yeşil, deleted kırmızı
+const GIT_BADGE: Record<string, { letter: string; text: string }> = {
+  modified:  { letter: 'M', text: 'text-[#E2C08D]' },
+  untracked: { letter: 'U', text: 'text-[#73C991]' },
+  added:     { letter: 'A', text: 'text-[#73C991]' },
+  deleted:   { letter: 'D', text: 'text-[#F14C4C]' },
+};
 
 export const FileTree: React.FC<FileTreeProps> = (props) => {
   const {
@@ -52,8 +61,19 @@ export const FileTree: React.FC<FileTreeProps> = (props) => {
     renamingPath, renameValue, setRenameValue, submitRename, setRenamingPath,
     handleTreeDragStart, handleTreeDragOver, handleTreeDragLeave, handleTreeDrop,
     handleTreeContextMenu, startTreeCreate, startRename, handleTreeDelete,
-    treeCreating, treeCreateValue, setTreeCreateValue, submitTreeCreate, setTreeCreating
+    treeCreating, treeCreateValue, setTreeCreateValue, submitTreeCreate, setTreeCreating,
+    gitStatus
   } = props;
+
+  // Girdinin git durumu: dosya → files haritasından; klasör → içinde değişiklik
+  // varsa 'contains' (nokta rozeti). Harita anahtarları LOWERCASE tutulur
+  // (Windows sürücü-harfi/case farkları), arama da lowercase yapılır.
+  const gitInfo = (entry: FileEntry): string | null => {
+    if (!gitStatus?.isRepo) return null;
+    const key = entry.path.toLowerCase();
+    if (!entry.isDirectory) return gitStatus.files[key] || null;
+    return gitStatus.dirs[key] ? 'contains' : null;
+  };
 
   const getFileIcon = (ext: string) => {
     const e = ext.toLowerCase();
@@ -102,7 +122,25 @@ export const FileTree: React.FC<FileTreeProps> = (props) => {
                 </>
               ) : <span className="w-[11px] shrink-0" />}
               {!entry.isDirectory && getFileIcon(entry.extension)}
-              <span className="truncate flex-1">{entry.name}</span>
+              {(() => {
+                const gs = gitInfo(entry);
+                const badge = gs && gs !== 'contains' ? GIT_BADGE[gs] : null;
+                return (
+                  <>
+                    <span className={`truncate flex-1 ${badge ? badge.text : ''} ${gs === 'deleted' ? 'line-through opacity-70' : ''}`}>
+                      {entry.name}
+                    </span>
+                    {badge && (
+                      <span className={`${badge.text} text-[10px] font-bold shrink-0 pr-1 group-hover:hidden`} title={gs === 'untracked' ? 'Yeni (untracked)' : gs === 'modified' ? 'Değiştirildi' : gs === 'added' ? 'Eklendi (staged)' : 'Silindi'}>
+                        {badge.letter}
+                      </span>
+                    )}
+                    {gs === 'contains' && (
+                      <span className="text-[#E2C08D] text-[9px] shrink-0 pr-1.5 group-hover:hidden" title="Bu klasörde değişiklik var">●</span>
+                    )}
+                  </>
+                );
+              })()}
               <span className="hidden group-hover:flex items-center gap-0.5 ml-auto shrink-0">
                 {entry.isDirectory && (
                   <>

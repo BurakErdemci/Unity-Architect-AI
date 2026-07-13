@@ -55,8 +55,12 @@ describe('IPC Whitelist — izinsiz kanallar engellenir', () => {
 })
 
 describe('IPC Whitelist — Set doğruluğu', () => {
-  it('tam olarak 23 kanal içerir', () => {
-    expect(ALLOWED_INVOKE_CHANNELS.size).toBe(23)
+  it('tam olarak 24 kanal içerir', () => {
+    expect(ALLOWED_INVOKE_CHANNELS.size).toBe(24)
+  })
+
+  it('git-status kanalı whitelist\'te', () => {
+    expect(ALLOWED_INVOKE_CHANNELS.has('git-status')).toBe(true)
   })
 
   it('her kanal benzersiz', () => {

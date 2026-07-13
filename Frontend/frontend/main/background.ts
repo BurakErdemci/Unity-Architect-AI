@@ -245,6 +245,63 @@ ipcMain.handle('read-directory', async (_event, dirPath: string, workspacePath?:
   } catch { return [] }
 })
 
+// VSCode tarzı git durum rozetleri: workspace bir git reposuysa değişen/yeni/
+// silinen dosyaların mutlak-yol → durum haritasını döner (dosya ağacı boyar).
+ipcMain.handle('git-status', async (_event, workspacePath?: string) => {
+  const empty = { isRepo: false, files: {}, dirs: {} }
+  try {
+    if (!workspacePath || !fs.existsSync(workspacePath)) return empty
+    const { execFile } = require('child_process') as typeof import('child_process')
+    const run = (args: string[]) => new Promise<string>((resolve, reject) => {
+      execFile('git', ['-C', workspacePath, ...args], {
+        timeout: 8000, maxBuffer: 8 * 1024 * 1024, windowsHide: true,
+      }, (err, stdout) => err ? reject(err) : resolve(stdout))
+    })
+
+    const toplevel = (await run(['rev-parse', '--show-toplevel'])).trim()
+    if (!toplevel) return empty
+    // -z: NUL ayraçlı (boşluklu/unicode yollar güvenli); untracked dosyalar tek tek
+    const raw = await run(['status', '--porcelain', '-z', '--untracked-files=all'])
+
+    const files: Record<string, string> = {}
+    const dirs: Record<string, string> = {}
+    const parts = raw.split('\0')
+    let count = 0
+    for (let i = 0; i < parts.length && count < 8000; i++) {
+      const p = parts[i]
+      if (p.length < 4) continue
+      const xy = p.slice(0, 2)
+      const rel = p.slice(3)
+      if (!rel) continue
+      // Rename kayıtlarında sonraki eleman ESKİ yoldur → atla
+      if (xy[0] === 'R' || xy[0] === 'C') i++
+      let status = 'modified'
+      if (xy === '??') status = 'untracked'
+      else if (xy.includes('D')) status = 'deleted'
+      else if (xy.includes('A')) status = 'added'
+      // Anahtarlar lowercase: renderer'daki entry.path ile sürücü-harfi/case
+      // farklarından bağımsız eşleşme (renderer da lowercase ile arar).
+      const abs = path.normalize(path.join(toplevel, rel)).toLowerCase()
+      files[abs] = status
+      count++
+      // Üst klasörleri işaretle (workspace köküne kadar) — klasörde nokta rozeti.
+      // Windows'ta sürücü harfi büyük/küçük gelebilir (C:\ vs c:\) → karşılaştırma
+      // case-insensitive, anahtarlar orijinal (path.join ile aynı) case'te tutulur.
+      let dir = path.dirname(abs)
+      const rootLower = path.normalize(workspacePath).toLowerCase()
+      while (dir.startsWith(rootLower) && !dirs[dir]) {
+        dirs[dir] = 'contains'
+        const parent = path.dirname(dir)
+        if (parent === dir) break
+        dir = parent
+      }
+    }
+    return { isRepo: true, files, dirs }
+  } catch {
+    return empty // git yok / repo değil / timeout → rozetsiz devam
+  }
+})
+
 ipcMain.handle('read-file', async (_event, filePath: string, workspacePath?: string) => {
   try {
     if (!workspacePath) return null;

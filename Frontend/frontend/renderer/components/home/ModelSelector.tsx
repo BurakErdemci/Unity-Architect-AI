@@ -197,7 +197,10 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
     const cloudProvider = (orToggle && m.openrouter_id) ? 'openrouter' : (m.provider || '');
     const hasKey = providersWithKeys.includes(cloudProvider);
     // Optimistic: tıklama HER ZAMAN modele geçer; key yoksa Ayarlar açılır.
-    const newCfg = { ...aiConfig, provider_type: cloudProvider, model_name: effectiveModelId };
+    // api_key BİLEREK boşaltılır: state'te bayat 'CLI_SESSION' (veya başka
+    // provider'ın key'i) kalmış olabilir — save-ai-config'e sızarsa kullanıcının
+    // kayıtlı gerçek key'ini ezer (nvidia 401 bug'ı).
+    const newCfg = { ...aiConfig, provider_type: cloudProvider, model_name: effectiveModelId, api_key: '' };
     setAiConfig(newCfg);
     setIsModelDropdownOpen(false);
     if (user) await axios.post(`${API}/save-ai-config`, { ...newCfg, user_id: user.id });
