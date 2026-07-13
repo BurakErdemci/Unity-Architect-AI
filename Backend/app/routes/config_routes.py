@@ -393,6 +393,9 @@ def create_config_router(db):
         "opencode": ("npm install -g opencode-ai", True),
         "claude":   ("npm install -g @anthropic-ai/claude-code", True),
         "codex":    ("npm install -g @openai/codex", True),
+        # DİKKAT: npm'deki 'agy'/'antigravity-cli' paketleri Google'ın DEĞİL
+        # (squatter) — agy yalnız resmi installer'la kurulur (LOCALAPPDATA\agy\bin).
+        "agy":      ("irm 'https://antigravity.google/cli/install.ps1' | iex", False),
     }
     _LOGIN_CMDS = {
         "cursor":   "agent login",
@@ -400,6 +403,7 @@ def create_config_router(db):
         "codex":    "codex login",
         "opencode": "opencode auth login",
         "claude":   "claude",   # claude login akışı interaktif oturum içinde (/login)
+        "agy":      "agy",      # login subcommand'ı yok — ilk interaktif açılış Google girişini başlatır
     }
 
     def _open_visible_terminal(ps_command: str) -> None:
