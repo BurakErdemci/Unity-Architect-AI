@@ -131,11 +131,18 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
 
   // CLI doktoru: kurulu mu + giriş yapılmış mı (Kur/Giriş butonlarını sürer).
   const [doctor, setDoctor] = useState<CliDoctor | null>(null);
+  const [doctorRefreshing, setDoctorRefreshing] = useState(false);
   const fetchDoctor = async (refresh = false) => {
+    if (refresh) setDoctorRefreshing(true);
     try {
       const res = await axios.get(`${API}/cli-doctor${refresh ? '?refresh=true' : ''}`);
       setDoctor(res.data || {});
-    } catch { /* best-effort */ }
+      if (refresh) showToast('CLI durumları güncellendi.', 'success');
+    } catch {
+      if (refresh) showToast('CLI durumları alınamadı.', 'error');
+    } finally {
+      if (refresh) setDoctorRefreshing(false);
+    }
   };
   useEffect(() => {
     if (!isModelDropdownOpen || !API) return;
@@ -443,11 +450,14 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                       <div className="flex items-center justify-between pr-2">
                         {sectionLabel(<Key size={9} />, t('models.subscription'))}
                         <button
-                          onClick={() => { fetchDoctor(true); setDynModels({}); showToast('CLI durumları yenileniyor…', 'info'); }}
+                          onClick={() => { if (!doctorRefreshing) { fetchDoctor(true); setDynModels({}); } }}
+                          disabled={doctorRefreshing}
                           title="Kurulum/giriş durumlarını ve model listelerini yenile"
-                          className="p-1 rounded-md text-slate-500 hover:text-slate-300 hover:bg-white/[0.06] transition-colors"
+                          className={`p-1 rounded-md transition-colors ${doctorRefreshing
+                            ? 'text-blue-400 bg-blue-500/10'
+                            : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.06] active:scale-90'}`}
                         >
-                          <RefreshCw size={11} />
+                          <RefreshCw size={11} className={doctorRefreshing ? 'animate-spin' : ''} />
                         </button>
                       </div>
                       {CLI_GROUPS.map(g => {

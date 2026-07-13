@@ -485,7 +485,20 @@ class CodexSession:
             await out_q.put(None)  # sentinel → stream biter
 
         elif method == "error":
-            await out_q.put({"type": "error", "message": json.dumps(params, ensure_ascii=False)[:300]})
+            # willRetry=true → GEÇİCİ hata (codex kendi yeniden deniyor): turu
+            # ÖLDÜRME, ham JSON'u kullanıcıya basma; kısa bir durum notu göster.
+            # (Canlı yakalandı: "Reconnecting... 2/5" + willRetry:true ham error
+            # olarak yüzeye vuruyor ve turu bitiriyordu.)
+            if params.get("willRetry"):
+                _note = params.get("message", "yeniden bağlanılıyor…")
+                await out_q.put({"type": "thinking", "text": f"🔁 Codex: {_note}"})
+                return
+            _err = params.get("message") or json.dumps(params, ensure_ascii=False)[:300]
+            _details = ((params.get("codexErrorInfo") or {}).get("additionalDetails")
+                        or params.get("additionalDetails") or "")
+            if _details and _details not in _err:
+                _err = f"{_err} — {_details}"[:400]
+            await out_q.put({"type": "error", "message": _err})
             await out_q.put(None)
 
     @staticmethod

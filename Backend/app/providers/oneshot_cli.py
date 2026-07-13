@@ -200,9 +200,11 @@ PLAN_ERROR_RE = _re.compile(
     r"(named models unavailable|free plans can only use auto|"
     r"is not available|switch to auto|upgrade plans)", _re.I)
 
-# Codex plan kısıtı (canlı yakalandı 2026-07-13):
+# Codex plan kısıtı (ikisi de canlı yakalandı 2026-07-13):
 #   "The 'gpt-5.6-sol' model is not supported when using Codex with a ChatGPT account."
-CODEX_PLAN_ERROR_RE = _re.compile(r"model is not supported when using codex", _re.I)
+#   "unexpected status 404 Not Found: Model not found gpt-5.6-luna-free-1p-..."
+CODEX_PLAN_ERROR_RE = _re.compile(
+    r"(model is not supported when using codex|model not found)", _re.I)
 
 # Kota/limit tükenmesi (tüm CLI'lar) → kullanıcıya dostane "hakkın doluyor/doldu" mesajı
 QUOTA_ERROR_RE = _re.compile(
