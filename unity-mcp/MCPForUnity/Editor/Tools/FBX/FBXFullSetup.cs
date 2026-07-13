@@ -88,9 +88,6 @@ namespace MCPForUnity.Editor.Tools.FBX
                     continue;
                 }
 
-                var entry = FBXNamingDetector.Detect(animPath);
-                entries.Add(entry);
-
                 var charImporter = AssetImporter.GetAtPath(characterFbx) as ModelImporter;
                 var animImporter = AssetImporter.GetAtPath(animPath) as ModelImporter;
                 if (charImporter != null && animImporter != null)
@@ -112,6 +109,16 @@ namespace MCPForUnity.Editor.Tools.FBX
                     }
                 }
 
+                // Kullanıcı setup_clips ile klip adı/loop ayarlamış olabilir — ONU KORU.
+                // (Controller builder klibi FBX'ten yükler; kategori tespiti klip adına
+                //  bakar → korunan ad hem controller'ı hem loop'u bozmadan geçer.)
+                var existingClips        = animImporter?.clipAnimations;
+                bool hasUserClips        = existingClips != null && existingClips.Length > 0;
+                string configuredClipName = hasUserClips ? existingClips[0].name : null;
+
+                var entry = FBXNamingDetector.Detect(animPath, configuredClipName);
+                entries.Add(entry);
+
                 var animRigParams = new JObject
                 {
                     ["path"]        = animPath,
@@ -121,38 +128,48 @@ namespace MCPForUnity.Editor.Tools.FBX
                 };
                 FBXImportSetup.ConfigureRig(animRigParams);
 
-                // Bug fix: gerçek frame aralığını FBX'ten oku (default 0→60 truncation'ı önler)
-                float firstFrame = 0f, lastFrame = 60f;
-                if (animImporter != null)
+                if (hasUserClips)
                 {
-                    var defaults = animImporter.defaultClipAnimations;
-                    var customs  = animImporter.clipAnimations;
-                    var source   = (customs != null && customs.Length > 0) ? customs : defaults;
-                    if (source != null && source.Length > 0)
-                    {
-                        firstFrame = source[0].firstFrame;
-                        lastFrame  = source[0].lastFrame;
-                    }
+                    // Mevcut ayarı koru; entry'yi kullanıcının adı/loop'u ile hizala, üzerine yazma.
+                    entry.ClipName = existingClips[0].name;
+                    entry.Loop     = existingClips[0].loopTime;
+                    diagnostics.AddInfo(
+                        "CLIP_CONFIG_PRESERVED",
+                        $"'{Path.GetFileName(animPath)}': mevcut klip ayarı korundu (ad='{entry.ClipName}', loop={entry.Loop}). full_setup üzerine yazmadı.",
+                        new { anim_fbx = animPath, clip = entry.ClipName, loop = entry.Loop }
+                    );
                 }
-
-                var clipDefs = new JArray
+                else
                 {
-                    new JObject
+                    // İlk kurulum — gerçek frame aralığını FBX'ten oku (default 0→60 truncation'ı önler).
+                    float firstFrame = 0f, lastFrame = 60f;
+                    var defaults = animImporter?.defaultClipAnimations;
+                    if (defaults != null && defaults.Length > 0)
                     {
-                        ["name"]        = entry.ClipName,
-                        ["loop"]        = entry.Loop,
-                        ["start_frame"] = (int)firstFrame,
-                        ["end_frame"]   = (int)lastFrame,
+                        firstFrame = defaults[0].firstFrame;
+                        lastFrame  = defaults[0].lastFrame;
                     }
-                };
-                FBXImportSetup.SetupClips(new JObject { ["path"] = animPath, ["clips"] = clipDefs });
+
+                    var clipDefs = new JArray
+                    {
+                        new JObject
+                        {
+                            ["name"]        = entry.ClipName,
+                            ["loop"]        = entry.Loop,
+                            ["start_frame"] = (int)firstFrame,
+                            ["end_frame"]   = (int)lastFrame,
+                        }
+                    };
+                    FBXImportSetup.SetupClips(new JObject { ["path"] = animPath, ["clips"] = clipDefs });
+                }
 
                 animResults.Add(new
                 {
-                    path     = animPath,
-                    clip     = entry.ClipName,
-                    category = entry.Category.ToString(),
-                    loop     = entry.Loop,
+                    path      = animPath,
+                    clip      = entry.ClipName,
+                    category  = entry.Category.ToString(),
+                    loop      = entry.Loop,
+                    preserved = hasUserClips,
                 });
             }
 

@@ -354,7 +354,12 @@ def create_config_router(db):
             if not base:
                 return None
             out = await _run_cli_capture([*base, "status"], timeout=10)
-            if "logged in" in out.lower():
+            low = out.lower()
+            # DİKKAT: "not logged in" metni "logged in" alt-dizesini içerir →
+            # negatifi ÖNCE kontrol et, yoksa çıkış yapmış kullanıcı "giriş yapmış" görünür.
+            if "not logged in" in low or "not authenticated" in low or "please log in" in low:
+                return False
+            if "logged in" in low or "logged in as" in low:
                 return True
             return False if out.strip() else None
 

@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -19,20 +20,43 @@ namespace MCPForUnity.Editor.Tools.FBX
 
     internal static class FBXNamingDetector
     {
-        public static AnimationEntry Detect(string fbxPath)
+        public static AnimationEntry Detect(string fbxPath, string configuredClipName = null)
         {
             string fileName = Path.GetFileNameWithoutExtension(fbxPath);
-            string lower    = fileName.ToLowerInvariant();
+
+            // Kategori tespiti kaynağı: kullanıcının verdiği klip adı (setup_clips ile
+            // ayarlanmışsa) önce gelir; yoksa dosya adından "Karakter_Anim_Walk" ya da
+            // Mixamo "Karakter@Walk" gibi önekler ayıklanıp anlamlı son ek kullanılır.
+            string detectSource = !string.IsNullOrEmpty(configuredClipName)
+                ? configuredClipName
+                : StripAnimMarker(fileName);
+            string lower = detectSource.ToLowerInvariant();
 
             var entry = new AnimationEntry
             {
                 FbxPath  = fbxPath,
-                ClipName = fileName,
+                ClipName = !string.IsNullOrEmpty(configuredClipName) ? configuredClipName : fileName,
             };
 
             Categorize(lower, entry);
             entry.Loop = AutoDetectLoop(entry.Category);
             return entry;
+        }
+
+        // "Yagmaci_Anim_Walk" → "Walk", "Hero_Animation_Attack" → "Attack",
+        // "Ch03@Running" → "Running". Marker yoksa dosya adını olduğu gibi döndürür
+        // (geriye dönük uyumlu — eski düz "Walk.fbx" adları da çalışmaya devam eder).
+        private static string StripAnimMarker(string fileName)
+        {
+            string[] markers = { "_animation_", "_anim_", "_anims_", "@" };
+            string lower = fileName.ToLowerInvariant();
+            foreach (var m in markers)
+            {
+                int idx = lower.LastIndexOf(m, StringComparison.Ordinal);
+                if (idx >= 0 && idx + m.Length < fileName.Length)
+                    return fileName.Substring(idx + m.Length);
+            }
+            return fileName;
         }
 
         public static bool HasDirectionalWalks(IEnumerable<AnimationEntry> entries)

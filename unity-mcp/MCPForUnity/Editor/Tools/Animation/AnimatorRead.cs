@@ -14,9 +14,11 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (go == null)
                 return new { success = false, message = "Target GameObject not found" };
 
-            var animator = go.GetComponent<Animator>();
+            // Animator genelde model child'ında olur (kullanıcı scriptleri de
+            // GetComponentInChildren kullanıyor) — kökte yoksa child'larda ara.
+            var animator = go.GetComponent<Animator>() ?? go.GetComponentInChildren<Animator>(true);
             if (animator == null)
-                return new { success = false, message = $"No Animator component on '{go.name}'" };
+                return new { success = false, message = $"No Animator component on '{go.name}' or its children" };
 
             var parameters = new List<object>();
             for (int i = 0; i < animator.parameterCount; i++)
@@ -72,7 +74,7 @@ namespace MCPForUnity.Editor.Tools.Animation
                 success = true,
                 data = new
                 {
-                    gameObject = go.name,
+                    gameObject = animator.gameObject.name,
                     enabled = animator.enabled,
                     speed = animator.speed,
                     hasController = animator.runtimeAnimatorController != null,
@@ -95,9 +97,9 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (go == null)
                 return new { success = false, message = "Target GameObject not found" };
 
-            var animator = go.GetComponent<Animator>();
+            var animator = go.GetComponent<Animator>() ?? go.GetComponentInChildren<Animator>(true);
             if (animator == null)
-                return new { success = false, message = $"No Animator component on '{go.name}'" };
+                return new { success = false, message = $"No Animator component on '{go.name}' or its children" };
 
             string paramName = @params["parameterName"]?.ToString();
             if (string.IsNullOrEmpty(paramName))
