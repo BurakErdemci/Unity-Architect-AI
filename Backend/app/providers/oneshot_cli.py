@@ -150,6 +150,95 @@ def cli_installed(cli: str) -> bool:
 #   copilot-claude-sonnet-5      → claude-sonnet-5
 #   opencode:opencode/big-pickle → opencode/big-pickle
 # ─────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────
+# Plan yetenekleri (öğrenilmiş): adlı modeller bu planda çalışıyor mu?
+# Kaynaklar: (a) /cli-models içindeki tek seferlik ucuz probe,
+#            (b) agent_runner'daki canlı Auto-fallback (turda plan hatası).
+# Dosya: ~/.unity_architect_ai/cli_plan_caps.json
+#   {"cursor": {"named_models": false, "checked_at": 1234567890}, ...}
+# ─────────────────────────────────────────────────────────────────
+_CAPS_PATH = os.path.expanduser(os.path.join("~", ".unity_architect_ai", "cli_plan_caps.json"))
+_CAPS_TTL = 7 * 24 * 3600  # planlar değişebilir → haftada bir yeniden öğren
+
+
+def get_plan_caps() -> dict:
+    try:
+        import json as _json
+        with open(_CAPS_PATH, "r", encoding="utf-8") as f:
+            return _json.load(f) or {}
+    except Exception:
+        return {}
+
+
+def get_named_models_cap(cli: str) -> Optional[bool]:
+    """True/False = biliniyor; None = bilinmiyor veya bayat (yeniden öğren)."""
+    import time
+    entry = get_plan_caps().get(cli)
+    if not isinstance(entry, dict) or "named_models" not in entry:
+        return None
+    if time.time() - entry.get("checked_at", 0) > _CAPS_TTL:
+        return None
+    return bool(entry["named_models"])
+
+
+def set_named_models_cap(cli: str, available: bool) -> None:
+    try:
+        import json as _json, time
+        caps = get_plan_caps()
+        caps[cli] = {"named_models": bool(available), "checked_at": time.time()}
+        os.makedirs(os.path.dirname(_CAPS_PATH), exist_ok=True)
+        with open(_CAPS_PATH, "w", encoding="utf-8") as f:
+            _json.dump(caps, f, indent=2)
+        logger.info(f"[plan-caps] {cli}.named_models={available}")
+    except Exception as e:
+        logger.warning(f"[plan-caps] yazılamadı: {e}")
+
+
+# Plan kısıtı hata kalıbı (cursor/copilot canlı yakalandı)
+import re as _re
+PLAN_ERROR_RE = _re.compile(
+    r"(named models unavailable|free plans can only use auto|"
+    r"is not available|switch to auto|upgrade plans)", _re.I)
+
+
+async def probe_named_models(cli: str, timeout: float = 30.0) -> Optional[bool]:
+    """Ucuz adlı-model probe'u: planın adlı modelleri destekleyip desteklemediğini
+    tek seferlik öğrenir. True/False döner; belirsizse None (karar verme)."""
+    import asyncio
+    import subprocess as sp
+    base = resolve_cli_cmd(cli)
+    if not base:
+        return None
+    if cli == "cursor":
+        cmd = [*base, "-p", "--model", "gpt-5.2", "--output-format", "json", "--trust", "Reply: 1"]
+    elif cli == "copilot":
+        cmd = [*base, "--model", "claude-haiku-4.5", "-s", "--no-color", "--no-auto-update", "-p", "Reply: 1"]
+    else:
+        return None
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            creationflags=getattr(sp, "CREATE_NO_WINDOW", 0))
+        out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        blob = (out.decode("utf-8", "ignore") + "\n" + err.decode("utf-8", "ignore"))
+        if PLAN_ERROR_RE.search(blob):
+            set_named_models_cap(cli, False)
+            return False
+        if proc.returncode == 0:
+            set_named_models_cap(cli, True)
+            return True
+        return None  # başka tür hata (auth vb.) → plan hakkında hüküm verme
+    except asyncio.TimeoutError:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        return None
+    except Exception:
+        return None
+
+
 def split_model_id(our_id: str) -> Tuple[Optional[str], str]:
     """(cli_key, cli_model) döndürür; eşleşme yoksa (None, our_id)."""
     if our_id.startswith("cursor-"):

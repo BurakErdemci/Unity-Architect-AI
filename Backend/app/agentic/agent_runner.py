@@ -1165,10 +1165,9 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
             sess.session_id = provider.fresh_session_id
 
         # Plan kısıtı tespiti: Cursor/Copilot free planlarda adlı modeller kapalı.
-        # Hata mesajı bu kalıba uyarsa turu 'auto' modeliyle OTOMATİK tekrarlarız.
-        _PLAN_ERR = _re.compile(
-            r"(named models unavailable|free plans can only use auto|"
-            r"is not available|switch to auto|upgrade plans)", _re.I)
+        # Hata mesajı bu kalıba uyarsa turu 'auto' modeliyle OTOMATİK tekrarlarız
+        # ve öğrenilen kısıt cli_plan_caps.json'a yazılır (model seçici soluklaştırır).
+        from providers.oneshot_cli import PLAN_ERROR_RE as _PLAN_ERR, set_named_models_cap
         _current_model = (self.model_name or "").lower()
         _can_fallback = (
             cli_key in ("cursor", "copilot")
@@ -1228,9 +1227,14 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                             yield AgentEvent("error", {"message": _msg})
 
                 if not _plan_error:
+                    # Adlı model başarıyla çalıştıysa planın desteklediğini öğren
+                    # (upgrade sonrası soluk modeller kendiliğinden açılır).
+                    if attempt == 1 and not got_error and _can_fallback:
+                        set_named_models_cap(cli_key, True)
                     break
 
                 # ── Auto fallback (yalnız cursor/copilot, tek sefer) ──
+                set_named_models_cap(cli_key, False)
                 logger.info(f"[{cli_key}Session] plan kısıtı → auto fallback (model={self.model_name})")
                 yield AgentEvent("thinking", {
                     "text": (f"ℹ️ Aboneliğin bu modeli desteklemiyor — **Auto** ile devam ediyorum. "

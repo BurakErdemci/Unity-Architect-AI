@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 import urllib.request
 
 from fastapi import APIRouter, Header, HTTPException
@@ -241,33 +242,176 @@ def create_config_router(db):
             models.append({"id": f"opencode:{line}", "name": pretty, "provider": "subscription"})
         return models
 
+    # Copilot'un programatik model listeleme komutu yok → statik liste (dinamik
+    # endpoint'ten servis edilir ki plan-caps disabled bayrakları eklenebilsin).
+    _COPILOT_MODELS = [
+        {"id": "copilot-auto",                   "name": "Copilot Auto (Önerilen)", "provider": "subscription"},
+        {"id": "copilot-claude-sonnet-5",        "name": "Claude Sonnet 5",         "provider": "subscription"},
+        {"id": "copilot-claude-fable-5",         "name": "Claude Fable 5",          "provider": "subscription"},
+        {"id": "copilot-claude-opus-4.8",        "name": "Claude Opus 4.8",         "provider": "subscription"},
+        {"id": "copilot-claude-haiku-4.5",       "name": "Claude Haiku 4.5",        "provider": "subscription"},
+        {"id": "copilot-gpt-5.6-sol",            "name": "GPT-5.6 Sol",             "provider": "subscription"},
+        {"id": "copilot-gpt-5.6-luna",           "name": "GPT-5.6 Luna",            "provider": "subscription"},
+        {"id": "copilot-gpt-5.5",                "name": "GPT-5.5",                 "provider": "subscription"},
+        {"id": "copilot-gpt-5.4-mini",           "name": "GPT-5.4 Mini",            "provider": "subscription"},
+        {"id": "copilot-gemini-3.1-pro-preview", "name": "Gemini 3.1 Pro",          "provider": "subscription"},
+    ]
+
+    def _apply_plan_caps(cli: str, models: list) -> list:
+        """Plan adlı modelleri desteklemiyorsa auto dışındakileri devre dışı işaretle."""
+        from providers.oneshot_cli import get_named_models_cap
+        if get_named_models_cap(cli) is False:
+            for m in models:
+                if m["id"] not in (f"{cli}-auto",):
+                    m["disabled"] = True
+                    m["disabled_reason"] = "plan"
+        return models
+
     @router.get("/cli-models/{cli}")
     async def cli_models(cli: str, x_session_token: str = Header(alias="X-Session-Token", default="")):
-        """Cursor/OpenCode için canlı model listesi (kullanıcının hesabına/kurulumuna
-        göre). 5 dk cache'lenir. CLI kurulu değilse boş liste döner."""
+        """Cursor/OpenCode: canlı model listesi; Copilot: statik liste.
+        Cursor/Copilot'ta plan adlı modelleri desteklemiyorsa (öğrenilmiş/probe)
+        modeller disabled=true bayrağıyla döner. 5 dk cache."""
         import time
-        from providers.oneshot_cli import resolve_cli_cmd
+        from providers.oneshot_cli import resolve_cli_cmd, get_named_models_cap, probe_named_models
 
-        if cli not in ("cursor", "opencode"):
-            raise HTTPException(404, "Desteklenen: cursor, opencode")
+        if cli not in ("cursor", "opencode", "copilot"):
+            raise HTTPException(404, "Desteklenen: cursor, opencode, copilot")
 
         cached = _cli_models_cache.get(cli)
         if cached and time.time() - cached[0] < _CLI_MODELS_TTL:
-            return {"models": cached[1]}
+            return {"models": cached[1], "installed": True}
 
         base = resolve_cli_cmd(cli)
         if not base:
             return {"models": [], "installed": False}
 
-        try:
-            raw = await _run_cli_capture([*base, "models"])
-            models = _parse_cursor_models(raw) if cli == "cursor" else _parse_opencode_models(raw)
-        except Exception as exc:
-            logger.warning(f"cli-models({cli}) alınamadı: {exc}")
-            models = []
+        if cli == "copilot":
+            import copy
+            models = copy.deepcopy(_COPILOT_MODELS)
+        else:
+            try:
+                raw = await _run_cli_capture([*base, "models"])
+                models = _parse_cursor_models(raw) if cli == "cursor" else _parse_opencode_models(raw)
+            except Exception as exc:
+                logger.warning(f"cli-models({cli}) alınamadı: {exc}")
+                models = []
+
+        # Plan yeteneği bilinmiyorsa TEK SEFERLİK ucuz probe (sonuç haftalık cache'li
+        # dosyada). İlk açılışta grup birkaç sn "yükleniyor" gösterir, sonrası anlık.
+        if cli in ("cursor", "copilot") and get_named_models_cap(cli) is None:
+            await probe_named_models(cli)
+        models = _apply_plan_caps(cli, models)
 
         if models:
             _cli_models_cache[cli] = (time.time(), models)
         return {"models": models, "installed": True}
+
+    # ── CLI doktoru: kurulu mu + giriş yapılmış mı ──────────────────
+    _doctor_cache: dict = {}
+
+    @router.get("/cli-doctor")
+    async def cli_doctor(refresh: bool = False, x_session_token: str = Header(alias="X-Session-Token", default="")):
+        import time
+        import shutil
+        from providers.oneshot_cli import cli_installed, resolve_cli_cmd
+        from providers.agy_provider import AgyProvider
+
+        if not refresh and _doctor_cache.get("t", 0) > time.time() - 60:
+            return _doctor_cache["data"]
+
+        async def cursor_login() -> bool | None:
+            base = resolve_cli_cmd("cursor")
+            if not base:
+                return None
+            out = await _run_cli_capture([*base, "status"], timeout=10)
+            if "logged in" in out.lower():
+                return True
+            return False if out.strip() else None
+
+        def copilot_login() -> bool | None:
+            # Login durumu config dosyasında — spawn'sız, anlık.
+            import json as _json
+            try:
+                p = os.path.expanduser(os.path.join("~", ".copilot", "config.json"))
+                with open(p, "r", encoding="utf-8") as f:
+                    txt = "\n".join(l for l in f.read().splitlines() if not l.strip().startswith("//"))
+                return bool((_json.loads(txt) or {}).get("lastLoggedInUser"))
+            except Exception:
+                return None
+
+        agy_ok = AgyProvider._agy_binary() != "agy" or bool(shutil.which("agy"))
+        data = {
+            "claude":   {"installed": bool(shutil.which("claude")),  "loggedIn": None},
+            "codex":    {"installed": bool(shutil.which("codex")),   "loggedIn": None},
+            "agy":      {"installed": agy_ok,                        "loggedIn": None},
+            "cursor":   {"installed": cli_installed("cursor"),       "loggedIn": None},
+            "copilot":  {"installed": cli_installed("copilot"),      "loggedIn": None},
+            "opencode": {"installed": cli_installed("opencode"),     "loggedIn": True},  # auth opsiyonel (ücretsiz modeller)
+        }
+        if data["cursor"]["installed"]:
+            try:
+                data["cursor"]["loggedIn"] = await cursor_login()
+            except Exception:
+                pass
+        if data["copilot"]["installed"]:
+            data["copilot"]["loggedIn"] = copilot_login()
+        if not data["opencode"]["installed"]:
+            data["opencode"]["loggedIn"] = None
+
+        _doctor_cache["t"] = time.time()
+        _doctor_cache["data"] = data
+        return data
+
+    # ── Tek tık kurulum / giriş: kullanıcının GÖREBİLECEĞİ bir terminal
+    #    penceresi açar (kurulum çıktısı + tarayıcı login akışı orada yaşar). ──
+    _INSTALL_CMDS = {
+        "cursor":   ("irm 'https://cursor.com/install?win32=true' | iex", False),
+        "copilot":  ("npm install -g @github/copilot", True),
+        "opencode": ("npm install -g opencode-ai", True),
+        "claude":   ("npm install -g @anthropic-ai/claude-code", True),
+        "codex":    ("npm install -g @openai/codex", True),
+    }
+    _LOGIN_CMDS = {
+        "cursor":   "agent login",
+        "copilot":  "copilot login",
+        "codex":    "codex login",
+        "opencode": "opencode auth login",
+        "claude":   "claude",   # claude login akışı interaktif oturum içinde (/login)
+    }
+
+    def _open_visible_terminal(ps_command: str) -> None:
+        import subprocess as sp
+        import sys as _sys
+        if _sys.platform != "win32":
+            raise HTTPException(501, "Şimdilik yalnız Windows'ta destekleniyor.")
+        CREATE_NEW_CONSOLE = 0x00000010
+        sp.Popen(["powershell", "-NoExit", "-ExecutionPolicy", "Bypass", "-Command", ps_command],
+                 creationflags=CREATE_NEW_CONSOLE)
+
+    @router.post("/cli-install/{cli}")
+    async def cli_install(cli: str, x_session_token: str = Header(alias="X-Session-Token", default="")):
+        import shutil
+        entry = _INSTALL_CMDS.get(cli)
+        if not entry:
+            raise HTTPException(404, f"'{cli}' için otomatik kurulum desteklenmiyor.")
+        cmd, needs_npm = entry
+        if needs_npm and not shutil.which("npm"):
+            raise HTTPException(412, "Bu CLI'ın kurulumu için Node.js gerekiyor. Önce nodejs.org'dan Node.js kurun (npm ile birlikte gelir).")
+        _open_visible_terminal(
+            f"Write-Host '=== {cli} kurulumu basliyor ===' -ForegroundColor Cyan; {cmd}; "
+            f"Write-Host ''; Write-Host '=== Bitti. Bu pencereyi kapatip uygulamada Yenile''ye basabilirsiniz. ===' -ForegroundColor Green")
+        _doctor_cache.clear()
+        return {"status": "started", "message": "Kurulum penceresi açıldı."}
+
+    @router.post("/cli-login/{cli}")
+    async def cli_login(cli: str, x_session_token: str = Header(alias="X-Session-Token", default="")):
+        cmd = _LOGIN_CMDS.get(cli)
+        if not cmd:
+            raise HTTPException(404, f"'{cli}' için giriş akışı desteklenmiyor.")
+        _open_visible_terminal(
+            f"Write-Host '=== {cli} girisi: acilan tarayicida hesabinizla giris yapin ===' -ForegroundColor Cyan; {cmd}")
+        _doctor_cache.clear()
+        return {"status": "started", "message": "Giriş penceresi açıldı."}
 
     return router

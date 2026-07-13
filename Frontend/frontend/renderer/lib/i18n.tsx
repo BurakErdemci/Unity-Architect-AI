@@ -89,6 +89,8 @@ const tr = {
   'models.emptyGroup': 'Model listesi alınamadı — CLI ile giriş yaptığından emin ol.',
   'models.installFirst': 'kurulu değil. Modelleri görmek için önce kur.',
   'models.noLocal': 'Ollama modeli bulunamadı.',
+  'models.install': 'Kur',
+  'models.login': 'Giriş Yap',
   // FileCreationApproval
   'approval.title': 'Dosya Onay Paneli',
   'approval.pending': 'bekliyor',
@@ -228,6 +230,8 @@ const en: Record<keyof typeof tr, string> = {
   'models.emptyGroup': 'Could not fetch models — make sure you are logged in to the CLI.',
   'models.installFirst': 'is not installed. Install it first to see models.',
   'models.noLocal': 'No Ollama models found.',
+  'models.install': 'Install',
+  'models.login': 'Log In',
   // FileCreationApproval
   'approval.title': 'File Approval Panel',
   'approval.pending': 'pending',

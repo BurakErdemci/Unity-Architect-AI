@@ -9,7 +9,10 @@ import {
   Search,
   Check,
   AlertTriangle,
-  Loader2
+  Loader2,
+  Download,
+  LogIn,
+  RefreshCw
 } from 'lucide-react';
 import { ModelAvatar } from './ModelAvatar';
 import { AIConfig, AvailableModels, UserData } from './types';
@@ -41,7 +44,7 @@ interface CliGroupDef {
   availKey: string;            // /cli-availability yanıtındaki anahtar
   cliLabel: string;            // "kurulu değil" uyarısında insan-okur ad
   matches: (id: string) => boolean;
-  dynamic?: 'cursor' | 'opencode'; // /cli-models/{cli} ile canlı liste
+  dynamic?: 'cursor' | 'opencode' | 'copilot'; // /cli-models/{cli} ile canlı liste
   accent: string;              // aktif model rengi (tailwind text sınıfı)
   dot: string;                 // aktif nokta rengi (tailwind bg sınıfı)
   badge?: string;              // grup başlığı yanındaki küçük rozet
@@ -66,6 +69,7 @@ const CLI_GROUPS: CliGroupDef[] = [
   {
     key: 'copilot', label: 'GitHub Copilot', brand: 'copilot', availKey: 'copilot', cliLabel: 'GitHub Copilot CLI',
     matches: id => id.startsWith('copilot-'),
+    dynamic: 'copilot',
     accent: 'text-violet-300', dot: 'bg-violet-300',
   },
   {
@@ -83,7 +87,8 @@ const CLI_GROUPS: CliGroupDef[] = [
   },
 ];
 
-type ModelItem = { id: string; name: string; provider?: string; openrouter_id?: string };
+type ModelItem = { id: string; name: string; provider?: string; openrouter_id?: string; disabled?: boolean; disabled_reason?: string };
+type CliDoctor = Record<string, { installed: boolean; loggedIn: boolean | null }>;
 
 // Bulut API sağlayıcı grupları (abonelik CLI grupları gibi kategorize görünüm)
 const CLOUD_PROVIDER_META: Record<string, { label: string; badge?: string }> = {
@@ -123,26 +128,46 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
   const [query, setQuery] = useState('');
   const searchRef = useRef<HTMLInputElement>(null);
 
-  // CLI binary'leri gömülü değil — kurulu olmayanları işaretle.
-  const [cliAvail, setCliAvail] = useState<Record<string, boolean> | null>(null);
+  // CLI doktoru: kurulu mu + giriş yapılmış mı (Kur/Giriş butonlarını sürer).
+  const [doctor, setDoctor] = useState<CliDoctor | null>(null);
+  const fetchDoctor = async (refresh = false) => {
+    try {
+      const res = await axios.get(`${API}/cli-doctor${refresh ? '?refresh=true' : ''}`);
+      setDoctor(res.data || {});
+    } catch { /* best-effort */ }
+  };
   useEffect(() => {
     if (!isModelDropdownOpen || !API) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await axios.get(`${API}/cli-availability`);
-        if (!cancelled) setCliAvail(res.data || {});
-      } catch { /* best-effort */ }
-    })();
+    fetchDoctor();
     setQuery('');
     setTimeout(() => searchRef.current?.focus(), 60);
-    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isModelDropdownOpen, API]);
+
+  const [busyCli, setBusyCli] = useState<string | null>(null);
+  const installCli = async (g: CliGroupDef) => {
+    setBusyCli(g.key);
+    try {
+      await axios.post(`${API}/cli-install/${g.availKey}`);
+      showToast('Kurulum penceresi açıldı — bittiğinde buradaki ↻ Yenile ile kontrol et.', 'info');
+    } catch (e: any) {
+      showToast(e?.response?.data?.detail || 'Kurulum başlatılamadı.', 'error');
+    } finally { setBusyCli(null); }
+  };
+  const loginCli = async (g: CliGroupDef) => {
+    setBusyCli(g.key);
+    try {
+      await axios.post(`${API}/cli-login/${g.availKey}`);
+      showToast('Giriş penceresi açıldı — tarayıcıda hesabınla giriş yap, sonra ↻ Yenile.', 'info');
+    } catch (e: any) {
+      showToast(e?.response?.data?.detail || 'Giriş başlatılamadı.', 'error');
+    } finally { setBusyCli(null); }
+  };
 
   // Cursor/OpenCode: hesaba/kuruluma göre CANLI model listesi (grup ilk açılınca çekilir).
   const [dynModels, setDynModels] = useState<Record<string, ModelItem[]>>({});
   const [dynLoading, setDynLoading] = useState<Record<string, boolean>>({});
-  const fetchDynModels = async (cli: 'cursor' | 'opencode') => {
+  const fetchDynModels = async (cli: 'cursor' | 'opencode' | 'copilot') => {
     if (dynModels[cli] || dynLoading[cli]) return;
     setDynLoading(prev => ({ ...prev, [cli]: true }));
     try {
@@ -156,9 +181,11 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
   };
 
   const isGroupInstalled = (g: CliGroupDef): boolean => {
-    if (!cliAvail) return true; // henüz yüklenmedi → uyarı gösterme
-    return cliAvail[g.availKey] !== false;
+    if (!doctor) return true; // henüz yüklenmedi → uyarı gösterme
+    return doctor[g.availKey]?.installed !== false;
   };
+  const groupNeedsLogin = (g: CliGroupDef): boolean =>
+    !!doctor && doctor[g.availKey]?.installed === true && doctor[g.availKey]?.loggedIn === false;
 
   const groupModels = (g: CliGroupDef): ModelItem[] => {
     if (g.dynamic) return dynModels[g.dynamic] || [];
@@ -182,13 +209,17 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
   }, [availableModels.cloud]);
 
   const selectCliModel = async (g: CliGroupDef, m: ModelItem) => {
+    if (m.disabled) {
+      showToast(`Aboneliğin "${m.name}" modelini desteklemiyor — ${g.label} Auto'yu kullanabilirsin.`, 'warning');
+      return;
+    }
     const newCfg = { ...aiConfig, provider_type: 'subscription', model_name: m.id, api_key: 'CLI_SESSION' };
     setAiConfig(newCfg);
     setIsModelDropdownOpen(false);
     if (user) await axios.post(`${API}/save-ai-config`, { ...newCfg, user_id: user.id });
     showToast(`${m.name} seçildi.`, 'info');
-    if (cliAvail && cliAvail[g.availKey] === false) {
-      showToast(`${g.cliLabel} bu bilgisayarda bulunamadı. Bu modeli kullanmak için önce CLI'ı kurman gerekiyor.`, 'warning');
+    if (doctor && doctor[g.availKey]?.installed === false) {
+      showToast(`${g.cliLabel} bu bilgisayarda bulunamadı. Aşağıdaki Kur butonuyla kurabilirsin.`, 'warning');
     }
   };
 
@@ -251,6 +282,20 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
 
   const cliModelRow = (g: CliGroupDef, m: ModelItem, indent = true) => {
     const active = isActive(m.id);
+    if (m.disabled) {
+      // Plan bu modeli desteklemiyor → soluk + kilitli (tıklanınca açıklayıcı toast)
+      return (
+        <button
+          key={m.id}
+          onClick={() => selectCliModel(g, m)}
+          title="Aboneliğin bu modeli desteklemiyor (plan yükseltince otomatik açılır)"
+          className={`w-full text-left ${indent ? 'pl-[46px]' : 'pl-4'} pr-3 py-[7px] text-[12px] flex items-center justify-between rounded-lg cursor-not-allowed`}
+        >
+          <span className="truncate font-medium text-slate-600 line-through decoration-slate-700">{m.name}</span>
+          <span className="text-[9px] text-slate-600 shrink-0 ml-2">🔒 planda yok</span>
+        </button>
+      );
+    }
     return (
       <button
         key={m.id}
@@ -394,7 +439,16 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                   <>
                     {/* ── CLI ABONELİKLERİ ── */}
                     <div className="p-1">
-                      {sectionLabel(<Key size={9} />, t('models.subscription'))}
+                      <div className="flex items-center justify-between pr-2">
+                        {sectionLabel(<Key size={9} />, t('models.subscription'))}
+                        <button
+                          onClick={() => { fetchDoctor(true); setDynModels({}); showToast('CLI durumları yenileniyor…', 'info'); }}
+                          title="Kurulum/giriş durumlarını ve model listelerini yenile"
+                          className="p-1 rounded-md text-slate-500 hover:text-slate-300 hover:bg-white/[0.06] transition-colors"
+                        >
+                          <RefreshCw size={11} />
+                        </button>
+                      </div>
                       {CLI_GROUPS.map(g => {
                         const models = groupModels(g);
                         const isOpen = expandedGroup === g.key;
@@ -423,10 +477,20 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                               )}
                               {!installed && (
                                 <span
-                                  title={`${g.cliLabel} bu bilgisayarda kurulu değil. Kullanmak için önce kurman gerekiyor.`}
-                                  className="flex items-center gap-1 text-amber-300 bg-amber-500/15 border border-amber-500/40 rounded-md px-1.5 py-0.5 text-[8.5px] font-semibold uppercase tracking-wide shrink-0"
+                                  onClick={e => { e.stopPropagation(); if (busyCli !== g.key) installCli(g); }}
+                                  title={`${g.cliLabel} kurulu değil — tıkla, otomatik kuralım (terminal penceresi açılır).`}
+                                  className="flex items-center gap-1 text-amber-200 bg-amber-500/15 border border-amber-500/40 rounded-md px-1.5 py-0.5 text-[8.5px] font-semibold uppercase tracking-wide shrink-0 hover:bg-amber-500/30 transition-colors cursor-pointer"
                                 >
-                                  <AlertTriangle size={10} /> {t('models.notInstalled')}
+                                  {busyCli === g.key ? <Loader2 size={10} className="animate-spin" /> : <Download size={10} />} {t('models.install')}
+                                </span>
+                              )}
+                              {groupNeedsLogin(g) && (
+                                <span
+                                  onClick={e => { e.stopPropagation(); if (busyCli !== g.key) loginCli(g); }}
+                                  title={`${g.cliLabel} kurulu ama giriş yapılmamış — tıkla, giriş penceresi açılsın.`}
+                                  className="flex items-center gap-1 text-sky-200 bg-sky-500/15 border border-sky-500/40 rounded-md px-1.5 py-0.5 text-[8.5px] font-semibold uppercase tracking-wide shrink-0 hover:bg-sky-500/30 transition-colors cursor-pointer"
+                                >
+                                  {busyCli === g.key ? <Loader2 size={10} className="animate-spin" /> : <LogIn size={10} />} {t('models.login')}
                                 </span>
                               )}
                               <ChevronDown size={12} className={`text-slate-500 transition-transform duration-200 shrink-0 ${isOpen ? 'rotate-180' : ''}`} />
