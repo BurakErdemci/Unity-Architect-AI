@@ -85,6 +85,18 @@ const CLI_GROUPS: CliGroupDef[] = [
 
 type ModelItem = { id: string; name: string; provider?: string; openrouter_id?: string };
 
+// Bulut API sağlayıcı grupları (abonelik CLI grupları gibi kategorize görünüm)
+const CLOUD_PROVIDER_META: Record<string, { label: string; badge?: string }> = {
+  anthropic:  { label: 'Anthropic' },
+  openai:     { label: 'OpenAI' },
+  google:     { label: 'Google' },
+  deepseek:   { label: 'DeepSeek' },
+  groq:       { label: 'Groq' },
+  moonshot:   { label: 'Moonshot' },
+  'z-ai':     { label: 'Z.ai' },
+  nvidia:     { label: 'NVIDIA NIM', badge: 'ücretsiz' },
+};
+
 export const ModelSelector: React.FC<ModelSelectorProps> = ({
   aiConfig,
   setAiConfig,
@@ -105,7 +117,9 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
 }) => {
   const { t } = useLang();
   const activeGroupKey = CLI_GROUPS.find(g => g.matches(aiConfig.model_name || ''))?.key ?? null;
-  const [expandedGroup, setExpandedGroup] = useState<string | null>(activeGroupKey);
+  // Aktif bulut sağlayıcısının grubu da başlangıçta açık gelsin (cloud:<provider>)
+  const activeCloudKey = CLOUD_PROVIDER_META[aiConfig.provider_type] ? `cloud:${aiConfig.provider_type}` : null;
+  const [expandedGroup, setExpandedGroup] = useState<string | null>(activeGroupKey ?? activeCloudKey);
   const [query, setQuery] = useState('');
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -150,6 +164,22 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
     if (g.dynamic) return dynModels[g.dynamic] || [];
     return (availableModels.subscription || []).filter(m => g.matches(m.id));
   };
+
+  // Bulut modelleri sağlayıcıya göre grupla (liste sırası korunur)
+  const cloudGroups = useMemo(() => {
+    const order: string[] = [];
+    const map: Record<string, ModelItem[]> = {};
+    for (const m of availableModels.cloud) {
+      const p = m.provider || 'other';
+      if (!map[p]) { map[p] = []; order.push(p); }
+      map[p].push(m);
+    }
+    return order.map(p => ({
+      provider: p,
+      meta: CLOUD_PROVIDER_META[p] || { label: p },
+      models: map[p],
+    }));
+  }, [availableModels.cloud]);
 
   const selectCliModel = async (g: CliGroupDef, m: ModelItem) => {
     const newCfg = { ...aiConfig, provider_type: 'subscription', model_name: m.id, api_key: 'CLI_SESSION' };
@@ -426,11 +456,55 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                       })}
                     </div>
 
-                    {/* ── BULUT API ── */}
-                    {availableModels.cloud.length > 0 && (
+                    {/* ── BULUT API (sağlayıcıya göre gruplu) ── */}
+                    {cloudGroups.length > 0 && (
                       <div className="p-1 border-t border-white/[0.06]">
                         {sectionLabel(<Sparkles size={9} />, t('models.cloud'))}
-                        {availableModels.cloud.map(m => cloudModelRow(m))}
+                        {cloudGroups.map(({ provider, meta, models }) => {
+                          const gKey = `cloud:${provider}`;
+                          const isOpen = expandedGroup === gKey;
+                          const hasKey = providersWithKeys.includes(provider);
+                          const isGroupActive = aiConfig.provider_type === provider ||
+                            models.some(m => isActive(m.id) || (m.openrouter_id && aiConfig.model_name === m.openrouter_id));
+                          return (
+                            <div key={gKey} className={`rounded-xl transition-colors ${isOpen ? 'bg-white/[0.03]' : ''}`}>
+                              <button
+                                onClick={() => setExpandedGroup(isOpen ? null : gKey)}
+                                className="w-full text-left px-3 py-2 flex items-center gap-2.5 rounded-xl hover:bg-white/[0.04] transition-colors"
+                              >
+                                <ModelAvatar provider={provider} size={12} containerSize="h-6 w-6" />
+                                <span className={`flex-1 min-w-0 text-[12.5px] font-semibold truncate ${isGroupActive ? 'text-blue-400' : 'text-slate-200'}`}>
+                                  {meta.label}
+                                </span>
+                                {isGroupActive && <span className="h-1.5 w-1.5 rounded-full bg-blue-400 shrink-0" />}
+                                {meta.badge && (
+                                  <span className="text-[8px] font-semibold text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 rounded-md px-1.5 py-0.5 uppercase tracking-wide shrink-0">
+                                    {meta.badge}
+                                  </span>
+                                )}
+                                {hasKey ? (
+                                  <Key size={10} className="text-blue-400/70 shrink-0" />
+                                ) : (
+                                  <span className="text-[8px] text-amber-400/90 bg-amber-500/10 border border-amber-500/30 rounded px-1 leading-tight shrink-0">key yok</span>
+                                )}
+                                <ChevronDown size={12} className={`text-slate-500 transition-transform duration-200 shrink-0 ${isOpen ? 'rotate-180' : ''}`} />
+                              </button>
+                              <AnimatePresence initial={false}>
+                                {isOpen && (
+                                  <motion.div
+                                    initial={{ height: 0, opacity: 0 }}
+                                    animate={{ height: 'auto', opacity: 1 }}
+                                    exit={{ height: 0, opacity: 0 }}
+                                    transition={{ duration: 0.15 }}
+                                    className="overflow-hidden pb-1 pl-6"
+                                  >
+                                    {models.map(m => cloudModelRow(m))}
+                                  </motion.div>
+                                )}
+                              </AnimatePresence>
+                            </div>
+                          );
+                        })}
                       </div>
                     )}
 

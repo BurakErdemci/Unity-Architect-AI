@@ -33,6 +33,10 @@ class AIProviderManager:
             return OpenAICompatibleProvider(api_key=api_key, base_url="https://api.moonshot.cn/v1", model_name=m_name or "kimi-k2.7-code")
         elif p_type == "z-ai" and api_key:
             return OpenAICompatibleProvider(api_key=api_key, base_url="https://api.z.ai/api/paas/v4", model_name=m_name or "glm-5.2")
+        elif p_type == "nvidia" and api_key:
+            # NVIDIA NIM (build.nvidia.com) — tek nvapi- key ile 100+ ücretsiz model,
+            # OpenAI-uyumlu endpoint (~40 RPM free tier)
+            return OpenAICompatibleProvider(api_key=api_key, base_url="https://integrate.api.nvidia.com/v1", model_name=m_name or "nvidia/nemotron-3-super-120b-a12b")
         elif p_type == "subscription":
             # m_name burada binary adıdır (claude, codex, agy, cursor-*, copilot-*, opencode:*)
             name = m_name or "claude"
@@ -51,7 +55,7 @@ class AIProviderManager:
         elif p_type == "ollama":
             return OllamaProvider(model_name=m_name)
 
-        cloud_providers = ("anthropic", "google", "openai", "deepseek", "groq", "openrouter", "moonshot", "z-ai")
+        cloud_providers = ("anthropic", "google", "openai", "deepseek", "groq", "openrouter", "moonshot", "z-ai", "nvidia")
         if p_type in cloud_providers and not api_key:
             raise ValueError(
                 f"⚠️ {p_type.capitalize()} için API key girilmedi. "

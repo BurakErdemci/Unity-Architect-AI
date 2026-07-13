@@ -89,6 +89,15 @@ def create_config_router(db):
                 {"id": "glm-5.2",                  "name": "GLM 5.2",            "provider": "z-ai",      "openrouter_id": "z-ai/glm-5.2"},
                 {"id": "kimi-k2.7-code",           "name": "Kimi K2.7 Code",     "provider": "moonshot",  "openrouter_id": "moonshotai/kimi-k2.7-code"},
                 {"id": "kimi-k2.6",                "name": "Kimi K2.6",          "provider": "moonshot",  "openrouter_id": "moonshotai/kimi-k2.6"},
+                # NVIDIA NIM (build.nvidia.com) — tek nvapi- key ile ÜCRETSİZ havuz
+                # (kredi kartsız, ~40 RPM; ID'ler NIM kataloğundan, 2026-07-13)
+                {"id": "nvidia/nemotron-3-super-120b-a12b",            "name": "Nemotron 3 Super 120B",  "provider": "nvidia"},
+                {"id": "nvidia/llama-3.3-nemotron-super-49b-v1.5",     "name": "Nemotron Super 49B",     "provider": "nvidia"},
+                {"id": "qwen/qwen3.5-397b-a17b",                       "name": "Qwen 3.5 397B",          "provider": "nvidia"},
+                {"id": "qwen/qwen3-coder-480b-a35b-instruct",          "name": "Qwen3 Coder 480B",       "provider": "nvidia"},
+                {"id": "mistralai/mistral-large-3-675b-instruct-2512", "name": "Mistral Large 3 675B",   "provider": "nvidia"},
+                {"id": "deepseek-ai/deepseek-v4-pro",                  "name": "DeepSeek V4 Pro (NIM)",  "provider": "nvidia"},
+                {"id": "moonshotai/kimi-k2.6",                         "name": "Kimi K2.6 (NIM)",        "provider": "nvidia"},
             ],
             "subscription": [
                 {"id": "claude-sonnet-5",      "name": "Claude Sonnet 5 (CLI)",         "provider": "subscription"},

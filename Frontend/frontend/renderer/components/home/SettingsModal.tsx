@@ -15,6 +15,7 @@ const DEFAULT_MODELS: Record<string, string> = {
   deepseek: "deepseek-v4-pro",
   moonshot: "kimi-k2.7-code",
   "z-ai": "glm-5.2",
+  nvidia: "nvidia/nemotron-3-super-120b-a12b",
   ollama: "qwen2.5-coder:7b",
   kb: "unity-kb-v1",
   subscription: "claude-sonnet-5",
@@ -115,6 +116,15 @@ export const SettingsModal = ({
       { label: `DeepSeek V4 Pro (${t('hint.recommended')})`, value: "deepseek-v4-pro" },
       { label: "DeepSeek V4 Flash", value: "deepseek-v4-flash" },
     ],
+    nvidia: [
+      { label: `Nemotron 3 Super 120B (${t('hint.recommended')})`, value: "nvidia/nemotron-3-super-120b-a12b" },
+      { label: "Qwen3 Coder 480B", value: "qwen/qwen3-coder-480b-a35b-instruct" },
+      { label: "Qwen 3.5 397B", value: "qwen/qwen3.5-397b-a17b" },
+      { label: "Mistral Large 3 675B", value: "mistralai/mistral-large-3-675b-instruct-2512" },
+      { label: "DeepSeek V4 Pro", value: "deepseek-ai/deepseek-v4-pro" },
+      { label: "Kimi K2.6", value: "moonshotai/kimi-k2.6" },
+      { label: "Nemotron Super 49B", value: "nvidia/llama-3.3-nemotron-super-49b-v1.5" },
+    ],
     subscription: [
       { label: "Claude Fable 5", value: "claude-fable-5" },
       { label: `Claude Opus 4.8 (${t('hint.strongest')})`, value: "claude-opus-4-8" },
@@ -169,6 +179,7 @@ export const SettingsModal = ({
                 <option value="deepseek">{t('settings.providerDeepseek')}</option>
                 <option value="moonshot">{t('settings.providerMoonshot')}</option>
                 <option value="z-ai">{t('settings.providerZai')}</option>
+                <option value="nvidia">{t('settings.providerNvidia')}</option>
                 <option value="openrouter">{t('settings.providerOpenrouter')}</option>
                 <option value="subscription">{t('settings.providerSubscription')}</option>
               </select>

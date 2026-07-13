@@ -59,6 +59,17 @@ class TestManagerRouting(unittest.TestCase):
         # copilot-gpt-* Codex'e DÜŞMEMELİ (prefix önceliği):
         self.assertIsInstance(self._get("copilot-gpt-5.6-sol"), CopilotProvider)
 
+    def test_nvidia_routing(self):
+        """NVIDIA NIM → OpenAI-uyumlu provider, doğru base_url ile."""
+        from providers.manager import AIProviderManager
+        from providers.api_providers import OpenAICompatibleProvider
+        p = AIProviderManager.get_provider({
+            "provider_type": "nvidia", "api_key": "nvapi-test",
+            "model_name": "nvidia/nemotron-3-super-120b-a12b",
+        })
+        self.assertIsInstance(p, OpenAICompatibleProvider)
+        self.assertIn("integrate.api.nvidia.com", getattr(p, "base_url", ""))
+
 
 def _mock_unity_mcp(running=False):
     """unity_ai_mcp.unity_mcp_manager import'unu mock'lar."""

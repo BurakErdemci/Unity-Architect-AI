@@ -228,7 +228,7 @@ class AgentRunner:
         elif self.provider_type == "anthropic":
             async for event in self._run_anthropic(user_message):
                 yield event
-        elif self.provider_type in ("openai", "openrouter", "deepseek", "groq", "moonshot", "z-ai"):
+        elif self.provider_type in ("openai", "openrouter", "deepseek", "groq", "moonshot", "z-ai", "nvidia"):
             async for event in self._run_openai(user_message):
                 yield event
         elif self.provider_type == "subscription":
@@ -741,6 +741,9 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
             client.base_url = "https://api.moonshot.cn/v1"
         elif self.provider_type == "z-ai":
             client.base_url = "https://api.z.ai/api/paas/v4"
+        elif self.provider_type == "nvidia":
+            # NVIDIA NIM — OpenAI-uyumlu, tek nvapi- key ile ücretsiz model havuzu
+            client.base_url = "https://integrate.api.nvidia.com/v1"
 
         system_instruction = f"""{SYSTEM_PROMPT}
 

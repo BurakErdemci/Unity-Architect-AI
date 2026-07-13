@@ -82,6 +82,16 @@ export const ModelLogo: React.FC<ModelLogoProps> = ({ provider, className, size 
     );
   }
 
+  // NVIDIA — stilize "göz" kıvrımı
+  if (p.includes('nvidia')) {
+    return (
+      <svg viewBox="0 0 24 24" width={size} height={size} className={className} fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M3 12c2.5-4.5 6-7 9-7s6.5 2.5 9 7c-2.5 4.5-6 7-9 7s-6.5-2.5-9-7z" />
+        <circle cx="12" cy="12" r="2.6" fill="currentColor" stroke="none" />
+      </svg>
+    );
+  }
+
   // Moonshot (Kimi) Logo - Stylized Crescent
   if (p.includes('moonshot') || p.includes('openrouter')) {
     return (
