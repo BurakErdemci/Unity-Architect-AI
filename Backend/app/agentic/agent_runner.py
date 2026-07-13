@@ -146,6 +146,11 @@ class AgentRunner:
         if self.conversation_id is None:
             return
         try:
+            if provider in ("cursor", "copilot", "opencode"):
+                from providers.oneshot_cli import close_session as _close_oneshot
+                await _close_oneshot(provider, self.conversation_id)
+                logger.info(f"[handoff] {provider} session resetlendi (CLI değişimi)")
+                return
             if provider == "codex":
                 from providers.codex_session import close_session
             elif provider == "agy":
@@ -229,8 +234,15 @@ class AgentRunner:
         elif self.provider_type == "subscription":
             # claude-* → kalıcı interaktif SDK session (native onay + AskUserQuestion + skill/slash).
             # codex (gpt-*) → kalıcı app-server session (native onay). agy → disk-resume CLI.
+            # cursor-*/copilot-*/opencode:* → one-shot CLI + resmi resume (oneshot_cli).
             _name = (self.model_name or "claude").lower()
-            if _name.startswith("gpt-"):
+            if _name.startswith("cursor-"):
+                _cur = "cursor"
+            elif _name.startswith("copilot-"):
+                _cur = "copilot"
+            elif _name.startswith("opencode:"):
+                _cur = "opencode"
+            elif _name.startswith("gpt-"):
                 _cur = "codex"
             elif _name.startswith(("gemini", "agy-")):
                 _cur = "agy"
@@ -251,6 +263,9 @@ class AgentRunner:
                     yield event
             elif _cur == "agy":
                 async for event in self._run_agy_session(user_message):
+                    yield event
+            elif _cur in ("cursor", "copilot", "opencode"):
+                async for event in self._run_oneshot_cli_session(user_message, _cur):
                     yield event
             else:
                 async for event in self._run_claude_session(user_message):
@@ -1108,6 +1123,92 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
             yield AgentEvent("pending_delete", {"path": f["path"]})
 
         yield AgentEvent("done", {"iterations": 1})
+
+    # ═══════════════════════════════════════════════
+    # CURSOR / COPILOT / OPENCODE — one-shot CLI + RESMİ resume
+    # ═══════════════════════════════════════════════
+    async def _run_oneshot_cli_session(self, user_message: str, cli_key: str) -> AsyncGenerator[AgentEvent, None]:
+        """Cursor/Copilot/OpenCode'u tur bazlı (ephemeral subprocess) sürer.
+
+        Bağlam, CLI'ların RESMİ resume mekanizmasıyla korunur (agy'nin aksine
+        üçünde de resmi ve çalışır — 2026-07-13 canlı doğrulandı):
+          cursor  → --resume <chatId>   (chatId ilk turun event'lerinden yakalanır)
+          copilot → --session-id=<bizim uuid> (tur 1) / --resume=<uuid> (sonrası)
+          opencode→ -s <sessionID>      (sessionID her event'te gelir)
+        İlk turda (resume anahtarı yokken) tam transcript enjekte edilir;
+        sonraki turlarda CLI kendi hafızasından devam eder.
+        """
+        from ai_providers import AIProviderManager
+        from providers.oneshot_cli import get_session
+
+        provider = AIProviderManager.get_provider({
+            "provider_type": self.provider_type,
+            "model_name": self.model_name,
+            "api_key": getattr(self, "api_key", ""),
+        })
+
+        sess = get_session(cli_key, self.conversation_id)
+        sess.auto_approve = (getattr(self, "generation_mode", "auto") == "auto")
+        provider.resume_session_id = sess.session_id
+        if cli_key == "copilot" and not sess.session_id:
+            # Copilot'ta session UUID'ini BİZ üretiriz (--session-id) → yakalama derdi yok.
+            import uuid as _uuid
+            provider.fresh_session_id = str(_uuid.uuid4())
+            sess.session_id = provider.fresh_session_id
+
+        # İlk turda transcript enjeksiyonu (sonraki turlarda CLI resume hatırlar).
+        enriched_prompt = user_message
+        if self.context and not sess.ctx_injected:
+            _CTX_CAP = 24000  # Windows argv sınırı (~32K) + mcp_hint payı
+            _ctx = self.context
+            if len(_ctx) > _CTX_CAP:
+                _ctx = "…[eski geçmiş kırpıldı — en yeni kısım korundu]\n" + _ctx[-_CTX_CAP:]
+            enriched_prompt = f"{user_message}\n\n{_HANDOFF_HEADER}\n{_ctx}"
+        sess.ctx_injected = True
+
+        # Görseller: dosyaya yaz + yolu prompt'a enjekte (üç CLI da read aracıyla açar).
+        from providers._attachments import materialize_images, cleanup_dir
+        _img_paths, _att_dir = materialize_images(
+            self.images, self.workspace_path, f"{cli_key}_conv{self.conversation_id}")
+        if _img_paths:
+            _lines = "\n".join(f"- {p}" for p in _img_paths)
+            enriched_prompt += ("\n\n[EKLİ GÖRSELLER] Kullanıcı bu turda görsel ekledi. "
+                                "İncelemen için (read aracıyla aç):\n" + _lines)
+
+        final_text = ""
+        got_error = False
+        try:
+            async for event in provider.analyze_code(
+                enriched_prompt,
+                thinking_level="medium" if self.use_thinking else "off",
+                cwd=self.workspace_path or ".",
+                interactive=True,
+            ):
+                etype = event.get("type")
+                if etype == "session_meta":
+                    _sid = event.get("session_id")
+                    if _sid and not sess.session_id:
+                        sess.session_id = _sid
+                        logger.info(f"[{cli_key}Session] conv={self.conversation_id} resume anahtarı: {_sid}")
+                elif etype == "delta":
+                    yield AgentEvent("text", {"content": event.get("text", "")})
+                elif etype == "thinking":
+                    yield AgentEvent("thinking", {"text": event.get("text", "")})
+                elif etype == "final":
+                    final_text = event.get("text", "")
+                elif etype == "error":
+                    got_error = True
+                    yield AgentEvent("error", {"message": event.get("content", "")})
+        finally:
+            cleanup_dir(_att_dir)
+
+        if got_error:
+            return
+
+        if not final_text:
+            final_text = f"⚠️ {cli_key} bu tur için bir yanıt üretmedi."
+        yield AgentEvent("response", {"content": final_text})
+        yield AgentEvent("done", {"iterations": 1, "session_id": sess.session_id})
 
     # ═══════════════════════════════════════════════
     # CLAUDE KALICI SESSION (claude-agent-sdk, native onay)

@@ -16,7 +16,13 @@ export const ModelAvatar = ({
   let bg = "bg-gradient-to-br from-blue-500 to-violet-500";
   let iconColor = "text-white";
 
-  if (normalizedProvider.includes("anthropic") || normalizedProvider.includes("claude")) {
+  if (normalizedProvider.includes("copilot") || normalizedProvider.includes("github")) {
+    bg = "bg-[#24292F] border border-white/15";
+  } else if (normalizedProvider.includes("cursor")) {
+    bg = "bg-black border border-white/20";
+  } else if (normalizedProvider.includes("opencode")) {
+    bg = "bg-gradient-to-br from-[#0F766E] to-[#134E4A]";
+  } else if (normalizedProvider.includes("anthropic") || normalizedProvider.includes("claude")) {
     bg = "bg-[#D97757]";
   } else if (normalizedProvider.includes("openai")) {
     bg = "bg-gradient-to-br from-[#10A37F] to-[#0A6B53]";

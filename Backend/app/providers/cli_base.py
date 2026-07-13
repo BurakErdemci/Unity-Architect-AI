@@ -207,7 +207,10 @@ class BaseCLIProvider(AIProvider):
 
             # CLI binary bu PC'de kurulu mu? Değilse korkunç traceback yerine temiz uyarı ver.
             if not self._cli_installed(cmd[0]):
-                _labels = {"agy": "Antigravity (agy)", "claude": "Claude Code", "codex": "Codex"}
+                _labels = {"agy": "Antigravity (agy)", "claude": "Claude Code", "codex": "Codex",
+                           "cursor-agent-not-found": "Cursor CLI (agent)",
+                           "copilot-not-found": "GitHub Copilot CLI",
+                           "opencode-not-found": "OpenCode"}
                 _label = _labels.get(os.path.basename(cmd[0]).lower(), cmd[0])
                 logger.warning(f"[CLIProvider:{self.binary_name}] CLI bulunamadı (PATH'te yok): {cmd[0]}")
                 yield {"type": "error", "content": f"⚠️ {_label} CLI bu bilgisayarda kurulu değil (PATH'te bulunamadı). Lütfen kurun veya farklı bir model seçin."}
@@ -314,6 +317,10 @@ class BaseCLIProvider(AIProvider):
             full_text = ""
             line_count = 0
             _start = asyncio.get_event_loop().time()
+            # Yeni CLI'lar (cursor/copilot/opencode) için parser durumu:
+            _sess_meta_sent = False          # resume anahtarı bir kez yield edilir
+            _copilot_streamed = set()        # delta'sı akıtılan messageId'ler (dedup)
+            _is_cursor = self.binary_name.startswith("cursor-")
 
             while True:
                 try:
@@ -361,12 +368,23 @@ class BaseCLIProvider(AIProvider):
                     self.binary_name.startswith("claude") or
                     self.binary_name.startswith("gemini") or
                     self.binary_name.startswith("agy-") or
-                    self.binary_name.startswith("gpt-")
+                    self.binary_name.startswith("gpt-") or
+                    self.binary_name.startswith("cursor-") or
+                    self.binary_name.startswith("copilot-") or
+                    self.binary_name.startswith("opencode:")
                 )
                 if _is_json_provider:
                     try:
                         ev = _json.loads(raw)
                         ev_type = ev.get("type", "")
+
+                        # ── Resume anahtarı yakalama (cursor: session_id her event'te;
+                        #    opencode: sessionID her event'te; copilot: result.sessionId) ──
+                        if not _sess_meta_sent:
+                            _sid = ev.get("session_id") or ev.get("sessionID") or ev.get("sessionId")
+                            if _sid:
+                                _sess_meta_sent = True
+                                yield {"type": "session_meta", "session_id": str(_sid)}
 
                         # ── Claude stream-json ──────────────────────────────
                         if ev_type == "assistant":
@@ -387,6 +405,11 @@ class BaseCLIProvider(AIProvider):
                                     yield {"type": "thinking", "text": hint}
                                 elif btype == "text":
                                     t = block.get("text", "")
+                                    # Cursor --stream-partial-output: parçalı delta'ların ardından
+                                    # AYNI metnin tam halini tekrar yollar → biriken metinle birebir
+                                    # aynıysa mükerrer basma.
+                                    if _is_cursor and t and t == full_text:
+                                        continue
                                     if t:
                                         full_text += t
                                         yield {"type": "delta", "text": t}
@@ -399,6 +422,68 @@ class BaseCLIProvider(AIProvider):
                             result = ev.get("result", "")
                             if result and not full_text:
                                 full_text = result
+
+                        # ── Cursor stream-json: thinking ayrı top-level event ──
+                        elif ev_type == "thinking":
+                            if ev.get("subtype") == "delta":
+                                t = ev.get("text", "")
+                                if t:
+                                    yield {"type": "thinking", "text": t}
+
+                        # ── Copilot JSONL (assistant.* / tool.*) ────────────
+                        elif ev_type == "assistant.message_delta":
+                            _d = ev.get("data", {})
+                            t = _d.get("deltaContent", "")
+                            if t:
+                                _copilot_streamed.add(_d.get("messageId", ""))
+                                full_text += t
+                                yield {"type": "delta", "text": t}
+                        elif ev_type == "assistant.reasoning_delta":
+                            t = ev.get("data", {}).get("deltaContent", "")
+                            if t:
+                                yield {"type": "thinking", "text": t}
+                        elif ev_type == "assistant.message":
+                            _d = ev.get("data", {})
+                            t = _d.get("content", "")
+                            # delta'ları zaten akıttıysak tam metni tekrar basma
+                            if t and _d.get("messageId", "") not in _copilot_streamed:
+                                full_text += t
+                                yield {"type": "delta", "text": t}
+                            for _tr in (_d.get("toolRequests") or []):
+                                _tn = _tr.get("name", _tr.get("toolName", "")) if isinstance(_tr, dict) else ""
+                                if _tn:
+                                    yield {"type": "thinking", "text": f"🔧 `{_tn}`"}
+                        elif ev_type.startswith("tool."):
+                            _d = ev.get("data", {})
+                            _tn = _d.get("toolName", _d.get("name", ""))
+                            if ev_type.endswith(("started", "requested")) and _tn:
+                                yield {"type": "thinking", "text": f"🔧 `{_tn}`"}
+                            elif ev_type.endswith(("completed", "finished")):
+                                _out = str(_d.get("output", _d.get("result", "")))[:200]
+                                if _out:
+                                    yield {"type": "thinking", "text": f"↩ {_out}"}
+
+                        # ── OpenCode --format json (text / tool_use / step_*) ──
+                        elif ev_type == "text":
+                            t = (ev.get("part") or {}).get("text", "")
+                            if t:
+                                full_text += t
+                                yield {"type": "delta", "text": t}
+                        elif ev_type == "tool_use":
+                            _part = ev.get("part") or {}
+                            _tn = _part.get("tool", "")
+                            _st = _part.get("state") or {}
+                            hint = f"🔧 `{_tn}`" if _tn else ""
+                            _title = _st.get("title", "")
+                            if _title:
+                                hint += f" → `{_title[:120]}`"
+                            if hint:
+                                yield {"type": "thinking", "text": hint}
+                            _out = str(_st.get("output", ""))[:200].strip()
+                            if _out:
+                                yield {"type": "thinking", "text": f"↩ {_out}"}
+                        elif ev_type in ("step_start", "step_finish"):
+                            pass  # akış iskeleti; step_finish token sayılarını taşır (gerekirse logla)
 
                         # ── agy / Gemini CLI JSONL (hot-swap) ───────────────
                         elif ev_type in ("content", "error"):
@@ -522,6 +607,18 @@ class BaseCLIProvider(AIProvider):
                 stderr_full = "\n".join(stderr_buffer)
                 logger.error(f"[CLIProvider:{self.binary_name}][NO_OUTPUT] Stdout boş!\nSTDERR:\n{stderr_full}")
                 yield {"type": "error", "content": f"⚠️ Çıktı yok. Hata: {stderr_full[:500]}"}
+            elif not full_text.strip() and self.binary_name.startswith(("cursor-", "copilot-", "opencode:")):
+                # Yeni CLI'lar rc=1 ile ölürken stdout'a yalnız init event'leri basmış
+                # olabilir (örn. copilot "Model ... is not available" hatası stderr'de,
+                # rc=1) → yukarıdaki iki dal da yakalamaz, kullanıcı boş kart görürdü.
+                _err_lines = [l for l in stderr_buffer if "error" in l.lower()] or stderr_buffer
+                if _err_lines:
+                    _msg = "\n".join(_err_lines)[:400]
+                    logger.error(f"[CLIProvider:{self.binary_name}][EMPTY_TEXT] {_msg}")
+                    _hint = ""
+                    if "not available" in _msg.lower() and self.binary_name.startswith("copilot-"):
+                        _hint = "\n💡 Bu model Copilot planında kullanılamıyor olabilir — 'Copilot Auto' modelini deneyin."
+                    yield {"type": "error", "content": f"⚠️ CLI yanıt üretmedi: {_msg}{_hint}"}
 
             yield {"type": "final", "text": self._clean_response(full_text)}
 

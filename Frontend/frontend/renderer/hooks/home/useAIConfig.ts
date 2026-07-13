@@ -173,6 +173,13 @@ export const useAIConfig = (API: string, user: UserData | null, showToast: (msg:
     );
     if (found) return found.name;
     const name = aiConfig.model_name;
+    // Dinamik CLI modelleri (cursor/opencode) statik listede yok → prefix'i soy.
+    if (name.startsWith('cursor-')) return name.slice(7);
+    if (name.startsWith('copilot-')) return name.slice(8);
+    if (name.startsWith('opencode:')) {
+      const m = name.slice(9);
+      return m.includes('/') ? m.split('/').slice(1).join('/') : m;
+    }
     if (name.includes('/')) return name.split('/').slice(1).join('/');
     return name;
   }, [aiConfig, availableModels]);

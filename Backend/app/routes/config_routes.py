@@ -110,6 +110,20 @@ def create_config_router(db):
                 {"id": "gemini-3.1-flash-lite-preview","name": "Gemini 3.1 Flash Lite",       "provider": "subscription"},
                 {"id": "agy-claude-sonnet-4-6",        "name": "Claude Sonnet 4.6 (Thinking)", "provider": "subscription"},
                 {"id": "agy-gpt-oss-120b",             "name": "GPT-OSS 120B (Medium)",       "provider": "subscription"},
+                # GitHub Copilot CLI (statik — copilot'un programatik model listesi yok;
+                # ID'ler CLI'ın kendi model seçicisinden alındı, 2026-07-13)
+                {"id": "copilot-auto",                 "name": "Copilot Auto (Önerilen)",     "provider": "subscription"},
+                {"id": "copilot-claude-sonnet-5",      "name": "Claude Sonnet 5",             "provider": "subscription"},
+                {"id": "copilot-claude-fable-5",       "name": "Claude Fable 5",              "provider": "subscription"},
+                {"id": "copilot-claude-opus-4.8",      "name": "Claude Opus 4.8",             "provider": "subscription"},
+                {"id": "copilot-claude-haiku-4.5",     "name": "Claude Haiku 4.5",            "provider": "subscription"},
+                {"id": "copilot-gpt-5.6-sol",          "name": "GPT-5.6 Sol",                 "provider": "subscription"},
+                {"id": "copilot-gpt-5.6-luna",         "name": "GPT-5.6 Luna",                "provider": "subscription"},
+                {"id": "copilot-gpt-5.5",              "name": "GPT-5.5",                     "provider": "subscription"},
+                {"id": "copilot-gpt-5.4-mini",         "name": "GPT-5.4 Mini",                "provider": "subscription"},
+                {"id": "copilot-gemini-3.1-pro-preview", "name": "Gemini 3.1 Pro",            "provider": "subscription"},
+                # Cursor ve OpenCode modelleri DİNAMİK: /cli-models/{cli} endpoint'i
+                # kullanıcının hesabına/kurulumuna göre canlı liste döner.
             ]
         }
 
@@ -137,11 +151,12 @@ def create_config_router(db):
 
     @router.get("/cli-availability")
     async def cli_availability(x_session_token: str = Header(alias="X-Session-Token", default="")):
-        """CLI sağlayıcılarının (claude/codex/agy) kullanıcı PC'sinde kurulu olup
-        olmadığını döner. Bunlar gömülü DEĞİL — kullanıcının kurmuş olması gerekir.
+        """CLI sağlayıcılarının kullanıcı PC'sinde kurulu olup olmadığını döner.
+        Bunlar gömülü DEĞİL — kullanıcının kurmuş olması gerekir.
         Frontend, kurulu olmayan bir CLI modeli seçilince uyarı gösterir."""
         import shutil
         from providers.agy_provider import AgyProvider
+        from providers.oneshot_cli import cli_installed
 
         # _agy_binary() yaygın kurulum yollarına da bakar; "agy" dönerse sadece PATH'e kalmış demektir.
         agy_ok = AgyProvider._agy_binary() != "agy" or bool(shutil.which("agy"))
@@ -149,6 +164,97 @@ def create_config_router(db):
             "claude": bool(shutil.which("claude")),
             "codex": bool(shutil.which("codex")),
             "agy": agy_ok,
+            "cursor": cli_installed("cursor"),
+            "copilot": cli_installed("copilot"),
+            "opencode": cli_installed("opencode"),
         }
+
+    # ── Dinamik CLI model listeleri (cursor: hesaba göre; opencode: kuruluma göre) ──
+    _cli_models_cache: dict = {}   # cli → (timestamp, models)
+    _CLI_MODELS_TTL = 300          # 5 dk — CLI listeleri nadiren değişir
+
+    async def _run_cli_capture(cmd: list, timeout: float = 20.0) -> str:
+        """CLI komutunu çalıştırıp stdout'u döner (Windows'ta pencere açmadan)."""
+        import subprocess as sp
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            creationflags=getattr(sp, "CREATE_NO_WINDOW", 0),
+        )
+        try:
+            out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except asyncio.TimeoutError:
+            proc.kill()
+            return ""
+        return out.decode("utf-8", errors="ignore")
+
+    def _parse_cursor_models(raw: str) -> list:
+        """`agent models` çıktısı: 'id - Display Name' satırları.
+        '-fast' hız varyantları listeyi 2x şişiriyor → elenir (id'yi bilen
+        kullanıcı yine seçebilir; UI listesi derli toplu kalsın)."""
+        models = []
+        for line in raw.splitlines():
+            line = line.strip()
+            if " - " not in line or line.lower().startswith("available"):
+                continue
+            mid, _, name = line.partition(" - ")
+            mid = mid.strip()
+            name = name.strip()
+            if not mid or mid.endswith("-fast"):
+                continue
+            # "Auto (current, default)" → "Auto"
+            name = name.split(" (current")[0].split(" (default")[0].strip()
+            models.append({"id": f"cursor-{mid}", "name": name, "provider": "subscription"})
+        return models
+
+    def _parse_opencode_models(raw: str) -> list:
+        """`opencode models` çıktısı: 'provider/model' satırları. Liste models.dev
+        kataloğunun tamamı olabilir (yüzlerce) → yalnızca opencode/* (ücretsiz,
+        auth'suz çalışır — canlı doğrulandı) gösterilir; diğer sağlayıcılar için
+        kullanıcı zaten bizim API-key provider'larımızı kullanabilir."""
+        models = []
+        for line in raw.splitlines():
+            line = line.strip()
+            if "/" not in line or " " in line:
+                continue
+            if not line.startswith("opencode/"):
+                continue
+            short = line.split("/", 1)[1]
+            pretty = short.replace("-", " ").title()
+            if short.endswith("-free"):
+                pretty = pretty[:-5].strip() + " (Ücretsiz)"
+            models.append({"id": f"opencode:{line}", "name": pretty, "provider": "subscription"})
+        return models
+
+    @router.get("/cli-models/{cli}")
+    async def cli_models(cli: str, x_session_token: str = Header(alias="X-Session-Token", default="")):
+        """Cursor/OpenCode için canlı model listesi (kullanıcının hesabına/kurulumuna
+        göre). 5 dk cache'lenir. CLI kurulu değilse boş liste döner."""
+        import time
+        from providers.oneshot_cli import resolve_cli_cmd
+
+        if cli not in ("cursor", "opencode"):
+            raise HTTPException(404, "Desteklenen: cursor, opencode")
+
+        cached = _cli_models_cache.get(cli)
+        if cached and time.time() - cached[0] < _CLI_MODELS_TTL:
+            return {"models": cached[1]}
+
+        base = resolve_cli_cmd(cli)
+        if not base:
+            return {"models": [], "installed": False}
+
+        try:
+            raw = await _run_cli_capture([*base, "models"])
+            models = _parse_cursor_models(raw) if cli == "cursor" else _parse_opencode_models(raw)
+        except Exception as exc:
+            logger.warning(f"cli-models({cli}) alınamadı: {exc}")
+            models = []
+
+        if models:
+            _cli_models_cache[cli] = (time.time(), models)
+        return {"models": models, "installed": True}
 
     return router

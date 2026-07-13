@@ -3,6 +3,9 @@ from .api_providers import GeminiProvider, OllamaProvider, OpenAICompatibleProvi
 from .claude_provider import ClaudeCodeProvider
 from .codex_provider import CodexProvider
 from .agy_provider import AgyProvider
+from .cursor_provider import CursorProvider
+from .copilot_provider import CopilotProvider
+from .opencode_provider import OpenCodeProvider
 from .cli_base import BaseCLIProvider as CLIProvider
 from .base import AIProvider
 
@@ -31,9 +34,15 @@ class AIProviderManager:
         elif p_type == "z-ai" and api_key:
             return OpenAICompatibleProvider(api_key=api_key, base_url="https://api.z.ai/api/paas/v4", model_name=m_name or "glm-5.2")
         elif p_type == "subscription":
-            # m_name burada binary adıdır (claude, codex, agy vb.)
+            # m_name burada binary adıdır (claude, codex, agy, cursor-*, copilot-*, opencode:*)
             name = m_name or "claude"
-            if name.startswith("gpt-"):
+            if name.startswith("cursor-"):
+                return CursorProvider(binary_name=name)
+            elif name.startswith("copilot-"):
+                return CopilotProvider(binary_name=name)
+            elif name.startswith("opencode:"):
+                return OpenCodeProvider(binary_name=name)
+            elif name.startswith("gpt-"):
                 return CodexProvider(binary_name=name)
             elif name.startswith(("gemini", "agy-")):
                 return AgyProvider(binary_name=name)
