@@ -257,38 +257,61 @@ def create_config_router(db):
         {"id": "copilot-gemini-3.1-pro-preview", "name": "Gemini 3.1 Pro",          "provider": "subscription"},
     ]
 
+    # Codex modelleri: statik liste (plan-bazlı blocklist bayrakları eklenerek servis edilir)
+    _CODEX_MODELS = [
+        {"id": "gpt-5.6-terra", "name": "GPT-5.6 Terra",  "provider": "subscription"},
+        {"id": "gpt-5.6-sol",   "name": "GPT-5.6 Sol",    "provider": "subscription"},
+        {"id": "gpt-5.6-luna",  "name": "GPT-5.6 Luna",   "provider": "subscription"},
+        {"id": "gpt-5.5",       "name": "GPT-5.5",        "provider": "subscription"},
+        {"id": "gpt-5.4",       "name": "GPT-5.4",        "provider": "subscription"},
+        {"id": "gpt-5.4-mini",  "name": "GPT-5.4 Mini",   "provider": "subscription"},
+    ]
+
     def _apply_plan_caps(cli: str, models: list) -> list:
-        """Plan adlı modelleri desteklemiyorsa auto dışındakileri devre dışı işaretle."""
-        from providers.oneshot_cli import get_named_models_cap
+        """Plan kısıtlarını işaretle: (a) adlı-modeller-kapalı (cursor/copilot),
+        (b) model-bazlı blocklist (codex: 'not supported with ChatGPT account')."""
+        from providers.oneshot_cli import get_named_models_cap, get_blocked_models
         if get_named_models_cap(cli) is False:
             for m in models:
                 if m["id"] not in (f"{cli}-auto",):
+                    m["disabled"] = True
+                    m["disabled_reason"] = "plan"
+        blocked = get_blocked_models(cli)
+        if blocked:
+            for m in models:
+                if m["id"] in blocked:
                     m["disabled"] = True
                     m["disabled_reason"] = "plan"
         return models
 
     @router.get("/cli-models/{cli}")
     async def cli_models(cli: str, x_session_token: str = Header(alias="X-Session-Token", default="")):
-        """Cursor/OpenCode: canlı model listesi; Copilot: statik liste.
-        Cursor/Copilot'ta plan adlı modelleri desteklemiyorsa (öğrenilmiş/probe)
-        modeller disabled=true bayrağıyla döner. 5 dk cache."""
+        """Cursor/OpenCode: canlı model listesi; Copilot/Codex: statik liste.
+        Plan desteklemeyen modeller disabled=true bayrağıyla döner. 5 dk cache."""
         import time
         from providers.oneshot_cli import resolve_cli_cmd, get_named_models_cap, probe_named_models
 
-        if cli not in ("cursor", "opencode", "copilot"):
-            raise HTTPException(404, "Desteklenen: cursor, opencode, copilot")
+        if cli not in ("cursor", "opencode", "copilot", "codex"):
+            raise HTTPException(404, "Desteklenen: cursor, opencode, copilot, codex")
 
+        import copy as _copy
         cached = _cli_models_cache.get(cli)
         if cached and time.time() - cached[0] < _CLI_MODELS_TTL:
-            return {"models": cached[1], "installed": True}
+            # Bayraklar cache'e YAZILMAZ — plan bilgisi turda değişebilir (canlı
+            # öğrenme) → her istekte taze uygulanır.
+            return {"models": _apply_plan_caps(cli, _copy.deepcopy(cached[1])), "installed": True}
 
-        base = resolve_cli_cmd(cli)
+        import shutil as _shutil
+        base = resolve_cli_cmd(cli) if cli != "codex" else (["codex"] if _shutil.which("codex") else None)
         if not base:
             return {"models": [], "installed": False}
 
         if cli == "copilot":
             import copy
             models = copy.deepcopy(_COPILOT_MODELS)
+        elif cli == "codex":
+            import copy
+            models = copy.deepcopy(_CODEX_MODELS)
         else:
             try:
                 raw = await _run_cli_capture([*base, "models"])
@@ -301,11 +324,10 @@ def create_config_router(db):
         # dosyada). İlk açılışta grup birkaç sn "yükleniyor" gösterir, sonrası anlık.
         if cli in ("cursor", "copilot") and get_named_models_cap(cli) is None:
             await probe_named_models(cli)
-        models = _apply_plan_caps(cli, models)
 
         if models:
-            _cli_models_cache[cli] = (time.time(), models)
-        return {"models": models, "installed": True}
+            _cli_models_cache[cli] = (time.time(), _copy.deepcopy(models))
+        return {"models": _apply_plan_caps(cli, models), "installed": True}
 
     # ── CLI doktoru: kurulu mu + giriş yapılmış mı ──────────────────
     _doctor_cache: dict = {}

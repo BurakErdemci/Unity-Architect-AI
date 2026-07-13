@@ -200,6 +200,42 @@ PLAN_ERROR_RE = _re.compile(
     r"(named models unavailable|free plans can only use auto|"
     r"is not available|switch to auto|upgrade plans)", _re.I)
 
+# Codex plan kısıtı (canlı yakalandı 2026-07-13):
+#   "The 'gpt-5.6-sol' model is not supported when using Codex with a ChatGPT account."
+CODEX_PLAN_ERROR_RE = _re.compile(r"model is not supported when using codex", _re.I)
+
+# Kota/limit tükenmesi (tüm CLI'lar) → kullanıcıya dostane "hakkın doluyor/doldu" mesajı
+QUOTA_ERROR_RE = _re.compile(
+    r"(usage limit|rate limit|quota|too many requests|\b429\b|"
+    r"out of (free )?credits|limit reached|hakk?ınız)", _re.I)
+
+
+def get_blocked_models(cli: str) -> set:
+    """Bu planda çalışmadığı ÖĞRENİLMİŞ model id'leri (bizim id formatımızda)."""
+    import time
+    entry = get_plan_caps().get(cli) or {}
+    if time.time() - entry.get("checked_at", 0) > _CAPS_TTL:
+        return set()
+    return set(entry.get("blocked_models") or [])
+
+
+def add_blocked_model(cli: str, our_model_id: str) -> None:
+    try:
+        import json as _json, time
+        caps = get_plan_caps()
+        entry = caps.get(cli) or {}
+        blocked = set(entry.get("blocked_models") or [])
+        blocked.add(our_model_id)
+        entry["blocked_models"] = sorted(blocked)
+        entry["checked_at"] = time.time()
+        caps[cli] = entry
+        os.makedirs(os.path.dirname(_CAPS_PATH), exist_ok=True)
+        with open(_CAPS_PATH, "w", encoding="utf-8") as f:
+            _json.dump(caps, f, indent=2)
+        logger.info(f"[plan-caps] {cli} blocked_models += {our_model_id}")
+    except Exception as e:
+        logger.warning(f"[plan-caps] blocked_models yazılamadı: {e}")
+
 
 async def probe_named_models(cli: str, timeout: float = 30.0) -> Optional[bool]:
     """Ucuz adlı-model probe'u: planın adlı modelleri destekleyip desteklemediğini

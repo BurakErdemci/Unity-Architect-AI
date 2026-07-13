@@ -44,7 +44,7 @@ interface CliGroupDef {
   availKey: string;            // /cli-availability yanıtındaki anahtar
   cliLabel: string;            // "kurulu değil" uyarısında insan-okur ad
   matches: (id: string) => boolean;
-  dynamic?: 'cursor' | 'opencode' | 'copilot'; // /cli-models/{cli} ile canlı liste
+  dynamic?: 'cursor' | 'opencode' | 'copilot' | 'codex'; // /cli-models/{cli} ile liste
   accent: string;              // aktif model rengi (tailwind text sınıfı)
   dot: string;                 // aktif nokta rengi (tailwind bg sınıfı)
   badge?: string;              // grup başlığı yanındaki küçük rozet
@@ -59,6 +59,7 @@ const CLI_GROUPS: CliGroupDef[] = [
   {
     key: 'codex', label: 'Codex', brand: 'openai', availKey: 'codex', cliLabel: 'Codex',
     matches: id => id.startsWith('gpt-'),
+    dynamic: 'codex',
     accent: 'text-emerald-400', dot: 'bg-emerald-400',
   },
   {
@@ -167,7 +168,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
   // Cursor/OpenCode: hesaba/kuruluma göre CANLI model listesi (grup ilk açılınca çekilir).
   const [dynModels, setDynModels] = useState<Record<string, ModelItem[]>>({});
   const [dynLoading, setDynLoading] = useState<Record<string, boolean>>({});
-  const fetchDynModels = async (cli: 'cursor' | 'opencode' | 'copilot') => {
+  const fetchDynModels = async (cli: 'cursor' | 'opencode' | 'copilot' | 'codex') => {
     if (dynModels[cli] || dynLoading[cli]) return;
     setDynLoading(prev => ({ ...prev, [cli]: true }));
     try {
@@ -265,7 +266,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
 
   // Arama açıkken dinamik listeleri de getir (sonuç tam olsun)
   useEffect(() => {
-    if (q) { fetchDynModels('cursor'); fetchDynModels('opencode'); }
+    if (q) { fetchDynModels('cursor'); fetchDynModels('opencode'); fetchDynModels('copilot'); fetchDynModels('codex'); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q]);
 

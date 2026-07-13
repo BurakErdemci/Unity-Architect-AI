@@ -1224,6 +1224,12 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                             _plan_error = True
                         else:
                             got_error = True
+                            from providers.oneshot_cli import QUOTA_ERROR_RE as _QRE
+                            if _QRE.search(_msg):
+                                _msg = (f"⏳ {cli_key.capitalize()} kullanım hakkın dolmuş görünüyor "
+                                        f"(plan kotası). Kota yenilenene kadar başka bir sağlayıcı "
+                                        f"seçebilirsin (örn. NVIDIA ücretsiz havuzu veya OpenCode).\n\n"
+                                        + _msg[:200])
                             yield AgentEvent("error", {"message": _msg})
 
                 if not _plan_error:
@@ -1439,9 +1445,25 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
         from providers._attachments import materialize_images, cleanup_dir
         image_paths, _att_dir = materialize_images(
             self.images, self.workspace_path, f"codex_conv{self.conversation_id}")
+        from providers.oneshot_cli import CODEX_PLAN_ERROR_RE, QUOTA_ERROR_RE, add_blocked_model
         try:
             async for ev in session.stream(message, image_paths=image_paths):
                 etype = ev.pop("type", "text")
+                if etype == "error":
+                    _msg = str(ev.get("message", ""))
+                    if CODEX_PLAN_ERROR_RE.search(_msg):
+                        # Plan bu modeli desteklemiyor (canlı örnek: gpt-5.6-sol +
+                        # ChatGPT hesabı) → öğren (seçici soluklaştırır) + dostane mesaj.
+                        add_blocked_model("codex", self.model_name)
+                        ev["message"] = (
+                            f"🔒 ChatGPT planın **{self.model_name}** modelini desteklemiyor. "
+                            f"Model seçiciden başka bir Codex modeli seç (örn. GPT-5.5) — "
+                            f"bu model artık listede kilitli görünecek.")
+                    elif QUOTA_ERROR_RE.search(_msg):
+                        ev["message"] = (
+                            "⏳ Codex kullanım hakkın dolmuş görünüyor (plan kotası). "
+                            "Kota yenilenene kadar başka bir sağlayıcı seçebilirsin "
+                            "(örn. NVIDIA ücretsiz havuzu veya OpenCode).\n\n" + _msg[:200])
                 yield AgentEvent(etype, ev)
         except Exception as e:
             logger.exception("[CodexSession] stream hatası")
