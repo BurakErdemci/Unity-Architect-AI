@@ -1141,14 +1141,19 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
         İlk turda (resume anahtarı yokken) tam transcript enjekte edilir;
         sonraki turlarda CLI kendi hafızasından devam eder.
         """
+        import re as _re
         from ai_providers import AIProviderManager
         from providers.oneshot_cli import get_session
 
-        provider = AIProviderManager.get_provider({
-            "provider_type": self.provider_type,
-            "model_name": self.model_name,
-            "api_key": getattr(self, "api_key", ""),
-        })
+        def _make_provider(model_name: str):
+            p = AIProviderManager.get_provider({
+                "provider_type": self.provider_type,
+                "model_name": model_name,
+                "api_key": getattr(self, "api_key", ""),
+            })
+            return p
+
+        provider = _make_provider(self.model_name)
 
         sess = get_session(cli_key, self.conversation_id)
         sess.auto_approve = (getattr(self, "generation_mode", "auto") == "auto")
@@ -1158,6 +1163,17 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
             import uuid as _uuid
             provider.fresh_session_id = str(_uuid.uuid4())
             sess.session_id = provider.fresh_session_id
+
+        # Plan kısıtı tespiti: Cursor/Copilot free planlarda adlı modeller kapalı.
+        # Hata mesajı bu kalıba uyarsa turu 'auto' modeliyle OTOMATİK tekrarlarız.
+        _PLAN_ERR = _re.compile(
+            r"(named models unavailable|free plans can only use auto|"
+            r"is not available|switch to auto|upgrade plans)", _re.I)
+        _current_model = (self.model_name or "").lower()
+        _can_fallback = (
+            cli_key in ("cursor", "copilot")
+            and _current_model not in (f"{cli_key}-auto",)
+        )
 
         # İlk turda transcript enjeksiyonu (sonraki turlarda CLI resume hatırlar).
         enriched_prompt = user_message
@@ -1181,27 +1197,53 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
         final_text = ""
         got_error = False
         try:
-            async for event in provider.analyze_code(
-                enriched_prompt,
-                thinking_level="medium" if self.use_thinking else "off",
-                cwd=self.workspace_path or ".",
-                interactive=True,
-            ):
-                etype = event.get("type")
-                if etype == "session_meta":
-                    _sid = event.get("session_id")
-                    if _sid and not sess.session_id:
-                        sess.session_id = _sid
-                        logger.info(f"[{cli_key}Session] conv={self.conversation_id} resume anahtarı: {_sid}")
-                elif etype == "delta":
-                    yield AgentEvent("text", {"content": event.get("text", "")})
-                elif etype == "thinking":
-                    yield AgentEvent("thinking", {"text": event.get("text", "")})
-                elif etype == "final":
-                    final_text = event.get("text", "")
-                elif etype == "error":
-                    got_error = True
-                    yield AgentEvent("error", {"message": event.get("content", "")})
+            for attempt in (1, 2):
+                got_error = False
+                _plan_error = False
+                async for event in provider.analyze_code(
+                    enriched_prompt,
+                    thinking_level="medium" if self.use_thinking else "off",
+                    cwd=self.workspace_path or ".",
+                    interactive=True,
+                ):
+                    etype = event.get("type")
+                    if etype == "session_meta":
+                        _sid = event.get("session_id")
+                        if _sid and not sess.session_id:
+                            sess.session_id = _sid
+                            logger.info(f"[{cli_key}Session] conv={self.conversation_id} resume anahtarı: {_sid}")
+                    elif etype == "delta":
+                        yield AgentEvent("text", {"content": event.get("text", "")})
+                    elif etype == "thinking":
+                        yield AgentEvent("thinking", {"text": event.get("text", "")})
+                    elif etype == "final":
+                        final_text = event.get("text", "")
+                    elif etype == "error":
+                        _msg = event.get("content", "")
+                        if attempt == 1 and _can_fallback and _PLAN_ERR.search(_msg):
+                            # Plan bu modeli desteklemiyor → hatayı GÖSTERME, Auto ile tekrarla.
+                            _plan_error = True
+                        else:
+                            got_error = True
+                            yield AgentEvent("error", {"message": _msg})
+
+                if not _plan_error:
+                    break
+
+                # ── Auto fallback (yalnız cursor/copilot, tek sefer) ──
+                logger.info(f"[{cli_key}Session] plan kısıtı → auto fallback (model={self.model_name})")
+                yield AgentEvent("thinking", {
+                    "text": (f"ℹ️ Aboneliğin bu modeli desteklemiyor — **Auto** ile devam ediyorum. "
+                             f"(Kalıcı çözüm: model seçiciden {cli_key.capitalize()} Auto'yu seç.)")
+                })
+                provider = _make_provider(f"{cli_key}-auto")
+                if cli_key == "copilot":
+                    # --session-id yoksa YARATIR, varsa devam eder (CLI help'inden) —
+                    # ilk tur patladıysa session hiç doğmamış olabilir, --resume ölürdü.
+                    provider.fresh_session_id = sess.session_id
+                    provider.resume_session_id = None
+                else:
+                    provider.resume_session_id = sess.session_id
         finally:
             cleanup_dir(_att_dir)
 

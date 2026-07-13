@@ -1,7 +1,8 @@
-import { LogOut, Settings, Trash2, X, Gamepad2, Loader2, Globe } from "lucide-react";
+import { LogOut, Settings, Trash2, X, Gamepad2, Loader2, Globe, Key, Check } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 
 import { AIConfig } from "./types";
+import { ModelAvatar } from "./ModelAvatar";
 import { UnityMCPStatus } from "../../hooks/home/useAIConfig";
 import { useLang, type Lang } from "../../lib/i18n";
 
@@ -20,6 +21,22 @@ const DEFAULT_MODELS: Record<string, string> = {
   kb: "unity-kb-v1",
   subscription: "claude-sonnet-5",
 };
+
+// Sağlayıcı seçim ızgarası (marka avatarlı — native <select> yerine).
+// brand: ModelAvatar/ModelLogo anahtarı; badge: küçük rozet.
+const PROVIDER_TILES: { value: string; label: string; brand: string; badge?: string }[] = [
+  { value: "anthropic",    label: "Claude",     brand: "anthropic" },
+  { value: "openai",       label: "OpenAI",     brand: "openai" },
+  { value: "google",       label: "Gemini",     brand: "google" },
+  { value: "deepseek",     label: "DeepSeek",   brand: "deepseek" },
+  { value: "moonshot",     label: "Kimi",       brand: "moonshot" },
+  { value: "z-ai",         label: "GLM",        brand: "z-ai" },
+  { value: "nvidia",       label: "NVIDIA",     brand: "nvidia", badge: "ücretsiz" },
+  { value: "groq",         label: "Groq",       brand: "groq" },
+  { value: "openrouter",   label: "OpenRouter", brand: "openrouter" },
+  { value: "ollama",       label: "Ollama",     brand: "ollama", badge: "yerel" },
+  { value: "subscription", label: "Abonelik (CLI)", brand: "subscription" },
+];
 
 
 
@@ -117,13 +134,13 @@ export const SettingsModal = ({
       { label: "DeepSeek V4 Flash", value: "deepseek-v4-flash" },
     ],
     nvidia: [
+      { label: `Nemotron 3 Ultra 550B (${t('hint.strongest')})`, value: "nvidia/nemotron-3-ultra-550b-a55b" },
       { label: `Nemotron 3 Super 120B (${t('hint.recommended')})`, value: "nvidia/nemotron-3-super-120b-a12b" },
-      { label: "Qwen3 Coder 480B", value: "qwen/qwen3-coder-480b-a35b-instruct" },
       { label: "Qwen 3.5 397B", value: "qwen/qwen3.5-397b-a17b" },
       { label: "Mistral Large 3 675B", value: "mistralai/mistral-large-3-675b-instruct-2512" },
+      { label: "MiniMax M3", value: "minimaxai/minimax-m3" },
       { label: "DeepSeek V4 Pro", value: "deepseek-ai/deepseek-v4-pro" },
       { label: "Kimi K2.6", value: "moonshotai/kimi-k2.6" },
-      { label: "Nemotron Super 49B", value: "nvidia/llama-3.3-nemotron-super-49b-v1.5" },
     ],
     subscription: [
       { label: "Claude Fable 5", value: "claude-fable-5" },
@@ -148,56 +165,70 @@ export const SettingsModal = ({
     {open && (
       <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[100]">
         <motion.div
-          initial={{ scale: 0.95, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          exit={{ scale: 0.95, opacity: 0 }}
-          className="bg-[#000000] border border-slate-800 rounded-2xl p-6 max-w-md w-full shadow-2xl"
+          initial={{ scale: 0.96, opacity: 0, y: 8 }}
+          animate={{ scale: 1, opacity: 1, y: 0 }}
+          exit={{ scale: 0.96, opacity: 0, y: 8 }}
+          transition={{ duration: 0.16, ease: 'easeOut' }}
+          className="bg-[#0B0D12]/95 backdrop-blur-xl border border-white/10 rounded-2xl max-w-lg w-full shadow-[0_24px_64px_-16px_rgba(0,0,0,0.9)] flex flex-col max-h-[88vh] overflow-hidden"
         >
-          <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center justify-between px-5 pt-5 pb-4 border-b border-white/[0.06] shrink-0">
             <div className="flex items-center gap-2.5">
               <div className="p-1.5 bg-blue-500/10 rounded-lg text-blue-500"><Settings size={18} /></div>
               <h2 className="text-base font-bold text-white">{t('settings.title')}</h2>
             </div>
-            <button onClick={onClose} className="p-1.5 hover:bg-slate-800 rounded-lg transition-colors text-slate-400">
+            <button onClick={onClose} className="p-1.5 hover:bg-white/[0.06] rounded-lg transition-colors text-slate-400">
               <X size={18} />
             </button>
           </div>
-          <div className="space-y-4">
+          <div className="space-y-4 px-5 py-4 overflow-y-auto custom-scrollbar">
             <div>
-              <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1.5">{t('settings.provider')}</label>
-              <select
-                style={{ backgroundColor: '#000000', color: 'white' }}
-                value={aiConfig.provider_type}
-                onChange={e => onChange({ ...aiConfig, provider_type: e.target.value, api_key: '', model_name: DEFAULT_MODELS[e.target.value] || '' })}
-                className="w-full bg-[#000000] border border-slate-800 rounded-xl p-3 text-white text-sm outline-none focus:border-blue-500 transition-colors"
-              >
-                <option value="groq">{t('settings.providerGroq')}</option>
-                <option value="ollama">{t('settings.providerOllama')}</option>
-                <option value="anthropic">{t('settings.providerAnthropic')}</option>
-                <option value="google">{t('settings.providerGoogle')}</option>
-                <option value="openai">{t('settings.providerOpenai')}</option>
-                <option value="deepseek">{t('settings.providerDeepseek')}</option>
-                <option value="moonshot">{t('settings.providerMoonshot')}</option>
-                <option value="z-ai">{t('settings.providerZai')}</option>
-                <option value="nvidia">{t('settings.providerNvidia')}</option>
-                <option value="openrouter">{t('settings.providerOpenrouter')}</option>
-                <option value="subscription">{t('settings.providerSubscription')}</option>
-              </select>
+              <label className="block text-[9.5px] font-bold text-slate-500 uppercase tracking-[0.14em] mb-2">{t('settings.provider')}</label>
+              <div className="grid grid-cols-3 gap-1.5">
+                {PROVIDER_TILES.map(tile => {
+                  const selected = aiConfig.provider_type === tile.value;
+                  const hasKey = providersWithKeys.includes(tile.value);
+                  return (
+                    <button
+                      key={tile.value}
+                      type="button"
+                      onClick={() => onChange({ ...aiConfig, provider_type: tile.value, api_key: '', model_name: DEFAULT_MODELS[tile.value] || '' })}
+                      className={`relative flex items-center gap-2 px-2 py-2 rounded-xl border text-left transition-all ${
+                        selected
+                          ? 'border-blue-500/60 bg-blue-500/10 shadow-[0_0_0_1px_rgba(59,130,246,0.25)]'
+                          : 'border-white/[0.07] bg-white/[0.03] hover:bg-white/[0.06] hover:border-white/15'
+                      } ${tile.value === 'subscription' ? 'col-span-2' : ''}`}
+                    >
+                      <ModelAvatar provider={tile.brand} size={11} containerSize="h-5 w-5" />
+                      <span className={`text-[11px] font-semibold truncate ${selected ? 'text-blue-300' : 'text-slate-300'}`}>
+                        {tile.label}
+                      </span>
+                      {tile.badge && (
+                        <span className="absolute -top-1.5 -right-1 text-[7px] font-bold text-emerald-300 bg-emerald-500/15 border border-emerald-500/40 rounded px-1 uppercase tracking-wide">
+                          {tile.badge}
+                        </span>
+                      )}
+                      {!tile.badge && hasKey && tile.value !== 'subscription' && tile.value !== 'ollama' && (
+                        <Key size={8} className="absolute top-1.5 right-1.5 text-blue-400/60" />
+                      )}
+                      {selected && <Check size={11} className="ml-auto text-blue-400 shrink-0" />}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
             {aiConfig.provider_type !== 'ollama' && aiConfig.provider_type !== 'subscription' && (
               <div>
-                <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
+                <label className="block text-[9.5px] font-bold text-slate-500 uppercase tracking-[0.14em] mb-1.5">
                   {t('settings.apiKey')}
                   {providersWithKeys.includes(aiConfig.provider_type) && !aiConfig.api_key && (
                     <span className="ml-2 text-emerald-400 normal-case tracking-normal">{t('settings.savedKey')}</span>
                   )}
                 </label>
                 <input
-                  style={{ backgroundColor: '#000000', color: 'white' }}
                   type="password"
                   value={aiConfig.api_key}
                   onChange={e => onChange({ ...aiConfig, api_key: e.target.value })}
-                  className="w-full bg-[#000000] border border-slate-800 rounded-xl p-3 text-white text-sm outline-none focus:border-blue-500 transition-colors"
+                  className="w-full bg-white/[0.04] border border-white/[0.08] rounded-xl p-3 text-white text-sm outline-none focus:border-blue-500/60 focus:bg-white/[0.06] transition-colors placeholder:text-slate-600"
                   placeholder={providersWithKeys.includes(aiConfig.provider_type) ? t('settings.savedKeyPlaceholder') : t('settings.apiKeyPlaceholder')}
                 />
                 {providersWithKeys.includes(aiConfig.provider_type) && !aiConfig.api_key && (
@@ -219,12 +250,11 @@ export const SettingsModal = ({
               </div>
             )}
             <div>
-              <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1.5">{t('settings.modelName')}</label>
+              <label className="block text-[9.5px] font-bold text-slate-500 uppercase tracking-[0.14em] mb-1.5">{t('settings.modelName')}</label>
               <input
-                style={{ backgroundColor: '#000000', color: 'white' }}
                 value={aiConfig.model_name}
                 onChange={e => onChange({ ...aiConfig, model_name: e.target.value })}
-                className="w-full bg-[#000000] border border-slate-800 rounded-xl p-3 text-white text-sm outline-none focus:border-blue-500 transition-colors"
+                className="w-full bg-white/[0.04] border border-white/[0.08] rounded-xl p-3 text-white text-sm outline-none focus:border-blue-500/60 focus:bg-white/[0.06] transition-colors placeholder:text-slate-600"
                 placeholder={DEFAULT_MODELS[aiConfig.provider_type] || "model-adı-girin"}
               />
               {MODEL_HINTS[aiConfig.provider_type] && (
@@ -237,7 +267,7 @@ export const SettingsModal = ({
                       className={`px-2 py-0.5 rounded-md text-[10px] transition-colors border ${
                         aiConfig.model_name === hint.value
                           ? 'bg-blue-500/20 border-blue-500/40 text-blue-300'
-                          : 'bg-slate-900 border-slate-800 text-slate-500 hover:text-slate-300 hover:border-slate-600'
+                          : 'bg-white/[0.03] border-white/[0.08] text-slate-500 hover:text-slate-300 hover:border-white/20'
                       }`}
                     >
                       {hint.label}
@@ -274,7 +304,7 @@ export const SettingsModal = ({
             </div>
 
             {/* Language */}
-            <div className="flex items-center justify-between p-3 rounded-xl border border-slate-700/50 bg-slate-900/30">
+            <div className="flex items-center justify-between p-3 rounded-xl border border-white/[0.07] bg-white/[0.03]">
               <div className="flex items-center gap-2.5">
                 <Globe size={15} className="text-slate-400 shrink-0" />
                 <p className="text-xs font-semibold text-slate-200">{t('settings.language')}</p>
@@ -287,7 +317,7 @@ export const SettingsModal = ({
                     className={`px-3 py-1 rounded-lg text-[11px] font-bold transition-all border ${
                       lang === l
                         ? 'bg-blue-600/20 border-blue-500/40 text-blue-300'
-                        : 'bg-slate-800 border-slate-700 text-slate-500 hover:text-slate-300 hover:border-slate-600'
+                        : 'bg-white/[0.04] border-white/[0.08] text-slate-500 hover:text-slate-300 hover:border-white/20'
                     }`}
                   >
                     {l === 'tr' ? '🇹🇷 TR' : '🇬🇧 EN'}
@@ -296,7 +326,7 @@ export const SettingsModal = ({
               </div>
             </div>
 
-            <div className="flex gap-3 pt-2 mt-2 border-t border-slate-800/50">
+            <div className="flex gap-3 pt-2 mt-2 border-t border-white/[0.06]">
               <button
                 onClick={onSave}
                 className="flex-1 bg-blue-600 hover:bg-blue-500 text-white p-3 rounded-xl font-bold text-xs tracking-wide transition-all"

@@ -63,9 +63,16 @@ class CursorProvider(BaseCLIProvider):
             "--stream-partial-output",
             "--trust",
             "--approve-mcps",
+            # --force ŞART: headless modda MCP tool çağrıları onay bekleyip
+            # reddediliyor (canlı doğrulandı). Native Write/Shell ise
+            # .cursor/cli.json deny-list'i ile kapalı ("unless explicitly
+            # denied") → tüm yazma/shell unityai MCP onayından geçer.
+            "--force",
         ]
-        if model and model != "auto":
-            cmd += ["--model", model]
+        # 'auto' da AÇIKÇA geçirilir: bayraksız çağrıda CLI kayıtlı varsayılan
+        # (adlı) modeli dener ve Free planda "Named models unavailable" ile ölür
+        # (canlı doğrulandı 2026-07-13).
+        cmd += ["--model", model or "auto"]
         if self.resume_session_id:
             cmd += ["--resume", self.resume_session_id]
         # Prompt SON pozisyonel arg (cli_base'in cmd/c stdin-pop fallback'iyle uyumlu;
@@ -118,5 +125,25 @@ class CursorProvider(BaseCLIProvider):
             with open(cfg_path, "w", encoding="utf-8") as f:
                 json.dump(merged, f, indent=2)
             logger.info("[CursorProvider] .cursor/mcp.json yazıldı.")
+
+            # İzin politikası: --force ile birlikte native Write/Shell'i deny-list'le
+            # kapat (şema hem allow hem deny İSTİYOR; BOM'suz yazılmalı).
+            cli_cfg_path = os.path.join(cfg_dir, "cli.json")
+            cli_existing = {}
+            if os.path.exists(cli_cfg_path):
+                try:
+                    with open(cli_cfg_path, "r", encoding="utf-8-sig") as f:
+                        cli_existing = json.load(f) or {}
+                except Exception:
+                    cli_existing = {}
+            perms = cli_existing.get("permissions") or {}
+            deny = list(perms.get("deny") or [])
+            for rule in ("Write(**)", "Shell(**)"):
+                if rule not in deny:
+                    deny.append(rule)
+            cli_existing["permissions"] = {"allow": list(perms.get("allow") or []), "deny": deny}
+            with open(cli_cfg_path, "w", encoding="utf-8") as f:
+                json.dump(cli_existing, f, indent=2)
+            logger.info("[CursorProvider] .cursor/cli.json izin politikası yazıldı.")
         except Exception as e:
             logger.warning(f"[CursorProvider] MCP kaydı yapılamadı: {e}")

@@ -73,8 +73,7 @@ class CopilotProvider(BaseCLIProvider):
         ]
         if unity_running:
             cmd += ["--allow-tool", "unityMCP"]
-        if model and model != "auto":
-            cmd += ["--model", model]
+        cmd += ["--model", model or "auto"]
         if self.resume_session_id:
             cmd += [f"--resume={self.resume_session_id}"]
         elif self.fresh_session_id:

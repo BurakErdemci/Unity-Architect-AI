@@ -114,6 +114,16 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   // donarsa (donmuş sayı) gerçekten bir renderer/bağlantı sorunu var demektir.
   const turnStartRef = useRef<number | null>(null);
   const [elapsedSec, setElapsedSec] = useState(0);
+
+  // Resim lightbox: window.open(dataURI) Electron'da bembeyaz sekme açıyordu
+  // (data: URL yeni pencerede render edilmiyor) → uygulama içi tam ekran önizleme.
+  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
+  useEffect(() => {
+    if (!lightboxSrc) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setLightboxSrc(null); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [lightboxSrc]);
   useEffect(() => {
     if (!loading) { turnStartRef.current = null; setElapsedSec(0); return; }
     turnStartRef.current = Date.now();
@@ -373,7 +383,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                           src={img} 
                           alt="user upload" 
                           className="max-w-[200px] max-h-[200px] rounded-lg border border-white/10 shadow-lg cursor-zoom-in hover:scale-[1.02] transition-transform" 
-                          onClick={() => window.open(img, '_blank')}
+                          onClick={() => setLightboxSrc(img)}
                         />
                       ))}
                     </div>
@@ -504,6 +514,31 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
 
         <div ref={messagesEndRef} className="h-4" />
       </div>
+
+      {/* Resim lightbox (uygulama içi tam ekran önizleme) */}
+      {lightboxSrc && (
+        <div
+          className="fixed inset-0 z-[300] bg-black/90 backdrop-blur-sm flex items-center justify-center cursor-zoom-out"
+          onClick={() => setLightboxSrc(null)}
+        >
+          <motion.img
+            initial={{ scale: 0.92, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            transition={{ duration: 0.15 }}
+            src={lightboxSrc}
+            alt="preview"
+            className="max-w-[92vw] max-h-[92vh] rounded-xl shadow-2xl object-contain"
+            onClick={e => e.stopPropagation()}
+          />
+          <button
+            onClick={() => setLightboxSrc(null)}
+            className="absolute top-4 right-4 h-9 w-9 rounded-full bg-white/10 hover:bg-white/20 text-white text-lg leading-none flex items-center justify-center transition-colors"
+            title="Kapat (Esc)"
+          >
+            ✕
+          </button>
+        </div>
+      )}
     </div>
   );
 };

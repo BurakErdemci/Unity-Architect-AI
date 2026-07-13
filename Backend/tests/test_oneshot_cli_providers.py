@@ -96,13 +96,15 @@ class TestBuildCmd(unittest.TestCase):
         self.assertIn("stream-json", cmd)
         self.assertTrue(cmd[-1].endswith("merhaba"))  # prompt son pozisyonel arg
 
-    def test_cursor_auto_model_omitted(self):
+    def test_cursor_auto_model_explicit(self):
+        """'auto' da AÇIKÇA --model auto olarak geçirilir: bayraksız çağrı CLI'ın
+        kayıtlı adlı modelini dener ve Free planda patlar (canlı doğrulandı)."""
         from providers.cursor_provider import CursorProvider
         p = CursorProvider(binary_name="cursor-auto")
         with _mock_unity_mcp(), \
              patch("providers.cursor_provider.resolve_cursor_cmd", return_value=["agent"]):
             cmd = p._build_cmd("hi")
-        self.assertNotIn("--model", cmd)
+        self.assertEqual(cmd[cmd.index("--model") + 1], "auto")
 
     def test_copilot_first_turn_vs_resume(self):
         from providers.copilot_provider import CopilotProvider
