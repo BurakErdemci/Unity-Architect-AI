@@ -341,6 +341,13 @@ def create_config_router(db):
 
         if not refresh and _doctor_cache.get("t", 0) > time.time() - 60:
             return _doctor_cache["data"]
+        if refresh:
+            # Kullanıcı yenilemesi = "durumu baştan öğren": plan kısıtları da
+            # sıfırlanır (plan yükseltince kilitli modeller anında açılabilsin;
+            # kısıt sürüyorsa probe/ilk hata yeniden öğrenir).
+            from providers.oneshot_cli import clear_plan_caps
+            clear_plan_caps()
+            _cli_models_cache.clear()
 
         async def cursor_login() -> bool | None:
             base = resolve_cli_cmd("cursor")

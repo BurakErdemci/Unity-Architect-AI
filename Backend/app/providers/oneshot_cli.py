@@ -212,6 +212,17 @@ QUOTA_ERROR_RE = _re.compile(
     r"out of (free )?credits|limit reached|hakk?ınız)", _re.I)
 
 
+def clear_plan_caps() -> None:
+    """Öğrenilmiş plan kısıtlarını sıfırlar (kullanıcı ↻ Yenile'ye basınca —
+    plan yükseltmesi sonrası kilitli modellerin anında yeniden denenebilmesi için)."""
+    try:
+        if os.path.exists(_CAPS_PATH):
+            os.remove(_CAPS_PATH)
+            logger.info("[plan-caps] sıfırlandı (kullanıcı yenilemesi)")
+    except Exception as e:
+        logger.warning(f"[plan-caps] sıfırlanamadı: {e}")
+
+
 def get_blocked_models(cli: str) -> set:
     """Bu planda çalışmadığı ÖĞRENİLMİŞ model id'leri (bizim id formatımızda)."""
     import time
