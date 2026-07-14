@@ -16,7 +16,12 @@ namespace MCPForUnity.Editor.Tools.Animation
 
             // Animator genelde model child'ında olur (kullanıcı scriptleri de
             // GetComponentInChildren kullanıyor) — kökte yoksa child'larda ara.
-            var animator = go.GetComponent<Animator>() ?? go.GetComponentInChildren<Animator>(true);
+            // DİKKAT: ?? kullanma — Editor'da GetComponent eksik bileşen için
+            // "fake null" stub döndürür, ?? referans kontrolü yaptığı için
+            // child aramasına hiç düşmez. Overload'lu == şart.
+            var animator = go.GetComponent<Animator>();
+            if (animator == null)
+                animator = go.GetComponentInChildren<Animator>(true);
             if (animator == null)
                 return new { success = false, message = $"No Animator component on '{go.name}' or its children" };
 
@@ -97,7 +102,9 @@ namespace MCPForUnity.Editor.Tools.Animation
             if (go == null)
                 return new { success = false, message = "Target GameObject not found" };
 
-            var animator = go.GetComponent<Animator>() ?? go.GetComponentInChildren<Animator>(true);
+            var animator = go.GetComponent<Animator>();
+            if (animator == null)
+                animator = go.GetComponentInChildren<Animator>(true);
             if (animator == null)
                 return new { success = false, message = $"No Animator component on '{go.name}' or its children" };
 

@@ -14,14 +14,14 @@ from core.config import config
 @mcp_for_unity_tool(
     unity_target=None,
     group=None,
-    description="Set the active Unity instance for this client/session. Accepts Name@hash, hash prefix, or port number (stdio only).",
+    description="Set the active Unity instance for this client/session. Accepts Name@hash, hash prefix, project name, or port number (stdio only).",
     annotations=ToolAnnotations(
         title="Set Active Instance",
     ),
 )
 async def set_active_instance(
         ctx: Context,
-        instance: Annotated[str, "Target instance (Name@hash, hash prefix, or port number in stdio mode)"]
+        instance: Annotated[str, "Target instance (Name@hash, hash prefix, project name, or port number in stdio mode)"]
 ) -> dict[str, Any]:
     transport = (config.transport_mode or "stdio").lower()
 
@@ -112,13 +112,18 @@ async def set_active_instance(
             if not getattr(inst, "id", None):
                 continue
             inst_hash = getattr(inst, "hash", "")
-            if inst_hash and inst_hash.lower().startswith(lookup):
+            # Düz proje adı da kabul edilir ("MyGame" → "MyGame@abc123") —
+            # stdio pool'da .name olmayabilir, id'nin @ öncesinden türet.
+            inst_name = getattr(inst, "name", None) or (
+                inst.id.split("@")[0] if "@" in inst.id else "")
+            if (inst_hash and inst_hash.lower().startswith(lookup)) or \
+               (inst_name and inst_name.lower().startswith(lookup)):
                 matches.append(inst)
         if not matches:
             return {
                 "success": False,
-                "error": f"Instance hash '{value}' does not match any running Unity editors. "
-                "Use mcpforunity://instances to confirm the available hashes."
+                "error": f"'{value}' does not match any running Unity editor's hash or project name. "
+                "Use mcpforunity://instances to confirm the available instances."
             }
         if len(matches) > 1:
             matching_ids = ", ".join(
@@ -126,7 +131,7 @@ async def set_active_instance(
             ) or "multiple instances"
             return {
                 "success": False,
-                "error": f"Instance hash '{value}' is ambiguous ({matching_ids}). "
+                "error": f"'{value}' is ambiguous ({matching_ids}). "
                 "Provide the full Name@hash from mcpforunity://instances."
             }
         resolved = matches[0]

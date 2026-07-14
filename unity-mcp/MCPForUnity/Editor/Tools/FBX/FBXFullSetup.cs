@@ -259,7 +259,10 @@ namespace MCPForUnity.Editor.Tools.FBX
                 go = new GameObject(Path.GetFileNameWithoutExtension(characterFbxPath));
             }
 
-            var animator = go.GetComponent<Animator>() ?? go.AddComponent<Animator>();
+            // ?? değil — Editor'da GetComponent fake-null stub döndürebilir.
+            var animator = go.GetComponent<Animator>();
+            if (animator == null)
+                animator = go.AddComponent<Animator>();
             animator.runtimeAnimatorController = controller;
             return go.name;
         }

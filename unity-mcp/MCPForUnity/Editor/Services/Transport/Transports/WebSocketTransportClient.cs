@@ -246,7 +246,10 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             _disposed = true;
         }
 
-        private async Task<bool> EstablishConnectionAsync(CancellationToken token)
+        // quiet=true → arka plan reconnect denemesi: başarısızlık Debug'a düşer.
+        // Sunucu kapalıyken 30 sn'de bir Error/Warn basıp konsolu spam'lememek için;
+        // kullanıcı-tetikli ilk bağlantı hatası Error olarak kalır.
+        private async Task<bool> EstablishConnectionAsync(CancellationToken token, bool quiet = false)
         {
             await StopConnectionLoopsAsync().ConfigureAwait(false);
 
@@ -292,7 +295,10 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             if (connectedEndpoint == null)
             {
                 string errorMsg = "Connection failed. Check that the server URL is correct, the server is running, and your API key (if required) is valid.";
-                McpLog.Error($"[WebSocket] {errorMsg} (Detail: {lastConnectError?.Message ?? "Unknown error"})");
+                if (quiet)
+                    McpLog.Debug($"[WebSocket] Reconnect attempt failed: {lastConnectError?.Message ?? "Unknown error"}");
+                else
+                    McpLog.Error($"[WebSocket] {errorMsg} (Detail: {lastConnectError?.Message ?? "Unknown error"})");
                 _state = TransportState.Disconnected(TransportDisplayName, errorMsg);
                 return false;
             }
@@ -312,7 +318,10 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             catch (Exception ex)
             {
                 string regMsg = $"Registration with server failed: {ex.Message}";
-                McpLog.Error($"[WebSocket] {regMsg}");
+                if (quiet)
+                    McpLog.Debug($"[WebSocket] {regMsg}");
+                else
+                    McpLog.Error($"[WebSocket] {regMsg}");
                 _state = TransportState.Disconnected(TransportDisplayName, regMsg);
                 return false;
             }
@@ -786,7 +795,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                         catch (OperationCanceledException) { return; }
                     }
 
-                    if (await EstablishConnectionAsync(token).ConfigureAwait(false))
+                    if (await EstablishConnectionAsync(token, quiet: true).ConfigureAwait(false))
                     {
                         _state = TransportState.Connected(TransportDisplayName, sessionId: _sessionId, details: _endpointUri.ToString());
                         _isConnected = true;
@@ -804,7 +813,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     try { await Task.Delay(ReconnectTailInterval, token).ConfigureAwait(false); }
                     catch (OperationCanceledException) { return; }
 
-                    if (await EstablishConnectionAsync(token).ConfigureAwait(false))
+                    if (await EstablishConnectionAsync(token, quiet: true).ConfigureAwait(false))
                     {
                         _state = TransportState.Connected(TransportDisplayName, sessionId: _sessionId, details: _endpointUri.ToString());
                         _isConnected = true;

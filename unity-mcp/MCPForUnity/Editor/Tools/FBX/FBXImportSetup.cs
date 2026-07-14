@@ -172,22 +172,60 @@ namespace MCPForUnity.Editor.Tools.FBX
             if (clipsToken == null || clipsToken.Count == 0)
                 return new ErrorResponse("'clips' array is required and must not be empty.");
 
+            // Mevcut klip ayarlarını (Root Transform Y bake/feet, mask, curve'ler vb.)
+            // KORU: aynı adlı klip varsa onun üzerinden git, yoksa (tek klip → tek klip
+            // yeniden adlandırma senaryosu için) index'e göre eşle. Sıfırdan
+            // ModelImporterClipAnimation kurmak tüm bu ayarları default'a eziyordu.
+            var existingClips = importer.clipAnimations ?? new ModelImporterClipAnimation[0];
+            var defaultClips  = importer.defaultClipAnimations;
+
             var newClips = new List<ModelImporterClipAnimation>();
-            foreach (JObject clipDef in clipsToken)
+            for (int i = 0; i < clipsToken.Count; i++)
             {
+                var clipDef = (JObject)clipsToken[i];
                 string name = clipDef["name"]?.ToString();
                 if (string.IsNullOrEmpty(name))
                     return new ErrorResponse("Each clip must have a 'name'.");
 
-                var clip = new ModelImporterClipAnimation
+                var clip = existingClips.FirstOrDefault(c => c.name == name)
+                    ?? (existingClips.Length == clipsToken.Count ? existingClips[i] : null);
+                bool preserved = clip != null;
+
+                if (clip == null)
                 {
-                    name       = name,
-                    firstFrame = clipDef["start_frame"]?.ToObject<float>() ?? 0f,
-                    lastFrame  = clipDef["end_frame"]?.ToObject<float>() ?? 60f,
-                };
+                    clip = new ModelImporterClipAnimation();
+                    // Frame verilmezse FBX'in gerçek take aralığını kullan (0→60 truncation'ı önler).
+                    var d = (defaultClips != null && defaultClips.Length > 0)
+                        ? defaultClips[Math.Min(i, defaultClips.Length - 1)] : null;
+                    clip.firstFrame = d?.firstFrame ?? 0f;
+                    clip.lastFrame  = d?.lastFrame  ?? 60f;
+                }
+
+                clip.name = name;
+                float? startOverride = clipDef["start_frame"]?.ToObject<float?>();
+                float? endOverride   = clipDef["end_frame"]?.ToObject<float?>();
+                if (startOverride.HasValue) clip.firstFrame = startOverride.Value;
+                if (endOverride.HasValue)   clip.lastFrame  = endOverride.Value;
 
                 bool? loopOverride = clipDef["loop"]?.ToObject<bool?>();
-                clip.loopTime = loopOverride ?? AutoDetectLoop(name);
+                if (loopOverride.HasValue)  clip.loopTime = loopOverride.Value;
+                else if (!preserved)        clip.loopTime = AutoDetectLoop(name);
+
+                // Root Transform Position (Y) — Inspector karşılıkları:
+                // bake_root_y = Bake Into Pose, root_y_based_on = Based Upon (original|feet),
+                // height_offset = Offset. Verilmeyen alanlar korunur.
+                bool? bakeY = clipDef["bake_root_y"]?.ToObject<bool?>();
+                if (bakeY.HasValue) clip.lockRootHeightY = bakeY.Value;
+
+                string basedOn = clipDef["root_y_based_on"]?.ToString()?.ToLowerInvariant();
+                if (basedOn == "original")
+                { clip.keepOriginalPositionY = true;  clip.heightFromFeet = false; }
+                else if (basedOn == "feet")
+                { clip.keepOriginalPositionY = false; clip.heightFromFeet = true; }
+
+                float? heightOffset = clipDef["height_offset"]?.ToObject<float?>();
+                if (heightOffset.HasValue) clip.heightOffset = heightOffset.Value;
+
                 newClips.Add(clip);
             }
 
@@ -201,10 +239,14 @@ namespace MCPForUnity.Editor.Tools.FBX
                 clip_count = newClips.Count,
                 clips      = newClips.Select(c => new
                 {
-                    name        = c.name,
-                    start_frame = (int)c.firstFrame,
-                    end_frame   = (int)c.lastFrame,
-                    loop        = c.loopTime,
+                    name            = c.name,
+                    start_frame     = (int)c.firstFrame,
+                    end_frame       = (int)c.lastFrame,
+                    loop            = c.loopTime,
+                    bake_root_y     = c.lockRootHeightY,
+                    root_y_based_on = c.heightFromFeet ? "feet"
+                                    : c.keepOriginalPositionY ? "original" : "center_of_mass",
+                    height_offset   = c.heightOffset,
                 }).ToArray(),
             };
         }

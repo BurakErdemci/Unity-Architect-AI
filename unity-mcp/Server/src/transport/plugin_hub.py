@@ -1009,16 +1009,18 @@ class PluginHub(WebSocketEndpoint):
         # a main-thread ping command (handled by TransportCommandDispatcher) rather than waiting on
         # register_tools (which can be delayed by EditorApplication.delayCall).
         if retry_on_reload and command_type in cls._FAST_FAIL_COMMANDS and command_type != "ping":
+            # Play-stop / reimport sonrası domain reload 6 sn'yi rahat aşabiliyor;
+            # 12 sn istemci tool-timeout'larının (Cursor ~30s) hâlâ güvenli altında.
             try:
                 max_wait_s = float(os.environ.get(
-                    "UNITY_MCP_SESSION_READY_WAIT_SECONDS", "6"))
+                    "UNITY_MCP_SESSION_READY_WAIT_SECONDS", "12"))
             except ValueError as e:
                 raw_val = os.environ.get(
-                    "UNITY_MCP_SESSION_READY_WAIT_SECONDS", "6")
+                    "UNITY_MCP_SESSION_READY_WAIT_SECONDS", "12")
                 logger.warning(
-                    "Invalid UNITY_MCP_SESSION_READY_WAIT_SECONDS=%r, using default 6.0: %s",
+                    "Invalid UNITY_MCP_SESSION_READY_WAIT_SECONDS=%r, using default 12.0: %s",
                     raw_val, e)
-                max_wait_s = 6.0
+                max_wait_s = 12.0
             max_wait_s = max(0.0, min(max_wait_s, 20.0))
             if max_wait_s > 0:
                 deadline = time.monotonic() + max_wait_s

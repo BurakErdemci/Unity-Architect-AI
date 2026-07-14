@@ -61,7 +61,11 @@ async def manage_fbx(
     ] = None,
     clips: Annotated[
         list[dict[str, Any]] | None,
-        "Clip configs for setup_clips: [{name, start_frame, end_frame, loop}]. loop defaults to auto-detect.",
+        "Clip configs for setup_clips: [{name, start_frame, end_frame, loop, "
+        "bake_root_y (bool, Root Transform Y → Bake Into Pose), "
+        "root_y_based_on ('original'|'feet'), height_offset (float)}]. "
+        "Existing clip settings are preserved; only provided fields change. "
+        "loop auto-detects for brand-new clips.",
     ] = None,
     character_fbx: Annotated[
         str | None,

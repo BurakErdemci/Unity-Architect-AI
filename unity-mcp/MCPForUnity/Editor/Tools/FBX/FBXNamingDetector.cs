@@ -39,6 +39,12 @@ namespace MCPForUnity.Editor.Tools.FBX
             };
 
             Categorize(lower, entry);
+
+            // Klip adı tanınmadıysa (ör. Türkçe "Yürüme") dosya adı konvansiyonuna
+            // geri düş — "X_Anim_Walk.fbx" içindeki "Yürüme" yine Walk olarak yakalanır.
+            if (entry.Category == AnimCategory.Unknown && !string.IsNullOrEmpty(configuredClipName))
+                Categorize(StripAnimMarker(fileName).ToLowerInvariant(), entry);
+
             entry.Loop = AutoDetectLoop(entry.Category);
             return entry;
         }
