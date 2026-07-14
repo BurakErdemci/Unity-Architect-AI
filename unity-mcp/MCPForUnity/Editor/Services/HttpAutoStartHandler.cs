@@ -21,6 +21,12 @@ namespace MCPForUnity.Editor.Services
 
         static HttpAutoStartHandler()
         {
+            // AssetImportWorker süreçleri de [InitializeOnLoad] çalıştırır ve EditorPrefs'i
+            // ana editörle paylaşır — worker'da bridge başlatmak, ana editörle aynı proje
+            // kimliğiyle register olup sürekli karşılıklı session eviction'a yol açıyordu
+            // (30 sn'de bir kopuş + "session superseded" hataları). Worker'da asla başlama.
+            if (AssetDatabase.IsAssetImportWorkerProcess()) return;
+
             // SessionState resets on editor process start but persists across domain reloads.
             // Only run once per session — let HttpBridgeReloadHandler handle reload-resume cases.
             if (SessionState.GetBool(SessionInitKey, false)) return;

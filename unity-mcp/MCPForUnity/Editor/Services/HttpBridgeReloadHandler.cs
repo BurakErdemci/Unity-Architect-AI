@@ -26,6 +26,10 @@ namespace MCPForUnity.Editor.Services
 
         static HttpBridgeReloadHandler()
         {
+            // AssetImportWorker'da bridge resume etme — ana editörün session'ını evict
+            // ediyordu (bkz. HttpAutoStartHandler'daki açıklama).
+            if (AssetDatabase.IsAssetImportWorkerProcess()) return;
+
             AssemblyReloadEvents.beforeAssemblyReload += OnBeforeAssemblyReload;
             AssemblyReloadEvents.afterAssemblyReload += OnAfterAssemblyReload;
         }

@@ -56,6 +56,11 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         private TimeSpan _keepAliveInterval = DefaultKeepAliveInterval;
         private volatile bool _isConnected;
         private int _isReconnectingFlag;
+        // Her Establish yeni bir "bağlantı nesli" açar; arka plan döngüleri ve
+        // kapanış olayları kendi nesline bağlıdır, bayat nesilden gelenler yok
+        // sayılır. Aksi halde eski soketlerin döngüleri hayalet reconnect tetikleyip
+        // sağlıklı session'ı evict ettiriyordu (kronik 15-30 sn eviction döngüsü).
+        private int _connectionGen;
         private TransportState _state = TransportState.Disconnected(TransportDisplayName, "Transport not started");
         private string _apiKey;
         private bool _disposed;
@@ -135,6 +140,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 return;
             }
 
+            Interlocked.Increment(ref _connectionGen); // tüm eski döngüleri/kapanışları geçersiz kıl
+
             try
             {
                 _lifecycleCts.Cancel();
@@ -174,6 +181,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         /// </summary>
         public void ForceStop()
         {
+            Interlocked.Increment(ref _connectionGen); // tüm eski döngüleri/kapanışları geçersiz kıl
             try { _lifecycleCts?.Cancel(); } catch { }
             try { _connectionCts?.Cancel(); } catch { }
 
@@ -252,6 +260,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         {
             await StopConnectionLoopsAsync().ConfigureAwait(false);
 
+            int gen = Interlocked.Increment(ref _connectionGen);
+
             _connectionCts?.Dispose();
             _connectionCts = CancellationTokenSource.CreateLinkedTokenSource(token);
             CancellationToken connectionToken = _connectionCts.Token;
@@ -314,7 +324,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 _endpointUri = connectedEndpoint;
             }
 
-            StartBackgroundLoops(connectionToken);
+            StartBackgroundLoops(_socket, connectionToken, gen);
 
             try
             {
@@ -379,29 +389,28 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             }
         }
 
-        private void StartBackgroundLoops(CancellationToken token)
+        private void StartBackgroundLoops(ClientWebSocket socket, CancellationToken token, int gen)
         {
-            if ((_receiveTask != null && !_receiveTask.IsCompleted) || (_keepAliveTask != null && !_keepAliveTask.IsCompleted))
-            {
-                return;
-            }
-
-            _receiveTask = Task.Run(() => ReceiveLoopAsync(token), CancellationToken.None);
-            _keepAliveTask = Task.Run(() => KeepAliveLoopAsync(token), CancellationToken.None);
+            // Her yeni bağlantı KENDİ döngülerini alır; eski döngüler token iptali +
+            // nesil kontrolüyle kendiliğinden ölür. Eski "önceki task bitmediyse yeni
+            // loop başlatma" davranışı, server'a kayıtlı ama client'ın hiç dinlemediği
+            // sessiz soketler bırakıyordu.
+            _receiveTask = Task.Run(() => ReceiveLoopAsync(socket, token, gen), CancellationToken.None);
+            _keepAliveTask = Task.Run(() => KeepAliveLoopAsync(socket, token, gen), CancellationToken.None);
         }
 
-        private async Task ReceiveLoopAsync(CancellationToken token)
+        private async Task ReceiveLoopAsync(ClientWebSocket socket, CancellationToken token, int gen)
         {
-            while (!token.IsCancellationRequested)
+            while (!token.IsCancellationRequested && gen == Volatile.Read(ref _connectionGen))
             {
                 try
                 {
-                    string message = await ReceiveMessageAsync(token).ConfigureAwait(false);
+                    string message = await ReceiveMessageAsync(socket, token, gen).ConfigureAwait(false);
                     if (message == null)
                     {
                         // Close frame işlendi ya da soket öldü — devam etmek kapalı sokete
                         // ReceiveAsync atıp ikinci bir exception + mükerrer log üretir.
-                        if (_socket == null || _socket.State != WebSocketState.Open)
+                        if (socket.State != WebSocketState.Open)
                             break;
                         continue;
                     }
@@ -416,25 +425,20 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     // Kopuş uyarısını tek yerden (HandleSocketClosureAsync) basıyoruz;
                     // burada Warn basmak her kopuşta 2-3 mükerrer konsol satırı üretiyordu.
                     McpLog.Debug($"[WebSocket] Receive loop ended: {wse.Message}");
-                    await HandleSocketClosureAsync(wse.Message).ConfigureAwait(false);
+                    await HandleSocketClosureAsync(wse.Message, gen).ConfigureAwait(false);
                     break;
                 }
                 catch (Exception ex)
                 {
                     McpLog.Debug($"[WebSocket] Receive loop ended unexpectedly: {ex.Message}");
-                    await HandleSocketClosureAsync(ex.Message).ConfigureAwait(false);
+                    await HandleSocketClosureAsync(ex.Message, gen).ConfigureAwait(false);
                     break;
                 }
             }
         }
 
-        private async Task<string> ReceiveMessageAsync(CancellationToken token)
+        private async Task<string> ReceiveMessageAsync(ClientWebSocket socket, CancellationToken token, int gen)
         {
-            if (_socket == null)
-            {
-                return null;
-            }
-
             byte[] rentedBuffer = System.Buffers.ArrayPool<byte>.Shared.Rent(8192);
             var buffer = new ArraySegment<byte>(rentedBuffer);
             using var ms = new MemoryStream(8192);
@@ -443,11 +447,11 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             {
                 while (!token.IsCancellationRequested)
                 {
-                    WebSocketReceiveResult result = await _socket.ReceiveAsync(buffer, token).ConfigureAwait(false);
+                    WebSocketReceiveResult result = await socket.ReceiveAsync(buffer, token).ConfigureAwait(false);
 
                     if (result.MessageType == WebSocketMessageType.Close)
                     {
-                        await HandleSocketClosureAsync(result.CloseStatusDescription ?? "Server closed connection").ConfigureAwait(false);
+                        await HandleSocketClosureAsync(result.CloseStatusDescription ?? "Server closed connection", gen).ConfigureAwait(false);
                         return null;
                     }
 
@@ -675,14 +679,18 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             await SendJsonAsync(responsePayload, token).ConfigureAwait(false);
         }
 
-        private async Task KeepAliveLoopAsync(CancellationToken token)
+        private async Task KeepAliveLoopAsync(ClientWebSocket socket, CancellationToken token, int gen)
         {
             while (!token.IsCancellationRequested)
             {
                 try
                 {
                     await Task.Delay(_keepAliveInterval, token).ConfigureAwait(false);
-                    if (_socket == null || _socket.State != WebSocketState.Open)
+                    if (gen != Volatile.Read(ref _connectionGen))
+                    {
+                        break;
+                    }
+                    if (socket.State != WebSocketState.Open)
                     {
                         break;
                     }
@@ -695,7 +703,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 catch (Exception ex)
                 {
                     McpLog.Debug($"[WebSocket] Keep-alive failed: {ex.Message}");
-                    await HandleSocketClosureAsync(ex.Message).ConfigureAwait(false);
+                    await HandleSocketClosureAsync(ex.Message, gen).ConfigureAwait(false);
                     break;
                 }
             }
@@ -753,11 +761,19 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             }
         }
 
-        private async Task HandleSocketClosureAsync(string reason)
+        private async Task HandleSocketClosureAsync(string reason, int gen)
         {
             // Capture stack trace for debugging disconnection triggers
             var stackTrace = new System.Diagnostics.StackTrace(true);
-            McpLog.Debug($"[WebSocket] HandleSocketClosureAsync called. Reason: {reason}\nStack trace:\n{stackTrace}");
+            McpLog.Debug($"[WebSocket] HandleSocketClosureAsync called (gen={gen}). Reason: {reason}\nStack trace:\n{stackTrace}");
+
+            // Bayat nesilden (eski soketin döngüsünden) gelen kapanış → yok say.
+            // Bu olmadan eski döngüler reconnect tetikleyip taze bağlantının
+            // session'ını evict ettiriyordu.
+            if (gen != Volatile.Read(ref _connectionGen))
+            {
+                return;
+            }
 
             if (_lifecycleCts == null || _lifecycleCts.IsCancellationRequested)
             {
@@ -800,6 +816,13 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                         catch (OperationCanceledException) { return; }
                     }
 
+                    // Beklerken başka bir yol (StartAsync/diğer reconnect) bağlandıysa
+                    // sağlıklı bağlantıyı ezme.
+                    if (_isConnected)
+                    {
+                        return;
+                    }
+
                     if (await EstablishConnectionAsync(token, quiet: true).ConfigureAwait(false))
                     {
                         _state = TransportState.Connected(TransportDisplayName, sessionId: _sessionId, details: _endpointUri.ToString());
@@ -818,6 +841,11 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 {
                     try { await Task.Delay(ReconnectTailInterval, token).ConfigureAwait(false); }
                     catch (OperationCanceledException) { return; }
+
+                    if (_isConnected)
+                    {
+                        return;
+                    }
 
                     if (await EstablishConnectionAsync(token, quiet: true).ConfigureAwait(false))
                     {

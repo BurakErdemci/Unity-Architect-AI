@@ -119,6 +119,9 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         {
             try { mainThreadId = Thread.CurrentThread.ManagedThreadId; } catch { mainThreadId = 0; }
 
+            // AssetImportWorker'da bridge başlatma (bkz. HttpAutoStartHandler'daki açıklama).
+            if (UnityEditor.AssetDatabase.IsAssetImportWorkerProcess()) return;
+
             if (Application.isBatchMode && string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("UNITY_MCP_ALLOW_BATCH")))
             {
                 return;
