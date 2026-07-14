@@ -32,7 +32,11 @@ namespace MCPForUnity.Runtime.Helpers
 #if UNITY_6000_5_OR_NEWER
             return (int)EntityId.ToULong(obj.GetEntityId());
 #else
+            // 6.4 GetInstanceID'yi obsolete işaretler ama GetEntityId ancak 6.5'te
+            // güvenilir — bu dal bilerek eski API'de (shim'in varlık sebebi).
+#pragma warning disable CS0618
             return obj.GetInstanceID();
+#pragma warning restore CS0618
 #endif
         }
 
@@ -65,7 +69,11 @@ namespace MCPForUnity.Runtime.Helpers
             }
             return _instanceIdToObject?.Invoke(null, new object[] { instanceId }) as Object;
 #elif UNITY_6000_3_OR_NEWER
+            // 6.4 implicit int→EntityId cast'i obsolete işaretler; 6.6+ dalı zaten
+            // reflection'a geçiyor — aradaki sürümlerde bilinçli eski davranış.
+#pragma warning disable CS0618
             return EditorUtility.EntityIdToObject(instanceId);
+#pragma warning restore CS0618
 #else
             return EditorUtility.InstanceIDToObject(instanceId);
 #endif

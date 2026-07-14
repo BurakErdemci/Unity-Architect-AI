@@ -21,6 +21,9 @@ namespace MCPForUnity.Runtime.Helpers
     ///     reflection rather than direct calls. This keeps the file CS0618-clean across all
     ///     SDKs we compile against and lets the package keep working if Unity ever fully
     ///     removes the legacy methods (CS0619).
+    ///   - Unity 6.4 marks the sortMode overloads obsolete (CoreCLR/EntityId migration)
+    ///     while the replacement overloads only became reliable at 6.5 — so the
+    ///     2022.3–6.4 branch calls are intentionally wrapped in #pragma CS0618.
     /// </summary>
     public static class UnityFindObjectsCompat
     {
@@ -30,9 +33,32 @@ namespace MCPForUnity.Runtime.Helpers
 #if UNITY_6000_5_OR_NEWER
             return UObject.FindObjectsByType<T>();
 #elif UNITY_2022_3_OR_NEWER
+#pragma warning disable CS0618
             return UObject.FindObjectsByType<T>(UnityEngine.FindObjectsSortMode.None);
+#pragma warning restore CS0618
 #else
             var arr = LegacyFindObjectsOfType(typeof(T));
+            if (arr == null) return Array.Empty<T>();
+            var typed = new T[arr.Length];
+            for (int i = 0; i < arr.Length; i++) typed[i] = (T)arr[i];
+            return typed;
+#endif
+        }
+
+        /// <summary>Find all objects of type T, optionally including inactive.</summary>
+        public static T[] FindAll<T>(bool includeInactive) where T : UObject
+        {
+#if UNITY_6000_5_OR_NEWER
+            return UObject.FindObjectsByType<T>(
+                includeInactive ? UnityEngine.FindObjectsInactive.Include : UnityEngine.FindObjectsInactive.Exclude);
+#elif UNITY_2022_3_OR_NEWER
+#pragma warning disable CS0618
+            return UObject.FindObjectsByType<T>(
+                includeInactive ? UnityEngine.FindObjectsInactive.Include : UnityEngine.FindObjectsInactive.Exclude,
+                UnityEngine.FindObjectsSortMode.None);
+#pragma warning restore CS0618
+#else
+            var arr = LegacyFindObjectsOfType(typeof(T), includeInactive);
             if (arr == null) return Array.Empty<T>();
             var typed = new T[arr.Length];
             for (int i = 0; i < arr.Length; i++) typed[i] = (T)arr[i];
@@ -46,7 +72,9 @@ namespace MCPForUnity.Runtime.Helpers
 #if UNITY_6000_5_OR_NEWER
             return UObject.FindObjectsByType(type, UnityEngine.FindObjectsInactive.Exclude);
 #elif UNITY_2022_3_OR_NEWER
+#pragma warning disable CS0618
             return UObject.FindObjectsByType(type, UnityEngine.FindObjectsSortMode.None);
+#pragma warning restore CS0618
 #else
             return LegacyFindObjectsOfType(type) ?? Array.Empty<UObject>();
 #endif
@@ -59,9 +87,11 @@ namespace MCPForUnity.Runtime.Helpers
             return UObject.FindObjectsByType(type,
                 includeInactive ? UnityEngine.FindObjectsInactive.Include : UnityEngine.FindObjectsInactive.Exclude);
 #elif UNITY_2022_3_OR_NEWER
+#pragma warning disable CS0618
             return UObject.FindObjectsByType(type,
                 includeInactive ? UnityEngine.FindObjectsInactive.Include : UnityEngine.FindObjectsInactive.Exclude,
                 UnityEngine.FindObjectsSortMode.None);
+#pragma warning restore CS0618
 #else
             return LegacyFindObjectsOfType(type, includeInactive) ?? Array.Empty<UObject>();
 #endif
