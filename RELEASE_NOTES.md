@@ -1,14 +1,23 @@
-## Unity Architect AI v2.1.2
+## Unity Architect AI v2.1.3
 
-Canlı animasyon-pipeline testinden çıkan üç düzeltme ve bir CLI oturum-durumu hatası giderildi.
+Kronik bir MCP WebSocket bağlantı sorunu kökten çözüldü, model kilit sistemi düzeltildi, sohbet ve genel uygulama tasarımı elden geçirildi.
 
-### 🎞️ Animasyon tool düzeltmeleri
-- **`manage_fbx full_setup` artık klip ayarlarını EZMİYOR:** `setup_clips` ile verdiğin klip adlarını ve loop bayraklarını koruyor. Daha önce `full_setup`'ı tekrar çalıştırınca klip adları FBX adına dönüyor, loop'lar `false`'a sıfırlanıyordu. Artık mevcut konfig korunuyor ve diagnostics'te `CLIP_CONFIG_PRESERVED` bilgisi düşüyor.
-- **Akıllı adlandırma artık `X_Anim_Walk` / Mixamo `@` konvansiyonlarını tanıyor:** `YagmaciBrute_Anim_Walk.fbx` gibi önekli dosyalar doğru kategoriye (Walk/Run/Attack…) çözülüyor; ayrıca `setup_clips` ile verdiğin klip adı da tespit kaynağı olarak kullanılıyor. Böylece controller'ı elle kurmaya gerek kalmıyor.
-- **`animator_get_info` artık child'larda Animator arıyor:** Prefab kökünü verdiğinde Animator model child'ındaysa da buluyor (`GetComponentInChildren`) — "No Animator component" hatası kalktı.
+### 🔌 MCP WebSocket "eviction fırtınası" — kökten çözüldü
+- **Kök neden bulundu:** Unity'nin arka planda çalışan `AssetImportWorker` süreçleri de MCP köprüsünü başlatıp aynı proje hash'iyle kaydoluyor, ana Editor ile sürekli bağlantı çekişmesine (15-30 saniyede bir "eviction") sebep oluyordu. Artık worker süreçleri köprüyü hiç başlatmıyor.
+- **Sonuç:** Önceden dakikada ~16 bağlantı kopması yaşanırken, artık 2 dakikalık canlı testte 0 kopma ölçüldü.
+- Ayrıca bağlantı kopuş logları konsoldan temizlendi — sadece kalıcı bağlantı kaybında tek bir kırmızı hata görünüyor, geçici yeniden bağlanmalar artık sessiz.
+- Animator child-arama ve `setup_clips` ayar koruması ile ilgili "fake null" kaynaklı düzeltmeler de bu sürümde.
 
-### 🐛 CLI oturum-durumu düzeltmesi
-- **Cursor "Giriş Yap" butonu:** Cursor'dan çıkış yapınca model seçicide artık doğru şekilde "Giriş Yap" butonu görünüyor. Daha önce `agent status`'un "Not logged in" çıktısı yanlış yorumlanıyordu (metin "logged in" alt-dizesini içerdiği için oturum açık sanılıyordu).
+### 🔒 Model kilit sistemi düzeltmesi
+- Codex'te "Yenile" sonrası model kilitlerinin (plan limiti nedeniyle) kaybolması giderildi — artık kilit bilgisi korunuyor ve bir model başarıyla yanıt verince otomatik açılıyor.
+- Model seçici artık kilit durumunu her açılışta tazeliyor (önceden uygulama yeniden başlatılana kadar bayat kalabiliyordu).
+
+### 🎨 Tasarım yenilemesi
+- **Sohbet akışı:** Claude.ai tarzı ferah okuma deneyimi — geniş paragraf boşlukları, başlıklar için ince ayraç çizgiler, tablolar kendi kartında yatay kaydırmalı, "düşünüyor" göstergesi shimmer animasyonlu geçen-süre sayaçlı.
+- **Genel arayüz:** Katmanlı yüzey sistemi (daha az düz siyah), aktif modele göre renk değişen marka ışığı (empty state ve Copilot paneli), sidebar ve üst bar rafine edildi.
+
+### 🐛 Diğer
+- Unity 6.4'te sürüm-uyum shim'lerinden kaynaklanan CS0618 (obsolete API) sarı derleyici uyarıları susturuldu — davranış değişmedi, sadece gürültü kalktı.
 
 ### 🔄 Güncelleme & Güvenlik
 Uygulama açılışta yeni sürümü kontrol eder ve **haber verir** — kurulumu sen onaylarsın, sessiz/otomatik kurulum yoktur. Windows'ta kurulum eski sürümü otomatik kaldırır.
