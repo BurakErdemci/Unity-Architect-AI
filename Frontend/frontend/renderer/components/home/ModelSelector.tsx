@@ -305,8 +305,8 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
         <button
           key={m.id}
           onClick={() => selectCliModel(g, m)}
-          title="Aboneliğin bu modeli desteklemiyor (plan yükseltince otomatik açılır)"
-          className={`w-full text-left ${indent ? 'pl-[46px]' : 'pl-4'} pr-3 py-[7px] text-[12px] flex items-center justify-between rounded-lg cursor-not-allowed`}
+          title="Planında kilitli görünüyor — yine de deneyebilirsin; model çalışırsa kilit otomatik kalkar"
+          className={`w-full text-left ${indent ? 'pl-[46px]' : 'pl-4'} pr-3 py-[7px] text-[12px] flex items-center justify-between rounded-lg hover:bg-white/[0.03] transition-colors`}
         >
           <span className="truncate font-medium text-slate-600 line-through decoration-slate-700">{m.name}</span>
           <span className="text-[9px] text-slate-600 shrink-0 ml-2">🔒 planda yok</span>
