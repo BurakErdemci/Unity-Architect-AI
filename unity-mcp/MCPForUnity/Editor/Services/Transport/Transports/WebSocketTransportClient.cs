@@ -394,6 +394,10 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                     string message = await ReceiveMessageAsync(token).ConfigureAwait(false);
                     if (message == null)
                     {
+                        // Close frame işlendi ya da soket öldü — devam etmek kapalı sokete
+                        // ReceiveAsync atıp ikinci bir exception + mükerrer log üretir.
+                        if (_socket == null || _socket.State != WebSocketState.Open)
+                            break;
                         continue;
                     }
                     await HandleMessageAsync(message, token).ConfigureAwait(false);
@@ -404,13 +408,15 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 }
                 catch (WebSocketException wse)
                 {
-                    McpLog.Warn($"[WebSocket] Receive loop error: {wse.Message}");
+                    // Kopuş uyarısını tek yerden (HandleSocketClosureAsync) basıyoruz;
+                    // burada Warn basmak her kopuşta 2-3 mükerrer konsol satırı üretiyordu.
+                    McpLog.Debug($"[WebSocket] Receive loop ended: {wse.Message}");
                     await HandleSocketClosureAsync(wse.Message).ConfigureAwait(false);
                     break;
                 }
                 catch (Exception ex)
                 {
-                    McpLog.Warn($"[WebSocket] Unexpected receive error: {ex.Message}");
+                    McpLog.Debug($"[WebSocket] Receive loop ended unexpectedly: {ex.Message}");
                     await HandleSocketClosureAsync(ex.Message).ConfigureAwait(false);
                     break;
                 }
@@ -692,7 +698,7 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 }
                 catch (Exception ex)
                 {
-                    McpLog.Warn($"[WebSocket] Keep-alive failed: {ex.Message}");
+                    McpLog.Debug($"[WebSocket] Keep-alive failed: {ex.Message}");
                     await HandleSocketClosureAsync(ex.Message).ConfigureAwait(false);
                     break;
                 }
@@ -767,9 +773,12 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 return;
             }
 
+            // Kopuş konsola YAZILMAZ (bağlantı durumu app UI'ında zaten görünür;
+            // arka plan reconnect sessiz çalışır). Kalıcı kopuşta tek kırmızı
+            // error'u AttemptReconnectAsync (schedule tükenince) basar.
             _isConnected = false;
             _state = _state.WithError(reason ?? "Connection closed");
-            McpLog.Warn($"[WebSocket] Connection closed: {reason}");
+            McpLog.Debug($"[WebSocket] Connection closed: {reason}");
 
             await StopConnectionLoopsAsync(awaitTasks: false).ConfigureAwait(false);
 
@@ -806,7 +815,8 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
                 // Schedule exhausted — keep retrying every 30 s indefinitely so a transient
                 // server outage longer than ~49 s doesn't leave the plugin permanently dead.
-                McpLog.Warn($"[WebSocket] Initial reconnect schedule exhausted. Retrying every {ReconnectTailInterval.TotalSeconds}s until cancelled.");
+                // Kalıcı kopuşun TEK konsol bildirimi bu error'dur (kopuş Warn'ları kaldırıldı).
+                McpLog.Error($"[WebSocket] MCP sunucusuna yeniden bağlanılamadı — sunucu kapalı görünüyor. Arka planda {ReconnectTailInterval.TotalSeconds} sn'de bir denenmeye devam edilecek.");
                 _state = _state.WithError($"Server unreachable – retrying every {ReconnectTailInterval.TotalSeconds} s");
                 while (!token.IsCancellationRequested)
                 {
