@@ -33,9 +33,31 @@ const globalStyles = `
   .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
   .custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 10px; }
   .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #475569; }
-  .monaco-editor, .monaco-editor .margin, .monaco-editor-background { background-color: #000000 !important; }
+  .monaco-editor, .monaco-editor .margin, .monaco-editor-background { background-color: #0B0D12 !important; }
   .no-scrollbar::-webkit-scrollbar { display: none; }
 `;
+
+// Aktif modelin marka rengi (r,g,b) — imza "ambient ışık" bunu kullanır:
+// copilot panelindeki üst süzülme + hero glow, hangi zekayla konuşulduğunu
+// renkle hissettirir (Claude turuncu, Gemini mavi, Copilot menekşe...).
+const BRAND_RGB: Record<string, string> = {
+  claude: '251, 146, 60',
+  openai: '52, 211, 153',
+  gemini: '96, 165, 250',
+  copilot: '196, 181, 253',
+  cursor: '226, 232, 240',
+  opencode: '94, 234, 212',
+};
+const getBrandRgb = (modelName?: string, provider?: string): string => {
+  const m = (modelName || '').toLowerCase();
+  if (m.startsWith('claude-')) return BRAND_RGB.claude;
+  if (m.startsWith('gpt-')) return BRAND_RGB.openai;
+  if (m.startsWith('gemini') || m.startsWith('agy-')) return BRAND_RGB.gemini;
+  if (m.startsWith('copilot-')) return BRAND_RGB.copilot;
+  if (m.startsWith('cursor-')) return BRAND_RGB.cursor;
+  if (m.startsWith('opencode:')) return BRAND_RGB.opencode;
+  return BRAND_RGB[(provider || '').toLowerCase()] || '96, 165, 250';
+};
 
 const getRelativePath = (absolutePath: string, workspacePath: string | null): string => {
   if (!workspacePath) return absolutePath.split('/').pop() || '';
@@ -358,6 +380,9 @@ export default function Home() {
 
   const langCtxValue = { lang, setLang, t: (k: string) => translations[lang][k] ?? k };
 
+  // İmza ambient ışık: aktif modelin marka rengi
+  const brandRgb = getBrandRgb(ai.aiConfig?.model_name, ai.effectiveProvider);
+
   if (backendError) {
     return (
       <div className="h-screen bg-black flex flex-col items-center justify-center text-center p-6">
@@ -383,7 +408,7 @@ export default function Home() {
 
   return (
     <LangContext.Provider value={langCtxValue}>
-    <div className="flex h-screen bg-[#000000] text-slate-200 font-sans overflow-hidden">
+    <div className="flex h-screen bg-[#0B0D12] text-slate-200 font-sans overflow-hidden">
       <Head>
         <title>{`Unity Architect AI | ${auth.user?.name || 'Giriş'}`}</title>
         <style>{globalStyles}</style>
@@ -425,16 +450,16 @@ export default function Home() {
         user={auth.user} setShowSettings={ai.setShowSettings} handleLogout={handleLogout}
       />
 
-      <div className="flex-1 flex flex-col min-w-0 border-r border-slate-800/50">
-        <div className="h-11 border-b border-slate-800/50 flex items-center justify-between px-4 bg-[#000000]/50 shrink-0">
+      <div className="flex-1 flex flex-col min-w-0 border-r border-white/[0.06]">
+        <div className="h-12 border-b border-white/[0.06] flex items-center justify-between px-4 bg-white/[0.015] shrink-0">
           <div className="flex items-center gap-3">
-            <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-500 transition-all">
+            <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="p-1.5 hover:bg-white/[0.06] rounded-lg text-slate-500 hover:text-slate-300 transition-all">
               {isSidebarOpen ? <ChevronLeft size={16} /> : <ChevronRight size={16} />}
             </button>
-            <button onClick={() => setIsTerminalOpen(!isTerminalOpen)} className={`p-1.5 hover:bg-slate-800 rounded-lg transition-all ${isTerminalOpen ? 'text-blue-500 bg-blue-500/10' : 'text-slate-500'}`}>
+            <button onClick={() => setIsTerminalOpen(!isTerminalOpen)} className={`p-1.5 hover:bg-white/[0.06] rounded-lg transition-all ${isTerminalOpen ? 'text-blue-400 bg-blue-500/10' : 'text-slate-500 hover:text-slate-300'}`}>
               <TerminalIcon size={16} />
             </button>
-            <div className="flex items-center gap-2 border-l border-slate-800/50 pl-3 ml-1">
+            <div className="flex items-center gap-2 border-l border-white/[0.06] pl-3 ml-1">
               <Code2 size={14} className="text-blue-500" />
               <div className="flex items-center gap-1.5">
                 <span className="text-[12px] font-semibold text-slate-400">
@@ -474,7 +499,7 @@ export default function Home() {
                 ai.unityMcpStatus === 'connected' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20' :
                 ai.unityMcpStatus === 'running' ? 'bg-yellow-500/10 border-yellow-500/30 text-yellow-400 hover:bg-yellow-500/20' :
                 ai.unityMcpStatus === 'starting' ? 'bg-yellow-500/10 border-yellow-500/30 text-yellow-400' :
-                'bg-slate-800/50 border-slate-700/50 text-slate-500 hover:bg-slate-700/50 hover:text-slate-300'
+                'bg-white/[0.03] border-white/[0.08] text-slate-500 hover:bg-white/[0.06] hover:text-slate-300'
               }`}
             >
               <span className={`w-1.5 h-1.5 rounded-full ${
@@ -504,27 +529,55 @@ export default function Home() {
           </div>
         </div>
 
-        <div className="flex-1 overflow-hidden relative flex flex-col bg-[#000000]">
+        <div className="flex-1 overflow-hidden relative flex flex-col bg-[#0B0D12]">
           {(fs.openedFilePath || diffFile) ? (
             <EditorPanel
               code={fs.code} setCode={fs.setCode} openedFilePath={fs.openedFilePath} isEditorFocused={isEditorFocused} setIsEditorFocused={setIsEditorFocused}
               workspacePath={fs.workspacePath} problems={flattenedProblems} diffFile={diffFile}
             />
           ) : (
-            <div className="flex-1 flex flex-col items-center justify-center text-center p-8 bg-[#000000]">
+            <div className="flex-1 flex flex-col items-center justify-center text-center p-8 relative overflow-hidden">
+              {/* Marka renkli ambient zemin — hangi zekayla çalışıldığını hissettirir */}
+              <div
+                className="pointer-events-none absolute inset-0 transition-all duration-700"
+                style={{ background: `radial-gradient(ellipse 55% 42% at 50% 36%, rgba(${brandRgb}, 0.06), transparent 70%)` }}
+              />
               <div className="relative mb-8">
-                <div className="absolute inset-0 bg-blue-500/10 blur-[80px] rounded-full animate-pulse" />
-                <Zap size={48} className="text-blue-500 relative z-10 opacity-40" />
+                <div
+                  className="absolute inset-0 blur-[80px] rounded-full animate-pulse transition-colors duration-700"
+                  style={{ backgroundColor: `rgba(${brandRgb}, 0.16)` }}
+                />
+                <Zap size={48} className="relative z-10 opacity-60 transition-colors duration-700" style={{ color: `rgb(${brandRgb})` }} />
               </div>
-              <h2 className="text-2xl font-bold text-slate-200 mb-3 tracking-tight">UNITY ARCHITECT ENGINE</h2>
-              <p className="text-slate-500 text-sm max-w-md leading-relaxed mb-8">{t("home.editorHint")}</p>
-              <div className="grid grid-cols-3 gap-4 max-w-lg w-full">
+              <h2 className="text-2xl font-bold text-slate-100 mb-3 tracking-tight relative">UNITY ARCHITECT ENGINE</h2>
+              <p className="text-slate-500 text-sm max-w-md leading-relaxed mb-8 relative">{t("home.editorHint")}</p>
+              <div className="grid grid-cols-3 gap-3 max-w-lg w-full mb-10 relative">
                 {[ {icon:<Activity size={14}/>, label: t('home.bugfix')}, {icon:<Code size={14}/>, label: t('home.codegen')}, {icon:<Layout size={14}/>, label: t('home.analyze')} ].map((item, i) => (
-                  <div key={i} className="px-4 py-3 bg-slate-900/40 border border-slate-800/50 rounded-xl flex items-center justify-center gap-2 text-[11px] font-bold text-slate-400 hover:bg-slate-800/60 hover:text-slate-200 transition-all cursor-default">
+                  <div key={i} className="px-4 py-3 bg-white/[0.03] border border-white/[0.07] rounded-xl flex items-center justify-center gap-2 text-[11px] font-semibold text-slate-400 hover:bg-white/[0.06] hover:border-white/[0.12] hover:text-slate-200 transition-all cursor-default">
                     {item.icon} {item.label}
                   </div>
                 ))}
               </div>
+              {/* Son sohbetler — boş ekran gerçek bir karşılamaya dönüşsün */}
+              {chat.conversations.length > 0 && (
+                <div className="w-full max-w-lg relative">
+                  <div className="text-[10px] uppercase tracking-widest text-slate-600 font-semibold mb-2 text-left">
+                    {lang === 'tr' ? 'Son sohbetler' : 'Recent chats'}
+                  </div>
+                  <div className="space-y-1.5">
+                    {chat.conversations.slice(0, 3).map((conv) => (
+                      <button
+                        key={conv.id}
+                        onClick={() => { chat.selectConversation(conv); setIsChatOpen(true); }}
+                        className="w-full flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl border border-white/[0.06] bg-white/[0.02] hover:bg-white/[0.05] hover:border-white/[0.1] text-left transition-colors group"
+                      >
+                        <MessageSquare size={13} className="text-slate-600 group-hover:text-slate-400 shrink-0 transition-colors" />
+                        <span className="text-[12px] text-slate-400 group-hover:text-slate-200 truncate transition-colors">{conv.title}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -541,14 +594,25 @@ export default function Home() {
         />
       </div>
 
-      <motion.div animate={{ width: isChatOpen ? 450 : 0, opacity: isChatOpen ? 1 : 0 }} transition={{ duration: 0.2 }} className="bg-[#000000] flex flex-col overflow-hidden shrink-0 border-l border-slate-800/50">
-        <div className="flex-1 relative flex flex-col min-h-0 bg-[#000000]">
-          <div className="h-11 border-b border-slate-800/50 flex items-center justify-between px-4 bg-[#000000]/50 shrink-0">
-            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-widest">Architect Copilot</span>
-            <button onClick={() => setIsChatOpen(false)} className="p-1 hover:bg-slate-800 rounded transition-all text-slate-500"><PanelRightClose size={16} /></button>
+      <motion.div animate={{ width: isChatOpen ? 450 : 0, opacity: isChatOpen ? 1 : 0 }} transition={{ duration: 0.2 }} className="bg-[#0B0D12] flex flex-col overflow-hidden shrink-0 border-l border-white/[0.06]">
+        <div className="flex-1 relative flex flex-col min-h-0">
+          {/* İmza: aktif modelin markası panelin tepesinden içeri süzülen ışık */}
+          <div
+            className="pointer-events-none absolute top-0 inset-x-0 h-36 transition-all duration-700"
+            style={{ background: `linear-gradient(180deg, rgba(${brandRgb}, 0.05), transparent)` }}
+          />
+          <div className="h-12 border-b border-white/[0.06] flex items-center justify-between px-4 shrink-0 relative">
+            <div className="flex items-center gap-2">
+              <span
+                className="w-1.5 h-1.5 rounded-full transition-colors duration-700"
+                style={{ backgroundColor: `rgba(${brandRgb}, 0.9)` }}
+              />
+              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">Architect Copilot</span>
+            </div>
+            <button onClick={() => setIsChatOpen(false)} className="p-1 hover:bg-white/[0.06] rounded transition-all text-slate-500 hover:text-slate-300"><PanelRightClose size={16} /></button>
           </div>
-          
-          <div className="flex-1 overflow-y-auto custom-scrollbar">
+
+          <div className="flex-1 overflow-y-auto custom-scrollbar relative">
             <ChatPanel 
               messages={chat.messages} activeConvId={chat.activeConvId} user={auth.user} loading={chat.loading} clearHistory={chat.clearHistory} lang={lang}
               effectiveProvider={ai.effectiveProvider}
@@ -562,7 +626,7 @@ export default function Home() {
             />
           </div>
 
-          <div className="p-4 border-t border-slate-800/50 bg-[#000000]">
+          <div className="p-4 border-t border-white/[0.06] bg-white/[0.015] relative">
             <ControlPanel
               thinkingLevel={thinkingLevel} setThinkingLevel={setThinkingLevel} generationMode={chat.generationMode} setGenerationMode={chat.setGenerationMode}
               isAnalyzingProject={chat.isAnalyzingProject} activeConvId={chat.activeConvId} analyzeProject={chat.analyzeProject}

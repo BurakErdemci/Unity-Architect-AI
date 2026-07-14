@@ -6,7 +6,9 @@
 
 @layer base {
   body {
-    @apply bg-[#0e0e10] text-slate-200 font-sans;
+    /* Saf siyah yerine hafif mavi-kömür: katman hiyerarşisinin zemini
+       (paneller white/[0.015-0.06] tonlarıyla bunun üstünde yükselir) */
+    @apply bg-[#0B0D12] text-slate-200 font-sans;
     -webkit-font-smoothing: antialiased;
   }
 
@@ -38,6 +40,80 @@
     content: "" !important;
   }
 
+  /* ── Chat okuma deneyimi ("ferah akış") ──────────────────────────────
+     Asistan mesajı tipografisinin tek kaynağı. Tailwind prose yerine özel
+     blok: bileşen override'larıyla (tablo sarmalayıcı vb.) çakışmasın ve
+     tüm ölçüler tek yerden ayarlansın diye. */
+  .chat-prose {
+    font-size: 14px;
+    line-height: 1.75;
+    color: #cbd5e1;
+    word-break: break-word;
+  }
+  .chat-prose > :first-child { margin-top: 0; }
+  .chat-prose > :last-child { margin-bottom: 0; }
+  .chat-prose p { margin: 0.875rem 0; }
+  .chat-prose strong { color: #f1f5f9; font-weight: 600; }
+  .chat-prose em { color: #94a3b8; }
+  .chat-prose a { color: #34d399; text-decoration: none; }
+  .chat-prose a:hover { text-decoration: underline; }
+  .chat-prose h1, .chat-prose h2 {
+    font-size: 15px;
+    font-weight: 600;
+    color: #f1f5f9;
+    margin: 1.75rem 0 0.75rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  }
+  .chat-prose h3 { font-size: 13.5px; font-weight: 600; color: #e2e8f0; margin: 1.25rem 0 0.5rem; }
+  .chat-prose h4, .chat-prose h5, .chat-prose h6 { font-size: 13px; font-weight: 600; color: #e2e8f0; margin: 1rem 0 0.4rem; }
+  .chat-prose ul, .chat-prose ol { margin: 0.75rem 0; padding-left: 1.25rem; }
+  .chat-prose ul { list-style: disc; }
+  .chat-prose ol { list-style: decimal; }
+  .chat-prose li { margin: 0.375rem 0; }
+  .chat-prose li > ul, .chat-prose li > ol { margin: 0.25rem 0; }
+  .chat-prose li::marker { color: #64748b; }
+  .chat-prose hr {
+    border: 0;
+    height: 1px;
+    margin: 1.5rem 0;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1) 18%, rgba(255, 255, 255, 0.1) 82%, transparent);
+  }
+  .chat-prose blockquote {
+    margin: 0.875rem 0;
+    padding: 0.125rem 0 0.125rem 0.875rem;
+    border-left: 2px solid rgba(59, 130, 246, 0.35);
+    color: #94a3b8;
+  }
+  .chat-prose pre { margin: 0; }
+  /* Tablo kartı — MarkdownRenderer tabloyu .chat-table div'ine sarar
+     (yatay taşma panel yerine kartın içinde scroll etsin diye) */
+  .chat-table {
+    margin: 1rem 0;
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: 0.625rem;
+    overflow-x: auto;
+  }
+  .chat-table table { width: 100%; border-collapse: collapse; font-size: 12.5px; margin: 0; }
+  .chat-table th {
+    text-align: left;
+    font-size: 10.5px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    font-weight: 600;
+    color: #94a3b8;
+    background: rgba(255, 255, 255, 0.03);
+    padding: 0.5rem 0.75rem;
+    white-space: nowrap;
+  }
+  .chat-table td {
+    padding: 0.5rem 0.75rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.045);
+    color: #cbd5e1;
+    vertical-align: top;
+  }
+  .chat-table tbody tr:nth-child(even) { background: rgba(255, 255, 255, 0.015); }
+
   /* Select & Input overrides */
   select option {
     background-color: #0d1117 !important;
@@ -67,6 +143,20 @@
   /* Panel resize handle */
   .resize-handle {
     @apply w-[3px] cursor-col-resize bg-transparent hover:bg-blue-500/40 transition-colors duration-200;
+  }
+
+  /* Düşünüyor göstergesi: kayan ışıltılı metin (Claude tarzı) */
+  .shimmer-text {
+    background: linear-gradient(90deg, #64748b 0%, #64748b 35%, #e2e8f0 50%, #64748b 65%, #64748b 100%);
+    background-size: 200% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: shimmerSlide 2.2s linear infinite;
+  }
+  @keyframes shimmerSlide {
+    from { background-position: 200% 0; }
+    to { background-position: -200% 0; }
   }
 
   /* Typing indicator */

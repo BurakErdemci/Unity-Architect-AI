@@ -46,23 +46,25 @@ export const ToolBlock = ({ tool, args, summary, success, output }: ToolBlockPro
   }
 
   const isSuccess = success ?? true;
-  const colorClass = isSuccess ? 'text-slate-500 hover:text-slate-400' : 'text-red-500 hover:text-red-400';
-  const dotColor = isSuccess ? 'bg-slate-600 group-hover:bg-slate-500' : 'bg-red-600 group-hover:bg-red-500';
+  const colorClass = isSuccess
+    ? 'text-slate-500 hover:text-slate-300 border-white/[0.07] bg-white/[0.02] hover:bg-white/[0.05] hover:border-white/[0.12]'
+    : 'text-red-400 hover:text-red-300 border-red-500/20 bg-red-500/[0.04] hover:bg-red-500/[0.08]';
+  const dotColor = isSuccess ? 'bg-emerald-500/60' : 'bg-red-500';
 
   return (
-    <div className="mb-2">
+    <div className="mb-1.5">
       <button
         onClick={() => setOpen(v => !v)}
-        className={`flex items-center gap-1.5 text-[11px] transition-colors select-none group ${colorClass}`}
+        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] transition-colors select-none group max-w-full ${colorClass}`}
       >
-        <span className={`w-1.5 h-1.5 rounded-full transition-colors ${dotColor}`} />
-        <Icon size={12} className="opacity-70" />
-        <span className="font-medium">{label}</span>
-        {summary && <span className="opacity-60 ml-1 truncate max-w-[200px]">- {summary}</span>}
+        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${dotColor}`} />
+        <Icon size={12} className="opacity-70 shrink-0" />
+        <span className="font-medium shrink-0">{label}</span>
+        {summary && <span className="opacity-60 truncate max-w-[200px]">— {summary}</span>}
         <motion.span
           animate={{ rotate: open ? 90 : 0 }}
           transition={{ duration: 0.15 }}
-          className="flex items-center ml-1"
+          className="flex items-center shrink-0"
         >
           <ChevronRight size={11} />
         </motion.span>
@@ -77,7 +79,7 @@ export const ToolBlock = ({ tool, args, summary, success, output }: ToolBlockPro
             transition={{ duration: 0.2 }}
             className="overflow-hidden"
           >
-            <div className="mt-2 pl-3 border-l border-slate-800 max-h-[300px] overflow-y-auto bg-slate-900/30 p-2 rounded-r-md space-y-2">
+            <div className="mt-1.5 max-h-[300px] overflow-y-auto custom-scrollbar bg-white/[0.02] border border-white/[0.06] p-2.5 rounded-lg space-y-2">
               {(() => {
                 const hasArgs = args != null && (typeof args !== 'object' || Object.keys(args).length > 0);
                 const hasOutput = !!(output && output.trim());

@@ -92,9 +92,9 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
     <motion.aside
       animate={{ width: isSidebarOpen ? 260 : 0, opacity: isSidebarOpen ? 1 : 0 }}
       transition={{ duration: 0.2 }}
-      className="bg-[#000000] border-r border-slate-800/50 flex flex-col overflow-hidden z-20 shrink-0"
+      className="bg-white/[0.015] border-r border-white/[0.06] flex flex-col overflow-hidden z-20 shrink-0"
     >
-      <div className="flex items-center justify-between px-3 py-2 border-b border-slate-800/50 min-w-[260px] bg-[#000000]">
+      <div className="flex items-center justify-between px-3 h-12 border-b border-white/[0.06] min-w-[260px] shrink-0">
         <div className="flex items-center gap-2 flex-1 min-w-0">
           <Folder size={13} className="text-blue-500 shrink-0" />
           <span className="text-[11px] text-slate-300 font-medium truncate">
@@ -106,9 +106,20 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
         </button>
       </div>
 
-      <div className="flex border-b border-slate-800/50 min-w-[260px]">
-        <button onClick={() => setSidebarTab('chats')} className={`flex-1 py-2.5 text-[10px] font-semibold tracking-wider uppercase transition-colors ${sidebarTab === 'chats' ? 'text-blue-500 border-b-2 border-blue-500' : 'text-slate-500 hover:text-slate-300'}`}>{t('sidebar.chats')}</button>
-        <button onClick={() => setSidebarTab('files')} className={`flex-1 py-2.5 text-[10px] font-semibold tracking-wider uppercase transition-colors ${sidebarTab === 'files' ? 'text-blue-500 border-b-2 border-blue-500' : 'text-slate-500 hover:text-slate-300'}`}>{t('sidebar.files')}</button>
+      <div className="flex gap-1 p-1.5 border-b border-white/[0.06] min-w-[260px]">
+        {([['chats', t('sidebar.chats')], ['files', t('sidebar.files')]] as const).map(([tab, label]) => (
+          <button
+            key={tab}
+            onClick={() => setSidebarTab(tab)}
+            className={`flex-1 py-1.5 rounded-lg text-[10px] font-semibold tracking-wider uppercase transition-colors ${
+              sidebarTab === tab
+                ? 'bg-white/[0.06] text-slate-100'
+                : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.03]'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
       </div>
 
       <div className="flex-1 overflow-y-auto custom-scrollbar min-w-[260px]">
@@ -116,9 +127,12 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
           <div className="p-1.5 space-y-0.5">
             <button onClick={() => createNewConversation()} className="w-full flex items-center gap-2 px-3 py-2 text-[11px] text-blue-500 hover:bg-blue-600/10 rounded-lg transition-all font-medium"><Plus size={14} /> {t('sidebar.newChat')}</button>
             {conversations.map((conv) => (
-              <div key={conv.id} onClick={() => selectConversation(conv)} className={`group relative px-3 py-2.5 rounded-lg transition-all cursor-pointer ${activeConvId === conv.id ? 'bg-slate-800/60 text-white' : 'text-slate-400 hover:bg-slate-800/30 hover:text-slate-200'}`}>
+              <div key={conv.id} onClick={() => selectConversation(conv)} className={`group relative px-3 py-2.5 rounded-lg transition-all cursor-pointer ${activeConvId === conv.id ? 'bg-white/[0.06] text-slate-100' : 'text-slate-400 hover:bg-white/[0.03] hover:text-slate-200'}`}>
+                {activeConvId === conv.id && (
+                  <span className="absolute left-0 top-2 bottom-2 w-[2px] rounded-full bg-blue-400/80" />
+                )}
                 <div className="flex items-center gap-2.5">
-                  <MessageSquare size={14} className={activeConvId === conv.id ? "text-blue-500" : "text-slate-600"} />
+                  <MessageSquare size={14} className={activeConvId === conv.id ? "text-blue-400" : "text-slate-600"} />
                   <div className="flex-1 overflow-hidden pr-6">
                     {editingId === conv.id ? (
                       <input autoFocus className="bg-[#000000] text-white text-xs w-full px-2 py-1 rounded border border-blue-500 outline-none" value={tempTitle} onChange={e => setTempTitle(e.target.value)} onBlur={() => saveRename(conv.id)} onKeyDown={e => e.key === 'Enter' && saveRename(conv.id)} onClick={e => e.stopPropagation()} />
@@ -184,8 +198,14 @@ export const Sidebar: React.FC<SidebarProps> = (props) => {
         )}
       </div>
 
-      <div className="p-3 border-t border-slate-800/50 flex items-center justify-end min-w-[260px]">
-        <button onClick={() => setShowSettings(true)} className="p-2 hover:bg-slate-800 text-slate-500 hover:text-white rounded-lg transition-all"><Settings size={14} /></button>
+      <div className="px-3 py-2.5 border-t border-white/[0.06] flex items-center justify-between min-w-[260px]">
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="w-6 h-6 rounded-full bg-white/[0.06] border border-white/[0.08] flex items-center justify-center text-[10px] font-bold text-slate-300 shrink-0">
+            {(user.name || '?').charAt(0).toUpperCase()}
+          </div>
+          <span className="text-[11px] text-slate-500 truncate">{user.name}</span>
+        </div>
+        <button onClick={() => setShowSettings(true)} className="p-2 hover:bg-white/[0.06] text-slate-500 hover:text-slate-200 rounded-lg transition-all shrink-0"><Settings size={14} /></button>
       </div>
     </motion.aside>
   );

@@ -148,6 +148,12 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
     if (!isModelDropdownOpen || !API) return;
     fetchDoctor();
     setQuery('');
+    // Plan kilitleri TUR SIRASINDA öğrenilebilir (mesaj plan-blok yiyince backend
+    // blocklist'e yazar) → dropdown her açılışta yüklü dinamik listeleri arka planda
+    // tazele; yoksa kilit ancak uygulama yeniden başlayınca görünüyordu.
+    (['cursor', 'opencode', 'copilot', 'codex'] as const).forEach(cli => {
+      if (dynModels[cli]) fetchDynModels(cli, true);
+    });
     setTimeout(() => searchRef.current?.focus(), 60);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isModelDropdownOpen, API]);
@@ -175,14 +181,17 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
   // Cursor/OpenCode: hesaba/kuruluma göre CANLI model listesi (grup ilk açılınca çekilir).
   const [dynModels, setDynModels] = useState<Record<string, ModelItem[]>>({});
   const [dynLoading, setDynLoading] = useState<Record<string, boolean>>({});
-  const fetchDynModels = async (cli: 'cursor' | 'opencode' | 'copilot' | 'codex') => {
-    if (dynModels[cli] || dynLoading[cli]) return;
+  const fetchDynModels = async (cli: 'cursor' | 'opencode' | 'copilot' | 'codex', force = false) => {
+    if (dynLoading[cli]) return;
+    if (!force && dynModels[cli]) return;
     setDynLoading(prev => ({ ...prev, [cli]: true }));
     try {
       const res = await axios.get(`${API}/cli-models/${cli}`);
       setDynModels(prev => ({ ...prev, [cli]: res.data?.models || [] }));
     } catch {
-      setDynModels(prev => ({ ...prev, [cli]: [] }));
+      // force-tazelemede eldeki listeyi SİLME (geçici ağ hatası kilitli/kilitsiz
+      // bilgisini kaybettirmesin); ilk yüklemede boş liste göster.
+      setDynModels(prev => ({ ...prev, [cli]: force && prev[cli] ? prev[cli] : [] }));
     } finally {
       setDynLoading(prev => ({ ...prev, [cli]: false }));
     }
@@ -374,7 +383,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
             }
           }
         }}
-        className="flex items-center gap-1.5 hover:bg-slate-800 px-2 py-1 rounded transition-all text-left shrink-0 max-w-[160px]"
+        className="flex items-center gap-1.5 hover:bg-white/[0.06] px-2 py-1 rounded-lg transition-all text-left shrink-0 max-w-[160px]"
       >
         <ModelAvatar provider={activeGroupKey ? CLI_GROUPS.find(g => g.key === activeGroupKey)!.brand : aiConfig.provider_type} size={14} />
         <div className="flex flex-col min-w-0">

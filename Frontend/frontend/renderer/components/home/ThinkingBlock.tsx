@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'framer-motion';
-import { ChevronRight } from 'lucide-react';
+import { ChevronRight, Sparkles } from 'lucide-react';
 import { useState } from 'react';
 
 interface ThinkingBlockProps {
@@ -14,12 +14,12 @@ export const ThinkingBlock = ({ thinking, durationMs }: ThinkingBlockProps) => {
   const label = seconds ? `${seconds} saniye düşündü` : 'Düşündü';
 
   return (
-    <div className="mb-2">
+    <div className="mb-2.5">
       <button
         onClick={() => setOpen(v => !v)}
-        className="flex items-center gap-1.5 text-[11px] text-slate-500 hover:text-slate-400 transition-colors select-none group"
+        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-white/[0.07] bg-white/[0.02] hover:bg-white/[0.05] hover:border-white/[0.12] text-[11px] text-slate-500 hover:text-slate-300 transition-colors select-none group"
       >
-        <span className="w-1.5 h-1.5 rounded-full bg-slate-600 group-hover:bg-slate-500 transition-colors" />
+        <Sparkles size={10.5} className="text-violet-400/70" />
         <span>{label}</span>
         <motion.span
           animate={{ rotate: open ? 90 : 0 }}
@@ -39,7 +39,7 @@ export const ThinkingBlock = ({ thinking, durationMs }: ThinkingBlockProps) => {
             transition={{ duration: 0.2 }}
             className="overflow-hidden"
           >
-            <div className="mt-2 pl-3 border-l border-slate-800 max-h-[320px] overflow-y-auto">
+            <div className="mt-2 pl-3 border-l border-white/[0.08] max-h-[320px] overflow-y-auto custom-scrollbar">
               <p className="text-[11px] text-slate-500 whitespace-pre-wrap leading-relaxed font-mono">
                 {thinking}
               </p>

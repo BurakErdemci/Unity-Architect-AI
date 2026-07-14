@@ -115,6 +115,14 @@ const MarkdownRendererInner = ({
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
       components={{
+        // Tablo panelden taşmasın: kendi kartında yatay scroll (bkz. globals.css .chat-table)
+        table({ children, ...props }: any) {
+          return (
+            <div className="chat-table custom-scrollbar">
+              <table {...props}>{children}</table>
+            </div>
+          );
+        },
         code({ inline, className, children, ...props }: any) {
           const match = /language-(\w+)/.exec(className || "");
           const codeString = String(children).replace(/\n$/, "");

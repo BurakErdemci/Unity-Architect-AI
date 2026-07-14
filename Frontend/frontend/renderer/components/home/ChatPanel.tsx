@@ -7,7 +7,8 @@ import {
   History,
   Trash2,
   AlertTriangle,
-  Bot
+  Bot,
+  Sparkles
 } from 'lucide-react';
 import { Message, UserData, FileEntry, GenerationMode, ChatActivity } from './types';
 import { ModelAvatar } from './ModelAvatar';
@@ -108,6 +109,20 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   const fmtTok = (n?: number | null) =>
     typeof n === 'number' && n > 0 ? (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`) : null;
 
+  // Mesaj meta satırı için insan-okur model/sağlayıcı adı.
+  // Mesaj aktif sağlayıcıdan geldiyse tam model adını göster; geçmiş
+  // mesajlarda (farklı sağlayıcı) marka adına düş.
+  const PROVIDER_LABELS: Record<string, string> = {
+    claude: 'Claude', anthropic: 'Claude', openai: 'GPT', codex: 'Codex',
+    gemini: 'Gemini', agy: 'Antigravity', copilot: 'Copilot', cursor: 'Cursor',
+    opencode: 'OpenCode', nvidia: 'NVIDIA', groq: 'Groq', ollama: 'Ollama',
+  };
+  const metaName = (msgProvider?: string) => {
+    const p = (msgProvider || effectiveProvider || '').toLowerCase();
+    if ((!msgProvider || msgProvider === effectiveProvider) && modelName) return modelName;
+    return PROVIDER_LABELS[p] || (p ? p.charAt(0).toUpperCase() + p.slice(1) : 'AI');
+  };
+
   // Backend'den BAĞIMSIZ, saniyede tikleyen sayaç: token/aktivite metni uzunca
   // değişmese bile (örn. büyük bir dosya okunurken) kullanıcı "hala çalışıyor mu
   // yoksa dondu mu" diye soruyordu — bu sayaç ilerliyorsa süreç KESİN canlı,
@@ -160,7 +175,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
 
   return (
     <div className="flex-1 overflow-y-auto px-4 py-6 custom-scrollbar scroll-smooth">
-      <div className="max-w-4xl mx-auto space-y-6">
+      <div className="max-w-4xl mx-auto space-y-8">
         {messages.map((msg, msgIdx) => {
           // /usage, /context → özel kart. Canlı turda mesaj etiketli gelir (slashCommand);
           // geçmişten yüklenende etiket yok → bir önceki kullanıcı mesajından tespit et.
@@ -173,9 +188,20 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           return (
           <div key={msg.id} className={`chat-message-enter ${msg.role === 'user' ? 'flex justify-end' : ''}`}>
             {msg.role === 'assistant' ? (
-              <div className="flex gap-2.5 max-w-full group">
-                <ModelAvatar provider={msg.provider || effectiveProvider} size={13} className="mt-0.5" />
-                <div className="flex-1 min-w-0">
+              // Avatar yan sütun yerine ÜSTTE tek meta satırı — dar panelde
+              // içerik tam genişlik akar, model/süre/token bilgisi tek bakışta.
+              <div className="max-w-full group">
+                <div className="flex items-center gap-2 mb-2 select-none">
+                  <ModelAvatar provider={msg.provider || effectiveProvider} size={14} />
+                  <span className="text-[11px] font-medium text-slate-400 truncate">{metaName(msg.provider)}</span>
+                  {msg.usage && (msg.usage.duration_ms || msg.usage.output_tokens) ? (
+                    <span className="text-[10.5px] text-slate-600 tabular-nums shrink-0">
+                      {msg.usage.duration_ms ? `· ${Math.max(1, Math.round(msg.usage.duration_ms / 1000))}sn` : null}
+                      {fmtTok(msg.usage.output_tokens) ? ` · ↓${fmtTok(msg.usage.output_tokens)}` : null}
+                    </span>
+                  ) : null}
+                </div>
+                <div className="min-w-0">
                   {/* Statik Bulgular */}
                   {msg.smells && msg.smells.length > 0 && (
                     <div className="mb-3 bg-[#000000] rounded-lg border border-orange-500/20 p-3">
@@ -207,32 +233,22 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
 
                   {/* Content or Loading Typing */}
                   {(msg.content === "" || !msg.content) && loading && msgIdx === messages.length - 1 ? (
-                    <div className="bg-[#000000] rounded-lg px-4 py-3 border border-slate-800 inline-flex items-center gap-2.5">
-                      <div className="flex items-center gap-1.5">
-                        <div className="typing-dot h-2 w-2 bg-blue-500 rounded-full" />
-                        <div className="typing-dot h-2 w-2 bg-blue-500 rounded-full" />
-                        <div className="typing-dot h-2 w-2 bg-blue-500 rounded-full" />
-                      </div>
-                      {activity ? (
-                        <span className="text-[11px] text-violet-300">
-                          {activity.detail}
-                          {fmtTok(activity.tokens) && <span className="text-slate-500"> · {fmtTok(activity.tokens)} token</span>}
-                          {/* Saniyede tikleyen sayaç: ilerliyorsa süreç KESİN canlı ("dondu mu?" sorusunun cevabı) */}
-                          <span className="text-slate-600 tabular-nums"> · {fmtElapsed(elapsedSec)}</span>
-                        </span>
-                      ) : (
-                        thinkingLevel !== 'off' && (
-                          <span className="text-[11px] text-violet-400">
-                            <span className="animate-pulse">{t('chat.thinking')}</span>
-                            <span className="text-slate-600 tabular-nums"> · {fmtElapsed(elapsedSec)}</span>
-                          </span>
-                        )
+                    // Modern "düşünüyor": kutu yok — ışıltısı kayan metin + canlı sayaç.
+                    // (Sayaç ilerliyorsa süreç KESİN canlı; "dondu mu?" sorusunun cevabı.)
+                    <div className="inline-flex items-center gap-2 py-0.5 max-w-full">
+                      <Sparkles size={13} className="text-violet-400/80 animate-pulse shrink-0" />
+                      <span className="text-[12.5px] font-medium shimmer-text truncate">
+                        {activity?.detail || t('chat.thinking')}
+                      </span>
+                      {activity && fmtTok(activity.tokens) && (
+                        <span className="text-[11px] text-slate-600 shrink-0">· {fmtTok(activity.tokens)}</span>
                       )}
+                      <span className="text-[11px] text-slate-600 tabular-nums shrink-0">· {fmtElapsed(elapsedSec)}</span>
                     </div>
                   ) : slashCmd ? (
                     <SlashCommandCard command={slashCmd} text={msg.content} workspacePath={workspacePath} />
                   ) : (
-                    <div className="prose prose-invert max-w-none text-[13px] leading-relaxed prose-p:my-2 prose-headings:my-3 prose-ul:my-2 prose-li:my-0.5 prose-pre:bg-slate-900 prose-pre:border prose-pre:border-slate-800 prose-a:text-emerald-400">
+                    <div className="chat-prose max-w-none">
                       <MarkdownRenderer
                         content={msg.content.replace('<!-- SCOPE_WARNING_ACTIVE -->', '')}
                         workspacePath={workspacePath}
@@ -241,14 +257,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                     </div>
                   )}
 
-                  {/* Tur istatistiği: süre + token (backend turn_usage event'i) */}
-                  {msg.usage && (msg.usage.output_tokens || msg.usage.duration_ms) ? (
-                    <div className="mt-1.5 text-[10.5px] text-slate-600 select-none">
-                      {msg.usage.duration_ms ? `⏱ ${Math.max(1, Math.round(msg.usage.duration_ms / 1000))}sn` : null}
-                      {fmtTok(msg.usage.input_tokens) ? ` · ↑${fmtTok(msg.usage.input_tokens)}` : null}
-                      {fmtTok(msg.usage.output_tokens) ? ` · ↓${fmtTok(msg.usage.output_tokens)} token` : null}
-                    </div>
-                  ) : null}
+                  {/* Tur istatistiği artık mesajın ÜSTÜNDEKİ meta satırında */}
 
                   {/* Scope Warning Buttons */}
                   {msg.content.includes('SCOPE_WARNING_ACTIVE') && msgIdx === messages.length - 1 && !loading && (
@@ -374,7 +383,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             ) : (
               // Kullanıcı Mesajı
               <div className="max-w-[85%]">
-                <div className="bg-blue-600/15 border border-blue-500/20 rounded-xl rounded-tr-sm px-3.5 py-2.5">
+                <div className="bg-blue-500/10 border border-blue-400/15 rounded-2xl rounded-tr-md px-4 py-2.5">
                   {msg.images && msg.images.length > 0 && (
                     <div className="flex gap-2 mb-3 flex-wrap">
                       {msg.images.map((img, i) => (
@@ -401,25 +410,22 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
         {/* Canlı aktivite şeridi: metin akmaya başladıktan sonra da Claude'un çalıştığı
             görünür kalsın (typing bubble yalnızca içerik boşken görünüyor). */}
         {loading && activity && messages.length > 0 && !!messages[messages.length - 1]?.content && (
-          <div className="flex items-center gap-2 mb-6 pl-8 text-[11.5px] text-slate-400">
-            <div className="flex items-center gap-1">
-              <div className="typing-dot h-1.5 w-1.5 bg-violet-400 rounded-full" />
-              <div className="typing-dot h-1.5 w-1.5 bg-violet-400 rounded-full" />
-              <div className="typing-dot h-1.5 w-1.5 bg-violet-400 rounded-full" />
-            </div>
-            <span className="text-violet-300">{activity.detail}</span>
-            {fmtTok(activity.tokens) && <span className="text-slate-500">· {fmtTok(activity.tokens)} token</span>}
-            <span className="text-slate-600 tabular-nums">· {fmtElapsed(elapsedSec)}</span>
+          <div className="flex items-center gap-2 mb-6 text-[11.5px]">
+            <Sparkles size={12} className="text-violet-400/80 animate-pulse shrink-0" />
+            <span className="shimmer-text font-medium truncate">{activity.detail}</span>
+            {fmtTok(activity.tokens) && <span className="text-slate-600 shrink-0">· {fmtTok(activity.tokens)} token</span>}
+            <span className="text-slate-600 tabular-nums shrink-0">· {fmtElapsed(elapsedSec)}</span>
           </div>
         )}
 
         {/* AgentPlan Indicator */}
         {loading && currentPlan.length > 0 && (
-          <div className="flex gap-2.5 chat-message-enter mb-6">
-            <ModelAvatar provider={effectiveProvider} size={13} />
-            <div className="flex-1 min-w-0">
-              <AgentPlan tasks={currentPlan} />
+          <div className="chat-message-enter mb-6">
+            <div className="flex items-center gap-2 mb-2 select-none">
+              <ModelAvatar provider={effectiveProvider} size={14} />
+              <span className="text-[11px] font-medium text-slate-400">{metaName()}</span>
             </div>
+            <AgentPlan tasks={currentPlan} />
           </div>
         )}
         {/* MCP Onay Kartları — mesaj ID'sinden bağımsız, her zaman göster */}
