@@ -54,7 +54,6 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         private string _projectPath;
         private string _unityVersion;
         private TimeSpan _keepAliveInterval = DefaultKeepAliveInterval;
-        private TimeSpan _socketKeepAliveInterval = DefaultKeepAliveInterval;
         private volatile bool _isConnected;
         private int _isReconnectingFlag;
         private TransportState _state = TransportState.Disconnected(TransportDisplayName, "Transport not started");
@@ -267,7 +266,13 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
 
                 _socket?.Dispose();
                 _socket = new ClientWebSocket();
-                _socket.Options.KeepAliveInterval = _socketKeepAliveInterval;
+                // Protokol seviyesi keep-alive KAPALI (TimeSpan.Zero): Mono'nun
+                // ManagedWebSocket'i bu frame'leri gönderdiğinde uvicorn tarafı
+                // bağlantıyı kesiyor ve 15 sn'de bir reconnect+eviction fırtınası
+                // dönüyordu ("session superseded" hatalarının kökü). Canlılık zaten
+                // uygulama seviyesinde sağlanıyor: server 10 sn'de bir ping atar,
+                // client pong'lar; client ayrıca 15 sn'de bir kendi pong'unu yollar.
+                _socket.Options.KeepAliveInterval = TimeSpan.Zero;
 
                 // Add API key header if configured (for remote-hosted mode)
                 if (!string.IsNullOrEmpty(_apiKey))
@@ -511,15 +516,6 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             if (keepAliveSeconds.HasValue && keepAliveSeconds.Value > 0)
             {
                 _keepAliveInterval = TimeSpan.FromSeconds(keepAliveSeconds.Value);
-                _socketKeepAliveInterval = _keepAliveInterval;
-            }
-
-            int? serverTimeoutSeconds = payload.Value<int?>("serverTimeout");
-            if (serverTimeoutSeconds.HasValue)
-            {
-                int sourceSeconds = keepAliveSeconds ?? serverTimeoutSeconds.Value;
-                int safeSeconds = Math.Max(5, Math.Min(serverTimeoutSeconds.Value, sourceSeconds));
-                _socketKeepAliveInterval = TimeSpan.FromSeconds(safeSeconds);
             }
         }
 
