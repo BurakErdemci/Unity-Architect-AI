@@ -227,14 +227,29 @@ class BaseCLIProvider(AIProvider):
             if _is_agy:
                 async with BaseCLIProvider._AGY_LOCK:
                     self._set_agy_model(self._pending_agy_model, workspace)
-                    # agy --print HİÇBİR MCP yüklemez (test edildi). agy'nin gördüğü tek
-                    # köprü built-in run_command. Yazma araçları (write_to_file vb.)
-                    # _AGY_DISABLED_TOOLS ile kapalı → agy yazmak için 'unityai' CLI'ını
-                    # run_command ile çağırmak zorunda kalır → onay kartı çıkar.
+                    # agy --print ARTIK MCP yükler (2026-07-14, agy 1.1.2 canlı doğrulandı):
+                    # config göç-sonrası yola (~/.gemini/config/mcp_config.json) yazıldığı için
+                    # agy unityMCP + meshy + unityai tool'larını görüyor (bkz. _register_mcp 1b).
+                    # Yine de DOSYA YAZMA/SİLME/SHELL için agy'nin kendi write araçları
+                    # (write_to_file vb.) _AGY_DISABLED_TOOLS ile kapalı → agy bunları 'unityai'
+                    # CLI'ı ile run_command üzerinden yapmak zorunda → onay kartı çıkar.
                     unityai_cli = self._launcher_path("unityai")
                     self._ensure_exec(unityai_cli)
                     mcp_hint = (
                         "IMPORTANT: You MUST respond in Turkish (Türkçe) at all times.\n\n"
+                        "AVAILABLE MCP TOOLS — call these DIRECTLY when the task needs them:\n"
+                        "- unityMCP: Unity editor operations (manage_gameobject, manage_scene,\n"
+                        "  manage_fbx, manage_animation, manage_material, refresh_unity, read_console,\n"
+                        "  run_tests, find_gameobjects, etc.). Use directly for Unity queries/actions.\n"
+                        "- meshy: 3D asset generation (meshy_text_to_3d, meshy_image_to_3d, meshy_rig,\n"
+                        "  meshy_animate, meshy_retexture, meshy_check_balance, etc.). Use directly.\n"
+                        "  Meshy calls cost credits — state the cost and get user confirmation first.\n"
+                        "Do NOT route unityMCP/meshy through the unityai CLI — call them as MCP tools.\n\n"
+                        "EFFICIENCY — answer directly, do NOT flail:\n"
+                        "- Respond to the user's actual request. Do NOT go on filesystem expeditions.\n"
+                        "- Do NOT call list_dir / grep_search / view_file / invoke_subagent / schedule\n"
+                        "  unless the task genuinely requires it. No self-scheduling, no timers, no\n"
+                        "  probing the .system_generated / brain / transcript folders. Just do the task.\n\n"
                         "You have a command-line tool 'unityai' for file WRITES, DELETES and shell.\n"
                         "Your own write_to_file/replace_file_content tools are DISABLED on purpose —\n"
                         "the ONLY way to create, edit, delete a file or run shell is via run_command\n"
@@ -253,15 +268,17 @@ class BaseCLIProvider(AIProvider):
                         "4. To READ a file or LIST a directory you MAY use your own view_file / list_dir.\n\n"
                         "Every write, delete and shell command MUST go through unityai so the user can\n"
                         "approve it in the IDE. SCOPE: Only the current workspace. No unprompted test files.\n\n"
-                        "REPLY STYLE — keep your text answer SHORT and clean:\n"
-                        "- NEVER paste the file's full content/code block in your reply. The IDE approval\n"
-                        "  card already shows the code and diff to the user.\n"
-                        "- NEVER explain the approval mechanics (do not say 'onayınızı bekliyor',\n"
-                        "  'onay verdikten sonra', 'komutu çalıştırdım' etc.).\n"
-                        "- Do NOT repeat yourself or describe the same file twice.\n"
-                        "- After a file/shell action, reply with ONE short Turkish sentence stating what\n"
-                        "  you did (e.g. 'TestScripts.cs oluşturuldu.'). Add a brief note only if it gives\n"
-                        "  real extra value.\n\n"
+                        "REPLY STYLE — match the reply length to the task:\n"
+                        "- For file WRITE / DELETE / shell actions: reply with ONE short Turkish\n"
+                        "  sentence stating what you did (e.g. 'TestScripts.cs oluşturuldu.'). NEVER\n"
+                        "  paste the file's full content/code block — the IDE approval card already\n"
+                        "  shows the code and diff. NEVER explain approval mechanics ('onayınızı\n"
+                        "  bekliyor', 'onay verdikten sonra', 'komutu çalıştırdım'). Don't repeat.\n"
+                        "- For QUESTIONS, reading/analysis, or reports (e.g. 'read the GDD and tell me\n"
+                        "  the rules', 'check MCP access', 'what does X do'): give a COMPLETE, substantive\n"
+                        "  Turkish answer — actually report the findings, rules, values, or console output\n"
+                        "  you gathered. Do NOT collapse it into a passive one-liner like 'öğrenildi',\n"
+                        "  'incelendi' or 'test edildi'. Be genuinely informative, not terse.\n\n"
                     )
                     # Prompt = mcp_hint + enriched_prompt, SON POZİSYONEL ARG olarak
                     # verilir (stdin DEĞİL — agy 1.1.1 ham-metin stdin'i bozuk okuyup

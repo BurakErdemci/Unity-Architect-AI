@@ -83,13 +83,15 @@ a = Analysis(
         'grpc._cython',
         'grpc._cython.cygrpc',
         # Frozen binary subcommand dispatch hedefleri (main.py bunları çağırır):
-        #   backend mcp-server  → unity_ai_mcp.server.main
-        #   backend unityai     → unityai_cli.main
+        #   backend mcp-server        → unity_ai_mcp.server.main
+        #   backend unityai           → unityai_cli.main
+        #   backend codex-mcp-bridge  → providers.codex_unitymcp_bridge.main
         'unity_ai_mcp.server',
         'unity_ai_mcp.approval_bridge',
         'unity_ai_mcp.tools.file_tools',
         'unity_ai_mcp.tools.bash_tool',
         'unityai_cli',
+        'providers.codex_unitymcp_bridge',
         # FastMCP (MCP server transport)
         'mcp',
         'mcp.server',

@@ -47,12 +47,19 @@ os.environ["PATH"] = os.pathsep.join(
 # binary'sini alt-komutlarla çağırır:
 #   backend mcp-server [--workspace X]  → unity_ai_mcp.server.main (Claude/Codex MCP)
 #   backend unityai <save-file|...>     → unityai_cli.main (agy köprüsü)
+#   backend codex-mcp-bridge <http_url> → providers.codex_unitymcp_bridge (Codex stdio köprüsü)
 # FastAPI/uvicorn app'i kurmadan erken dön — bu komutlar HTTP server başlatmaz.
-if len(sys.argv) > 1 and sys.argv[1] in ("mcp-server", "unityai"):
+if len(sys.argv) > 1 and sys.argv[1] in ("mcp-server", "unityai", "codex-mcp-bridge"):
     _sub_mode = sys.argv[1]
     sys.argv = [sys.argv[0]] + sys.argv[2:]
     if _sub_mode == "mcp-server":
         from unity_ai_mcp.server import main as _sub_main
+        _sub_main()
+        sys.exit(0)
+    elif _sub_mode == "codex-mcp-bridge":
+        # Codex 0.14x, yerel FastMCP streamable-HTTP MCP'yi bozdu (OAuth-discovery-first;
+        # openai/codex #26955). unityMCP'yi Codex'e stdio köprüsüyle veriyoruz.
+        from providers.codex_unitymcp_bridge import main as _sub_main
         _sub_main()
         sys.exit(0)
     else:  # unityai

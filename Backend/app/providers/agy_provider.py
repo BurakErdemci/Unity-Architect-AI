@@ -163,6 +163,36 @@ class AgyProvider(BaseCLIProvider):
         except Exception as e:
             logger.warning(f"[CLIProvider] agy mcp_config.json yazılamadı: {e}")
 
+        # 1b. GÖÇ SONRASI yol: ~/.gemini/config/mcp_config.json
+        # KRİTİK (2026-07-14 canlı doğrulandı, agy 1.1.2): agy artık MCP server'larını
+        # BU göç-sonrası yoldan okuyor (~/.gemini/config/.migrated marker'ı mevcut; CLI
+        # issue #60). Eski antigravity-cli/mcp_config.json ARTIK OKUNMUYOR → sadece oraya
+        # yazınca agy hiçbir MCP tool'u görmüyordu (yalnız built-in default_api:*). Aynı
+        # config'i buraya da yazınca --print modunda unityMCP + meshy + unityai tool'ları
+        # görünüyor (canlı: meshy_check_balance çağrısı PASS). Migrated dosyada zaten olan
+        # (IDE'nin eklediği meshy/playwright gibi) server'ları koru; taze unityai/unityMCP öncelikli.
+        migrated_path = os.path.expanduser("~/.gemini/config/mcp_config.json")
+        try:
+            migrated_cfg = {}
+            try:
+                with open(migrated_path) as f:
+                    _raw = f.read().strip()
+                    migrated_cfg = json.loads(_raw) if _raw else {}
+            except Exception:
+                migrated_cfg = {}
+            merged_servers = dict(migrated_cfg.get("mcpServers", {}))
+            merged_servers.update(config.get("mcpServers", {}))  # taze unityai/unityMCP kazanır
+            merged_servers.pop("antigravity", None)
+            out_cfg = dict(migrated_cfg)
+            out_cfg["mcpServers"] = merged_servers
+            out_cfg.pop("disabledTools", None)  # geçersiz key → agy tüm dosyayı yoksayar
+            os.makedirs(os.path.dirname(migrated_path), exist_ok=True)
+            with open(migrated_path, "w") as f:
+                json.dump(out_cfg, f, indent=2)
+            logger.info(f"[CLIProvider] agy MIGRATED mcp_config.json yazıldı ({len(merged_servers)} server): {migrated_path}")
+        except Exception as e:
+            logger.warning(f"[CLIProvider] agy migrated mcp_config.json yazılamadı: {e}")
+
         # 2. ~/.gemini/antigravity-cli/settings.json güncelle
         settings_path = os.path.expanduser("~/.gemini/antigravity-cli/settings.json")
         try:

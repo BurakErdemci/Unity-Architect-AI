@@ -1,4 +1,5 @@
 import os
+import sys
 import logging
 from .cli_base import BaseCLIProvider
 
@@ -102,12 +103,24 @@ class CodexProvider(BaseCLIProvider):
                 capture_output=True, timeout=5, check=True,
             )
             if unity_mcp_manager.is_running():
+                # Codex 0.14x, yerel FastMCP streamable-HTTP MCP'ye bağlanmayı bozdu
+                # (önce OAuth discovery yapıp initialize'a varmadan düşüyor; openai/codex
+                # #26955, #26072 — canlı doğrulandı: HTTP'de unityMCP tool'ları yüklenmiyor).
+                # ÇÖZÜM: unityMCP'yi HTTP yerine STDIO KÖPRÜSÜ ile ver. Köprü mevcut TEK
+                # HTTP sunucusuna forward eder (ikinci Unity bağlantısı AÇMAZ). Codex'in
+                # stdio transport'u sağlam → 45 tool görünüyor (canlı doğrulandı).
+                mcp_url = f"http://127.0.0.1:{unity_mcp_manager.mcp_port}/mcp"
+                if getattr(sys, "frozen", False):
+                    # Paketlenmiş app: backend.exe codex-mcp-bridge <url>
+                    bridge_argv = [sys.executable, "codex-mcp-bridge", mcp_url]
+                else:
+                    # Dev: python main.py codex-mcp-bridge <url>
+                    _main_py = os.path.join(
+                        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "main.py")
+                    bridge_argv = [sys.executable, _main_py, "codex-mcp-bridge", mcp_url]
                 sp.run(
-                    self._resolve_exec([
-                        "codex", "mcp", "add", "unityMCP",
-                        "--url", f"http://127.0.0.1:{unity_mcp_manager.mcp_port}/mcp",
-                    ]),
-                    capture_output=True, timeout=5, check=True,
+                    self._resolve_exec(["codex", "mcp", "add", "unityMCP", "--", *bridge_argv]),
+                    capture_output=True, timeout=10, check=True,
                 )
         except Exception as e:
             logger.warning(f"[CLIProvider] Codex MCP kaydı yapılamadı: {e}")
