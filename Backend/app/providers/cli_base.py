@@ -245,6 +245,11 @@ class BaseCLIProvider(AIProvider):
                         "  meshy_animate, meshy_retexture, meshy_check_balance, etc.). Use directly.\n"
                         "  Meshy calls cost credits — state the cost and get user confirmation first.\n"
                         "Do NOT route unityMCP/meshy through the unityai CLI — call them as MCP tools.\n\n"
+                        "RESUMING A LONG TASK: You remember previous turns. If earlier you started a\n"
+                        "long async job (e.g. meshy_text_to_3d returns a task id and generation takes\n"
+                        "minutes) and it looks unfinished/interrupted, do NOT restart it — call the\n"
+                        "status tool (meshy_get_task_status with the task id from your history) and\n"
+                        "continue from where you left off (download / refine / place in scene).\n\n"
                         "EFFICIENCY — answer directly, do NOT flail:\n"
                         "- Respond to the user's actual request. Do NOT go on filesystem expeditions.\n"
                         "- Do NOT call list_dir / grep_search / view_file / invoke_subagent / schedule\n"
@@ -339,27 +344,58 @@ class BaseCLIProvider(AIProvider):
             _copilot_streamed = set()        # delta'sı akıtılan messageId'ler (dedup)
             _is_cursor = self.binary_name.startswith("cursor-")
 
+            # agy CANLI-İZLEME: --print modunda uzun meshy işlerinde stdout SESSİZ kalır ama
+            # agy conversation .db'ye step (meshy status-poll'leri) yazmaya devam eder.
+            # Liveness'i STDOUT yerine DB BÜYÜMESİNDEN ölç → sahte timeout yok + yeni tool
+            # aktivitesini chate akıt (Fable gibi görünürlük). Yalnız agy için.
+            import time as _time
+            if _is_agy:
+                from .agy_session import get_max_step_idx, newest_conv_uuid, poll_agy_activity
+                _agy_uuid = getattr(self, "_resume_uuid", None)
+                _agy_last_idx = get_max_step_idx(_agy_uuid) if _agy_uuid else -1
+                _agy_last_activity = _start
+                _agy_wall_start = _time.time()
+                _AGY_IDLE_LIMIT = 300     # 5dk HİÇ db büyümesi yok → gerçek hang
+                _AGY_MAX_TOTAL = 1800     # 30dk mutlak tavan (Fable ~20dk meshy'yi kapsar)
+
             while True:
                 try:
                     line = await asyncio.wait_for(_stdout_reader.readline(), timeout=15.0)
                 except asyncio.TimeoutError:
                     _now = asyncio.get_event_loop().time()
-                    # Onay beklerken CLI uzun süre stdout üretmez — bu normal.
-                    # Tek satırlık watchdog; detaylı DIAG dump'ları kaldırıldı (log flood'a
-                    # yol açıyordu: codex session jsonl + devasa MCP tool şemaları her 15s).
-                    logger.warning(
-                        f"[CLIProvider:{self.binary_name}][WAIT] "
-                        f"{_now-_start:.0f}s stdout yok (onay/işlem bekleniyor olabilir) | "
-                        f"pid={process.pid} | rc={process.returncode}"
-                    )
                     if process.returncode is not None:
                         logger.error(f"[CLIProvider:{self.binary_name}] Process bitti rc={process.returncode}")
                         break
-                    # Onay (approval) beklerken CLI uzun süre sessiz kalabilir; hard-kill
-                    # bu süreyi kapsamalı (approval_bridge 180s bekliyor). 300s tüm provider'lar.
-                    _hard_timeout = 300
-                    if _now - _start > _hard_timeout:
-                        logger.error(f"[CLIProvider:{self.binary_name}] {_hard_timeout}s timeout — kill")
+
+                    if _is_agy:
+                        # agy stdout SESSİZ olabilir ama DB'ye step yazıyorsa CANLI'dır.
+                        # Aktif turun db'sini bul (resume-uuid; yoksa ilk turda beliren yeni db),
+                        # yeni tool aktivitesini oku → chate akıt + idle sayacını SIFIRLA.
+                        if _agy_uuid is None:
+                            _agy_uuid = newest_conv_uuid(min_mtime=_agy_wall_start - 2.0)
+                            if _agy_uuid:
+                                _agy_last_idx = -1  # yeni db → bu turun tüm aktivitesini akıt
+                        if _agy_uuid:
+                            _acts, _agy_last_idx = poll_agy_activity(_agy_uuid, _agy_last_idx)
+                            if _acts:
+                                _agy_last_activity = _now  # db büyüdü → agy canlı
+                                for _a in _acts:
+                                    yield {"type": "thinking", "text": f"⚙ {_a}"}
+                        _idle = _now - _agy_last_activity
+                        if _idle > _AGY_IDLE_LIMIT or (_now - _start) > _AGY_MAX_TOTAL:
+                            logger.error(
+                                f"[CLIProvider:agy] hang (idle={_idle:.0f}s / toplam={_now-_start:.0f}s) — kill")
+                            process.kill()
+                            break
+                        continue
+
+                    # Diğer provider'lar (claude/codex/...): onay beklerken sessiz kalabilir;
+                    # 300s hard-kill (approval_bridge 180s bekliyor).
+                    logger.warning(
+                        f"[CLIProvider:{self.binary_name}][WAIT] {_now-_start:.0f}s stdout yok "
+                        f"(onay/işlem bekleniyor olabilir) | pid={process.pid}")
+                    if _now - _start > 300:
+                        logger.error(f"[CLIProvider:{self.binary_name}] 300s timeout — kill")
                         process.kill()
                         break
                     continue

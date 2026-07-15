@@ -1003,6 +1003,7 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
         from ai_providers import AIProviderManager
         from providers.agy_session import (
             get_session, snapshot_db_names, detect_new_uuid, read_new_response,
+            read_agy_tool_activity, get_max_step_idx,
         )
 
         provider = AIProviderManager.get_provider({
@@ -1014,14 +1015,21 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
         sess = get_session(self.conversation_id)
         sess.auto_approve = (getattr(self, "generation_mode", "auto") == "auto")
 
-        # RESUME TERK EDİLDİ (agy 1.1.1): --conversation flag'i modeli derail'e sokuyor
-        # (built-in antigravity-guide skill'ini tetikleyip kullanıcının mesajını hiç
-        # yanıtlamıyor; canlı doğrulandı). Bu yüzden agy'nin disk-resume'unu KULLANMAYIZ;
-        # bunun yerine HER TURDA tam transcript'i prompt'a enjekte ederiz (Claude/Codex'te
-        # ilk tur, agy'de her tur). Prompt ARG olarak gittiği için (stdin bozuk) Windows
-        # ~32K argv limitine takılmamak adına en YENİ kısmı koruyacak şekilde sınırlarız.
+        # NATIVE DISK-RESUME (2026-07-15, agy 1.1.2 canlı doğrulandı): --conversation ile
+        # agy geçmişi KENDİ conversation .db'sinden yükler → normal devam mesajıyla derail
+        # ETMİYOR ('analiz' framing'i yalnız transcript'e dair meta-sorularda). Böylece:
+        #   • agy_uuid VARSA (bu sohbette daha önce agy koştu) → SADECE yeni mesajı yolla;
+        #     context'i prompt'a BASMAYIZ → 26K kırpma yok, unutma yok, token ucuz.
+        #   • agy_uuid YOKSA (ilk agy turu / app restart sonrası) → context'i enjekte et,
+        #     tur sonrası beliren yeni .db'nin UUID'ini yakala + sakla (sonraki turlar resume).
+        # _SESSIONS in-memory → app restart'ta agy_uuid kaybolur; ilk tur context'i yeniden
+        # enjekte edip disk db'yi taze bir agy conversation'la resume eder (kabul edilebilir).
+        resuming = bool(sess.agy_uuid)
+        prev_idx = sess.last_step_idx if resuming else -1
+        provider._resume_uuid = sess.agy_uuid if resuming else None
+
         enriched_prompt = user_message
-        if self.context:
+        if not resuming and self.context:
             _CTX_CAP = 26000  # mcp_hint (~1.5K) + görsel + argv payı için güvenli sınır
             _ctx = self.context
             if len(_ctx) > _CTX_CAP:
@@ -1038,9 +1046,9 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
             enriched_prompt += ("\n\n[EKLİ GÖRSELLER] Kullanıcı bu turda görsel ekledi. "
                                 "İncelemen için (Read/dosya aracıyla aç):\n" + _lines)
 
-        # Her tur YENİ bir agy .db yaratır (resume yok) → bu turun yanıtını okuyabilmek
-        # için önceki db kümesini fotoğrafla, tur sonrası beliren yeni .db'yi yakala.
-        db_before = snapshot_db_names()
+        # Resume YOKSA ilk tur yeni bir .db yaratır → UUID'i yakalamak için önceki db
+        # kümesini fotoğrafla. Resume'da aynı .db'ye append edilir (yeni db yok).
+        db_before = snapshot_db_names() if not resuming else set()
 
         final_text = ""
         ephemeral_files = []
@@ -1081,26 +1089,33 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
         # agy subprocess bitti → ekli görsel temp klasörünü temizle (agy artık okumadı).
         cleanup_dir(_att_dir)
 
-        # Tur bitti → BU turda yaratılan yeni .db'yi (UUID) yakala. Resume kullanmadığımız
-        # için her tur taze bir db üretir; UUID'i yalnızca bu turun yanıtını okumak için
-        # kullanırız (kalıcı olarak saklamayız).
-        turn_uuid = detect_new_uuid(db_before)
-        if turn_uuid:
-            logger.info(f"[AgySession] conv={self.conversation_id} agy tur UUID: {turn_uuid}")
+        # UUID: resume ise sess'te mevcut; değilse (ilk tur) yeni beliren .db'yi yakala + SAKLA
+        # ki sonraki turlar native resume yapsın.
+        if resuming:
+            turn_uuid = sess.agy_uuid
         else:
-            logger.warning(f"[AgySession] conv={self.conversation_id} yeni agy .db bulunamadı")
+            turn_uuid = detect_new_uuid(db_before)
+            if turn_uuid:
+                sess.agy_uuid = turn_uuid  # sonraki turlar --conversation ile resume eder
+                logger.info(f"[AgySession] conv={self.conversation_id} agy UUID yakalandı+saklandı: {turn_uuid}")
+            else:
+                logger.warning(f"[AgySession] conv={self.conversation_id} yeni agy .db bulunamadı")
 
-        # Asistan yanıt metnini bu turun .db'sinden oku (stdout boş kalırsa fallback).
-        # Taze db → baştan (idx -1) oku. agy 1.1.1'de stdout genelde çalışıyor (final
-        # event'i doldurur); bu blok yalnız final boşsa devreye girer.
+        # Asistan yanıt metnini .db'den oku (stdout boş kalırsa fallback). SADECE bu turun
+        # yeni step'leri (prev_idx sonrası) → resume'da eski turların prose'unu tekrar
+        # okumayı önler. agy 1.1.2'de stdout genelde çalışıyor; bu blok yalnız final boşsa.
         if turn_uuid and not final_text:
-            prose, _ = read_new_response(turn_uuid, -1)
+            prose, _ = read_new_response(turn_uuid, prev_idx)
             if not prose:
                 # nadiren db flush gecikebilir → tek kısa retry
                 await asyncio.sleep(0.4)
-                prose, _ = read_new_response(turn_uuid, -1)
+                prose, _ = read_new_response(turn_uuid, prev_idx)
             if prose:
                 final_text = prose
+
+        # Sonraki resume turu için son okunan step idx'ini güncelle (stdout yolu da dahil).
+        if turn_uuid:
+            sess.last_step_idx = get_max_step_idx(turn_uuid, fallback=prev_idx)
 
         # Ephemeral değişiklikleri encode et
         # Silinen dosyalar → pending_delete event'i olarak ayrıca gönder
@@ -1108,10 +1123,21 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
         modified = [f for f in ephemeral_files if not f.get("deleted")]
         deleted  = [f for f in ephemeral_files if f.get("deleted")]
 
-        # agy ne bir yanıt metni ne de dosya değişikliği ürettiyse (örn. gerçek bir
-        # agy hatası ya da boş tur) — boş kart yerine kısa bir not göster.
+        # agy ne bir yanıt metni ne de dosya değişikliği ürettiyse — stdout boş kalmış
+        # olabilir (uzun meshy işi tur sonunda prose yazmadan bitti; db-prose fallback'i
+        # 1.1.2 şema kaymasında boş dönüyor). "yanıt üretmedi" demek yerine db'deki gerçek
+        # tool aktivitesini göster ki kullanıcı agy'nin ÇALIŞTIĞINI görsün (patlamadı sansın).
         if not final_text and not modified and not deleted:
-            final_text = "⚠️ agy bu tur için bir yanıt veya değişiklik üretmedi."
+            activities = read_agy_tool_activity(turn_uuid, since_idx=prev_idx) if turn_uuid else []
+            if activities:
+                _acts = "\n".join(f"• {a}" for a in activities)
+                final_text = (
+                    "Bu turda araçları çalıştırdım ama bir metin yanıtı oluşmadı "
+                    "(uzun bir işlem sürüyor olabilir). Yaptığım işlemler:\n"
+                    f"{_acts}\n\nDevam etmemi mi istersin, yoksa sonucu mu sorayım?"
+                )
+            else:
+                final_text = "⚠️ agy bu tur için bir yanıt veya değişiklik üretmedi."
 
         response_parts = [final_text] if final_text else []
         for f in modified:

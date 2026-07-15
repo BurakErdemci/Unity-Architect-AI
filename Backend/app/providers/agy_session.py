@@ -20,6 +20,7 @@ step_type==15 = asistan mesajı; metin step_payload protobuf blob'unun içinde.
 """
 import os
 import glob
+import json
 import shutil
 import sqlite3
 import logging
@@ -233,3 +234,188 @@ def read_new_response(uuid: str, last_idx: int) -> Tuple[str, int]:
                 pass
 
     return "\n\n".join(text_parts).strip(), new_idx
+
+
+# ── tool aktivite özeti (stdout boşsa "ne yaptı" göstermek için) ────────────
+def _extract_tool_activity(payload: bytes) -> Optional[str]:
+    """Bir step'ten (type 15 tool-aksiyonu veya 38 tool-sonucu) insan-okunur tool
+    özetini çıkarır. Gözlenen yapı (agy 1.1.2): field 20 → alt-7 → alt-3 =
+    {"toolAction":"...","toolSummary":"...","AbsolutePath":...} JSON. Yoksa None."""
+    if not payload:
+        return None
+    try:
+        for fno, wire, val in _parse_fields(payload):
+            if fno != 20 or wire != 2 or not isinstance(val, (bytes, bytearray)):
+                continue
+            for sf, sw, sv in _parse_fields(val):
+                if sf != 7 or sw != 2 or not isinstance(sv, (bytes, bytearray)):
+                    continue
+                for ssf, ssw, ssv in _parse_fields(sv):
+                    if ssf != 3 or ssw != 2 or not isinstance(ssv, (bytes, bytearray)):
+                        continue
+                    try:
+                        obj = json.loads(ssv.decode("utf-8", "replace"))
+                    except Exception:
+                        continue
+                    if isinstance(obj, dict):
+                        s = obj.get("toolSummary") or obj.get("toolAction")
+                        if s and isinstance(s, str) and s.strip():
+                            return s.strip()
+    except Exception:
+        return None
+    return None
+
+
+def newest_conv_uuid(min_mtime: float = 0.0) -> Optional[str]:
+    """conv dir'deki en son değiştirilen .db'nin UUID'i (mtime >= min_mtime). agy'nin
+    O AN yazdığı aktif turun db'sini (ilk turda resume-uuid yokken) bulmak için."""
+    try:
+        dbs = glob.glob(os.path.join(_CONV_DIR, "*.db"))
+    except Exception:
+        return None
+    if min_mtime:
+        try:
+            dbs = [p for p in dbs if os.path.getmtime(p) >= min_mtime]
+        except Exception:
+            pass
+    if not dbs:
+        return None
+    try:
+        newest = max(dbs, key=os.path.getmtime)
+    except Exception:
+        return None
+    name = os.path.basename(newest)
+    return name[:-3] if name.lower().endswith(".db") else name
+
+
+def poll_agy_activity(uuid: str, since_idx: int = -1, limit: int = 12) -> Tuple[List[str], int]:
+    """CANLI liveness+progress için: since_idx sonrası tool aktivite özetlerini VE gördüğü
+    en yüksek idx'i döndürür → (aktiviteler, yeni_max_idx). agy --print uzun meshy işinde
+    stdout üretmez ama db'ye step yazar; bu fonksiyon o büyümeyi hem canlılık sinyali hem
+    ilerleme göstergesi olarak okur. Yeni step yoksa ([], since_idx) döner."""
+    if not uuid:
+        return [], since_idx
+    db_path = os.path.join(_CONV_DIR, f"{uuid}.db")
+    if not os.path.exists(db_path):
+        return [], since_idx
+    tmp = db_path + ".uaipoll"
+    src = tmp
+    try:
+        shutil.copy2(db_path, tmp)
+        for _ext in ("-wal", "-shm"):
+            if os.path.exists(db_path + _ext):
+                try:
+                    shutil.copy2(db_path + _ext, tmp + _ext)
+                except Exception:
+                    pass
+    except Exception:
+        src = db_path
+    acts: List[str] = []
+    new_idx = since_idx
+    con = None
+    try:
+        con = sqlite3.connect(f"file:{src}?mode=ro", uri=True)
+        rows = con.execute(
+            "SELECT idx, step_payload FROM steps WHERE idx > ? ORDER BY idx", (since_idx,)
+        ).fetchall()
+        for idx, payload in rows:
+            if idx > new_idx:
+                new_idx = idx
+            if not payload:
+                continue
+            a = _extract_tool_activity(payload if isinstance(payload, (bytes, bytearray)) else bytes(payload or b""))
+            if a and (not acts or acts[-1] != a):
+                acts.append(a)
+    except Exception:
+        pass
+    finally:
+        if con is not None:
+            try:
+                con.close()
+            except Exception:
+                pass
+        if src == tmp:
+            for _ext in ("", "-wal", "-shm"):
+                try:
+                    os.remove(tmp + _ext)
+                except Exception:
+                    pass
+    return acts[-limit:], new_idx
+
+
+def get_max_step_idx(uuid: str, fallback: int = -1) -> int:
+    """Turun .db'sindeki en yüksek step idx'ini döndürür (resume'da 'bir sonraki turun
+    başlangıç noktası' için). Okunamıyorsa fallback döner."""
+    if not uuid:
+        return fallback
+    db_path = os.path.join(_CONV_DIR, f"{uuid}.db")
+    if not os.path.exists(db_path):
+        return fallback
+    tmp = db_path + ".uaimax"
+    src = tmp
+    try:
+        shutil.copy2(db_path, tmp)
+    except Exception:
+        src = db_path
+    con = None
+    try:
+        con = sqlite3.connect(f"file:{src}?mode=ro", uri=True)
+        row = con.execute("SELECT MAX(idx) FROM steps").fetchone()
+        return int(row[0]) if row and row[0] is not None else fallback
+    except Exception:
+        return fallback
+    finally:
+        if con is not None:
+            try:
+                con.close()
+            except Exception:
+                pass
+        if src == tmp:
+            try:
+                os.remove(tmp)
+            except Exception:
+                pass
+
+
+def read_agy_tool_activity(uuid: str, since_idx: int = -1, limit: int = 12) -> List[str]:
+    """Turun .db'sinden tool aktivite özetlerini (sırayla, ardışık-tekrarsız) döndürür.
+    since_idx sonrası step'ler okunur (resume'da eski turların aktivitesini eleme).
+    stdout boş kalıp final prose yoksa 'agy ne yaptı' göstermek için kullanılır."""
+    if not uuid:
+        return []
+    db_path = os.path.join(_CONV_DIR, f"{uuid}.db")
+    if not os.path.exists(db_path):
+        return []
+    tmp = db_path + ".uaitool"
+    src = tmp
+    try:
+        shutil.copy2(db_path, tmp)
+    except Exception:
+        src = db_path
+    acts: List[str] = []
+    con = None
+    try:
+        con = sqlite3.connect(f"file:{src}?mode=ro", uri=True)
+        rows = con.execute(
+            "SELECT step_payload FROM steps WHERE idx > ? ORDER BY idx", (since_idx,)
+        ).fetchall()
+        for (payload,) in rows:
+            if not payload:
+                continue
+            a = _extract_tool_activity(payload if isinstance(payload, (bytes, bytearray)) else bytes(payload or b""))
+            if a and (not acts or acts[-1] != a):
+                acts.append(a)
+    except Exception as e:
+        logger.warning(f"[agy_session] tool activity okuma hatası ({uuid}): {e}")
+    finally:
+        if con is not None:
+            try:
+                con.close()
+            except Exception:
+                pass
+        if src == tmp:
+            try:
+                os.remove(tmp)
+            except Exception:
+                pass
+    return acts[-limit:]

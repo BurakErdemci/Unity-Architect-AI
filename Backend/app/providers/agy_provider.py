@@ -30,13 +30,16 @@ class AgyProvider(BaseCLIProvider):
         eklenir (stdin DEĞİL — agy 1.1.1 stdin'i bozdu: ham-metin stdin verilince
         prompt'u görmeyip help/derail'e düşüyor; canlı doğrulandı).
 
-        agy 1.1.1 derail kuralı (canlı doğrulandı): '--print' + '--add-dir' dışındaki
-        flag'ler (--dangerously-skip-permissions, --print-timeout, --conversation)
-        modele 'kullanıcı bu flag'i soruyor' gibi görünüp built-in antigravity-guide
-        skill'ini tetikliyor → kullanıcının mesajı hiç yanıtlanmıyor. Bu yüzden:
+        agy 1.1.1 derail kuralı (canlı doğrulandı): bazı flag'ler modele 'kullanıcı bu
+        flag'i soruyor' gibi görünüp built-in antigravity-guide skill'ini tetikliyor →
+        kullanıcının mesajı hiç yanıtlanmıyor. Bu yüzden:
         - --dangerously-skip-permissions YOK → yerine settings.json toolPermission=always-proceed
         - --print-timeout YOK → default 5dk + kendi subprocess timeout'umuz
-        - --conversation YOK → resume terk edildi; bağlam her turda prompt'a enjekte
+        - --mode YOK → hâlâ derail ediyor (1.1.2 canlı doğrulandı)
+        - --conversation VAR (RESUME AKTİF, 2026-07-15): 1.1.2'de NORMAL devam mesajıyla
+          derail ETMİYOR (canlı: 'Gölge Avcısı' görevini hatırlayıp doğal devam etti;
+          'analiz' framing'i yalnız transcript'e dair META-sorularda çıkıyor). _resume_uuid
+          set'liyse native disk-resume → context prompt'a enjekte edilmez (26K kırpma yok).
         """
         full_id = self.binary_name
         # Tüm agy modelleri: Gemini, Claude Sonnet/Opus, GPT-OSS
@@ -44,6 +47,9 @@ class AgyProvider(BaseCLIProvider):
         cmd = [self._agy_binary()]
         if workspace:
             cmd += ["--add-dir", workspace]
+        resume_uuid = getattr(self, "_resume_uuid", None)
+        if resume_uuid:
+            cmd += [f"--conversation={resume_uuid}"]
         cmd += ["--print"]  # prompt cli_base'de son arg olarak eklenir
         return cmd
 
