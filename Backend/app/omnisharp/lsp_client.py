@@ -25,12 +25,13 @@ class LspClient:
     def alive(self) -> bool:
         return self._proc is not None and self._proc.returncode is None
 
-    async def start(self, cmd: list[str], cwd: str) -> None:
+    async def start(self, cmd: list[str], cwd: str, env: dict | None = None) -> None:
         self._proc = await asyncio.create_subprocess_exec(
             *cmd, cwd=cwd,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
+            env=env,  # None → parent env aynen (mevcut davranış)
         )
         self._reader_task = asyncio.create_task(self._read_loop())
 

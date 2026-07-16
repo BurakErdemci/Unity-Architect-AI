@@ -46,19 +46,43 @@ def _lsp_diag_to_problem(rel_file: str, d: dict) -> dict:
     }
 
 
-def _resolve_binary() -> str | None:
-    """Frozen'da resources/omnisharp, dev'de repo third_party/omnisharp."""
-    exe = "OmniSharp.exe" if os.name == "nt" else "OmniSharp"
-    plat = "win-x64" if os.name == "nt" else "osx-arm64"
+def _omnisharp_roots() -> list[str]:
+    """omnisharp kök klasörü adayları: frozen'da resources/omnisharp, dev'de repo third_party/omnisharp."""
+    roots = []
     if getattr(sys, "frozen", False):
-        base = os.path.join(os.path.dirname(sys.executable), "..", "omnisharp", plat)
-        cand = os.path.abspath(os.path.join(base, exe))
-        if os.path.exists(cand):
-            return cand
+        roots.append(os.path.abspath(os.path.join(os.path.dirname(sys.executable), "..", "omnisharp")))
     here = os.path.dirname(os.path.abspath(__file__))          # Backend/app/omnisharp
     repo = os.path.abspath(os.path.join(here, "..", "..", ".."))  # repo kökü
-    cand = os.path.join(repo, "third_party", "omnisharp", plat, exe)
-    return cand if os.path.exists(cand) else None
+    roots.append(os.path.join(repo, "third_party", "omnisharp"))
+    return roots
+
+
+def _resolve_binary() -> str | None:
+    exe = "OmniSharp.exe" if os.name == "nt" else "OmniSharp"
+    plat = "win-x64" if os.name == "nt" else "osx-arm64"
+    for root in _omnisharp_roots():
+        cand = os.path.join(root, plat, exe)
+        if os.path.exists(cand):
+            return cand
+    return None
+
+
+def _spawn_env() -> dict | None:
+    """OmniSharp spawn ortamı. macOS/Linux'ta GÖMÜLÜ .NET runtime'a yönlendirir
+    (0-kurulum: kullanıcının PC'sinde .NET olmasa da çalışır). OmniSharp net6.0
+    hedefli → DOTNET_ROLL_FORWARD=Major ile gömülü .NET 10 LTS'te koşar (canlı
+    LSP initialize testiyle doğrulandı). Windows net472 → dokunma (None = parent env)."""
+    if os.name == "nt":
+        return None
+    plat = "osx-arm64" if sys.platform == "darwin" else "linux-x64"
+    for root in _omnisharp_roots():
+        dotnet_root = os.path.join(root, f"dotnet-{plat}")
+        if os.path.exists(os.path.join(dotnet_root, "dotnet")):
+            return {**os.environ,
+                    "DOTNET_ROOT": dotnet_root,
+                    "DOTNET_ROLL_FORWARD": "Major"}
+    # Gömülü runtime yoksa eski davranış: sistemdeki .NET'e güven (varsa)
+    return None
 
 
 class OmniSharpManager:
@@ -89,7 +113,7 @@ class OmniSharpManager:
             # Bayrak adları Task 1 Step 3'te doğrulandı (--help çıktısına göre güncel)
             cmd = [binary, "-z", "-s", workspace, "--languageserver", "--encoding", "utf-8"]
             try:
-                await client.start(cmd, cwd=workspace)
+                await client.start(cmd, cwd=workspace, env=_spawn_env())
                 client.on_notification("textDocument/publishDiagnostics", self._on_diags)
                 await client.request("initialize", {
                     "processId": os.getpid(),
