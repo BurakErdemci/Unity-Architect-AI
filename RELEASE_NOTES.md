@@ -1,23 +1,34 @@
-## Unity Architect AI v2.1.3
+## Unity Architect AI v2.2.0
 
-Kronik bir MCP WebSocket bağlantı sorunu kökten çözüldü, model kilit sistemi düzeltildi, sohbet ve genel uygulama tasarımı elden geçirildi.
+Bu sürümün yıldızı: **VSCode kalitesinde C# kod zekası**. El yapımı linter tarihe karıştı — yerine OmniSharp-Roslyn sidecar geldi. Ayrıca `execute_code` kalıcı olarak düzeldi, effort seçimi artık her modelde gerçek, dosya ağacı tüm Unity dosyalarını gösteriyor ve GLM 5.2 ücretsiz havuza katıldı.
 
-### 🔌 MCP WebSocket "eviction fırtınası" — kökten çözüldü
-- **Kök neden bulundu:** Unity'nin arka planda çalışan `AssetImportWorker` süreçleri de MCP köprüsünü başlatıp aynı proje hash'iyle kaydoluyor, ana Editor ile sürekli bağlantı çekişmesine (15-30 saniyede bir "eviction") sebep oluyordu. Artık worker süreçleri köprüyü hiç başlatmıyor.
-- **Sonuç:** Önceden dakikada ~16 bağlantı kopması yaşanırken, artık 2 dakikalık canlı testte 0 kopma ölçüldü.
-- Ayrıca bağlantı kopuş logları konsoldan temizlendi — sadece kalıcı bağlantı kaybında tek bir kırmızı hata görünüyor, geçici yeniden bağlanmalar artık sessiz.
-- Animator child-arama ve `setup_clips` ayar koruması ile ilgili "fake null" kaynaklı düzeltmeler de bu sürümde.
+### 🧠 OmniSharp C# Kod Zekası (YENİ)
+- **Canlı diagnostics:** Yazarken 1-2 saniyede gerçek derleyici hataları — Unity'nin ürettiği csproj'lardan beslenir, eski linter'ın çapraz-dosya false-positive'leri tamamen bitti.
+- **IntelliSense:** `transform.` yazınca gerçek Unity API tamamlama listesi; sembol üstünde hover ile dokümantasyon; Ctrl+tık ile tanıma gitme.
+- Workspace açılınca otomatik başlar ("C# analizi hazırlanıyor…" rozeti), Unity kapalıyken de çalışır. Kurulum gerektirmez — pakete gömülü.
+- Workspace'te .sln yoksa Unity'den otomatik `sync_csproj` tetiklenir.
 
-### 🔒 Model kilit sistemi düzeltmesi
-- Codex'te "Yenile" sonrası model kilitlerinin (plan limiti nedeniyle) kaybolması giderildi — artık kilit bilgisi korunuyor ve bir model başarıyla yanıt verince otomatik açılıyor.
-- Model seçici artık kilit durumunu her açılışta tazeliyor (önceden uygulama yeniden başlatılana kadar bayat kalabiliyordu).
+### ⚙️ execute_code — "dosya adı çok uzun" kalıcı çözüm
+- AI'nın Unity içinde kod çalıştırma aracı artık **Unity'nin kendi derleyicisini** kullanıyor (AssemblyBuilder): dil sürümü her zaman projeninkiyle aynı, oyunun kendi tiplerine (Assembly-CSharp) tam erişim, referans sorunu yapısal olarak imkânsız.
+- Derleme hataları temiz formatta doğru satır numarasıyla döner; runtime hataları stack trace ile.
 
-### 🎨 Tasarım yenilemesi
-- **Sohbet akışı:** Claude.ai tarzı ferah okuma deneyimi — geniş paragraf boşlukları, başlıklar için ince ayraç çizgiler, tablolar kendi kartında yatay kaydırmalı, "düşünüyor" göstergesi shimmer animasyonlu geçen-süre sayaçlı.
-- **Genel arayüz:** Katmanlı yüzey sistemi (daha az düz siyah), aktif modele göre renk değişen marka ışığı (empty state ve Copilot paneli), sidebar ve üst bar rafine edildi.
+### 🎚️ Effort/Reasoning — artık her modelde GERÇEK
+- Seçtiğin düşünme seviyesi artık **tüm** sağlayıcılara gerçekten iletiliyor (önceden çoğunda yok sayılıyordu): Codex `model_reasoning_effort`, Gemini `thinking_level`, Copilot `--effort`, NVIDIA/DeepSeek/Groq/Z.ai reasoning parametreleri…
+- **Yeni seçici:** segmented bar yalnız aktif modelin gerçekten desteklediği seviyeleri gösterir; her seviyenin ne yaptığı panelde açıklanır.
+- **Auto varsayılanı:** dokunmazsan model kendi akıllı varsayılanıyla çalışır.
 
-### 🐛 Diğer
-- Unity 6.4'te sürüm-uyum shim'lerinden kaynaklanan CS0618 (obsolete API) sarı derleyici uyarıları susturuldu — davranış değişmedi, sadece gürültü kalktı.
+### 📁 Dosya ağacı — tüm Unity dosyaları
+- Prefab, animasyon, sahne, materyal, FBX, ses… artık hepsi ağaçta (tür bazlı renkli ikonlarla). Unity'nin YAML formatları editörde açılıp düzenlenebilir.
+- Guard'lar: binary dosyalar ve 8MB üstü dev dosyalar için bilgilendirici uyarı.
+
+### 🤖 Model havuzu
+- **GLM 5.2** (açık ağırlıklı modellerin lideri, 1M bağlam) NVIDIA ücretsiz havuzuna eklendi ve varsayılan yapıldı; **Qwen3 Coder 480B** de katıldı.
+
+### 🛠️ Kararlılık & düzeltmeler
+- MCP sunucusunu artık yalnızca uygulamanın toggle'ı başlatır — Unity'nin kendi terminalinde sunucu açıp uygulamanın oturumunu çalması engellendi.
+- Editörde imleç/tıklama kayması düzeltildi (font yüklenme yarışı).
+- Üst barda uzun dosya yollarının taşması düzeltildi.
+- Antigravity (agy): uzun görevlerde ilerleme akışı, kaldığı yerden devam ve yanıt dilinin kullanıcı diline sabitlenmesi.
 
 ### 🔄 Güncelleme & Güvenlik
 Uygulama açılışta yeni sürümü kontrol eder ve **haber verir** — kurulumu sen onaylarsın, sessiz/otomatik kurulum yoktur. Windows'ta kurulum eski sürümü otomatik kaldırır.
