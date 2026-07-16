@@ -32,7 +32,7 @@ interface ChatPanelProps {
   lang: string;
   effectiveProvider: string;
   modelName?: string;
-  thinkingLevel: 'off' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+  thinkingLevel: 'auto' | 'off' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
   workspacePath: string | null;
   handleExportToUnity: (code: string) => void;
   pendingGenFiles: { files: PendingFile[]; messageId: number } | null;

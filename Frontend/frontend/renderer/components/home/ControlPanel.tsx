@@ -12,11 +12,22 @@ import {
 } from 'lucide-react';
 import { GenerationModeSelector, GenerationMode } from './GenerationModeSelector';
 
-export type ThinkingLevel = 'off' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+// Kanonik effort skalası — hangi seviyelerin GÖSTERİLECEĞİ backend kayıtçısından
+// (/effort-capabilities) gelir; provider+model gerçekte neyi destekliyorsa o.
+export type ThinkingLevel =
+  'auto' | 'off' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
+export interface EffortCaps {
+  levels: string[];
+  default?: string;
+  note?: string;
+}
 
 interface ControlPanelProps {
   thinkingLevel: ThinkingLevel;
   setThinkingLevel: (val: ThinkingLevel) => void;
+  // Backend kayıtçısından aktif provider+model'in gerçek seviye listesi.
+  effortCaps?: EffortCaps | null;
   generationMode: GenerationMode;
   setGenerationMode: (mode: GenerationMode) => void;
   isAnalyzingProject: boolean;
@@ -36,6 +47,7 @@ interface ControlPanelProps {
 export const ControlPanel: React.FC<ControlPanelProps> = ({
   thinkingLevel,
   setThinkingLevel,
+  effortCaps,
   generationMode,
   setGenerationMode,
   isAnalyzingProject,
@@ -54,57 +66,52 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
   const [showMemoryMenu, setShowMemoryMenu] = useState(false);
   const [showThinkingMenu, setShowThinkingMenu] = useState(false);
 
-  // Claude'da tek birleşik "Effort" skalası (low→max). Ayrı Max toggle KALDIRILDI —
-  // effort tek bir değerdir, iki widget çelişkili aktif-durum gösteriyordu.
-  // Claude dışı sağlayıcılarda thinking gerçek bir düşünme-flag'i (off/low/medium/high).
-  const LEVELS: { id: ThinkingLevel; label: string; color: string }[] = isClaudeSubscription
-    ? [
-        { id: 'low',    label: t('thinking.low'),    color: 'text-emerald-400' },
-        { id: 'medium', label: t('thinking.medium'), color: 'text-violet-400' },
-        { id: 'high',   label: t('thinking.high'),   color: 'text-fuchsia-400' },
-        { id: 'xhigh',  label: t('thinking.xhigh'),  color: 'text-orange-400' },
-        { id: 'max',    label: t('thinking.max'),    color: 'text-red-400' },
-      ]
-    : [
-        { id: 'off',    label: t('thinking.off'),    color: 'text-slate-500' },
-        { id: 'low',    label: t('thinking.low'),    color: 'text-emerald-400' },
-        { id: 'medium', label: t('thinking.medium'), color: 'text-violet-400' },
-        { id: 'high',   label: t('thinking.high'),   color: 'text-fuchsia-400' },
-      ];
-  // Claude'da 'off' anlamsız (düşünme kapatılamaz) → etikette 'low' göster.
-  const effLevel: ThinkingLevel = isClaudeSubscription && thinkingLevel === 'off' ? 'low' : thinkingLevel;
-  // Ultracode açıkken trigger'da yalnızca "Ultracode" yazsın (effort etiketi + gauge gizli).
-  const triggerLabel = isClaudeSubscription
-    ? (ultracode ? 'Ultracode' : `Effort ${effLevel === 'off' ? 'low' : effLevel}`)
-    : `Thinking ${thinkingLevel === 'off' ? t('thinking.off') : thinkingLevel}`;
+  // Seviye görselleri — hangi seviyelerin listeleneceğine backend kayıtçısı karar
+  // verir (effortCaps.levels). Burada yalnız etiket/renk/açıklama eşlemesi var.
+  const LEVEL_META: Record<string, { label: string; color: string; desc: string }> = {
+    auto:    { label: 'Auto',    color: 'text-sky-400',     desc: 'Model kendi varsayılanıyla çalışır — parametre gönderilmez.' },
+    off:     { label: 'Kapalı',  color: 'text-slate-500',   desc: 'Düşünme/reasoning kapatılır.' },
+    none:    { label: 'None',    color: 'text-slate-500',   desc: 'Reasoning kapalı.' },
+    minimal: { label: 'Minimal', color: 'text-teal-400',    desc: 'En sığ düşünme — en hızlı yanıt.' },
+    low:     { label: 'Düşük',   color: 'text-emerald-400', desc: 'Hafif düşünme — rutin işler.' },
+    medium:  { label: 'Orta',    color: 'text-violet-400',  desc: 'Dengeli düşünme.' },
+    high:    { label: 'Yüksek',  color: 'text-fuchsia-400', desc: 'Derin düşünme — zor görevler.' },
+    xhigh:   { label: 'XHigh',   color: 'text-orange-400',  desc: 'Çok derin düşünme — karmaşık mimari/debug.' },
+    max:     { label: 'Max',     color: 'text-red-400',     desc: 'Tek görevde mümkün olan en derin düşünme.' },
+  };
+  const levels = (effortCaps?.levels?.length ? effortCaps.levels : ['auto'])
+    .filter((l) => LEVEL_META[l]);
+  const effLevel: string = levels.includes(thinkingLevel) ? thinkingLevel : 'auto';
+  const activeMeta = LEVEL_META[effLevel] || LEVEL_META.auto;
+  const onlyAuto = levels.length <= 1; // model effort desteklemiyor → bilgi amaçlı panel
+  const triggerLabel = isClaudeSubscription && ultracode
+    ? 'Ultracode'
+    : `Effort ${activeMeta.label}`;
 
   return (
     <div className="flex items-center gap-2 px-1 mt-1.5">
       <GenerationModeSelector value={generationMode} onChange={setGenerationMode} />
       <div className="w-px h-3 bg-slate-800" />
       
-      {/* Thinking Level Selector */}
+      {/* Effort Selector — dinamik segmented bar (seviyeler backend kayıtçısından) */}
       <div className="relative">
         <button
           onClick={() => setShowThinkingMenu(!showThinkingMenu)}
           className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all ${
-            thinkingLevel !== 'off'
+            effLevel !== 'auto' || (isClaudeSubscription && ultracode)
               ? 'bg-violet-500/15 border border-violet-500/30 text-violet-400 shadow-[0_0_15px_rgba(139,92,246,0.1)]'
-              : 'text-slate-600 hover:text-slate-400 hover:bg-slate-800/30'
+              : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800/30'
           } ${showThinkingMenu ? 'bg-violet-500/20 text-violet-300' : ''}`}
-          title={isClaudeSubscription ? t('effort.title') : t('thinking.title')}
+          title={effortCaps?.note || t('effort.title')}
         >
-          <Brain size={11} className={thinkingLevel !== 'off' ? 'animate-pulse' : ''} />
-          <span className="capitalize">
-            {triggerLabel}
-          </span>
-          {/* Ultracode kapalıyken yüksek effort'ta ölçü ikonu; açıkken yalnızca roket. */}
-          {isClaudeSubscription && !ultracode && (effLevel === 'xhigh' || effLevel === 'max') && <Gauge size={10} className="text-orange-400" />}
+          <Brain size={11} className={effLevel !== 'auto' ? 'animate-pulse' : ''} />
+          <span>{triggerLabel}</span>
+          {!ultracode && (effLevel === 'xhigh' || effLevel === 'max') && <Gauge size={10} className="text-orange-400" />}
           {isClaudeSubscription && ultracode && <Rocket size={10} className="text-cyan-400" />}
           <ChevronDown size={10} className={`opacity-50 transition-transform duration-200 ${showThinkingMenu ? 'rotate-180' : ''}`} />
         </button>
 
-        {/* Level Dropdown */}
+        {/* Segmented panel */}
         <AnimatePresence>
           {showThinkingMenu && (
             <>
@@ -113,39 +120,53 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
                 initial={{ opacity: 0, y: 10, scale: 0.95 }}
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                className="absolute bottom-10 left-0 w-48 bg-[#0a0a0f] border border-slate-800 rounded-xl shadow-2xl z-50 p-1.5 overflow-hidden"
+                className="absolute bottom-10 left-0 w-[300px] bg-[#0a0a0f] border border-slate-800 rounded-xl shadow-2xl z-50 p-2.5 overflow-hidden"
               >
-                {isClaudeSubscription && (
-                  <div className="px-2 pt-0.5 pb-1 text-[8px] font-semibold uppercase tracking-wider text-slate-600">Effort</div>
-                )}
-                {LEVELS.map((lvl) => (
-                  <button
-                    key={lvl.id}
-                    onClick={() => {
-                      setThinkingLevel(lvl.id);
-                      setShowThinkingMenu(false);
-                    }}
-                    className={`w-full text-left px-3 py-2 rounded-lg text-[10px] transition-all hover:bg-white/5 flex items-center justify-between group ${
-                      effLevel === lvl.id ? lvl.color + ' bg-white/5' : 'text-slate-400'
-                    }`}
-                  >
-                    <span className="font-medium flex items-center gap-1.5">
-                      {(lvl.id === 'xhigh' || lvl.id === 'max') && <Gauge size={11} />}
-                      {lvl.label}
-                    </span>
-                    {effLevel === lvl.id && <div className={`w-1.5 h-1.5 rounded-full bg-current shadow-[0_0_8px_currentColor]`} />}
-                  </button>
-                ))}
+                <div className="flex items-center justify-between px-0.5 pb-2">
+                  <span className="text-[8.5px] font-semibold uppercase tracking-wider text-slate-500">Effort</span>
+                  <span className={`text-[8.5px] font-medium ${activeMeta.color}`}>{activeMeta.label}</span>
+                </div>
 
-                {/* Claude-only: Ultracode — Max'ın hemen ardından, aynı listede. Seviyeler
-                    radio (tek seçim); Ultracode bağımsız aç/kapa olduğu için ince ayraçla ayrı. */}
+                {/* Segmented bar — yalnız modelin GERÇEKTEN desteklediği seviyeler */}
+                <div className="flex w-full rounded-lg border border-slate-800 bg-black/40 p-0.5 gap-0.5">
+                  {levels.map((id) => {
+                    const meta = LEVEL_META[id];
+                    const active = effLevel === id && !(isClaudeSubscription && ultracode);
+                    return (
+                      <button
+                        key={id}
+                        onClick={() => {
+                          setThinkingLevel(id as ThinkingLevel);
+                          if (isClaudeSubscription && ultracode) setUltracode?.(false);
+                        }}
+                        title={meta.desc}
+                        className={`flex-1 min-w-0 px-1 py-1.5 rounded-md text-[9px] font-semibold truncate transition-all ${
+                          active
+                            ? `${meta.color} bg-white/[0.07] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08)]`
+                            : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.03]'
+                        }`}
+                      >
+                        {meta.label}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Aktif seviye açıklaması / model notu */}
+                <div className="px-0.5 pt-2 text-[9px] leading-relaxed text-slate-500">
+                  {isClaudeSubscription && ultracode
+                    ? 'Ultracode: xhigh effort + çok-ajanlı workflow orkestrasyonu.'
+                    : (onlyAuto && effortCaps?.note) ? effortCaps.note : activeMeta.desc}
+                </div>
+
+                {/* Claude-only: Ultracode — bağımsız mod satırı */}
                 {isClaudeSubscription && (
                   <>
-                    <div className="my-1 mx-1 h-px bg-slate-800" />
+                    <div className="my-2 h-px bg-slate-800" />
                     <button
                       onClick={() => setUltracode?.(!ultracode)}
                       title={t('ultracode.title')}
-                      className={`w-full text-left px-3 py-2 rounded-lg text-[10px] transition-all hover:bg-white/5 flex items-center justify-between ${
+                      className={`w-full text-left px-2 py-1.5 rounded-lg text-[10px] transition-all hover:bg-white/5 flex items-center justify-between ${
                         ultracode ? 'text-cyan-400 bg-white/5' : 'text-slate-400'
                       }`}
                     >

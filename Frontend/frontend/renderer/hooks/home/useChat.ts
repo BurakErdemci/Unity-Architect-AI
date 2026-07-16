@@ -111,7 +111,7 @@ export const useChat = (
     code: string, 
     lang: string, 
     genMode: GenerationMode, 
-    thinkingLevel: 'off' | 'low' | 'medium' | 'high' | 'xhigh' | 'max',
+    thinkingLevel: 'auto' | 'off' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max',
     setPendingGenFiles: (val: any) => void,
     setPendingDelete: (val: any) => void,
     images?: string[],
@@ -169,14 +169,16 @@ export const useChat = (
         body: JSON.stringify({
           conversation_id: targetConvId, message: messageContent, language: lang, user_id: user.id,
           editor_code: code || '',
-          // thinking_level: Claude-dışı sağlayıcıların düşünme-flag'i (off/low/medium/high).
-          // Claude-özel xhigh/max seviyeleri onlar için anlamsız → high'a indir.
-          thinking_level: (['off', 'low', 'medium', 'high'].includes(thinkingLevel) ? thinkingLevel : 'high'),
+          // thinking_level: geriye-uyum alanı (use_thinking türetimi için).
+          // off dışındaki her şey (auto dahil) → 'medium' nötr değeri; gerçek
+          // seviye effort_level'da gider, backend kayıtçısı (effort_caps) eşler.
+          thinking_level: (thinkingLevel === 'off' ? 'off'
+            : ['low', 'medium', 'high'].includes(thinkingLevel) ? thinkingLevel : 'medium'),
           generation_mode: genMode, generation_confirmed: false,
           images: images,
           videos: videos,
-          // effort_level: Claude effort skalası — birleşik seçicinin tam değeri (low..max).
-          // Backend yalnızca claude-subscription yolunda dikkate alır.
+          // effort_level: birleşik seçicinin TAM değeri (auto/off/minimal/low..max).
+          // Backend her provider dalında effort_caps kayıtçısıyla gerçek parametreye çevirir.
           effort_level: thinkingLevel,
           ultracode: !!ultracode,
         }),

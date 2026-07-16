@@ -17,7 +17,7 @@ import { SettingsModal } from '../components/home/SettingsModal';
 import { ExportModal } from '../components/home/ExportModal';
 import { ModelSelector } from '../components/home/ModelSelector';
 import { WorkspaceScreen } from '../components/home/WorkspaceScreen';
-import { ControlPanel } from '../components/home/ControlPanel';
+import { ControlPanel, ThinkingLevel, EffortCaps } from '../components/home/ControlPanel';
 import { AnimatedChatInput } from '../components/ui/animated-ai-chat';
 
 import { useAppInitialization } from '../hooks/home/useAppInitialization';
@@ -163,19 +163,31 @@ export default function Home() {
   }, []);
   const setLang = (l: Lang) => { setLangState(l); localStorage.setItem('app-lang', l); };
   const t = (key: string) => translations[lang][key] ?? key;
-  // Tek birleşik effort/thinking skalası. Claude: low→max; diğerleri: off/low/medium/high.
-  const [thinkingLevel, setThinkingLevel] = useState<'off' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'>('medium');
+  // Tek kavramsal effort skalası — GÖSTERİLEN seviyeler backend kayıtçısından gelir
+  // (/effort-capabilities): provider+model neyi destekliyorsa o. 'auto' = model
+  // varsayılanı, hiçbir parametre gönderilmez.
+  const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel>('auto');
+  const [effortCaps, setEffortCaps] = useState<EffortCaps | null>(null);
   // Claude-only kontrol (ultracode). Sadece subscription + claude-* modelde.
   const [ultracode, setUltracode] = useState(false);
   const isClaudeSub = ai.effectiveProvider === 'subscription' && (ai.aiConfig?.model_name || '').startsWith('claude-');
-  // Claude dışına geçilince: ultracode kapansın; xhigh/max yalnız Claude'da geçerli →
-  // diğer sağlayıcıların anlamadığı seviyeler gitmesin diye high'a indir.
   useEffect(() => {
-    if (!isClaudeSub) {
-      setUltracode(false);
-      setThinkingLevel(prev => (prev === 'xhigh' || prev === 'max') ? 'high' : prev);
-    }
+    if (!isClaudeSub) setUltracode(false);
   }, [isClaudeSub]);
+  // Provider/model değişince yetenekleri çek; mevcut seçim yeni listede yoksa auto'ya kıstır.
+  useEffect(() => {
+    if (!API || !auth.user) return;
+    const provider = ai.effectiveProvider || '';
+    const model = ai.aiConfig?.model_name || '';
+    axios.get(`${API}/effort-capabilities`, {
+      params: { provider, model },
+      headers: { 'X-Session-Token': auth.user?.sessionToken },
+    }).then(r => {
+      const caps = r.data as EffortCaps;
+      setEffortCaps(caps);
+      setThinkingLevel(prev => (caps?.levels || []).includes(prev) ? prev : 'auto');
+    }).catch(() => setEffortCaps(null));
+  }, [API, auth.user, ai.effectiveProvider, ai.aiConfig?.model_name]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isChatOpen, setIsChatOpen] = useState(true);
   const [sidebarTab, setSidebarTab] = useState<'chats' | 'files'>('chats');
@@ -562,7 +574,7 @@ export default function Home() {
               thinkingLevel={thinkingLevel} setThinkingLevel={setThinkingLevel} generationMode={chat.generationMode} setGenerationMode={chat.setGenerationMode}
               isAnalyzingProject={chat.isAnalyzingProject} activeConvId={chat.activeConvId} analyzeProject={chat.analyzeProject}
               exportMemory={chat.exportMemory} importMemory={chat.importMemory} compactConversation={chat.compactConversation} isCompacting={chat.isCompacting} contextUsage={chat.contextUsage}
-              isClaudeSubscription={isClaudeSub} ultracode={ultracode} setUltracode={setUltracode}
+              isClaudeSubscription={isClaudeSub} ultracode={ultracode} setUltracode={setUltracode} effortCaps={effortCaps}
             />
             <div className="mt-3">
               <AnimatedChatInput
