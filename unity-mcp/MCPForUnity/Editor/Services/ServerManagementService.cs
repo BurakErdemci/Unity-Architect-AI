@@ -230,115 +230,24 @@ namespace MCPForUnity.Editor.Services
         }
 
         /// <summary>
-        /// Start the local HTTP server in a separate terminal window.
-        /// Stops any existing server on the port and clears the uvx cache first.
+        /// Unity Architect AI fork: yerel MCP sunucusunu YALNIZCA uygulamanın MCP
+        /// toggle'ı başlatır. Unity'nin kendi terminalinde sunucu açması, app'in
+        /// başlattığı sunucuyu önce durdurup (port temizliği) oturumu çalıyordu —
+        /// bu yol bilinçli olarak kapalı; Unity yalnızca çalışan sunucuya BAĞLANIR.
         /// </summary>
         public bool StartLocalHttpServer(bool quiet = false)
         {
-            /// Clean stale Python build artifacts when using a local dev server path
-            AssetPathUtility.CleanLocalServerBuildArtifacts();
-
-            if (!TryGetLocalHttpServerCommandParts(out _, out _, out var displayCommand, out var error))
+            McpLog.Warn("[MCP] Sunucu Unity içinden başlatılamaz — Unity Architect AI uygulamasındaki MCP toggle'ını kullanın.");
+            if (!quiet)
             {
-                if (!quiet)
-                {
-                    EditorUtility.DisplayDialog(
-                        "Cannot Start HTTP Server",
-                        error ?? "The server command could not be constructed with the current settings.",
-                        "OK");
-                }
-                return false;
+                EditorUtility.DisplayDialog(
+                    "MCP Server",
+                    "MCP sunucusu Unity içinden başlatılamaz." +
+                    "\n\nSunucuyu Unity Architect AI uygulamasındaki MCP toggle'ı başlatır; " +
+                    "Unity çalışan sunucuya otomatik bağlanır.",
+                    "OK");
             }
-
-            // First, try to stop any existing server (quietly; we'll only warn if the port remains occupied).
-            StopLocalHttpServerInternal(quiet: true);
-
-            // If the port is still occupied, don't start and explain why (avoid confusing "refusing to stop" warnings).
-            try
-            {
-                string httpUrl = HttpEndpointUtility.GetLocalBaseUrl();
-                if (Uri.TryCreate(httpUrl, UriKind.Absolute, out var uri) && uri.Port > 0)
-                {
-                    var remaining = GetListeningProcessIdsForPort(uri.Port);
-                    if (remaining.Count > 0)
-                    {
-                        if (!quiet)
-                        {
-                            EditorUtility.DisplayDialog(
-                                "Port In Use",
-                                $"Cannot start the local HTTP server because port {uri.Port} is already in use by PID(s): " +
-                                $"{string.Join(", ", remaining)}\n\n" +
-                                "MCP For Unity will not terminate unrelated processes. Stop the owning process manually or change the HTTP URL.",
-                                "OK");
-                        }
-                        return false;
-                    }
-                }
-            }
-            catch { }
-
-            // Note: Dev mode cache-busting is handled by `uvx --no-cache --refresh` in the generated command.
-
-            // Create a per-launch token + pidfile path so Stop can be deterministic without relying on port/PID heuristics.
-            string baseUrlForPid = HttpEndpointUtility.GetLocalBaseUrl();
-            Uri.TryCreate(baseUrlForPid, UriKind.Absolute, out var uriForPid);
-            int portForPid = uriForPid?.Port ?? 0;
-            string instanceToken = Guid.NewGuid().ToString("N");
-            string pidFilePath = portForPid > 0 ? GetLocalHttpServerPidFilePath(portForPid) : null;
-
-            string launchCommand = displayCommand;
-            if (!string.IsNullOrEmpty(pidFilePath))
-            {
-                launchCommand = $"{displayCommand} --pidfile {QuoteIfNeeded(pidFilePath)} --unity-instance-token {instanceToken}";
-            }
-
-            if (!quiet && !EditorUtility.DisplayDialog(
-                "Start Local HTTP Server",
-                $"This will start the MCP server in HTTP mode in a new terminal window:\n\n{launchCommand}\n\n" +
-                "Continue?",
-                "Start Server",
-                "Cancel"))
-            {
-                return false;
-            }
-
-            try
-            {
-                // Clear any stale handshake state from prior launches.
-                ClearLocalServerPidTracking();
-
-                // Best-effort: delete stale pidfile if it exists.
-                try
-                {
-                    if (!string.IsNullOrEmpty(pidFilePath) && File.Exists(pidFilePath))
-                    {
-                        DeletePidFile(pidFilePath);
-                    }
-                }
-                catch { }
-
-                // Launch the server in a new terminal window (keeps user-visible logs).
-                var startInfo = CreateTerminalProcessStartInfo(launchCommand);
-                System.Diagnostics.Process.Start(startInfo);
-                if (!string.IsNullOrEmpty(pidFilePath))
-                {
-                    StoreLocalHttpServerHandshake(pidFilePath, instanceToken);
-                }
-                McpLog.Info($"Started local HTTP server in terminal: {launchCommand}");
-                return true;
-            }
-            catch (Exception ex)
-            {
-                McpLog.Error($"Failed to start server: {ex.Message}");
-                if (!quiet)
-                {
-                    EditorUtility.DisplayDialog(
-                        "Error",
-                        $"Failed to start server: {ex.Message}",
-                        "OK");
-                }
-                return false;
-            }
+            return false;
         }
 
         /// <summary>
