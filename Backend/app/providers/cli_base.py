@@ -283,7 +283,9 @@ class BaseCLIProvider(AIProvider):
                         "  the rules', 'check MCP access', 'what does X do'): give a COMPLETE, substantive\n"
                         "  Turkish answer — actually report the findings, rules, values, or console output\n"
                         "  you gathered. Do NOT collapse it into a passive one-liner like 'öğrenildi',\n"
-                        "  'incelendi' or 'test edildi'. Be genuinely informative, not terse.\n\n"
+                        "  'incelendi' or 'test edildi'. Be genuinely informative, not terse.\n"
+                        "- LANGUAGE: ALWAYS reply in the language the user writes in (Turkish user →\n"
+                        "  Turkish reply), including resumed conversations. Never drift to English.\n\n"
                     )
                     # Prompt = mcp_hint + enriched_prompt, SON POZİSYONEL ARG olarak
                     # verilir (stdin DEĞİL — agy 1.1.1 ham-metin stdin'i bozuk okuyup
