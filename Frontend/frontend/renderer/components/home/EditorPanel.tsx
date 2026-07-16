@@ -12,6 +12,16 @@ const MONACO_LANG: Record<string, string> = {
   '.xml': 'xml', '.uxml': 'xml', '.yaml': 'yaml', '.yml': 'yaml',
   '.txt': 'plaintext', '.shader': 'cpp', '.hlsl': 'cpp', '.cginc': 'cpp',
   '.compute': 'cpp', '.uss': 'css',
+  // Unity YAML asset formatları (metin — editörde yaml olarak açılır)
+  '.anim': 'yaml', '.prefab': 'yaml', '.unity': 'yaml', '.mat': 'yaml',
+  '.asset': 'yaml', '.controller': 'yaml', '.overridecontroller': 'yaml',
+  '.physicmaterial': 'yaml', '.physicsmaterial2d': 'yaml', '.mixer': 'yaml',
+  '.rendertexture': 'yaml', '.spriteatlas': 'yaml', '.terrainlayer': 'yaml',
+  '.playable': 'yaml', '.signal': 'yaml', '.preset': 'yaml', '.guiskin': 'yaml',
+  '.fontsettings': 'yaml', '.flare': 'yaml', '.giparams': 'yaml',
+  '.shadervariants': 'yaml', '.mask': 'yaml', '.brush': 'yaml', '.meta': 'yaml',
+  '.asmref': 'json', '.inputactions': 'json', '.html': 'html', '.css': 'css',
+  '.js': 'javascript', '.csv': 'plaintext', '.ini': 'ini', '.cfg': 'ini',
 };
 
 function monacoLangFor(filePath: string | null): string {
@@ -21,6 +31,13 @@ function monacoLangFor(filePath: string | null): string {
   return MONACO_LANG[filePath.slice(dot).toLowerCase()] ?? 'plaintext';
 }
 
+// LSP CompletionItemKind → Monaco CompletionItemKind (numaraları farklı enumlar)
+const LSP_TO_MONACO_KIND: Record<number, number> = {
+  1: 18, 2: 0, 3: 1, 4: 2, 5: 3, 6: 4, 7: 5, 8: 7, 9: 8, 10: 9, 11: 12, 12: 13,
+  13: 15, 14: 17, 15: 27, 16: 19, 17: 20, 18: 21, 19: 23, 20: 16, 21: 14,
+  22: 6, 23: 10, 24: 11, 25: 24,
+};
+
 interface EditorPanelProps {
   code: string;
   setCode: (code: string) => void;
@@ -29,6 +46,10 @@ interface EditorPanelProps {
   setIsEditorFocused: (focused: boolean) => void;
   workspacePath: string | null;
   problems?: any[];
+  // OmniSharp IntelliSense (completion/hover/definition) için backend erişimi
+  apiUrl?: string | null;
+  sessionToken?: string | null;
+  openFile?: (path: string) => void;
   // Diff Mode Props
   diffFile: { name: string; code: string; originalCode?: string; suggestedPath: string } | null;
 }
@@ -41,12 +62,81 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
   setIsEditorFocused,
   workspacePath,
   problems = [],
+  apiUrl,
+  sessionToken,
+  openFile,
   diffFile
 }) => {
   const { t } = useLang();
   const monacoRef = React.useRef<any>(null);
   const editorRef = React.useRef<any>(null);
   const [modelChangedTrigger, setModelChangedTrigger] = React.useState(0);
+
+  // Provider closure'ları bir kez kaydedilir; güncel prop'ları ref üzerinden görsünler
+  // (auth token ve açık dosya mount'tan SONRA değişiyor — closure bayat kalmasın).
+  const lspCtxRef = React.useRef({ apiUrl, sessionToken, openedFilePath, openFile });
+  React.useEffect(() => {
+    lspCtxRef.current = { apiUrl, sessionToken, openedFilePath, openFile };
+  }, [apiUrl, sessionToken, openedFilePath, openFile]);
+
+  const lspPost = async (ep: string, body: any) => {
+    const { apiUrl: api, sessionToken: token } = lspCtxRef.current;
+    if (!api) return null;
+    try {
+      const r = await fetch(`${api}/lsp/${ep}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Session-Token': token || '' },
+        body: JSON.stringify(body),
+      });
+      return r.ok ? r.json() : null;
+    } catch { return null; }
+  };
+
+  const registerCsProviders = (monaco: any) => {
+    // Monaco global'ine kaydolur — HMR/remount'ta çift kayıt olmasın
+    if ((window as any).__csProvidersRegistered) return;
+    (window as any).__csProvidersRegistered = true;
+
+    monaco.languages.registerCompletionItemProvider('csharp', {
+      triggerCharacters: ['.'],
+      provideCompletionItems: async (model: any, position: any) => {
+        const data = await lspPost('completion', {
+          path: lspCtxRef.current.openedFilePath, text: model.getValue(),
+          line: position.lineNumber, column: position.column,
+        });
+        const word = model.getWordUntilPosition(position);
+        const range = { startLineNumber: position.lineNumber, endLineNumber: position.lineNumber,
+                        startColumn: word.startColumn, endColumn: word.endColumn };
+        return { suggestions: (data?.items || []).map((it: any) => ({
+          label: it.label,
+          kind: LSP_TO_MONACO_KIND[it.kind] ?? 18,
+          insertText: it.insertText, detail: it.detail, range })) };
+      },
+    });
+
+    monaco.languages.registerHoverProvider('csharp', {
+      provideHover: async (model: any, position: any) => {
+        const data = await lspPost('hover', {
+          path: lspCtxRef.current.openedFilePath, text: model.getValue(),
+          line: position.lineNumber, column: position.column,
+        });
+        return data?.contents ? { contents: [{ value: data.contents }] } : null;
+      },
+    });
+
+    monaco.languages.registerDefinitionProvider('csharp', {
+      provideDefinition: async (model: any, position: any) => {
+        const data = await lspPost('definition', {
+          path: lspCtxRef.current.openedFilePath, text: model.getValue(),
+          line: position.lineNumber, column: position.column,
+        });
+        if (!data?.location) return null;
+        // Cross-model çözümü yerine dosyayı uygulama içinde aç
+        lspCtxRef.current.openFile?.(data.location.file);
+        return null;
+      },
+    });
+  };
 
   // Dosya değişince stale marker'ları temizle
   React.useEffect(() => {
@@ -182,6 +272,7 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
                 editorRef.current = editor;
                 monacoRef.current = monaco;
                 defineUnityTheme(monaco);
+                registerCsProviders(monaco);
 
                 // İlk açılışta marker'ları tetikle
                 setModelChangedTrigger(prev => prev + 1);

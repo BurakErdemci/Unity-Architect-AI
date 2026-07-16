@@ -131,47 +131,6 @@ export default function Home() {
     }
   }, [fs.workspacePath, API, auth.user]);
 
-  // --- Startup Full Project Lint (The "Rider" Experience) ---
-  useEffect(() => {
-    if (API && auth.user && fs.workspacePath && backendReady) {
-      const triggerFullLint = async () => {
-        try {
-          const res = await axios.post(`${API}/lint`, {
-            code: "", // Full project taramada koda gerek yok
-            filename: "project_root",
-            full_project: true
-          }, {
-            headers: { 'X-Session-Token': auth.user?.sessionToken }
-          });
-          
-          if (res.data && res.data.errors) {
-            // Tüm hataları dosyalarına göre grupla ve state'e bas
-            const grouped: Record<string, any[]> = {};
-            res.data.errors.forEach((err: any) => {
-              if (!grouped[err.file]) grouped[err.file] = [];
-              grouped[err.file].push(err);
-            });
-            setProjectProblems(prev => {
-              const next = { ...grouped };
-              if (openedFileRef.current) {
-                const relativeFile = getRelativePath(openedFileRef.current, fs.workspacePath);
-                if (relativeFile && prev[relativeFile]) {
-                  next[relativeFile] = prev[relativeFile];
-                }
-              }
-              return next;
-            });
-          }
-        } catch (err) {
-          // Sessizce devam et
-        }
-      };
-      
-      const timer = setTimeout(triggerFullLint, 2000);
-      return () => clearTimeout(timer);
-    }
-  }, [fs.workspacePath, API, auth.user, backendReady]);
-
   // --- Electron Menu IPC Listeners ---
   useEffect(() => {
     if (ipc) {
@@ -223,6 +182,8 @@ export default function Home() {
   const [isEditorFocused, setIsEditorFocused] = useState(false);
   const [isTerminalOpen, setIsTerminalOpen] = useState(false);
   const [projectProblems, setProjectProblems] = useState<Record<string, any[]>>({});
+  // OmniSharp sidecar durumu (starting → üst barda "C# analizi hazırlanıyor…" rozeti)
+  const [lspStatus, setLspStatus] = useState<{ state: string; detail: string } | null>(null);
   // Chat'te '/' autocomplete için Claude Code slash komutları + skill'ler (backend'den)
   const [slashCommands, setSlashCommands] = useState<string[]>([]);
   const [skills, setSkills] = useState<string[]>([]);
@@ -251,67 +212,29 @@ export default function Home() {
     openedFileRef.current = fs.openedFilePath;
   }, [fs.openedFilePath]);
 
-  // --- Real-time Linting (Single File) ---
+  // --- Canlı diagnostics (OmniSharp sidecar) ---
   useEffect(() => {
-    console.log("[Linter Debug] Triggered", { API, user: !!auth.user, path: fs.openedFilePath });
     if (!API || !auth.user || !fs.openedFilePath) return;
-    // C# linter yalnızca .cs için — artık md/json/shader gibi dosyalar da açılabiliyor.
+    // C# analizi yalnızca .cs için — md/json/shader gibi dosyalar da açılabiliyor.
     if (!fs.openedFilePath.toLowerCase().endsWith('.cs')) return;
-    
+
     if (lintTimeoutRef.current) clearTimeout(lintTimeoutRef.current);
 
     lintTimeoutRef.current = setTimeout(async () => {
       try {
         const relativeFile = getRelativePath(fs.openedFilePath!, fs.workspacePath);
-        console.log("[Linter Debug] Sending POST to /lint", { filename: relativeFile });
-        const res = await axios.post(`${API}/lint`, {
-          code: fs.code,
-          filename: relativeFile,
-          full_project: false
-        }, {
-          headers: { 'X-Session-Token': auth.user?.sessionToken }
-        });
-        console.log("[Linter Debug] Response received", res.data);
-        if (res.data && res.data.errors) {
-          setProjectProblems(prev => ({ ...prev, [relativeFile]: res.data.errors }));
+        const res = await axios.post(`${API}/lsp/change`,
+          { path: relativeFile, text: fs.code },
+          { headers: { 'X-Session-Token': auth.user?.sessionToken } });
+        setLspStatus(res.data?.status || null);
+        if (res.data?.problems) {
+          setProjectProblems(prev => ({ ...prev, [relativeFile]: res.data.problems }));
         }
-      } catch (err) { console.error("[Linter] Request failed:", err); }
-    }, 1000);
+      } catch { /* sidecar kapalıysa sessiz */ }
+    }, 700);
 
     return () => { if (lintTimeoutRef.current) clearTimeout(lintTimeoutRef.current); };
   }, [fs.code, fs.openedFilePath, API, auth.user]);
-
-  // --- Full Project Linting ---
-  const runFullProjectLint = async () => {
-    if (!API || !auth.user || !fs.workspacePath) return;
-    try {
-      const relativeFile = getRelativePath(fs.openedFilePath || '', fs.workspacePath);
-      const res = await axios.post(`${API}/lint`, {
-        code: fs.code,
-        filename: relativeFile || 'dummy.cs',
-        full_project: true
-      }, { headers: { 'X-Session-Token': auth.user?.sessionToken } });
-      
-      if (res.data && res.data.errors) {
-        const grouped: Record<string, any[]> = {};
-        res.data.errors.forEach((err: any) => {
-          const fname = err.file || 'Unknown';
-          if (!grouped[fname]) grouped[fname] = [];
-          grouped[fname].push(err);
-        });
-        setProjectProblems(prev => {
-          const next = { ...grouped };
-          if (openedFileRef.current) {
-            const relativeFile = getRelativePath(openedFileRef.current, fs.workspacePath);
-            if (relativeFile && prev[relativeFile]) {
-              next[relativeFile] = prev[relativeFile];
-            }
-          }
-          return next;
-        });
-      }
-    } catch (err) { console.error("Full project lint failed:", err); }
-  };
 
   const flattenedProblems = useMemo(() => {
     return Object.values(projectProblems)
@@ -330,8 +253,7 @@ export default function Home() {
     const handleKeyDown = async (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 's') {
         e.preventDefault();
-        const success = await fs.saveFile();
-        if (success) runFullProjectLint();
+        await fs.saveFile();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -452,24 +374,25 @@ export default function Home() {
 
       <div className="flex-1 flex flex-col min-w-0 border-r border-white/[0.06]">
         <div className="h-12 border-b border-white/[0.06] flex items-center justify-between px-4 bg-white/[0.015] shrink-0">
-          <div className="flex items-center gap-3">
-            <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="p-1.5 hover:bg-white/[0.06] rounded-lg text-slate-500 hover:text-slate-300 transition-all">
+          <div className="flex items-center gap-3 min-w-0">
+            <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="p-1.5 hover:bg-white/[0.06] rounded-lg text-slate-500 hover:text-slate-300 transition-all shrink-0">
               {isSidebarOpen ? <ChevronLeft size={16} /> : <ChevronRight size={16} />}
             </button>
-            <button onClick={() => setIsTerminalOpen(!isTerminalOpen)} className={`p-1.5 hover:bg-white/[0.06] rounded-lg transition-all ${isTerminalOpen ? 'text-blue-400 bg-blue-500/10' : 'text-slate-500 hover:text-slate-300'}`}>
+            <button onClick={() => setIsTerminalOpen(!isTerminalOpen)} className={`p-1.5 hover:bg-white/[0.06] rounded-lg transition-all shrink-0 ${isTerminalOpen ? 'text-blue-400 bg-blue-500/10' : 'text-slate-500 hover:text-slate-300'}`}>
               <TerminalIcon size={16} />
             </button>
-            <div className="flex items-center gap-2 border-l border-white/[0.06] pl-3 ml-1">
-              <Code2 size={14} className="text-blue-500" />
-              <div className="flex items-center gap-1.5">
-                <span className="text-[12px] font-semibold text-slate-400">
-                  {fs.openedFilePath ? fs.openedFilePath.split('/').pop() : 'C# Editor'}
+            <div className="flex items-center gap-2 border-l border-white/[0.06] pl-3 ml-1 min-w-0" title={fs.openedFilePath || undefined}>
+              <Code2 size={14} className="text-blue-500 shrink-0" />
+              <div className="flex items-center gap-1.5 min-w-0">
+                {/* Windows yolları '\' kullanır — her iki ayraçta da böl; dar ekranda kırp */}
+                <span className="text-[12px] font-semibold text-slate-400 truncate">
+                  {fs.openedFilePath ? fs.openedFilePath.split(/[\\/]/).pop() : 'C# Editor'}
                 </span>
-                {fs.isDirty && <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />}
+                {fs.isDirty && <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse shrink-0" />}
               </div>
               {fs.openedFilePath && (
-                <div className="flex items-center gap-1">
-                  <button onClick={async () => { if (await fs.saveFile()) runFullProjectLint(); }} disabled={!fs.isDirty} className={`p-1 rounded hover:bg-slate-800 ${fs.isDirty ? 'text-blue-400' : 'text-slate-600 opacity-50'}`}>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button onClick={async () => { await fs.saveFile(); }} disabled={!fs.isDirty} className={`p-1 rounded hover:bg-slate-800 ${fs.isDirty ? 'text-blue-400' : 'text-slate-600 opacity-50'}`}>
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
                   </button>
                   <button onClick={() => { fs.setOpenedFilePath(null); fs.setCode(''); }} className="p-0.5 hover:bg-slate-700 rounded text-slate-500"><X size={12} /></button>
@@ -477,13 +400,20 @@ export default function Home() {
               )}
             </div>
           </div>
-          <div className="flex items-center gap-2 relative">
+          <div className="flex items-center gap-2 relative shrink-0">
             {/* Unity MCP Hata Banner'ı */}
             {ai.unityMcpError && (
               <div className="absolute top-full right-0 mt-2 z-50 px-3 py-2 rounded-lg border border-red-500/40 bg-red-500/10 text-red-300 text-[11px] font-medium shadow-lg whitespace-nowrap flex items-center gap-2 animate-in fade-in slide-in-from-top-1">
                 <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />
                 {ai.unityMcpError}
               </div>
+            )}
+            {/* C# analizi (OmniSharp) hazırlanıyor rozeti */}
+            {lspStatus?.state === 'starting' && (
+              <span className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-white/[0.08] bg-white/[0.03] text-[10px] font-semibold text-slate-400 whitespace-nowrap">
+                <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+                C# analizi hazırlanıyor…
+              </span>
             )}
             {/* Unity MCP Durum Göstergesi */}
             <button
@@ -534,6 +464,7 @@ export default function Home() {
             <EditorPanel
               code={fs.code} setCode={fs.setCode} openedFilePath={fs.openedFilePath} isEditorFocused={isEditorFocused} setIsEditorFocused={setIsEditorFocused}
               workspacePath={fs.workspacePath} problems={flattenedProblems} diffFile={diffFile}
+              apiUrl={API} sessionToken={auth.user?.sessionToken} openFile={fs.openFile}
             />
           ) : (
             <div className="flex-1 flex flex-col items-center justify-center text-center p-8 relative overflow-hidden">
