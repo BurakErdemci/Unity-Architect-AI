@@ -48,6 +48,12 @@ def fetch(platform: str) -> None:
     os.makedirs(dest, exist_ok=True)
     with zipfile.ZipFile(io.BytesIO(data)) as zf:
         zf.extractall(dest)
+    # zipfile.extractall exec bitini KORUMAZ → macOS/Linux'ta OmniSharp host
+    # binary'si spawn edilemez (PermissionError). Windows'ta gereksiz/zararsız.
+    if not sys.platform.startswith("win"):
+        host = os.path.join(dest, "OmniSharp")
+        if os.path.exists(host):
+            os.chmod(host, 0o755)
     with open(stamp, "w", encoding="utf-8") as f:
         f.write(VERSION)
     print(f"[fetch_omnisharp] tamam: {dest}")
