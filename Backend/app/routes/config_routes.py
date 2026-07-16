@@ -166,6 +166,17 @@ def create_config_router(db):
 
         return models
 
+    @router.get("/effort-capabilities")
+    async def effort_capabilities(
+        provider: str = "",
+        model: str = "",
+        x_session_token: str = Header(alias="X-Session-Token", default=""),
+    ):
+        """Aktif provider+model'in GERÇEKTEN desteklediği effort seviyeleri.
+        Frontend seçici bunu gösterir — desteklenmeyen seviye hiç listelenmez."""
+        from providers.effort_caps import get_effort_caps
+        return get_effort_caps(provider, model)
+
     @router.get("/cli-availability")
     async def cli_availability(x_session_token: str = Header(alias="X-Session-Token", default="")):
         """CLI sağlayıcılarının kullanıcı PC'sinde kurulu olup olmadığını döner.

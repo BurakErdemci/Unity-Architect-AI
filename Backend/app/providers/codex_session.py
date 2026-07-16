@@ -225,10 +225,15 @@ class CodexSession:
         cwd: Optional[str] = None,
         approval_timeout: float = 300.0,
         auto_approve: bool = False,
+        effort: Optional[str] = None,
     ):
         self.conversation_id = conversation_id
         self.model = model
         self.cwd = cwd
+        # Reasoning effort (minimal..xhigh; max yalnız gpt-5.6). Launch-time config'tir
+        # (`-c model_reasoning_effort=`) — oturum ortasında değişemez; değişince
+        # agent_runner session'ı yeniden kurar (Claude'daki desenin aynısı).
+        self.effort = effort
         self.approval_timeout = approval_timeout
         # Oto mod: True ise onay kartı GÖSTERİLMEZ, gelen onay isteklerine otomatik "accept".
         self.auto_approve = auto_approve
@@ -253,6 +258,9 @@ class CodexSession:
         if self._started:
             return
         spawn = _resolve_codex_appserver_cmd()
+        if self.effort:
+            # Global -c override subcommand'dan sonra da geçerli (codex exec ile aynı desen)
+            spawn = spawn + ["-c", f"model_reasoning_effort={self.effort}"]
         # Abonelik auth: API key env'lerini ENJEKTE ETME (codex kendi login'ini kullanır)
         env = {**os.environ, "NO_COLOR": "1"}
         self._proc = await asyncio.create_subprocess_exec(

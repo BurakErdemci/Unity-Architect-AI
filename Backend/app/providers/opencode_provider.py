@@ -110,6 +110,24 @@ class OpenCodeProvider(BaseCLIProvider):
             if not unity_mcp_manager.is_running():
                 merged["mcp"].pop("unityMCP", None)
 
+            # Reasoning effort: opencode CLI flag sunmaz — model options'a yazılır
+            # (provider.<id>.models.<model>.options.reasoningEffort). auto → dokunma.
+            try:
+                from .oneshot_cli import split_model_id
+                from .effort_caps import map_effort
+                _, _mid = split_model_id(self.binary_name)
+                _lvl = getattr(self, "_effort_level", "auto")
+                _r = map_effort("subscription", f"opencode:{_mid or ''}", _lvl).get("opencode_reasoning")
+                if _r and _mid and "/" in _mid:
+                    _pid, _m = _mid.split("/", 1)
+                    node = (merged.setdefault("provider", {})
+                                  .setdefault(_pid, {})
+                                  .setdefault("models", {})
+                                  .setdefault(_m, {}))
+                    node.setdefault("options", {})["reasoningEffort"] = _r
+            except Exception:
+                pass
+
             with open(cfg_path, "w", encoding="utf-8") as f:
                 json.dump(merged, f, indent=2)
             logger.info("[OpenCodeProvider] opencode.json yazıldı.")

@@ -313,11 +313,20 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
 [DİL]
 Kullanıcıyla {'Türkçe' if self.language == 'tr' else 'İngilizce'} konuş."""
 
-        # Thinking config — sadece bilinen thinking destekleyen modeller için
-        _THINKING_MODELS = ("gemini-2.5", "gemini-3.", "gemini-3.0", "gemini-3.1")
-        _supports_thinking = any(t in self.model_name for t in _THINKING_MODELS)
+        # Thinking config — kayıtçıdan (effort_caps): gemini-3.x → thinking_level (enum),
+        # gemini-2.5 → thinking_budget (token). İkisi birlikte ASLA gönderilmez (3.x'te 400).
+        # auto → None → modelin kendi varsayılanı.
+        from providers.effort_caps import map_effort as _map_effort
+        _eff = _map_effort("google", self.model_name,
+                           self.effort_level or self.thinking_level or "auto")
         thinking_config = None
-        if self.use_thinking and _supports_thinking:
+        try:
+            if "gemini_thinking_level" in _eff:
+                thinking_config = gtypes.ThinkingConfig(thinking_level=_eff["gemini_thinking_level"])
+            elif "gemini_thinking_budget" in _eff:
+                thinking_config = gtypes.ThinkingConfig(thinking_budget=_eff["gemini_thinking_budget"])
+        except TypeError:
+            # Eski google-genai SDK thinking_level bilmiyorsa güvenli bütçeye düş
             thinking_config = gtypes.ThinkingConfig(thinking_budget=4096)
 
         config = gtypes.GenerateContentConfig(
@@ -625,12 +634,19 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                 messages.append({"role": "user", "content": user_parts})
             
             try:
+                # Effort: kayıtçıdan; extra_body ile geçer (output_config.effort —
+                # SDK sürümü parametreyi tanımasa da httpx gövdesine girer). auto → {}.
+                from providers.effort_caps import map_effort as _map_effort
+                _eff_body = _map_effort("anthropic", self.model_name,
+                                        self.effort_level or self.thinking_level or "auto"
+                                        ).get("anthropic_extra_body")
                 response = await client.messages.create(
                     model=self.model_name,
                     max_tokens=4096,
                     system=_sys_blocks,
                     messages=messages,
-                    tools=anthropic_tools
+                    tools=anthropic_tools,
+                    **({"extra_body": _eff_body} if _eff_body else {}),
                 )
             except Exception as e:
                 yield AgentEvent("error", {"message": f"Claude hatası: {str(e)}"})
@@ -792,6 +808,15 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
         ]
 
         _turn_t0 = time.time()   # footer: tur süresi + token
+        # Reasoning/effort: kayıtçıdan (effort_caps) — auto/desteklenmeyen → hiçbir
+        # parametre gitmez. request_params üst-seviye (reasoning_effort), extra_body
+        # sağlayıcıya özel gövde (NIM chat_template_kwargs, deepseek/z-ai thinking).
+        from providers.effort_caps import map_effort as _map_effort
+        _eff = _map_effort(self.provider_type, self.model_name,
+                           self.effort_level or self.thinking_level or "auto")
+        _effort_params = _eff.get("request_params", {})
+        _effort_extra_body = _eff.get("extra_body")
+
         _turn_in = _turn_out = 0
         for iteration in range(MAX_ITERATIONS):
             logger.info(f"  🔄 OpenAI Agentic Loop iterasyon {iteration + 1}")
@@ -808,7 +833,9 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                         model=self.model_name,
                         messages=messages,
                         tools=openai_tools,
-                        tool_choice="auto"
+                        tool_choice="auto",
+                        **_effort_params,
+                        **({"extra_body": _effort_extra_body} if _effort_extra_body else {}),
                     )
                     break
                 except Exception as e:
@@ -1219,6 +1246,10 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
             enriched_prompt += ("\n\n[EKLİ GÖRSELLER] Kullanıcı bu turda görsel ekledi. "
                                 "İncelemen için (read aracıyla aç):\n" + _lines)
 
+        # Effort seviyesi provider'a attr olarak geçer (agy _resume_uuid deseni):
+        # copilot _build_cmd --effort'a, opencode _register_mcp opencode.json'a çevirir.
+        provider._effort_level = self.effort_level or self.thinking_level or "auto"
+
         final_text = ""
         got_error = False
         try:
@@ -1336,17 +1367,15 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
 
         model = self.model_name if (self.model_name or "").startswith("claude-") else None
 
-        # Effort seçicisi (Claude'da tek birleşik kontrol) → ClaudeAgentOptions.effort (--effort).
-        # Frontend artık effort_level olarak DOĞRUDAN seçilen seviyeyi (low/medium/high/xhigh/max)
-        # gönderiyor; ayrı Max toggle KALDIRILDI. Geriye dönük: effort_level tanınmazsa
-        # thinking_level'a düşer. off→low (Fable/Claude'da düşünme kapatılamaz; en sığ seviye).
+        # Effort: kayıtçıdan (effort_caps) eşlenir — "auto" veya desteklenmeyen seviye →
+        # None → SDK'ya effort GEÇMEZ, model kendi varsayılanıyla çalışır (Claude'da high).
         # effort connect-time KİLİTLİ (SDK'da set_effort yok). Cache'li session'ın effort'u
         # farklıysa close+recreate gerekir: bu, o sohbetteki CANLI session'ı sıfırlar (DB
         # bağlam özeti aşağıda yeniden enjekte edilir). Böylece seçim gerçekten etki eder.
-        _EFFORT_MAP = {"off": "low", "low": "low", "medium": "medium",
-                       "high": "high", "xhigh": "xhigh", "max": "max"}
-        desired_effort = _EFFORT_MAP.get(self.effort_level) \
-            or _EFFORT_MAP.get(self.thinking_level) or "medium"
+        from providers.effort_caps import map_effort as _map_effort
+        _lvl = self.effort_level or self.thinking_level or "auto"
+        desired_effort = _map_effort("subscription", self.model_name or "claude-",
+                                     "low" if _lvl == "off" else _lvl).get("sdk_effort")
         _existing = _SESSIONS.get(self.conversation_id)
         if _existing is not None and _existing.effort != desired_effort:
             logger.info(f"[ClaudeSession] effort değişti ({_existing.effort}→{desired_effort}); "
@@ -1438,12 +1467,26 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
           → frontend onay kartı (Claude SDK yoluyla AYNI kartlar, yeni UI yok).
         - Abonelik (ChatGPT) auth — API key gerekmez.
         """
-        from providers.codex_session import get_session
+        from providers.codex_session import get_session, close_session, _SESSIONS
+        from providers.effort_caps import map_effort as _map_effort
+
+        # Effort kayıtçıdan (auto/desteklenmeyen → None → codex varsayılanı medium).
+        # Launch-time config olduğundan effort DEĞİŞİNCE session yeniden kurulur
+        # (Claude deseninin aynısı; thread bağlamı sıfırlanır, DB özeti yeniden gider).
+        _lvl = self.effort_level or self.thinking_level or "auto"
+        desired_effort = _map_effort("subscription", self.model_name or "gpt-",
+                                     _lvl).get("cli_config", {}).get("model_reasoning_effort")
+        _existing = _SESSIONS.get(self.conversation_id)
+        if _existing is not None and getattr(_existing, "effort", None) != desired_effort:
+            logger.info(f"[CodexSession] effort değişti ({_existing.effort}→{desired_effort}); "
+                        f"session yeniden kuruluyor")
+            await close_session(self.conversation_id)
 
         session = get_session(
             self.conversation_id,
             model=self.model_name,
             cwd=self.workspace_path or ".",
+            effort=desired_effort,
         )
         # Oto mod → onay otomatik accept; Adım/Plan modu → her mutasyonda onay kartı.
         session.auto_approve = (self.generation_mode == "auto")

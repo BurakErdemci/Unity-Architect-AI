@@ -80,9 +80,17 @@ class CopilotProvider(BaseCLIProvider):
             cmd += [f"--session-id={self.fresh_session_id}"]
         if self._mcp_cfg_path:
             cmd += ["--additional-mcp-config", f"@{self._mcp_cfg_path}"]
-        # NOT: --effort BİLEREK verilmiyor — "auto" ve bazı modeller reasoning effort
-        # konfigürasyonunu desteklemiyor ve CLI hata verip hiç yanıt üretmiyor
-        # (canlı doğrulandı: 'Model "auto" does not support reasoning effort').
+        # Effort: kayıtçıdan (effort_caps) — v1.0.60+ --effort gerçek bir flag.
+        # 'auto' modeli effort kabul etmez (canlı doğrulanmış hata) → kayıtçı zaten
+        # copilot-auto için boş döner; desteklenmeyen seviye/model'de flag hiç eklenmez.
+        try:
+            from .effort_caps import map_effort
+            _flags = map_effort("subscription", f"copilot-{model or 'auto'}",
+                                getattr(self, "_effort_level", "auto")).get("cli_flags")
+            if _flags:
+                cmd += _flags
+        except Exception:
+            pass
         cmd += ["-p", prompt]
         return cmd
 
