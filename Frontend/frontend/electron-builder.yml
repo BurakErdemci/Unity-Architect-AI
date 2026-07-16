@@ -44,6 +44,16 @@ extraResources:
     to: uv
     filter:
       - "**/*"
+  # OmniSharp-Roslyn sidecar (C# diagnostics + IntelliSense).
+  # Ana klasörü kopyalarız → build hangi OS'te koşuyorsa prebuild yalnız o
+  # platformun alt-klasörünü (win-x64 / osx-arm64) indirir; diğer platformun
+  # yolu OLMADIĞI için "yol yok" hatası çıkmaz. _resolve_binary bu ağacı bekler.
+  # Repoya girmez (git-ignored); prebuild hook scripts/fetch_omnisharp.py ile indirir.
+  # NOT: Windows=net472 (runtime hazır), macOS arm64=net6.0 (.NET 6 runtime gerekir).
+  - from: ../../third_party/omnisharp
+    to: omnisharp
+    filter:
+      - "**/*"
 mac:
   category: public.app-category.developer-tools
   # identity: null → imzasız build (test dağıtımı için)
