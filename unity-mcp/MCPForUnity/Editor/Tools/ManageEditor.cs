@@ -140,6 +140,20 @@ namespace MCPForUnity.Editor.Tools
                 case "restore_package":
                     return RestorePackage();
 
+                // Project File Sync
+                case "sync_csproj":
+                    try
+                    {
+                        // Dış editör proje dosyalarını (sln/csproj) üret/tazele —
+                        // OmniSharp sidecar'ın referans kaynağı bu dosyalar.
+                        Unity.CodeEditor.CodeEditor.Editor.CurrentCodeEditor.SyncAll();
+                        return new SuccessResponse("csproj/sln senkronize edildi.");
+                    }
+                    catch (Exception e)
+                    {
+                        return new ErrorResponse($"csproj senkronizasyonu başarısız: {e.Message}");
+                    }
+
                 // Undo/Redo
                 case "undo":
                 {
@@ -171,7 +185,7 @@ namespace MCPForUnity.Editor.Tools
 
                 default:
                     return new ErrorResponse(
-                        $"Unknown action: '{action}'. Supported actions: play, pause, stop, set_active_tool, add_tag, remove_tag, add_layer, remove_layer, deploy_package, restore_package, undo, redo. For prefab editing (open/save/close prefab stage), use manage_prefabs. Use MCP resources for reading editor state, project info, tags, layers, selection, windows, prefab stage, and active tool."
+                        $"Unknown action: '{action}'. Supported actions: play, pause, stop, set_active_tool, add_tag, remove_tag, add_layer, remove_layer, deploy_package, restore_package, sync_csproj, undo, redo. For prefab editing (open/save/close prefab stage), use manage_prefabs. Use MCP resources for reading editor state, project info, tags, layers, selection, windows, prefab stage, and active tool."
                     );
             }
         }
