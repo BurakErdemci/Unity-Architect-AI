@@ -95,7 +95,10 @@ def create_config_router(db):
                 {"id": "kimi-k2.7-code",           "name": "Kimi K2.7 Code",     "provider": "moonshot",  "openrouter_id": "moonshotai/kimi-k2.7-code"},
                 {"id": "kimi-k2.6",                "name": "Kimi K2.6",          "provider": "moonshot",  "openrouter_id": "moonshotai/kimi-k2.6"},
                 # NVIDIA NIM (build.nvidia.com) — tek nvapi- key ile ÜCRETSİZ havuz
-                # (kredi kartsız, ~40 RPM; ID'ler /v1/models'ten CANLI doğrulandı 2026-07-13)
+                # (kredi kartsız, ~40 RPM; ID'ler /v1/models'ten CANLI doğrulandı 2026-07-13;
+                #  glm-5.2 + qwen3-coder resmi docs.api.nvidia.com referanslarından 2026-07-16)
+                {"id": "z-ai/glm-5.2",                                 "name": "GLM 5.2 (NIM)",          "provider": "nvidia"},
+                {"id": "qwen/qwen3-coder-480b-a35b-instruct",          "name": "Qwen3 Coder 480B",       "provider": "nvidia"},
                 {"id": "nvidia/nemotron-3-ultra-550b-a55b",            "name": "Nemotron 3 Ultra 550B",  "provider": "nvidia"},
                 {"id": "nvidia/nemotron-3-super-120b-a12b",            "name": "Nemotron 3 Super 120B",  "provider": "nvidia"},
                 {"id": "qwen/qwen3.5-397b-a17b",                       "name": "Qwen 3.5 397B",          "provider": "nvidia"},

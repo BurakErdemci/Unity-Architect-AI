@@ -36,7 +36,7 @@ class AIProviderManager:
         elif p_type == "nvidia" and api_key:
             # NVIDIA NIM (build.nvidia.com) — tek nvapi- key ile 100+ ücretsiz model,
             # OpenAI-uyumlu endpoint (~40 RPM free tier)
-            return OpenAICompatibleProvider(api_key=api_key, base_url="https://integrate.api.nvidia.com/v1", model_name=m_name or "nvidia/nemotron-3-super-120b-a12b")
+            return OpenAICompatibleProvider(api_key=api_key, base_url="https://integrate.api.nvidia.com/v1", model_name=m_name or "z-ai/glm-5.2")
         elif p_type == "subscription":
             # m_name burada binary adıdır (claude, codex, agy, cursor-*, copilot-*, opencode:*)
             name = m_name or "claude"
