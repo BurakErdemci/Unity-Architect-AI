@@ -156,12 +156,20 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
   const openFile = useCallback(async (filePath: string) => {
     if (!ipc) return;
     const result = await ipc.invoke('read-file', filePath, workspacePath);
-    if (result) {
+    if (result?.error === 'unsupported') {
+      showToast('Bu dosya türü editörde açılamaz (binary).', 'warning');
+      return;
+    }
+    if (result?.error === 'too-large') {
+      showToast('Dosya editörde açılamayacak kadar büyük (>8MB).', 'warning');
+      return;
+    }
+    if (result && result.content != null) {
       setCode(result.content);
       setOriginalCode(result.content);
       setOpenedFilePath(result.path);
     }
-  }, [workspacePath]);
+  }, [workspacePath, showToast]);
 
   const toggleDir = useCallback(async (dirPath: string) => {
     const next = new Set(expandedDirs);

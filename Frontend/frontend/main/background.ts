@@ -13,7 +13,6 @@ import {
   isAllowedWorkspacePath,
   isAllowedWorkspaceReadFile,
   isAllowedWorkspaceWriteFile,
-  TEXT_FILE_EXTENSIONS,
 } from './helpers/file-security'
 import * as pty from 'node-pty'
 
@@ -229,7 +228,9 @@ ipcMain.handle('read-directory', async (_event, dirPath: string, workspacePath?:
     const entries = fs.readdirSync(fullPath, { withFileTypes: true })
     const items = entries
       .filter(e => !e.name.startsWith('.'))
-      .filter(e => e.isDirectory() || TEXT_FILE_EXTENSIONS.includes(path.extname(e.name).toLowerCase()))
+      // Ağaç HER dosyayı gösterir (prefab/anim/fbx/png…) — yalnız .meta gürültüsü
+      // gizli (her asset'in yanında bir tane var, ağacı ikiye katlar).
+      .filter(e => e.isDirectory() || path.extname(e.name).toLowerCase() !== '.meta')
       .map(e => ({
         name: e.name,
         path: path.join(fullPath, e.name),
@@ -307,7 +308,11 @@ ipcMain.handle('read-file', async (_event, filePath: string, workspacePath?: str
     if (!workspacePath) return null;
     const fullPath = path.isAbsolute(filePath) ? filePath : path.join(workspacePath, filePath);
     if (!isAllowedWorkspaceReadFile(fullPath, workspacePath)) {
-      return null
+      return { error: 'unsupported' }
+    }
+    // Dev Unity sahne/prefab YAML'ları 100MB'ı bulabilir — Monaco'yu dondurur.
+    if (fs.statSync(fullPath).size > 8 * 1024 * 1024) {
+      return { error: 'too-large' }
     }
     const content = fs.readFileSync(fullPath, 'utf-8')
     return { path: fullPath, name: path.basename(fullPath), content }

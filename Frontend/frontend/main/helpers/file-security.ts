@@ -37,13 +37,22 @@ function safeResolve(filePath: string): string {
 
 /**
  * Uygulama içinden okunup yazılabilen metin dosyası uzantıları.
- * Dosya ağacı (read-directory) ile aynı liste — md/txt gibi dokümanlar da
- * (örn. CLAUDE.md, README.md) editörde açılıp düzenlenebilsin diye.
- * Çalıştırılabilir/binary türler bilerek dışarıda.
+ * Editörde açma/kaydetme izni bu listeye bakar (dosya ağacı ise artık HER
+ * dosyayı listeler; binary'ler görünür ama açılamaz). Unity'nin YAML tabanlı
+ * asset formatları (prefab/anim/scene/mat…) metindir — editörde açılabilir.
+ * Çalıştırılabilir/binary türler (fbx, png, dll…) bilerek dışarıda.
  */
 export const TEXT_FILE_EXTENSIONS = [
   '.cs', '.shader', '.json', '.txt', '.md', '.xml', '.yaml', '.yml',
-  '.compute', '.asmdef', '.cginc', '.hlsl', '.uss', '.uxml',
+  '.compute', '.asmdef', '.asmref', '.cginc', '.hlsl', '.uss', '.uxml',
+  // Unity YAML asset formatları
+  '.anim', '.prefab', '.unity', '.mat', '.asset', '.controller',
+  '.overridecontroller', '.physicmaterial', '.physicsmaterial2d', '.mixer',
+  '.rendertexture', '.spriteatlas', '.terrainlayer', '.playable', '.signal',
+  '.preset', '.guiskin', '.fontsettings', '.flare', '.giparams',
+  '.shadervariants', '.mask', '.brush', '.meta',
+  // Diğer metin türleri
+  '.inputactions', '.csv', '.html', '.css', '.js', '.ini', '.cfg', '.rsp',
 ]
 
 /**

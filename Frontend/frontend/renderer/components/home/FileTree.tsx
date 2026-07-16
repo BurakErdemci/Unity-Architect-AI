@@ -80,7 +80,13 @@ export const FileTree: React.FC<FileTreeProps> = (props) => {
     if (e === '.cs') return <FileCode size={13} className="text-blue-400" />;
     if (e === '.prefab') return <Database size={13} className="text-orange-400" />;
     if (e === '.unity') return <Sparkles size={13} className="text-emerald-400" />;
-    if (e === '.asset') return <Settings size={13} className="text-purple-400" />;
+    if (['.asset', '.preset', '.spriteatlas', '.terrainlayer'].includes(e)) return <Settings size={13} className="text-purple-400" />;
+    if (['.anim', '.controller', '.overridecontroller', '.playable', '.mask'].includes(e)) return <Sparkles size={13} className="text-pink-400" />;
+    if (['.mat', '.physicmaterial', '.physicsmaterial2d', '.flare', '.rendertexture'].includes(e)) return <Database size={13} className="text-cyan-400" />;
+    if (['.shader', '.hlsl', '.cginc', '.compute', '.shadervariants'].includes(e)) return <FileCode size={13} className="text-fuchsia-400" />;
+    if (['.png', '.jpg', '.jpeg', '.tga', '.psd', '.tif', '.tiff', '.exr', '.hdr', '.gif', '.bmp'].includes(e)) return <FileIcon size={13} className="text-amber-400/70" />;
+    if (['.fbx', '.obj', '.blend', '.dae', '.3ds'].includes(e)) return <Database size={13} className="text-indigo-400/70" />;
+    if (['.wav', '.mp3', '.ogg', '.aiff', '.flac'].includes(e)) return <FileIcon size={13} className="text-rose-400/70" />;
     if (['.json', '.txt', '.md'].includes(e)) return <FileIcon size={13} className="text-slate-400" />;
     return <FileIcon size={13} className="text-slate-500" />;
   };
