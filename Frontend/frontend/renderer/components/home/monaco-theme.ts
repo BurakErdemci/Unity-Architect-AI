@@ -2,7 +2,22 @@ import type * as Monaco from 'monaco-editor';
 
 export const THEME_NAME = 'unityArchitectDark';
 
+// JetBrains Mono webfont'u (globals.css @import) Monaco'nun font ölçümünden SONRA
+// yüklenebiliyor → ölçüm bayat kalınca tıklanan piksel yanlış kolona düşüyor
+// (satır sonuna tıkla, imleç ortaya gelir). Font(lar) hazır olunca yeniden ölçtür.
+let _fontRemeasureHooked = false;
+const hookFontRemeasure = (monaco: typeof Monaco) => {
+  if (_fontRemeasureHooked || typeof document === 'undefined') return;
+  _fontRemeasureHooked = true;
+  const remeasure = () => monaco.editor.remeasureFonts();
+  const fonts: any = (document as any).fonts;
+  fonts?.ready?.then(remeasure).catch(() => {});
+  // Geç yüklenen font batch'leri için (ready bir kez çözülür, bu her batch'te tetiklenir)
+  fonts?.addEventListener?.('loadingdone', remeasure);
+};
+
 export const defineUnityTheme = (monaco: typeof Monaco) => {
+  hookFontRemeasure(monaco);
   monaco.editor.defineTheme(THEME_NAME, {
     base: 'vs-dark',
     inherit: true,
