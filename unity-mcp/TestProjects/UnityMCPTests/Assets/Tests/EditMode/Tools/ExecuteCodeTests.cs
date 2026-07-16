@@ -1,76 +1,94 @@
+using System.Collections;
+using System.Threading.Tasks;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
+using UnityEngine.TestTools;
 using MCPForUnity.Editor.Tools;
 using static MCPForUnityTests.Editor.TestUtilities;
 
 namespace MCPForUnityTests.Editor.Tools
 {
+    // HandleCommand async Task<object> döndürür (AssemblyBuilder derlemesi editor
+    // update loop'unda tamamlanır) → testler [UnityTest] coroutine ile task'ı
+    // poll'lar. Ana thread'i bloklamak (task.Result) derlemeyi kilitler — yapma.
     public class ExecuteCodeTests
     {
         [SetUp]
         public void SetUp()
         {
-            ExecuteCode.HandleCommand(new JObject { ["action"] = "clear_history" });
+            // clear_history senkron tamamlanır (await'siz yol) — Result güvenli.
+            ExecuteCode.HandleCommand(new JObject { ["action"] = "clear_history" }).GetAwaiter().GetResult();
         }
 
         // ──────────────────── Execute: success cases ────────────────────
 
-        [Test]
-        public void Execute_ReturnString_ReturnsSuccess()
+        [UnityTest]
+        public IEnumerator Execute_ReturnString_ReturnsSuccess()
         {
-            var result = Execute("return \"hello\";");
+            var t = Execute("return \"hello\";");
+            while (!t.IsCompleted) yield return null;
+            var result = ToJObject(t.Result);
 
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             Assert.AreEqual("hello", result["data"]["result"].Value<string>());
         }
 
-        [Test]
-        public void Execute_ReturnInt_ReturnsSuccess()
+        [UnityTest]
+        public IEnumerator Execute_ReturnInt_ReturnsSuccess()
         {
-            var result = Execute("return 42;");
+            var t = Execute("return 42;");
+            while (!t.IsCompleted) yield return null;
+            var result = ToJObject(t.Result);
 
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             Assert.AreEqual(42, result["data"]["result"].Value<int>());
         }
 
-        [Test]
-        public void Execute_ReturnNull_NoResultValue()
+        [UnityTest]
+        public IEnumerator Execute_ReturnNull_NoResultValue()
         {
-            var result = Execute("int x = 1; return null;");
+            var t = Execute("int x = 1; return null;");
+            while (!t.IsCompleted) yield return null;
+            var result = ToJObject(t.Result);
 
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
-            // data may contain compiler info but should not have a "result" key
             var data = result["data"] as JObject;
             if (data != null)
                 Assert.IsNull(data["result"], "Expected no 'result' key when code returns null");
         }
 
-        [Test]
-        public void Execute_VoidReturn_Succeeds()
+        [UnityTest]
+        public IEnumerator Execute_VoidReturn_Succeeds()
         {
-            var result = Execute("UnityEngine.Debug.Log(\"test\"); return null;");
+            var t = Execute("UnityEngine.Debug.Log(\"test\"); return null;");
+            while (!t.IsCompleted) yield return null;
+            var result = ToJObject(t.Result);
 
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
         }
 
-        [Test]
-        public void Execute_UnityAPI_CanAccessSceneManager()
+        [UnityTest]
+        public IEnumerator Execute_UnityAPI_CanAccessSceneManager()
         {
-            var result = Execute(
+            var t = Execute(
                 "var scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene();\n" +
                 "return scene.name;");
+            while (!t.IsCompleted) yield return null;
+            var result = ToJObject(t.Result);
 
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             Assert.IsNotNull(result["data"]["result"]);
         }
 
-        [Test]
-        public void Execute_Generics_ListOfString()
+        [UnityTest]
+        public IEnumerator Execute_Generics_ListOfString()
         {
-            var result = Execute(
+            var t = Execute(
                 "var list = new System.Collections.Generic.List<string>();\n" +
                 "list.Add(\"a\"); list.Add(\"b\");\n" +
                 "return list;");
+            while (!t.IsCompleted) yield return null;
+            var result = ToJObject(t.Result);
 
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             var arr = result["data"]["result"] as JArray;
@@ -78,12 +96,14 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(2, arr.Count);
         }
 
-        [Test]
-        public void Execute_LINQ_SelectWorks()
+        [UnityTest]
+        public IEnumerator Execute_LINQ_SelectWorks()
         {
-            var result = Execute(
+            var t = Execute(
                 "var nums = new int[] { 1, 2, 3 };\n" +
                 "return nums.Select(n => n * 2).ToList();");
+            while (!t.IsCompleted) yield return null;
+            var result = ToJObject(t.Result);
 
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             var arr = result["data"]["result"] as JArray;
@@ -93,100 +113,132 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(6, arr[2].Value<int>());
         }
 
-        [Test]
-        public void Execute_Dictionary_ReturnsStructured()
+        [UnityTest]
+        public IEnumerator Execute_Dictionary_ReturnsStructured()
         {
-            var result = Execute(
+            var t = Execute(
                 "var dict = new Dictionary<string, int> { { \"a\", 1 }, { \"b\", 2 } };\n" +
                 "return dict;");
+            while (!t.IsCompleted) yield return null;
+            var result = ToJObject(t.Result);
 
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             Assert.IsNotNull(result["data"]["result"]);
         }
 
+        [UnityTest]
+        public IEnumerator Execute_ProjectTypes_AreAccessible()
+        {
+            // AssemblyBuilder referans seti proje assembly'lerini içermeli —
+            // testin kendi tipine (bu sınıf) kod içinden erişilebilmeli.
+            var t = Execute(
+                "return typeof(MCPForUnityTests.Editor.Tools.ExecuteCodeTests).Name;");
+            while (!t.IsCompleted) yield return null;
+            var result = ToJObject(t.Result);
+
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            Assert.AreEqual("ExecuteCodeTests", result["data"]["result"].Value<string>());
+        }
+
         // ──────────────────── Execute: error cases ────────────────────
 
-        [Test]
-        public void Execute_CompilationError_ReturnsErrors()
+        [UnityTest]
+        public IEnumerator Execute_CompilationError_ReturnsErrors()
         {
-            var result = Execute("int x = \"not an int\";");
+            var t = Execute("int x = \"not an int\";");
+            while (!t.IsCompleted) yield return null;
+            var result = ToJObject(t.Result);
 
             Assert.IsFalse(result.Value<bool>("success"), result.ToString());
             StringAssert.Contains("Compilation failed", result.Value<string>("error"));
             Assert.IsNotNull(result["data"]["errors"]);
         }
 
-        [Test]
-        public void Execute_RuntimeException_ReturnsError()
+        [UnityTest]
+        public IEnumerator Execute_RuntimeException_ReturnsError()
         {
-            var result = Execute("throw new System.Exception(\"boom\");");
+            var t = Execute("throw new System.Exception(\"boom\");");
+            while (!t.IsCompleted) yield return null;
+            var result = ToJObject(t.Result);
 
             Assert.IsFalse(result.Value<bool>("success"), result.ToString());
             StringAssert.Contains("boom", result.Value<string>("error"));
         }
 
-        [Test]
-        public void Execute_MissingCode_ReturnsError()
+        [UnityTest]
+        public IEnumerator Execute_MissingCode_ReturnsError()
         {
-            var result = ToJObject(ExecuteCode.HandleCommand(new JObject
+            var t = ExecuteCode.HandleCommand(new JObject
             {
                 ["action"] = "execute"
-            }));
+            });
+            while (!t.IsCompleted) yield return null;
+            var result = ToJObject(t.Result);
 
             Assert.IsFalse(result.Value<bool>("success"), result.ToString());
             StringAssert.Contains("code", result.Value<string>("error").ToLowerInvariant());
         }
 
-        [Test]
-        public void Execute_EmptyCode_ReturnsError()
+        [UnityTest]
+        public IEnumerator Execute_EmptyCode_ReturnsError()
         {
-            var result = ToJObject(ExecuteCode.HandleCommand(new JObject
+            var t = ExecuteCode.HandleCommand(new JObject
             {
                 ["action"] = "execute",
                 ["code"] = "   "
-            }));
+            });
+            while (!t.IsCompleted) yield return null;
+            var result = ToJObject(t.Result);
 
             Assert.IsFalse(result.Value<bool>("success"), result.ToString());
         }
 
         // ──────────────────── Safety checks ────────────────────
 
-        [Test]
-        public void Execute_SafetyChecks_BlocksFileDelete()
+        [UnityTest]
+        public IEnumerator Execute_SafetyChecks_BlocksFileDelete()
         {
-            var result = Execute("System.IO.File.Delete(\"x\");");
+            var t = Execute("System.IO.File.Delete(\"x\");");
+            while (!t.IsCompleted) yield return null;
+            var result = ToJObject(t.Result);
 
             Assert.IsFalse(result.Value<bool>("success"), result.ToString());
             StringAssert.Contains("Blocked pattern", result.Value<string>("error"));
         }
 
-        [Test]
-        public void Execute_SafetyChecks_BlocksProcessStart()
+        [UnityTest]
+        public IEnumerator Execute_SafetyChecks_BlocksProcessStart()
         {
-            var result = Execute("Process.Start(\"cmd\");");
+            var t = Execute("Process.Start(\"cmd\");");
+            while (!t.IsCompleted) yield return null;
+            var result = ToJObject(t.Result);
 
             Assert.IsFalse(result.Value<bool>("success"), result.ToString());
             StringAssert.Contains("Blocked pattern", result.Value<string>("error"));
         }
 
-        [Test]
-        public void Execute_SafetyChecks_BlocksInfiniteLoop()
+        [UnityTest]
+        public IEnumerator Execute_SafetyChecks_BlocksInfiniteLoop()
         {
-            var result = Execute("while (true) { }");
+            var t = Execute("while (true) { }");
+            while (!t.IsCompleted) yield return null;
+            var result = ToJObject(t.Result);
 
             Assert.IsFalse(result.Value<bool>("success"), result.ToString());
             StringAssert.Contains("Blocked pattern", result.Value<string>("error"));
         }
 
-        [Test]
-        public void Execute_SafetyChecksDisabled_AllowsBlockedPattern()
+        [UnityTest]
+        public IEnumerator Execute_SafetyChecksDisabled_AllowsBlockedPattern()
         {
-            var result = ToJObject(ExecuteCode.HandleCommand(new JObject
+            var t = ExecuteCode.HandleCommand(new JObject
             {
                 ["action"] = "execute",
                 ["code"] = "while (true) { break; }  return null;",
                 ["safety_checks"] = false
-            }));
+            });
+            while (!t.IsCompleted) yield return null;
+            var result = ToJObject(t.Result);
 
             if (!result.Value<bool>("success"))
             {
@@ -198,27 +250,32 @@ namespace MCPForUnityTests.Editor.Tools
 
         // ──────────────────── History ────────────────────
 
-        [Test]
-        public void GetHistory_Empty_ReturnsZero()
+        [UnityTest]
+        public IEnumerator GetHistory_Empty_ReturnsZero()
         {
-            var result = ToJObject(ExecuteCode.HandleCommand(new JObject
+            var t = ExecuteCode.HandleCommand(new JObject
             {
                 ["action"] = "get_history"
-            }));
+            });
+            while (!t.IsCompleted) yield return null;
+            var result = ToJObject(t.Result);
 
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             Assert.AreEqual(0, result["data"]["total"].Value<int>());
         }
 
-        [Test]
-        public void GetHistory_AfterExecution_RecordsEntry()
+        [UnityTest]
+        public IEnumerator GetHistory_AfterExecution_RecordsEntry()
         {
-            Execute("return 1;");
+            var exec = Execute("return 1;");
+            while (!exec.IsCompleted) yield return null;
 
-            var result = ToJObject(ExecuteCode.HandleCommand(new JObject
+            var t = ExecuteCode.HandleCommand(new JObject
             {
                 ["action"] = "get_history"
-            }));
+            });
+            while (!t.IsCompleted) yield return null;
+            var result = ToJObject(t.Result);
 
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             Assert.AreEqual(1, result["data"]["total"].Value<int>());
@@ -228,18 +285,22 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.IsTrue(entries[0]["success"].Value<bool>());
         }
 
-        [Test]
-        public void GetHistory_Limit_RespectsParameter()
+        [UnityTest]
+        public IEnumerator GetHistory_Limit_RespectsParameter()
         {
-            Execute("return 1;");
-            Execute("return 2;");
-            Execute("return 3;");
+            foreach (var code in new[] { "return 1;", "return 2;", "return 3;" })
+            {
+                var exec = Execute(code);
+                while (!exec.IsCompleted) yield return null;
+            }
 
-            var result = ToJObject(ExecuteCode.HandleCommand(new JObject
+            var t = ExecuteCode.HandleCommand(new JObject
             {
                 ["action"] = "get_history",
                 ["limit"] = 2
-            }));
+            });
+            while (!t.IsCompleted) yield return null;
+            var result = ToJObject(t.Result);
 
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             Assert.AreEqual(3, result["data"]["total"].Value<int>());
@@ -247,101 +308,119 @@ namespace MCPForUnityTests.Editor.Tools
             Assert.AreEqual(2, entries.Count);
         }
 
-        [Test]
-        public void ClearHistory_RemovesAll()
+        [UnityTest]
+        public IEnumerator ClearHistory_RemovesAll()
         {
-            Execute("return 1;");
-            Execute("return 2;");
+            foreach (var code in new[] { "return 1;", "return 2;" })
+            {
+                var exec = Execute(code);
+                while (!exec.IsCompleted) yield return null;
+            }
 
-            var clearResult = ToJObject(ExecuteCode.HandleCommand(new JObject
+            var clear = ExecuteCode.HandleCommand(new JObject
             {
                 ["action"] = "clear_history"
-            }));
+            });
+            while (!clear.IsCompleted) yield return null;
+            var clearResult = ToJObject(clear.Result);
             Assert.IsTrue(clearResult.Value<bool>("success"), clearResult.ToString());
 
-            var historyResult = ToJObject(ExecuteCode.HandleCommand(new JObject
+            var t = ExecuteCode.HandleCommand(new JObject
             {
                 ["action"] = "get_history"
-            }));
+            });
+            while (!t.IsCompleted) yield return null;
+            var historyResult = ToJObject(t.Result);
             Assert.AreEqual(0, historyResult["data"]["total"].Value<int>());
         }
 
         // ──────────────────── Replay ────────────────────
 
-        [Test]
-        public void Replay_ValidIndex_ReExecutes()
+        [UnityTest]
+        public IEnumerator Replay_ValidIndex_ReExecutes()
         {
-            Execute("return 42;");
+            var exec = Execute("return 42;");
+            while (!exec.IsCompleted) yield return null;
 
-            var result = ToJObject(ExecuteCode.HandleCommand(new JObject
+            var t = ExecuteCode.HandleCommand(new JObject
             {
                 ["action"] = "replay",
                 ["index"] = 0
-            }));
+            });
+            while (!t.IsCompleted) yield return null;
+            var result = ToJObject(t.Result);
 
             Assert.IsTrue(result.Value<bool>("success"), result.ToString());
             Assert.AreEqual(42, result["data"]["result"].Value<int>());
         }
 
-        [Test]
-        public void Replay_InvalidIndex_ReturnsError()
+        [UnityTest]
+        public IEnumerator Replay_InvalidIndex_ReturnsError()
         {
-            Execute("return 1;");
+            var exec = Execute("return 1;");
+            while (!exec.IsCompleted) yield return null;
 
-            var result = ToJObject(ExecuteCode.HandleCommand(new JObject
+            var t = ExecuteCode.HandleCommand(new JObject
             {
                 ["action"] = "replay",
                 ["index"] = 99
-            }));
+            });
+            while (!t.IsCompleted) yield return null;
+            var result = ToJObject(t.Result);
 
             Assert.IsFalse(result.Value<bool>("success"), result.ToString());
             StringAssert.Contains("Invalid history index", result.Value<string>("error"));
         }
 
-        [Test]
-        public void Replay_EmptyHistory_ReturnsError()
+        [UnityTest]
+        public IEnumerator Replay_EmptyHistory_ReturnsError()
         {
-            var result = ToJObject(ExecuteCode.HandleCommand(new JObject
+            var t = ExecuteCode.HandleCommand(new JObject
             {
                 ["action"] = "replay",
                 ["index"] = 0
-            }));
+            });
+            while (!t.IsCompleted) yield return null;
+            var result = ToJObject(t.Result);
 
             Assert.IsFalse(result.Value<bool>("success"), result.ToString());
         }
 
         // ──────────────────── Action validation ────────────────────
 
-        [Test]
-        public void UnknownAction_ReturnsError()
+        [UnityTest]
+        public IEnumerator UnknownAction_ReturnsError()
         {
-            var result = ToJObject(ExecuteCode.HandleCommand(new JObject
+            var t = ExecuteCode.HandleCommand(new JObject
             {
                 ["action"] = "invalid_action"
-            }));
+            });
+            while (!t.IsCompleted) yield return null;
+            var result = ToJObject(t.Result);
 
             Assert.IsFalse(result.Value<bool>("success"), result.ToString());
             StringAssert.Contains("Unknown action", result.Value<string>("error"));
         }
 
-        [Test]
-        public void NullParams_ReturnsError()
+        [UnityTest]
+        public IEnumerator NullParams_ReturnsError()
         {
-            var result = ToJObject(ExecuteCode.HandleCommand(null));
+            var t = ExecuteCode.HandleCommand(null);
+            while (!t.IsCompleted) yield return null;
+            var result = ToJObject(t.Result);
 
             Assert.IsFalse(result.Value<bool>("success"), result.ToString());
         }
 
         // ──────────────────── Helpers ────────────────────
 
-        private static JObject Execute(string code)
+        private static Task<object> Execute(string code)
         {
-            return ToJObject(ExecuteCode.HandleCommand(new JObject
+            return ExecuteCode.HandleCommand(new JObject
             {
                 ["action"] = "execute",
                 ["code"] = code
-            }));
+            });
         }
-
     }
 }
