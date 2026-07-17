@@ -30,6 +30,32 @@ namespace MCPForUnity.Editor.Helpers
         }
 
         /// <summary>
+        /// How a by_name search term is matched against GameObject names.
+        /// </summary>
+        public enum MatchMode
+        {
+            Exact,
+            Contains,
+            Prefix
+        }
+
+        /// <summary>
+        /// Parses a match mode string into the enum value. Defaults to Exact.
+        /// </summary>
+        public static MatchMode ParseMatchMode(string mode)
+        {
+            if (string.IsNullOrEmpty(mode))
+                return MatchMode.Exact;
+
+            return mode.ToLowerInvariant() switch
+            {
+                "contains" => MatchMode.Contains,
+                "prefix" => MatchMode.Prefix,
+                _ => MatchMode.Exact
+            };
+        }
+
+        /// <summary>
         /// Parses a search method string into the enum value.
         /// </summary>
         public static SearchMethod ParseSearchMethod(string method)
@@ -88,11 +114,12 @@ namespace MCPForUnity.Editor.Helpers
         /// <param name="searchTerm">The term to search for</param>
         /// <param name="includeInactive">Whether to include inactive objects</param>
         /// <param name="maxResults">Maximum number of results to return (0 = unlimited)</param>
+        /// <param name="matchMode">How by_name terms match (exact/contains/prefix); other methods ignore it</param>
         /// <returns>List of instance IDs</returns>
-        public static List<int> SearchGameObjects(string searchMethod, string searchTerm, bool includeInactive = false, int maxResults = 0)
+        public static List<int> SearchGameObjects(string searchMethod, string searchTerm, bool includeInactive = false, int maxResults = 0, MatchMode matchMode = MatchMode.Exact)
         {
             var method = ParseSearchMethod(searchMethod);
-            return SearchGameObjects(method, searchTerm, includeInactive, maxResults);
+            return SearchGameObjects(method, searchTerm, includeInactive, maxResults, matchMode);
         }
 
         /// <summary>
@@ -102,8 +129,9 @@ namespace MCPForUnity.Editor.Helpers
         /// <param name="searchTerm">The term to search for</param>
         /// <param name="includeInactive">Whether to include inactive objects</param>
         /// <param name="maxResults">Maximum number of results to return (0 = unlimited)</param>
+        /// <param name="matchMode">How by_name terms match (exact/contains/prefix); other methods ignore it</param>
         /// <returns>List of instance IDs</returns>
-        public static List<int> SearchGameObjects(SearchMethod method, string searchTerm, bool includeInactive = false, int maxResults = 0)
+        public static List<int> SearchGameObjects(SearchMethod method, string searchTerm, bool includeInactive = false, int maxResults = 0, MatchMode matchMode = MatchMode.Exact)
         {
             var results = new List<int>();
 
@@ -121,7 +149,7 @@ namespace MCPForUnity.Editor.Helpers
                     break;
 
                 case SearchMethod.ByName:
-                    results.AddRange(SearchByName(searchTerm, includeInactive, maxResults));
+                    results.AddRange(SearchByName(searchTerm, includeInactive, maxResults, matchMode));
                     break;
 
                 case SearchMethod.ByPath:
@@ -144,10 +172,17 @@ namespace MCPForUnity.Editor.Helpers
             return results;
         }
 
-        private static IEnumerable<int> SearchByName(string name, bool includeInactive, int maxResults)
+        private static IEnumerable<int> SearchByName(string name, bool includeInactive, int maxResults, MatchMode matchMode = MatchMode.Exact)
         {
             var allObjects = GetAllSceneObjects(includeInactive);
-            var matching = allObjects.Where(go => go.name == name);
+            // Exact stays case-sensitive (backward compatible); contains/prefix are
+            // case-insensitive because agents rarely know the precise casing.
+            IEnumerable<GameObject> matching = matchMode switch
+            {
+                MatchMode.Contains => allObjects.Where(go => go.name.IndexOf(name, StringComparison.OrdinalIgnoreCase) >= 0),
+                MatchMode.Prefix => allObjects.Where(go => go.name.StartsWith(name, StringComparison.OrdinalIgnoreCase)),
+                _ => allObjects.Where(go => go.name == name),
+            };
 
             if (maxResults > 0)
                 matching = matching.Take(maxResults);

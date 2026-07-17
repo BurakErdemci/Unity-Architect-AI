@@ -148,6 +148,43 @@ async def test_find_gameobjects_boolean_coercion(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_find_gameobjects_match_mode_pass_through(monkeypatch):
+    """match_mode is forwarded as matchMode; omitted entirely when not provided."""
+    captured = {}
+
+    async def fake_send(cmd, params, **kwargs):
+        captured["params"] = params
+        return {"success": True, "data": {"instanceIDs": [1], "objects": [
+            {"instanceID": 1, "name": "Prop_VendingMachine", "path": "Env/Prop_VendingMachine"},
+        ]}}
+
+    monkeypatch.setattr(
+        find_go_mod,
+        "async_send_command_with_retry",
+        fake_send,
+    )
+
+    resp = await find_go_mod.find_gameobjects(
+        ctx=DummyContext(),
+        search_term="Prop_",
+        search_method="by_name",
+        match_mode="prefix",
+    )
+
+    assert resp.get("success") is True
+    assert captured["params"]["matchMode"] == "prefix"
+
+    resp = await find_go_mod.find_gameobjects(
+        ctx=DummyContext(),
+        search_term="Player",
+        search_method="by_name",
+    )
+
+    assert resp.get("success") is True
+    assert "matchMode" not in captured["params"]
+
+
+@pytest.mark.asyncio
 async def test_find_gameobjects_by_layer(monkeypatch):
     """Test search by layer."""
     captured = {}

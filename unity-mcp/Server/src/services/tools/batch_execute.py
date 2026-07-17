@@ -67,7 +67,11 @@ def invalidate_cached_max_commands() -> None:
         "or performing any repetitive operations. Reduces latency and token costs by 10-100x compared to "
         "sequential tool calls. The max commands per batch is configurable in the Unity MCP Tools window "
         f"(default {DEFAULT_MAX_COMMANDS_PER_BATCH}, hard max {ABSOLUTE_MAX_COMMANDS_PER_BATCH}). "
-        "Example: creating 5 cubes → use 1 batch_execute with 5 create commands instead of 5 separate calls."
+        "Example: creating 5 cubes → use 1 batch_execute with 5 create commands instead of 5 separate calls. "
+        "Chaining: a param value that is exactly '$[i]' or '$[i].some.path' (i = 0-based command index) is "
+        "replaced with (part of) that earlier command's result before execution, e.g. "
+        "{'target': '$[0].data.instanceID'} — enabling create→configure→parent in a single batch. "
+        "References to later/failed commands or missing paths fail that command with a clear error."
     ),
     annotations=ToolAnnotations(
         title="Batch Execute",

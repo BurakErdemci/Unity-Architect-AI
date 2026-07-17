@@ -1,6 +1,7 @@
 """
 Tool for searching GameObjects in Unity scenes.
-Returns only instance IDs with pagination support for efficient searches.
+Returns instance IDs plus a lightweight name+path summary per result,
+with pagination support for efficient searches.
 """
 from typing import Annotated, Any, Literal
 
@@ -17,8 +18,11 @@ from services.tools.preflight import preflight
 @mcp_for_unity_tool(
     description=(
         "Search for GameObjects in the scene by name, tag, layer, component type, or path. "
-        "Returns instance IDs only (paginated). "
-        "Then use mcpforunity://scene/gameobject/{id} resource for full data, "
+        "Returns paginated instance IDs plus an 'objects' summary (instanceID/name/path) per result, "
+        "so you usually don't need a follow-up lookup just to identify matches. "
+        "by_name supports match_mode: 'exact' (default), 'contains', or 'prefix' "
+        "(e.g. search_term='Prop_' with match_mode='prefix' finds Prop_VendingMachine etc.). "
+        "For full data use mcpforunity://scene/gameobject/{id} resource, "
         "or mcpforunity://scene/gameobject/{id}/components for component details. "
         "For CRUD operations (create/modify/delete), use manage_gameobject instead."
     )
@@ -36,6 +40,16 @@ async def find_gameobjects(
             description="How to search for GameObjects"
         )
     ] = "by_name",
+    match_mode: Annotated[
+        Literal["exact", "contains", "prefix"] | None,
+        Field(
+            default=None,
+            description=(
+                "How by_name terms match: 'exact' (default, case-sensitive), "
+                "'contains' or 'prefix' (both case-insensitive). Ignored by other search methods."
+            )
+        )
+    ] = None,
     include_inactive: Annotated[
         bool | str | None,
         Field(
@@ -91,6 +105,7 @@ async def find_gameobjects(
         params = {
             "searchMethod": search_method,
             "searchTerm": search_term,
+            "matchMode": match_mode,
             "includeInactive": include_inactive,
             "pageSize": page_size,
             "cursor": cursor,

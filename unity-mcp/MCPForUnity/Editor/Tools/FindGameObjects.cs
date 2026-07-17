@@ -8,9 +8,9 @@ namespace MCPForUnity.Editor.Tools
 {
     /// <summary>
     /// Tool for searching GameObjects in the scene.
-    /// Returns only instance IDs with pagination support.
-    /// 
-    /// This is a focused search tool that returns lightweight results (IDs only).
+    /// Returns instance IDs plus a lightweight per-object summary (name + path)
+    /// with pagination support, so callers don't need one extra resource
+    /// round-trip per result just to see what matched (N+1 avoidance).
     /// For detailed GameObject data, use the unity://scene/gameobject/{id} resource.
     /// </summary>
     [McpForUnityTool("find_gameobjects")]
@@ -53,17 +53,33 @@ namespace MCPForUnity.Editor.Tools
             bool includeInactive = p.GetBool("includeInactive", false) ||
                                    p.GetBool("searchInactive", false);
 
+            var matchMode = GameObjectLookup.ParseMatchMode(p.Get("matchMode", "exact"));
+
             try
             {
                 // Get all matching instance IDs
-                var allIds = GameObjectLookup.SearchGameObjects(searchMethod, searchTerm, includeInactive, 0);
-                
+                var allIds = GameObjectLookup.SearchGameObjects(searchMethod, searchTerm, includeInactive, 0, matchMode);
+
                 // Use standard pagination response
                 var paginatedResult = PaginationResponse<int>.Create(allIds, pagination);
+
+                // Lightweight summary for the returned page only (≤ pageSize objects):
+                // enough for the agent to pick a target without a follow-up resource call.
+                var objects = paginatedResult.Items.Select(id =>
+                {
+                    var go = GameObjectLookup.FindById(id);
+                    return new
+                    {
+                        instanceID = id,
+                        name = go != null ? go.name : null,
+                        path = go != null ? GameObjectLookup.GetGameObjectPath(go) : null
+                    };
+                }).ToList();
 
                 return new SuccessResponse("Found GameObjects", new
                 {
                     instanceIDs = paginatedResult.Items,
+                    objects,
                     pageSize = paginatedResult.PageSize,
                     cursor = paginatedResult.Cursor,
                     nextCursor = paginatedResult.NextCursor,
