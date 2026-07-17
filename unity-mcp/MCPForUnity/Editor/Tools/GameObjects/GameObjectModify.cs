@@ -282,9 +282,18 @@ namespace MCPForUnity.Editor.Tools.GameObjects
 
             if (!modified)
             {
+                // Sessiz no-op tuzağı (gece-testi geri bildirimi): "başarılı görünüp hiçbir şey
+                // yapmamak" hata fırlatmaktan pahalı — ajan doğrulama karesi almak zorunda kalıyor.
+                // success=true kalır (no-op ≠ hata; istenen durum zaten geçerli olabilir) ama
+                // mesaj + data.affected=0 ile durum GÖZDEN KAÇMAZ hale gelir.
                 return new SuccessResponse(
-                    $"No modifications applied to GameObject '{targetGo.name}'.",
-                    Helpers.GameObjectSerializer.GetGameObjectData(targetGo)
+                    $"⚠️ No-op: 0 changes applied to GameObject '{targetGo.name}' — none of the provided fields resulted in a modification (verify field names/values, or the state may already match).",
+                    new
+                    {
+                        affected = 0,
+                        no_op = true,
+                        gameObject = Helpers.GameObjectSerializer.GetGameObjectData(targetGo),
+                    }
                 );
             }
 

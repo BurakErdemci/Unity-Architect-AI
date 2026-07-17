@@ -210,26 +210,40 @@ namespace MCPForUnity.Editor.Tools
                 }
             }
 
+            // Play mode'da script mutasyonu domain reload tetikler ve AKTİF PLAY OTURUMUNU
+            // KESER — sessiz tuzak (gece-testi geri bildirimi). Başarılı cevaba açık uyarı
+            // ekle ki ajan bilinçli karar versin (istiyorsa play'i durdurup devam eder).
+            static object WithPlayModeWarning(object result)
+            {
+                if (EditorApplication.isPlaying && result is SuccessResponse ok)
+                {
+                    return new SuccessResponse(
+                        "⚠️ editor is in play mode — this script change triggers a domain reload and will interrupt the running play session. " + ok.Message,
+                        ok.Data);
+                }
+                return result;
+            }
+
             // Route to specific action handlers
             switch (action)
             {
                 case "create":
-                    return CreateScript(
+                    return WithPlayModeWarning(CreateScript(
                         fullPath,
                         relativePath,
                         name,
                         contents,
                         scriptType,
                         namespaceName
-                    );
+                    ));
                 case "read":
                     McpLog.Warn("manage_script.read is deprecated; prefer resources/read. Serving read for backward compatibility.");
                     return ReadScript(fullPath, relativePath);
                 case "update":
                     McpLog.Warn("manage_script.update is deprecated; prefer apply_text_edits. Serving update for backward compatibility.");
-                    return UpdateScript(fullPath, relativePath, name, contents);
+                    return WithPlayModeWarning(UpdateScript(fullPath, relativePath, name, contents));
                 case "delete":
-                    return DeleteScript(fullPath, relativePath);
+                    return WithPlayModeWarning(DeleteScript(fullPath, relativePath));
                 case "apply_text_edits":
                     {
                         var textEdits = p.GetRaw("edits") as JArray;
@@ -238,7 +252,7 @@ namespace MCPForUnity.Editor.Tools
                         var optionsObj = p.GetRaw("options") as JObject;
                         string refreshOpt = optionsObj?["refresh"]?.ToString()?.ToLowerInvariant();
                         string validateOpt = optionsObj?["validate"]?.ToString()?.ToLowerInvariant();
-                        return ApplyTextEdits(fullPath, relativePath, name, textEdits, precondition, refreshOpt, validateOpt);
+                        return WithPlayModeWarning(ApplyTextEdits(fullPath, relativePath, name, textEdits, precondition, refreshOpt, validateOpt));
                     }
                 case "validate":
                     {
@@ -278,7 +292,7 @@ namespace MCPForUnity.Editor.Tools
                     McpLog.Warn("manage_script.edit is deprecated; prefer apply_text_edits. Serving structured edit for backward compatibility.");
                     var structEdits = @params["edits"] as JArray;
                     var options = @params["options"] as JObject;
-                    return EditScript(fullPath, relativePath, name, structEdits, options);
+                    return WithPlayModeWarning(EditScript(fullPath, relativePath, name, structEdits, options));
                 case "get_sha":
                     {
                         try

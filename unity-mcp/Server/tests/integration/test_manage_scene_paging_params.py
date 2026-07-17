@@ -42,3 +42,35 @@ async def test_manage_scene_get_hierarchy_paging_params_pass_through(monkeypatch
     assert p["includeTransform"] in (True, "true")
 
 
+
+
+@pytest.mark.asyncio
+async def test_manage_scene_get_hierarchy_detail_param_pass_through(monkeypatch):
+    captured = {}
+
+    async def fake_send(cmd, params, **kwargs):
+        captured["params"] = params
+        return {"success": True, "data": {}}
+
+    monkeypatch.setattr(
+        manage_scene_mod,
+        "async_send_command_with_retry",
+        fake_send,
+    )
+
+    resp = await manage_scene_mod.manage_scene(
+        ctx=DummyContext(),
+        action="get_hierarchy",
+        detail="full",
+    )
+    assert resp.get("success") is True
+    assert captured["params"]["detail"] == "full"
+
+    # detail verilmezse parametre hiç gönderilmez (C# tarafı summary varsayar)
+    captured.clear()
+    resp = await manage_scene_mod.manage_scene(
+        ctx=DummyContext(),
+        action="get_hierarchy",
+    )
+    assert resp.get("success") is True
+    assert "detail" not in captured["params"]

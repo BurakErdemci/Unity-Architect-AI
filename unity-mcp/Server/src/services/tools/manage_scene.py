@@ -15,6 +15,8 @@ from services.tools.preflight import preflight
     description=(
         "Performs CRUD operations on Unity scenes. "
         "Read-only actions: get_hierarchy, get_active, get_build_settings, get_loaded_scenes, scene_view_frame. "
+        "get_hierarchy returns token-cheap summary nodes by default (name/instanceID/path/childCount); "
+        "pass detail='full' when you need componentTypes/tag/layer/active flags. "
         "Modifying actions: create (with optional template), load (with optional additive flag), save, "
         "close_scene, set_active_scene, move_to_scene, validate (with optional auto_repair). "
         "For build settings management (add/remove/enable scenes), use manage_build(action='scenes'). "
@@ -63,6 +65,9 @@ async def manage_scene(
                                      "Child paging hint (safety)."] | None = None,
     include_transform: Annotated[bool | str,
                                  "If true, include local transform in node summaries."] | None = None,
+    detail: Annotated[Literal["summary", "full"],
+                      "get_hierarchy node detail: 'summary' (DEFAULT — name/instanceID/path/childCount only, "
+                      "token-cheap) or 'full' (adds componentTypes, tag, layer, active flags, child paging meta)."] | None = None,
     # --- Multi-scene editing params ---
     scene_name: Annotated[str,
                           "Scene name for multi-scene operations."] | None = None,
@@ -123,6 +128,8 @@ async def manage_scene(
             params["maxChildrenPerNode"] = coerced_max_children_per_node
         if coerced_include_transform is not None:
             params["includeTransform"] = coerced_include_transform
+        if detail is not None:
+            params["detail"] = detail
 
         # Multi-scene editing params
         if scene_name is not None:

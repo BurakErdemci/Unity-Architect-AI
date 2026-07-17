@@ -735,10 +735,21 @@ async def script_apply_edits(
                            "Type of the script to edit"] = "MonoBehaviour",
     namespace: Annotated[str,
                          "Namespace of the script to edit"] | None = None,
+    wait_for_compile: Annotated[bool | str,
+                                "If true, wait for Unity's recompile to finish and include the compile result "
+                                "(error list) in the response — saves separate isCompiling/read_console round-trips."] | None = None,
 ) -> dict[str, Any]:
     unity_instance = await get_unity_instance_from_context(ctx)
     await ctx.info(
         f"Processing script_apply_edits: {name} (unity_instance={unity_instance or 'default'})")
+
+    async def _maybe_attach_compile(resp: dict[str, Any]) -> dict[str, Any]:
+        """wait_for_compile=true ise başarılı yazım sonrası derleme sonucunu cevaba iliştir."""
+        from services.tools.utils import coerce_bool as _cb
+        if isinstance(resp, dict) and resp.get("success") and _cb(wait_for_compile, default=False):
+            from services.tools.manage_script import _await_compile_result
+            resp.setdefault("data", {})["compile"] = await _await_compile_result(ctx, unity_instance)
+        return resp
 
     # Parse edits if they came as a stringified JSON
     edits = parse_json_payload(edits)
@@ -981,7 +992,7 @@ async def script_apply_edits(
             return None
 
         resp_struct = await send_mutation(ctx, unity_instance, "manage_script", params_struct, verify_after_disconnect=_verify)
-        return _with_norm(resp_struct if isinstance(resp_struct, dict) else {"success": False, "message": str(resp_struct)}, normalized_for_echo, routing="structured")
+        return await _maybe_attach_compile(_with_norm(resp_struct if isinstance(resp_struct, dict) else {"success": False, "message": str(resp_struct)}, normalized_for_echo, routing="structured"))
 
     # 1) read from Unity
     read_resp = await async_send_command_with_retry("manage_script", {
@@ -1119,6 +1130,8 @@ async def script_apply_edits(
                     return None
 
                 resp_text = await send_mutation(ctx, unity_instance, "manage_script", params_text, verify_after_disconnect=_verify_text)
+                if isinstance(resp_text, dict) and resp_text.get("success"):
+                    resp_text = await _maybe_attach_compile(resp_text)
                 if not (isinstance(resp_text, dict) and resp_text.get("success")):
                     return _with_norm(resp_text if isinstance(resp_text, dict) else {"success": False, "message": str(resp_text)}, normalized_for_echo, routing="mixed/text-first")
         except Exception as e:
@@ -1360,9 +1373,9 @@ async def script_apply_edits(
         return None
 
     write_resp = await send_mutation(ctx, unity_instance, "manage_script", params, verify_after_disconnect=_verify_write)
-    return _with_norm(
+    return await _maybe_attach_compile(_with_norm(
         write_resp if isinstance(write_resp, dict)
         else {"success": False, "message": str(write_resp)},
         normalized_for_echo,
         routing="text",
-    )
+    ))

@@ -55,6 +55,7 @@ namespace MCPForUnity.Editor.Tools
             public int? maxDepth { get; set; }
             public int? maxChildrenPerNode { get; set; }
             public bool? includeTransform { get; set; }
+            public string detail { get; set; }           // "summary" (default, token-cheap) | "full"
 
             // Multi-scene editing
             public string sceneName { get; set; }
@@ -1950,6 +1951,10 @@ namespace MCPForUnity.Editor.Tools
                 int effectiveTake = Mathf.Min(resolvedPageSize, resolvedMaxNodes);
                 int resolvedMaxChildrenPerNode = Mathf.Clamp(cmd.maxChildrenPerNode ?? 200, 0, 2000);
                 bool includeTransform = cmd.includeTransform ?? false;
+                // Node detail: "summary" (default) = name/instanceID/path/childCount only —
+                // hierarchy dump'ları LLM context'ini şişiriyordu (kota geri bildirimi).
+                // "full" = eski davranış (tag/layer/active/isStatic/componentTypes/child paging meta).
+                bool fullDetail = string.Equals(cmd.detail, "full", StringComparison.OrdinalIgnoreCase);
 
                 // NOTE: maxDepth is accepted for forward-compatibility, but current paging mode
                 // returns a single level (roots or direct children). This keeps payloads bounded.
@@ -1988,7 +1993,7 @@ namespace MCPForUnity.Editor.Tools
                 {
                     var go = nodes[i];
                     if (go == null) continue;
-                    items.Add(BuildGameObjectSummary(go, includeTransform, resolvedMaxChildrenPerNode));
+                    items.Add(BuildGameObjectSummary(go, includeTransform, resolvedMaxChildrenPerNode, fullDetail));
                 }
 
                 bool truncated = end < total;
@@ -1997,6 +2002,7 @@ namespace MCPForUnity.Editor.Tools
                 var payload = new
                 {
                     scope = scope,
+                    detail = fullDetail ? "full" : "summary",
                     cursor = resolvedCursor,
                     pageSize = effectiveTake,
                     next_cursor = nextCursor,
@@ -2072,51 +2078,69 @@ namespace MCPForUnity.Editor.Tools
             return null;
         }
 
-        private static object BuildGameObjectSummary(GameObject go, bool includeTransform, int maxChildrenPerNode)
+        private static object BuildGameObjectSummary(GameObject go, bool includeTransform, int maxChildrenPerNode, bool fullDetail)
         {
             if (go == null) return null;
 
             int childCount = 0;
             try { childCount = go.transform != null ? go.transform.childCount : 0; } catch { }
-            bool childrenTruncated = childCount > 0; // We do not inline children in summary mode.
 
-            // Get component type names (lightweight - no full serialization)
-            var componentTypes = new List<string>();
-            try
+            Dictionary<string, object> d;
+            if (!fullDetail)
             {
-                var components = go.GetComponents<Component>();
-                if (components != null)
+                // summary (varsayılan): LLM context'i için minimum alan seti.
+                // Not: inaktiflik bilgi kaybı olmasın diye activeSelf yalnız FALSE iken eklenir.
+                d = new Dictionary<string, object>
                 {
-                    foreach (var c in components)
+                    { "name", go.name },
+                    { "instanceID", go.GetInstanceIDCompat() },
+                    { "path", GetGameObjectPath(go) },
+                    { "childCount", childCount },
+                };
+                if (!go.activeSelf) d["activeSelf"] = false;
+            }
+            else
+            {
+                bool childrenTruncated = childCount > 0; // We do not inline children in summary mode.
+
+                // Get component type names (lightweight - no full serialization)
+                var componentTypes = new List<string>();
+                try
+                {
+                    var components = go.GetComponents<Component>();
+                    if (components != null)
                     {
-                        if (c != null)
+                        foreach (var c in components)
                         {
-                            componentTypes.Add(c.GetType().Name);
+                            if (c != null)
+                            {
+                                componentTypes.Add(c.GetType().Name);
+                            }
                         }
                     }
                 }
-            }
-            catch (Exception ex)
-            {
-                McpLog.Debug($"[ManageScene] Failed to enumerate components for '{go.name}': {ex.Message}");
-            }
+                catch (Exception ex)
+                {
+                    McpLog.Debug($"[ManageScene] Failed to enumerate components for '{go.name}': {ex.Message}");
+                }
 
-            var d = new Dictionary<string, object>
-            {
-                { "name", go.name },
-                { "instanceID", go.GetInstanceIDCompat() },
-                { "activeSelf", go.activeSelf },
-                { "activeInHierarchy", go.activeInHierarchy },
-                { "tag", go.tag },
-                { "layer", go.layer },
-                { "isStatic", go.isStatic },
-                { "path", GetGameObjectPath(go) },
-                { "childCount", childCount },
-                { "childrenTruncated", childrenTruncated },
-                { "childrenCursor", childCount > 0 ? "0" : null },
-                { "childrenPageSizeDefault", maxChildrenPerNode },
-                { "componentTypes", componentTypes },
-            };
+                d = new Dictionary<string, object>
+                {
+                    { "name", go.name },
+                    { "instanceID", go.GetInstanceIDCompat() },
+                    { "activeSelf", go.activeSelf },
+                    { "activeInHierarchy", go.activeInHierarchy },
+                    { "tag", go.tag },
+                    { "layer", go.layer },
+                    { "isStatic", go.isStatic },
+                    { "path", GetGameObjectPath(go) },
+                    { "childCount", childCount },
+                    { "childrenTruncated", childrenTruncated },
+                    { "childrenCursor", childCount > 0 ? "0" : null },
+                    { "childrenPageSizeDefault", maxChildrenPerNode },
+                    { "componentTypes", componentTypes },
+                };
+            }
 
             if (includeTransform && go.transform != null)
             {
