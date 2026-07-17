@@ -49,7 +49,7 @@
 
 Today a Unity developer juggles multiple windows for different jobs: one CLI to generate code, a separate plugin to control the Editor, yet another app to chat. Each has its own approval logic, its own configuration, its own disconnected view of the project.
 
-**Unity Architect AI brings them all into a single application** — and puts them behind *one approval gate*. You pick a model from a dropdown; whether it's the Claude Code CLI, Codex, Antigravity (agy), or a direct cloud API — they all:
+**Unity Architect AI brings them all into a single application** — and puts them behind *one approval gate*. You pick a model from a dropdown; whether it's the Claude Code CLI, Codex, Antigravity (agy), GitHub Copilot CLI, or a direct cloud API — they all:
 
 - run **in the same chat window**,
 - see **the same project** as their workspace,
@@ -63,6 +63,7 @@ Today a Unity developer juggles multiple windows for different jobs: one CLI to 
 | **Claude Code** (CLI) | ✅ | ✅ MCP | ✅ MCP | ✅ unityMCP | your Anthropic subscription |
 | **Codex** (CLI) | ✅ | ✅ MCP | ✅ MCP | ✅ unityMCP | your OpenAI subscription |
 | **Antigravity / agy** (CLI) | ✅ | ✅ `unityai` bridge | ✅ bridge | ✅ unityMCP (HTTP) | your Google subscription |
+| **GitHub Copilot** (CLI) | ✅ | ✅ MCP | ✅ MCP | ✅ unityMCP | your Copilot subscription |
 | **Cloud API** (Claude/GPT/Gemini/…) | ✅ | ✅ function calling | ✅ function calling | ✅ function calling | your API key |
 | **Ollama** (local) | ✅ | ✅ (compatible models) | ✅ | ⚠️ partial | free, offline |
 
@@ -78,21 +79,21 @@ AI tools in the Unity ecosystem usually land at one of two extremes: they either
 
 | Traditional AI Assistants | Unity Architect AI |
 |---|---|
-| Locked to a single provider | Claude Code, Codex, agy, 7 cloud APIs, Ollama — one menu |
+| Locked to a single provider | Claude Code, Codex, agy, Copilot CLI, 8+ cloud APIs (incl. the free NVIDIA NIM pool), Ollama — one menu |
 | Writes code, doesn't see the project | Scans every `.cs` file in the workspace, extracts an architecture map |
 | Can't touch the file system | Read/write/delete files — every dangerous op behind an approval card |
 | Unaware of the Unity Editor | Adds GameObjects, binds components, reads the console via MCP |
 | Can't run terminal | Secure terminal layer; dangerous commands require approval |
 | Every chat starts from zero | Persistent memory + project analysis keep the context |
-| Setup hassle | `uv` toolchain for Unity MCP is **bundled** — zero install |
+| Setup hassle | `uv`, OmniSharp + .NET runtime, ffmpeg/yt-dlp — all **bundled into the app**, zero extra install |
 
 ---
 
 ## ✨ Features
 
 ### Many agents, one experience
-- Claude Code / Codex / agy CLI agents + Anthropic, Google, OpenAI, Groq, DeepSeek, Moonshot cloud APIs + local Ollama models
-- When a CLI is selected, the backend writes that tool's MCP config **at call time, automatically** (`~/.claude.json`, `~/.codex/config.toml`, `~/.gemini/antigravity-cli/mcp_config.json`)
+- Claude Code / Codex / agy / GitHub Copilot CLI agents + Anthropic, Google, OpenAI, NVIDIA NIM (free pool: GLM 5.2, Qwen3 Coder 480B, Nemotron 3…), Groq, DeepSeek, Moonshot cloud APIs + local Ollama models
+- When a CLI is selected, the backend writes that tool's MCP config **at call time, automatically** (`~/.claude.json`, `~/.codex/config.toml`, `~/.gemini/antigravity-cli/mcp_config.json`; Copilot gets a session-scoped `--additional-mcp-config`)
 - **Transparent hot-swap**: as the Gemini CLI was being retired, the `gemini-*` model IDs were kept and the backend silently routes them to the Antigravity (`agy`) engine — the frontend never changed
 
 ### Autonomous agentic loop
@@ -118,10 +119,21 @@ AI tools in the Unity ecosystem usually land at one of two extremes: they either
 - "Learn Project" → extracts classes, inheritance relationships and key methods to produce an **architecture map**, writes a user-facing summary plus a technical note to its own memory
 - `/compact` lets the AI summarize long conversations, preserving context before hitting the token limit
 
-### Built-in C# linter
-- Auto-discovers **Unity's own Roslyn/csc compiler** from the Unity Hub configuration (zero-config, multi-version)
-- Recognizes `Assets/` and `Library/PackageCache/` (URP, HDRP, etc.) references
-- Errors surface in the Monaco editor
+### OmniSharp code intelligence (embedded, zero install)
+- **OmniSharp LSP** sidecar — real Roslyn-based C# analysis; errors surface in the Monaco editor
+- The **.NET runtime it needs is bundled into the app** (macOS/Linux) — users don't need .NET installed
+- Resolves the Unity project's `Assets/` and package references (the hand-made linter was removed in favor of a full LSP)
+
+### Real effort control
+- Segmented **effort selector** (Auto by default) — the selection **actually** takes effect on every provider, it's not decorative
+- Provider-aware registry: `model_reasoning_effort` for Codex, `thinking_level`/`thinkingBudget` for Gemini, thinking budget for Claude — the UI only shows the levels each model supports
+
+### Video → chat
+- Drop a video link/file into the chat: bundled **ffmpeg + yt-dlp** extract frames and a transcript, which join the visual analysis pipeline
+- Duration-aware frame budgeting + frame dedup keep the token cost under control
+
+### Update notifications
+- **New-release notifications** via GitHub Releases (electron-updater) — no silent download/install, the user decides
 
 ### Professional IDE interface
 - **Monaco Editor** (the VS Code engine) — Unity C# syntax
@@ -145,7 +157,7 @@ AI tools in the Unity ecosystem usually land at one of two extremes: they either
 │  └──────────────────────────────────────────────────┘ │
 │  ┌─────────────┐  ┌──────────────┐  ┌─────────────┐    │
 │  │ Chat Panel  │  │Monaco Editor │  │  Terminal   │    │
-│  │ (SSE stream)│  │ (C# linter)  │  │ (xterm.js)  │    │
+│  │ (SSE stream)│  │ (OmniSharp)  │  │ (xterm.js)  │    │
 │  └──────┬──────┘  └──────────────┘  └─────────────┘    │
 │         │        React 18 + Next.js (TR/EN i18n)        │
 └─────────┼──────────────────────────────────────────────┘
@@ -219,16 +231,17 @@ unityaıPython/
 │   │   ├── tools/               # Function-calling ToolRegistry (cloud API path)
 │   │   ├── rag/                 # ProjectRAG (scan+keyword), MemoryManager
 │   │   ├── routes/              # FastAPI routers (auth/chat/config/…)
+│   │   ├── omnisharp/           # OmniSharp LSP sidecar (manager + client, with bundled .NET)
 │   │   ├── auth_utils.py        # LOCAL_APP_TOKEN validation
-│   │   ├── database.py          # SQLite — single local user (id=1), Fernet
-│   │   └── linter.py            # resolves Roslyn/csc path from Unity Hub
-│   ├── vendor/                  # fetch_uv.sh / fetch_uv.ps1 (downloads uv toolchain)
+│   │   └── database.py          # SQLite — single local user (id=1), Fernet
+│   ├── vendor/                  # fetch_uv (uv toolchain) + fetch_video_bins (ffmpeg/yt-dlp)
 │   ├── backend.spec             # PyInstaller — frozen 'backend' binary
 │   └── tests/
 ├── Frontend/frontend/
 │   ├── renderer/                # home.tsx (IDE), components/, hooks/, lib/i18n.tsx
-│   └── main/background.ts       # Electron main process, LOCAL_APP_TOKEN generator
-├── unity-mcp/                   # CoplayDev/unity-mcp (Server + MCPForUnity plugin)
+│   └── main/background.ts       # Electron main process, LOCAL_APP_TOKEN + updater
+├── scripts/fetch_omnisharp.py   # downloads OmniSharp + .NET runtime (third_party/, not in git)
+├── unity-mcp/                   # CoplayDev/unity-mcp fork (Server + MCPForUnity plugin)
 └── docker-compose.yml
 ```
 
@@ -244,9 +257,10 @@ The backend invokes the official CLI on your machine as a subprocess, using the 
 
 | CLI Tool | Models (example) | Config file | Tool mechanism |
 |---|---|---|---|
-| **Claude Code** | claude-opus-4-8, claude-sonnet-4-6, claude-opus-4-7, claude-haiku-4-5 | `~/.claude.json` (user scope) | MCP native (stdio + HTTP) |
-| **Codex** | gpt-5.5, gpt-5.4, gpt-5.4-mini | `~/.codex/config.toml` | MCP native |
-| **Antigravity (agy)** | Gemini 3.5/3.1/3 + Claude/GPT-OSS via agy | `~/.gemini/antigravity-cli/` | `run_command` → `unityai` bridge |
+| **Claude Code** | claude-sonnet-5, claude-fable-5, claude-opus-4-8, claude-haiku-4-5 | `~/.claude.json` (user scope) | MCP native (stdio + HTTP) |
+| **Codex** | gpt-5.6-sol/terra/luna, gpt-5.5, gpt-5.4 | `~/.codex/config.toml` | MCP native |
+| **Antigravity (agy)** | Gemini 3.5 Flash + Claude/GPT-OSS via agy | `~/.gemini/antigravity-cli/` | `run_command` → `unityai` bridge |
+| **GitHub Copilot** | copilot-auto + Claude/GPT/Gemini options | session-scoped `--additional-mcp-config` | MCP native (global config untouched) |
 
 > **Why is agy different?** agy's `--print` mode does not natively load MCP servers. So file/terminal operations go through a `unityai` CLI bridge invoked via `run_command` that **shares the exact same approval gate** as the MCP tools. Details: [Developer Notes — The agy Saga, Scene 7](#scene-7-the-fix--i-was-knocking-on-the-wrong-door).
 
@@ -256,9 +270,11 @@ The backend calls the provider's official SDK or the OpenRouter gateway. Tool us
 
 | Provider | Models (example) | Notes |
 |---|---|---|
-| **Anthropic** | claude-opus-4-8, claude-sonnet-4-6, claude-haiku-4-5 | Extended Thinking, tool use |
-| **Google** | gemini-3.1-pro, gemini-3-flash, gemini-2.5-pro/flash | Thinking stream, vision |
-| **OpenAI** | gpt-5.5-pro, gpt-5.5, gpt-5.4, gpt-5.4-mini/nano | Function calling, vision |
+| **Anthropic** | claude-sonnet-5, claude-fable-5, claude-opus-4-8, claude-haiku-4-5 | Extended Thinking, tool use |
+| **Google** | gemini-3.5-flash, gemini-3.1-pro, gemini-3-flash | Thinking stream, vision |
+| **OpenAI** | gpt-5.6-sol/terra/luna, gpt-5.5-pro, gpt-5.5, gpt-5.4 | Function calling, vision |
+| **NVIDIA NIM** | GLM 5.2, Qwen3 Coder 480B, Nemotron 3 Ultra/Super, Mistral Large 3, Kimi K2.6… | **Free pool** with a single `nvapi-` key (40 RPM) |
+| **z-ai** | glm-5.2 | Open-weight, 1M context |
 | **Groq** | llama-3.3-70b-versatile | Low latency (LPU) |
 | **DeepSeek** | deepseek-chat (V3) | Cost-effective |
 | **Moonshot / Kimi** | kimi-k2.6, kimi-k2.5 | Long context |
@@ -368,7 +384,8 @@ Every HTTP request carries an X-Session-Token header
 - Python 3.13+
 - Node.js 20+
 - Unity Editor (for Unity MCP, optional)
-- Unity installed (for the C# linter, optional — Roslyn ships with Unity)
+
+> None of these are needed for the packaged app — Python, uv, OmniSharp, the .NET runtime, and ffmpeg/yt-dlp are all bundled. These requirements are for **developing from source** only.
 
 ### Backend
 
@@ -405,26 +422,34 @@ API_KEY_ENCRYPTION_KEY=        # if empty, a file-based key is generated
 
 ## 📦 Packaging (dmg / exe)
 
-A distributable app is produced in two/three steps:
+A distributable app is produced in four steps (none of the bundled binaries are committed to git; they are fetched before each build):
 
 ```bash
-# 1) Download the uv toolchain for Unity MCP (binaries are not committed to git)
+# 1) Download the uv toolchain for Unity MCP
 #    macOS: downloads both architectures (arm64 + x64)
 bash Backend/vendor/fetch_uv.sh
 #    Windows: pwsh Backend/vendor/fetch_uv.ps1
 
-# 2) Compile the backend into a single binary with PyInstaller
-cd Backend && ./build_backend.sh        # Windows: build_backend.bat
+# 2) Download OmniSharp + the .NET runtime (code intelligence; .NET is bundled on macOS/Linux)
+python3 scripts/fetch_omnisharp.py
 
-# 3) Package the Electron app (backend + uv + launchers are embedded)
-cd Frontend/frontend && npm run build
+# 3) Download the video tools (ffmpeg + yt-dlp — the video→chat feature)
+bash Backend/vendor/fetch_video_bins.sh
+
+# 4) Compile the backend with PyInstaller, then package the Electron app
+cd Backend && ./build_backend.sh        # Windows: build_backend.bat
+cd Frontend/frontend && npm install && npm run build
 ```
 
 Outputs land under `Frontend/frontend/build/`:
-- macOS: `Unity Architect AI-<version>-arm64.dmg` and `…-<version>.dmg` (x64)
+- macOS: `Unity Architect AI-<version>-arm64.dmg` (Apple Silicon)
 - Windows: NSIS installer (`.exe`)
 
-The packaged app does **not** require Python — the backend is a single frozen binary; the `mcp-server` and `unityai` subcommands are invoked through that same binary. The `uvx` needed for Unity MCP is embedded too (chosen by architecture at runtime).
+> ⚠️ **The x64 dmg trap:** electron-builder produces dmgs for both architectures, but the backend binary is only compiled for the host architecture — an x64 dmg built on Apple Silicon **won't work on Intel Macs**. Proper Intel support requires compiling the backend with an x64 Python separately.
+
+> 🍎 **macOS quarantine note:** the dmg is unsigned; if macOS reports it as "damaged" after downloading, clear the quarantine flag with `xattr -cr "/Applications/Unity Architect AI.app"`.
+
+The packaged app does **not** require Python or .NET — the backend is a single frozen binary; the `mcp-server` and `unityai` subcommands are invoked through that same binary. `uvx`, OmniSharp (+.NET), and ffmpeg/yt-dlp are all embedded.
 
 ---
 
@@ -466,11 +491,22 @@ Unifies the [CoplayDev/unity-mcp](https://github.com/CoplayDev/unity-mcp) projec
 |---|---|
 | Scene | `manage_scene`, `find_gameobjects`, `manage_gameobject` |
 | Components | `manage_components`, `manage_physics`, `manage_animation` |
-| UI/Camera | `manage_ui`, `manage_camera` |
+| UI/Camera | `manage_ui`, `manage_camera` (incl. screenshots) |
 | Prefab/Asset | `manage_prefabs`, `manage_scriptable_object`, `manage_asset` |
 | Visual | `manage_material`, `manage_shader`, `manage_texture`, `manage_graphics` |
-| Script | `manage_script`, `script_apply_edits`, `read_console` |
+| Script | `manage_script`, `script_apply_edits`, `validate_script`, `read_console` |
 | Build | `manage_build`, `manage_packages`, `manage_editor` |
+| Orchestration | `batch_execute` (up to 25 commands per call), `execute_code`, `execute_menu_item` |
+
+### A fork that evolves on agent feedback
+
+The tools in this fork are continuously improved based on feedback from real overnight agent sessions (Claude, GLM):
+
+- **Token economy** — `get_hierarchy` returns a lightweight summary by default (`detail:"full"` for everything); `find_gameobjects` results ship with a `name+path` summary (no N+1 follow-up calls)
+- **Smart search** — `match_mode: exact|contains|prefix` on `find_gameobjects` ("Prop_" finds every prop)
+- **Write-compile-verify in one turn** — `wait_for_compile: true` makes script writes return the compile result and console errors in the same response
+- **Batch chaining** — `"$[0].data.instanceID"` references enable create→configure→parent in a single `batch_execute`
+- **Honest feedback** — script changes during play mode carry a warning; a modify call that changes nothing is reported as `no_op`
 
 ### Multiple Unity instances
 

@@ -49,7 +49,7 @@
 
 Bugün bir Unity geliştiricisi farklı işler için farklı pencereler açmak zorunda: kod üretmek için bir CLI, Editor'ü kontrol etmek için ayrı bir eklenti, sohbet için bir başka uygulama. Her birinin kendi onay mantığı, kendi konfigürasyonu, projeden kendi kopuk görüşü var.
 
-**Unity Architect AI bunların hepsini tek bir uygulamada toplar** — ve hepsini *tek bir onay kapısının* arkasına alır. Bir modeli açılır menüden seçersin; ister Claude Code CLI olsun, ister Codex, ister Antigravity (agy), ister doğrudan bulut API'si — hepsi:
+**Unity Architect AI bunların hepsini tek bir uygulamada toplar** — ve hepsini *tek bir onay kapısının* arkasına alır. Bir modeli açılır menüden seçersin; ister Claude Code CLI olsun, ister Codex, ister Antigravity (agy), ister GitHub Copilot CLI, ister doğrudan bulut API'si — hepsi:
 
 - **aynı sohbet penceresinde** çalışır,
 - **aynı projeyi** workspace olarak görür,
@@ -63,6 +63,7 @@ Bugün bir Unity geliştiricisi farklı işler için farklı pencereler açmak z
 | **Claude Code** (CLI) | ✅ | ✅ MCP | ✅ MCP | ✅ unityMCP | Anthropic aboneliğin |
 | **Codex** (CLI) | ✅ | ✅ MCP | ✅ MCP | ✅ unityMCP | OpenAI aboneliğin |
 | **Antigravity / agy** (CLI) | ✅ | ✅ `unityai` köprüsü | ✅ köprü | ✅ unityMCP (HTTP) | Google aboneliğin |
+| **GitHub Copilot** (CLI) | ✅ | ✅ MCP | ✅ MCP | ✅ unityMCP | Copilot aboneliğin |
 | **Bulut API** (Claude/GPT/Gemini/…) | ✅ | ✅ function calling | ✅ function calling | ✅ function calling | Kendi API anahtarın |
 | **Ollama** (yerel) | ✅ | ✅ (uyumlu modeller) | ✅ | ⚠️ kısmi | Maliyet yok, offline |
 
@@ -78,21 +79,21 @@ Unity ekosistemindeki AI araçları genelde iki uçtan birine düşer: ya sadece
 
 | Geleneksel AI Asistanlar | Unity Architect AI |
 |---|---|
-| Tek sağlayıcıya kilitli | Claude Code, Codex, agy, 7 bulut API, Ollama — tek menüden |
+| Tek sağlayıcıya kilitli | Claude Code, Codex, agy, Copilot CLI, 8+ bulut API (NVIDIA NIM ücretsiz havuz dahil), Ollama — tek menüden |
 | Kod yazar, projeyi görmez | Workspace'teki tüm `.cs` dosyalarını tarar, mimari haritasını çıkarır |
 | Dosya sistemine erişemez | Dosya oku/yaz/sil — her tehlikeli işlem onay kartıyla |
 | Unity Editor'den habersiz | MCP ile sahneye GameObject ekler, bileşen bağlar, konsolu okur |
 | Terminal çalıştıramaz | Güvenli terminal katmanı; tehlikeli komutlar onay ister |
 | Her sohbet sıfırdan başlar | Kalıcı hafıza + proje analizi ile bağlamı korur |
-| Kurulum derdi | Unity MCP için `uv` araç zinciri **gömülü** — sıfır kurulum |
+| Kurulum derdi | `uv`, OmniSharp + .NET runtime, ffmpeg/yt-dlp — hepsi **uygulamaya gömülü**, sıfır ek kurulum |
 
 ---
 
 ## ✨ Özellikler
 
 ### Çoklu Ajan, Tek Deneyim
-- Claude Code / Codex / agy CLI ajanları + Anthropic, Google, OpenAI, Groq, DeepSeek, Moonshot bulut API'leri + Ollama yerel modelleri
-- CLI seçilince backend, o aracın MCP konfigürasyonunu **çağrı anında otomatik** yazar (`~/.claude.json`, `~/.codex/config.toml`, `~/.gemini/antigravity-cli/mcp_config.json`)
+- Claude Code / Codex / agy / GitHub Copilot CLI ajanları + Anthropic, Google, OpenAI, NVIDIA NIM (ücretsiz havuz: GLM 5.2, Qwen3 Coder 480B, Nemotron 3…), Groq, DeepSeek, Moonshot bulut API'leri + Ollama yerel modelleri
+- CLI seçilince backend, o aracın MCP konfigürasyonunu **çağrı anında otomatik** yazar (`~/.claude.json`, `~/.codex/config.toml`, `~/.gemini/antigravity-cli/mcp_config.json`; Copilot'ta session-bazlı `--additional-mcp-config`)
 - **Şeffaf hot-swap**: Gemini CLI kapanırken `gemini-*` model ID'leri korundu, backend bunları sessizce Antigravity (`agy`) motoruna yönlendiriyor — frontend hiç değişmedi
 
 ### Otonom Agentic Loop
@@ -118,10 +119,21 @@ Unity ekosistemindeki AI araçları genelde iki uçtan birine düşer: ya sadece
 - "Projeyi Öğren" → sınıfları, kalıtım ilişkilerini ve önemli metotları çıkarıp **mimari harita** üretir, kullanıcıya özet + kendi hafızasına teknik not yazar
 - `/compact` ile uzun sohbetler AI tarafından özetlenir, bağlam token limiti aşılmadan korunur
 
-### Gömülü C# Linter
-- Unity'nin **kendi Roslyn/csc derleyicisini** Unity Hub konfigürasyonundan otomatik bulur (zero-config, çoklu Unity sürümü)
-- `Assets/` ve `Library/PackageCache/` (URP, HDRP vb.) referanslarını tanır
-- Hatalar Monaco editöründe gösterilir
+### OmniSharp Kod Zekası (gömülü, sıfır kurulum)
+- **OmniSharp LSP** sidecar — gerçek Roslyn tabanlı C# analizi; hatalar Monaco editöründe gösterilir
+- Gerektirdiği **.NET runtime da uygulamaya gömülü** (macOS/Linux) — kullanıcının makinesinde .NET kurulu olması gerekmez
+- Unity projesinin `Assets/` ve paket referanslarını çözümleyerek çalışır (el yapımı linter söküldü, yerine tam LSP geldi)
+
+### Gerçek Effort Kontrolü
+- Segmented **effort seçici** (Auto varsayılan) — seçim her sağlayıcıda **gerçekten** etki eder, süs değil
+- Provider-farkında kayıtçı: Codex'te `model_reasoning_effort`, Gemini'de `thinking_level`/`thinkingBudget`, Claude'da düşünme bütçesi — model hangi seviyeleri destekliyorsa arayüz onları gösterir
+
+### Video → Sohbet
+- Sohbete video linki/dosyası at: gömülü **ffmpeg + yt-dlp** ile kareler ve transkript çıkarılır, görsel analiz hattına katılır
+- Süreye göre akıllı kare bütçesi + kare tekilleştirme — token maliyeti kontrol altında
+
+### Otomatik Güncelleme Bildirimi
+- GitHub Releases üzerinden **yeni sürüm bildirimi** (electron-updater) — sessiz indirme/kurulum yok, karar kullanıcının
 
 ### Profesyonel IDE Arayüzü
 - **Monaco Editor** (VS Code motoru) — Unity C# sözdizimi
@@ -145,7 +157,7 @@ Unity ekosistemindeki AI araçları genelde iki uçtan birine düşer: ya sadece
 │  └──────────────────────────────────────────────────┘ │
 │  ┌─────────────┐  ┌──────────────┐  ┌─────────────┐    │
 │  │ Chat Panel  │  │Monaco Editor │  │  Terminal   │    │
-│  │ (SSE stream)│  │ (C# linter)  │  │ (xterm.js)  │    │
+│  │ (SSE stream)│  │ (OmniSharp)  │  │ (xterm.js)  │    │
 │  └──────┬──────┘  └──────────────┘  └─────────────┘    │
 │         │        React 18 + Next.js (TR/EN i18n)        │
 └─────────┼──────────────────────────────────────────────┘
@@ -219,16 +231,17 @@ unityaıPython/
 │   │   ├── tools/               # Function-calling ToolRegistry (bulut API yolu)
 │   │   ├── rag/                 # ProjectRAG (tarama+keyword), MemoryManager
 │   │   ├── routes/              # FastAPI router'ları (auth/chat/config/…)
+│   │   ├── omnisharp/           # OmniSharp LSP sidecar (manager + client, gömülü .NET ile)
 │   │   ├── auth_utils.py        # LOCAL_APP_TOKEN doğrulama
-│   │   ├── database.py          # SQLite — tek lokal kullanıcı (id=1), Fernet
-│   │   └── linter.py            # Unity Hub'dan Roslyn/csc yolu çözer
-│   ├── vendor/                  # fetch_uv.sh / fetch_uv.ps1 (uv araç zinciri indirir)
+│   │   └── database.py          # SQLite — tek lokal kullanıcı (id=1), Fernet
+│   ├── vendor/                  # fetch_uv (uv zinciri) + fetch_video_bins (ffmpeg/yt-dlp)
 │   ├── backend.spec             # PyInstaller — frozen 'backend' binary
 │   └── tests/
 ├── Frontend/frontend/
 │   ├── renderer/                # home.tsx (IDE), components/, hooks/, lib/i18n.tsx
-│   └── main/background.ts       # Electron ana süreç, LOCAL_APP_TOKEN üretici
-├── unity-mcp/                   # CoplayDev/unity-mcp (Server + MCPForUnity eklentisi)
+│   └── main/background.ts       # Electron ana süreç, LOCAL_APP_TOKEN + updater
+├── scripts/fetch_omnisharp.py   # OmniSharp + .NET runtime indirir (third_party/, git'e girmez)
+├── unity-mcp/                   # CoplayDev/unity-mcp fork'u (Server + MCPForUnity eklentisi)
 └── docker-compose.yml
 ```
 
@@ -244,9 +257,10 @@ Backend, makinendeki resmi CLI aracını subprocess olarak çağırır; aracın 
 
 | CLI Aracı | Modeller (örnek) | Config Dosyası | Tool Mekanizması |
 |---|---|---|---|
-| **Claude Code** | claude-opus-4-8, claude-sonnet-4-6, claude-opus-4-7, claude-haiku-4-5 | `~/.claude.json` (user scope) | MCP native (stdio + HTTP) |
-| **Codex** | gpt-5.5, gpt-5.4, gpt-5.4-mini | `~/.codex/config.toml` | MCP native |
-| **Antigravity (agy)** | Gemini 3.5/3.1/3 + agy üzerinden Claude/GPT-OSS | `~/.gemini/antigravity-cli/` | `run_command` → `unityai` köprüsü |
+| **Claude Code** | claude-sonnet-5, claude-fable-5, claude-opus-4-8, claude-haiku-4-5 | `~/.claude.json` (user scope) | MCP native (stdio + HTTP) |
+| **Codex** | gpt-5.6-sol/terra/luna, gpt-5.5, gpt-5.4 | `~/.codex/config.toml` | MCP native |
+| **Antigravity (agy)** | Gemini 3.5 Flash + agy üzerinden Claude/GPT-OSS | `~/.gemini/antigravity-cli/` | `run_command` → `unityai` köprüsü |
+| **GitHub Copilot** | copilot-auto + Claude/GPT/Gemini seçenekleri | session-bazlı `--additional-mcp-config` | MCP native (global config'e dokunulmaz) |
 
 > **agy neden farklı?** agy'nin `--print` modu MCP sunucularını native yüklemez. Bu yüzden dosya/terminal işlemleri, `run_command` ile çağrılan ve MCP tool'larıyla **aynı onay kapısını paylaşan** bir `unityai` CLI köprüsü üzerinden yapılır. Detaylar: [Geliştirici Notları — agy Macerası, Sahne 7](#sahne-7-çözüm--yanlış-kapıyı-çalıyormuşum).
 
@@ -256,9 +270,11 @@ Backend, sağlayıcının resmi SDK'sı veya OpenRouter gateway'i üzerinden ist
 
 | Sağlayıcı | Modeller (örnek) | Notlar |
 |---|---|---|
-| **Anthropic** | claude-opus-4-8, claude-sonnet-4-6, claude-haiku-4-5 | Extended Thinking, tool use |
-| **Google** | gemini-3.1-pro, gemini-3-flash, gemini-2.5-pro/flash | Thinking stream, vision |
-| **OpenAI** | gpt-5.5-pro, gpt-5.5, gpt-5.4, gpt-5.4-mini/nano | Function calling, vision |
+| **Anthropic** | claude-sonnet-5, claude-fable-5, claude-opus-4-8, claude-haiku-4-5 | Extended Thinking, tool use |
+| **Google** | gemini-3.5-flash, gemini-3.1-pro, gemini-3-flash | Thinking stream, vision |
+| **OpenAI** | gpt-5.6-sol/terra/luna, gpt-5.5-pro, gpt-5.5, gpt-5.4 | Function calling, vision |
+| **NVIDIA NIM** | GLM 5.2, Qwen3 Coder 480B, Nemotron 3 Ultra/Super, Mistral Large 3, Kimi K2.6… | Tek `nvapi-` anahtarıyla **ücretsiz havuz** (40 RPM) |
+| **z-ai** | glm-5.2 | Açık ağırlık, 1M bağlam |
 | **Groq** | llama-3.3-70b-versatile | Düşük gecikme (LPU) |
 | **DeepSeek** | deepseek-chat (V3) | Uygun fiyat |
 | **Moonshot / Kimi** | kimi-k2.6, kimi-k2.5 | Uzun bağlam |
@@ -368,7 +384,8 @@ Her HTTP isteği X-Session-Token header'ı ile gelir
 - Python 3.13+
 - Node.js 20+
 - Unity Editor (Unity MCP için, isteğe bağlı)
-- Unity'nin kurulu olması (C# linter için, isteğe bağlı — Roslyn Unity ile gelir)
+
+> Paketlenmiş uygulamada bunların hiçbiri gerekmez — Python, uv, OmniSharp, .NET runtime, ffmpeg/yt-dlp hepsi gömülüdür. Bu gereksinimler yalnızca **kaynak koddan geliştirme** içindir.
 
 ### Backend
 
@@ -405,26 +422,34 @@ API_KEY_ENCRYPTION_KEY=        # boşsa dosya-tabanlı anahtar üretilir
 
 ## 📦 Paketleme (dmg / exe)
 
-Dağıtılabilir uygulama iki adımda üretilir:
+Dağıtılabilir uygulama dört adımda üretilir (gömülü binary'lerin hiçbiri git'e konmaz, her build öncesi indirilir):
 
 ```bash
-# 1) Unity MCP için uv araç zincirini indir (binary'ler git'e konmaz)
+# 1) Unity MCP için uv araç zincirini indir
 #    macOS: her iki mimari (arm64 + x64) indirilir
 bash Backend/vendor/fetch_uv.sh
 #    Windows: pwsh Backend/vendor/fetch_uv.ps1
 
-# 2) Backend'i PyInstaller ile tek binary'ye derle
-cd Backend && ./build_backend.sh        # Windows: build_backend.bat
+# 2) OmniSharp + .NET runtime'ı indir (kod zekası; macOS/Linux'ta .NET de gömülür)
+python3 scripts/fetch_omnisharp.py
 
-# 3) Electron uygulamasını paketle (backend + uv + launcher'lar gömülür)
-cd Frontend/frontend && npm run build
+# 3) Video araçlarını indir (ffmpeg + yt-dlp — video→sohbet özelliği)
+bash Backend/vendor/fetch_video_bins.sh
+
+# 4) Backend'i PyInstaller ile derle, sonra Electron'u paketle
+cd Backend && ./build_backend.sh        # Windows: build_backend.bat
+cd Frontend/frontend && npm install && npm run build
 ```
 
 Çıktılar `Frontend/frontend/build/` altında:
-- macOS: `Unity Architect AI-<sürüm>-arm64.dmg` ve `…-<sürüm>.dmg` (x64)
+- macOS: `Unity Architect AI-<sürüm>-arm64.dmg` (Apple Silicon)
 - Windows: NSIS installer (`.exe`)
 
-Paketlenmiş app'te Python kurulu olması **gerekmez** — backend tek bir frozen binary'dir; `mcp-server` ve `unityai` alt komutları aynı binary üzerinden çağrılır. Unity MCP için gerekli `uvx` da uygulamaya gömülüdür (çalışma anında mimariye göre seçilir).
+> ⚠️ **x64 dmg tuzağı:** electron-builder her iki mimari için dmg üretir ama backend binary'si yalnızca host mimaride derlenir — Apple Silicon'da alınan x64 dmg **Intel Mac'te çalışmaz**. Intel desteği için backend'i ayrıca x64 Python ile derlemek gerekir.
+
+> 🍎 **macOS karantina notu:** dmg imzasızdır; internetten indirilince "hasar görmüş" uyarısı çıkarsa `xattr -cr "/Applications/Unity Architect AI.app"` ile karantina kaldırılır.
+
+Paketlenmiş app'te Python veya .NET kurulu olması **gerekmez** — backend tek bir frozen binary'dir; `mcp-server` ve `unityai` alt komutları aynı binary üzerinden çağrılır. `uvx`, OmniSharp (+.NET) ve ffmpeg/yt-dlp uygulamaya gömülüdür.
 
 ---
 
@@ -466,11 +491,22 @@ Paketlenmiş app'te Python kurulu olması **gerekmez** — backend tek bir froze
 |---|---|
 | Sahne | `manage_scene`, `find_gameobjects`, `manage_gameobject` |
 | Bileşen | `manage_components`, `manage_physics`, `manage_animation` |
-| UI/Kamera | `manage_ui`, `manage_camera` |
+| UI/Kamera | `manage_ui`, `manage_camera` (screenshot dahil) |
 | Prefab/Asset | `manage_prefabs`, `manage_scriptable_object`, `manage_asset` |
 | Görsel | `manage_material`, `manage_shader`, `manage_texture`, `manage_graphics` |
-| Script | `manage_script`, `script_apply_edits`, `read_console` |
+| Script | `manage_script`, `script_apply_edits`, `validate_script`, `read_console` |
 | Build | `manage_build`, `manage_packages`, `manage_editor` |
+| Orkestrasyon | `batch_execute` (25 komuta kadar tek çağrı), `execute_code`, `execute_menu_item` |
+
+### Ajan geri bildirimiyle evrilen fork
+
+Bu fork'taki araçlar, gerçek gece-boyu ajan oturumlarının (Claude, GLM) geri bildirimleriyle sürekli iyileştiriliyor:
+
+- **Token ekonomisi** — `get_hierarchy` varsayılan olarak hafif özet döner (`detail:"full"` ile ayrıntı); `find_gameobjects` sonuçları `name+path` özetiyle gelir (N+1 çağrı derdi yok)
+- **Akıllı arama** — `find_gameobjects`'te `match_mode: exact|contains|prefix` ("Prop_" ile tüm prop'lar)
+- **Tek turda yaz-derle-doğrula** — `wait_for_compile: true` ile script yazımı, derleme sonucunu ve konsol hatalarını aynı yanıtta getirir
+- **Batch zincirleme** — `"$[0].data.instanceID"` referanslarıyla create→configure→parent tek `batch_execute`'ta
+- **Dürüst geri bildirim** — play mode'da script değişikliği uyarı verir; hiçbir şey değiştirmeyen modify çağrısı `no_op` olarak raporlanır
 
 ### Çoklu Unity Instance
 
