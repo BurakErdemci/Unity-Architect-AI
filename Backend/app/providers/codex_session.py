@@ -7,10 +7,13 @@ süreç olarak sürer — Claude'daki ClaudeSDKClient'ın muadili:
 - NATIVE onay: server `item/commandExecution/requestApproval` /
   `item/fileChange/requestApproval` gönderir → biz command_gates üzerinden onay
   kartına çevirip {"decision":"accept"|"decline"} döneriz (can_use_tool eşdeğeri).
+- MCP izin onayı: `item/permissions/requestApproval` ayrı cevap şeması kullanır;
+  kabulde istenen izin profili `permissions` alanıyla geri verilir.
 - Abonelik (ChatGPT) auth: API key gerekmez — codex kendi login'ini kullanır.
 
-Protokol (codex-cli 0.139.0, ampirik doğrulandı):
-- Framing: NDJSON (her mesaj tek satır UTF-8 JSON + '\n'). Content-Length YOK.
+Protokol (codex-cli 0.145.0, ampirik doğrulandı):
+- Framing: NDJSON (her mesaj tek satır UTF-8 JSON + '\n'). Content-Length ve
+  wire üzerinde `jsonrpc` alanı YOK.
 - Akış: initialize → initialized(notif) → thread/start → turn/start → (stream) →
   turn/completed. Onaylar Server→Client request (id + method) olarak gelir.
 - decision enum: accept | acceptForSession | decline | cancel.
@@ -30,6 +33,11 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Set
 from agentic.command_gates import APPROVAL_GATES, APPROVAL_RESULTS
 
 logger = logging.getLogger(__name__)
+
+# UnityMCP'nin 40+ araçlık şema/status mesajı tek NDJSON satırında asyncio'nun
+# varsayılan 64 KiB StreamReader limitini aşabiliyor. Makul bir üst sınır koy;
+# sınırsız buffer kullanma.
+_APP_SERVER_STREAM_LIMIT = 8 * 1024 * 1024
 
 # conversation_id → CodexSession (canlı, isteklerin ötesinde yaşar)
 _SESSIONS: Dict[int, "CodexSession"] = {}
@@ -131,13 +139,14 @@ async def fetch_codex_skills(cwd: Optional[str] = None, force: bool = False) -> 
                 stderr=asyncio.subprocess.DEVNULL,
                 env=env,
                 cwd=(cwd if (cwd and os.path.isdir(cwd)) else None),
+                limit=_APP_SERVER_STREAM_LIMIT,
             )
 
             req_id = 0
 
             async def send(method, params=None, notify=False):
                 nonlocal req_id
-                obj: Dict[str, Any] = {"jsonrpc": "2.0", "method": method}
+                obj: Dict[str, Any] = {"method": method}
                 rid = None
                 if not notify:
                     req_id += 1
@@ -214,6 +223,50 @@ def _describe_approval(method: str, params: dict) -> str:
     return method
 
 
+def _trusted_mcp_config() -> dict:
+    """IDE'nin kendi MCP'leri için Codex-katmanı onay politikasını üret.
+
+    unityai içindeki kalıcı dosya/terminal mutasyonları kendi ``approval_bridge``
+    kapısından geçer. unityMCP sahne işlemleri de tasarım gereği doğrudan çalışır.
+    Bu nedenle Codex'in ikinci bir MCP onayı istemesi hem gereksizdir hem de
+    app-server istemcisinde çift-onay üretir.
+    """
+    configured = _configured_codex_mcp_names()
+    servers = {}
+    if "unityai" in configured:
+        servers["unityai"] = {"default_tools_approval_mode": "approve"}
+    try:
+        from unity_ai_mcp.unity_mcp_manager import unity_mcp_manager
+        if unity_mcp_manager.is_running() and "unityMCP" in configured:
+            servers["unityMCP"] = {"default_tools_approval_mode": "approve"}
+    except Exception as exc:
+        # Unity yöneticisi henüz yüklenmemişse unityai yine kullanılabilir.
+        logger.debug("[CodexSession] unityMCP onay politikası belirlenemedi: %s", exc)
+    return {"mcp_servers": servers}
+
+
+def _configured_codex_mcp_names() -> Set[str]:
+    """Kullanıcının global Codex config'indeki MCP adlarını güvenle oku.
+
+    Thread config'inde mevcut olmayan bir MCP için yalnız
+    ``default_tools_approval_mode`` vermek, transport alanı bulunmadığından
+    Codex'in tüm ``thread/start`` isteğini reddetmesine yol açar.
+    """
+    try:
+        import tomllib
+
+        codex_home = os.environ.get("CODEX_HOME")
+        if not codex_home:
+            codex_home = os.path.join(os.path.expanduser("~"), ".codex")
+        with open(os.path.join(codex_home, "config.toml"), "rb") as fh:
+            config = tomllib.load(fh)
+        servers = config.get("mcp_servers", {})
+        return set(servers) if isinstance(servers, dict) else set()
+    except Exception as exc:
+        logger.debug("[CodexSession] Codex MCP config adları okunamadı: %s", exc)
+        return set()
+
+
 class CodexSession:
     """Tek bir sohbete ait kalıcı codex app-server süreç sarmalayıcısı."""
 
@@ -270,6 +323,7 @@ class CodexSession:
             stderr=asyncio.subprocess.DEVNULL,
             env=env,
             cwd=(self.cwd if (self.cwd and os.path.isdir(self.cwd)) else None),
+            limit=_APP_SERVER_STREAM_LIMIT,
         )
         self._read_task = asyncio.create_task(self._read_loop())
 
@@ -285,11 +339,23 @@ class CodexSession:
             "cwd": self.cwd or os.getcwd(),
             "approvalPolicy": "on-request",
             "sandbox": "read-only",
+            # Eski ``codex exec`` yolu bu iki override'ı CLI ``-c`` bayrağıyla
+            # geçiriyordu. Kalıcı app-server yolu da aynı güven modelini thread
+            # config'i üzerinden taşımalı; aksi halde salt-okunur MCP araçları
+            # bile "user rejected MCP tool call" ile düşer.
+            "config": _trusted_mcp_config(),
         }
         if self.model:
             params["model"] = self.model
         resp = await self._request("thread/start", params, timeout=30)
+        if (resp or {}).get("error"):
+            error = (resp or {}).get("error") or {}
+            raise RuntimeError(
+                f"Codex thread/start başarısız: {error.get('message') or error}"
+            )
         self.thread_id = (((resp or {}).get("result") or {}).get("thread") or {}).get("id")
+        if not self.thread_id:
+            raise RuntimeError("Codex thread/start yanıtında thread id bulunamadı.")
         self._started = True
         logger.info(f"[CodexSession:{self.conversation_id}] başlatıldı (model={self.model or 'default'}, thread={self.thread_id})")
 
@@ -333,14 +399,16 @@ class CodexSession:
         rid = self._req_id
         fut: asyncio.Future = asyncio.get_event_loop().create_future()
         self._pending[rid] = fut
-        await self._send({"jsonrpc": "2.0", "id": rid, "method": method, "params": params})
+        # Codex app-server JSON-RPC 2.0 semantiği kullanır fakat wire mesajında
+        # ``jsonrpc`` alanını kabul etmez (0.145.0'da alan sessiz timeout üretir).
+        await self._send({"id": rid, "method": method, "params": params})
         try:
             return await asyncio.wait_for(fut, timeout=timeout)
         finally:
             self._pending.pop(rid, None)
 
     async def _notify(self, method: str, params: Optional[dict] = None):
-        obj: Dict[str, Any] = {"jsonrpc": "2.0", "method": method}
+        obj: Dict[str, Any] = {"method": method}
         if params is not None:
             obj["params"] = params
         await self._send(obj)
@@ -395,7 +463,21 @@ class CodexSession:
         try:
             if method in _APPROVAL_METHODS:
                 decision = await self._resolve_approval(method, params)
-                await self._send({"id": rid, "result": {"decision": decision}})
+                if method == "item/permissions/requestApproval":
+                    # Codex 0.145+ bu request için ``decision`` kabul etmez.
+                    # Kabulde talep edilen profili aynen grant et; redde boş
+                    # profil dön. ``scope=turn`` izni oturumlar arasında kalıcı
+                    # hale getirmeden mevcut turla sınırlar.
+                    permissions = params.get("permissions", {}) if decision == "accept" else {}
+                    await self._send({
+                        "id": rid,
+                        "result": {
+                            "permissions": permissions,
+                            "scope": "turn",
+                        },
+                    })
+                else:
+                    await self._send({"id": rid, "result": {"decision": decision}})
             elif method == "item/tool/requestUserInput":
                 await self._send({"id": rid, "result": {"value": ""}})
             else:

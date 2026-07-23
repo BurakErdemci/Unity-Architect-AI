@@ -2,6 +2,9 @@ import asyncio
 import json
 import logging
 import os
+import subprocess
+import sys
+import tempfile
 import urllib.request
 
 from fastapi import APIRouter, Header, HTTPException
@@ -11,6 +14,171 @@ from schemas import AIConfigRequest, APIKeySaveRequest
 
 
 logger = logging.getLogger(__name__)
+
+
+_WINDOWS_INSTALL_CMDS = {
+    "cursor":   ("irm 'https://cursor.com/install?win32=true' | iex", False),
+    "copilot":  ("npm install -g @github/copilot", True),
+    "opencode": ("npm install -g opencode-ai", True),
+    "claude":   ("npm install -g @anthropic-ai/claude-code", True),
+    "codex":    ("npm install -g @openai/codex", True),
+    # npm'deki 'agy'/'antigravity-cli' paketleri Google'ın değil (squatter).
+    "agy":      ("irm 'https://antigravity.google/cli/install.ps1' | iex", False),
+}
+
+# macOS'ta mümkün olan yerlerde sağlayıcının resmi native installer'ını kullan.
+# Böylece Finder'dan açılan GUI uygulamasının kısıtlı PATH'i veya Node/npm sürümü
+# kurulumun önüne geçmez. Claude/Codex'in resmi standart kurulumu hâlâ npm'dir.
+_MAC_INSTALL_CMDS = {
+    "cursor":   ("curl https://cursor.com/install -fsS | bash", False),
+    "copilot":  ("curl -fsSL https://gh.io/copilot-install | bash", False),
+    "opencode": ("curl -fsSL https://opencode.ai/install | bash", False),
+    "claude":   ("npm install -g @anthropic-ai/claude-code", True),
+    "codex":    ("npm install -g @openai/codex", True),
+    "agy":      ("curl -fsSL https://antigravity.google/cli/install.sh | bash", False),
+}
+
+_WINDOWS_LOGIN_CMDS = {
+    "cursor":   "agent login",
+    "copilot":  "copilot login",
+    "codex":    "codex login",
+    "opencode": "opencode auth login",
+    "claude":   "claude",
+    "agy":      "agy",
+}
+
+_MAC_LOGIN_CMDS = {
+    "cursor":   "cursor-agent login",
+    "copilot":  "copilot login",
+    "codex":    "codex login",
+    "opencode": "opencode auth login",
+    "claude":   "claude",
+    "agy":      "agy",
+}
+
+# Native installer'ların yaygın hedefleri. Script login aşamasına geçtiğinde
+# yeni shell açmaya gerek kalmadan kurulan binary bulunabilsin.
+_MAC_CLI_PATH = 'export PATH="$HOME/.local/bin:$HOME/.opencode/bin:$HOME/.claude/bin:$HOME/.volta/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"'
+
+
+def _resolve_general_cli(name: str) -> str | None:
+    """PATH ve macOS kullanıcı kurulum dizinlerinden genel CLI binary'sini bul."""
+    import shutil
+
+    found = shutil.which(name)
+    if found:
+        return found
+    if sys.platform != "win32":
+        from providers.oneshot_cli import resolve_posix_cli
+        return resolve_posix_cli(name)
+    return None
+
+
+def _parse_opencode_models(raw: str) -> list:
+    """OpenCode'un kendi ücretsiz ve Go abonelik modellerini UI modeline çevir."""
+    models = []
+    for line in raw.splitlines():
+        line = line.strip()
+        if "/" not in line or " " in line:
+            continue
+        if not line.startswith(("opencode/", "opencode-go/")):
+            continue
+        provider, short = line.split("/", 1)
+        pretty = short.replace("-", " ").title()
+        if short.endswith("-free"):
+            pretty = pretty[:-5].strip() + " (Ücretsiz)"
+        elif provider == "opencode-go":
+            pretty += " (Go)"
+        models.append({"id": f"opencode:{line}", "name": pretty, "provider": "subscription"})
+    return models
+
+
+def _open_visible_terminal(shell_command: str, platform: str | None = None) -> None:
+    """Komutu kullanıcının görebileceği, interaktif bir sistem terminalinde aç."""
+    platform = platform or sys.platform
+    if platform == "win32":
+        CREATE_NEW_CONSOLE = 0x00000010
+        subprocess.Popen(
+            ["powershell", "-NoExit", "-ExecutionPolicy", "Bypass", "-Command", shell_command],
+            creationflags=CREATE_NEW_CONSOLE,
+        )
+        return
+
+    if platform == "darwin":
+        # AppleScript ile Terminal'i kontrol etmek paketlenmiş uygulamada ek
+        # Automation izni ister. Geçici .command dosyasını LaunchServices ile
+        # açmak aynı görünür terminali izin diyaloğu olmadan ve argüman kaçış
+        # problemi yaratmadan sağlar.
+        fd, script_path = tempfile.mkstemp(prefix="unityai-cli-", suffix=".command")
+        try:
+            script = (
+                "#!/bin/zsh\n"
+                "trap 'rm -f -- \"$0\"' EXIT\n"
+                "[ -f \"$HOME/.zprofile\" ] && source \"$HOME/.zprofile\"\n"
+                "[ -f \"$HOME/.zshrc\" ] && source \"$HOME/.zshrc\"\n"
+                f"{_MAC_CLI_PATH}\n"
+                f"{shell_command}\n"
+                "echo\n"
+                "echo 'Bu pencereyi kapatabilirsiniz.'\n"
+                "/bin/zsh -il\n"
+            )
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(script)
+            os.chmod(script_path, 0o700)
+            completed = subprocess.run(
+                ["/usr/bin/open", "-a", "Terminal", script_path],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if completed.returncode != 0:
+                detail = (completed.stderr or completed.stdout or "Terminal.app açılamadı.").strip()
+                raise HTTPException(500, detail)
+        except Exception:
+            try:
+                os.unlink(script_path)
+            except OSError:
+                pass
+            raise
+        return
+
+    raise HTTPException(501, "Otomatik kurulum şu anda Windows ve macOS'ta destekleniyor.")
+
+
+def _install_terminal_command(cli: str, install_cmd: str, needs_npm: bool, platform: str) -> str:
+    """Platform kabuğuna uygun kurulum + başarılıysa giriş komutunu üret."""
+    if platform == "win32":
+        return (
+            f"Write-Host '=== {cli} kurulumu basliyor ===' -ForegroundColor Cyan; {install_cmd}; "
+            f"Write-Host ''; Write-Host '=== Bitti. Bu pencereyi kapatip uygulamada Yenile''ye basabilirsiniz. ===' "
+            f"-ForegroundColor Green"
+        )
+
+    npm_guard = ""
+    if needs_npm:
+        npm_guard = (
+            "if ! command -v npm >/dev/null 2>&1; then "
+            "echo 'Node.js/npm bulunamadi. Once https://nodejs.org adresinden Node.js kurun.'; "
+            "install_status=127; else "
+        )
+        install_tail = "; install_status=$?; fi"
+    else:
+        install_tail = "; install_status=$?"
+
+    login_cmd = _MAC_LOGIN_CMDS.get(cli, "")
+    login_step = (
+        f"echo; echo '=== Kurulum tamamlandi. Simdi hesap girisi aciliyor. ==='; "
+        f"{_MAC_CLI_PATH}; {login_cmd}; "
+        if login_cmd else ""
+    )
+    return (
+        f"echo '=== {cli} kurulumu basliyor ==='; "
+        f"{npm_guard}{install_cmd}{install_tail}; "
+        "if [ \"$install_status\" -eq 0 ]; then "
+        f"{login_step}"
+        "echo; echo '=== Kurulum tamamlandi. Uygulamada Yenile butonuna basin. ==='; "
+        "else echo; echo '=== Kurulum basarisiz. Yukaridaki hatayi kontrol edin. ==='; fi"
+    )
 
 
 def create_config_router(db):
@@ -182,15 +350,14 @@ def create_config_router(db):
         """CLI sağlayıcılarının kullanıcı PC'sinde kurulu olup olmadığını döner.
         Bunlar gömülü DEĞİL — kullanıcının kurmuş olması gerekir.
         Frontend, kurulu olmayan bir CLI modeli seçilince uyarı gösterir."""
-        import shutil
         from providers.agy_provider import AgyProvider
         from providers.oneshot_cli import cli_installed
 
         # _agy_binary() yaygın kurulum yollarına da bakar; "agy" dönerse sadece PATH'e kalmış demektir.
-        agy_ok = AgyProvider._agy_binary() != "agy" or bool(shutil.which("agy"))
+        agy_ok = AgyProvider._agy_binary() != "agy" or bool(_resolve_general_cli("agy"))
         return {
-            "claude": bool(shutil.which("claude")),
-            "codex": bool(shutil.which("codex")),
+            "claude": bool(_resolve_general_cli("claude")),
+            "codex": bool(_resolve_general_cli("codex")),
             "agy": agy_ok,
             "cursor": cli_installed("cursor"),
             "copilot": cli_installed("copilot"),
@@ -235,25 +402,6 @@ def create_config_router(db):
             # "Auto (current, default)" → "Auto"
             name = name.split(" (current")[0].split(" (default")[0].strip()
             models.append({"id": f"cursor-{mid}", "name": name, "provider": "subscription"})
-        return models
-
-    def _parse_opencode_models(raw: str) -> list:
-        """`opencode models` çıktısı: 'provider/model' satırları. Liste models.dev
-        kataloğunun tamamı olabilir (yüzlerce) → yalnızca opencode/* (ücretsiz,
-        auth'suz çalışır — canlı doğrulandı) gösterilir; diğer sağlayıcılar için
-        kullanıcı zaten bizim API-key provider'larımızı kullanabilir."""
-        models = []
-        for line in raw.splitlines():
-            line = line.strip()
-            if "/" not in line or " " in line:
-                continue
-            if not line.startswith("opencode/"):
-                continue
-            short = line.split("/", 1)[1]
-            pretty = short.replace("-", " ").title()
-            if short.endswith("-free"):
-                pretty = pretty[:-5].strip() + " (Ücretsiz)"
-            models.append({"id": f"opencode:{line}", "name": pretty, "provider": "subscription"})
         return models
 
     # Copilot'un programatik model listeleme komutu yok → statik liste (dinamik
@@ -315,8 +463,8 @@ def create_config_router(db):
             # öğrenme) → her istekte taze uygulanır.
             return {"models": _apply_plan_caps(cli, _copy.deepcopy(cached[1])), "installed": True}
 
-        import shutil as _shutil
-        base = resolve_cli_cmd(cli) if cli != "codex" else (["codex"] if _shutil.which("codex") else None)
+        codex_binary = _resolve_general_cli("codex") if cli == "codex" else None
+        base = resolve_cli_cmd(cli) if cli != "codex" else ([codex_binary] if codex_binary else None)
         if not base:
             return {"models": [], "installed": False}
 
@@ -349,7 +497,6 @@ def create_config_router(db):
     @router.get("/cli-doctor")
     async def cli_doctor(refresh: bool = False, x_session_token: str = Header(alias="X-Session-Token", default="")):
         import time
-        import shutil
         from providers.oneshot_cli import cli_installed, resolve_cli_cmd
         from providers.agy_provider import AgyProvider
 
@@ -388,10 +535,10 @@ def create_config_router(db):
             except Exception:
                 return None
 
-        agy_ok = AgyProvider._agy_binary() != "agy" or bool(shutil.which("agy"))
+        agy_ok = AgyProvider._agy_binary() != "agy" or bool(_resolve_general_cli("agy"))
         data = {
-            "claude":   {"installed": bool(shutil.which("claude")),  "loggedIn": None},
-            "codex":    {"installed": bool(shutil.which("codex")),   "loggedIn": None},
+            "claude":   {"installed": bool(_resolve_general_cli("claude")),  "loggedIn": None},
+            "codex":    {"installed": bool(_resolve_general_cli("codex")),   "loggedIn": None},
             "agy":      {"installed": agy_ok,                        "loggedIn": None},
             "cursor":   {"installed": cli_installed("cursor"),       "loggedIn": None},
             "copilot":  {"installed": cli_installed("copilot"),      "loggedIn": None},
@@ -413,56 +560,40 @@ def create_config_router(db):
 
     # ── Tek tık kurulum / giriş: kullanıcının GÖREBİLECEĞİ bir terminal
     #    penceresi açar (kurulum çıktısı + tarayıcı login akışı orada yaşar). ──
-    _INSTALL_CMDS = {
-        "cursor":   ("irm 'https://cursor.com/install?win32=true' | iex", False),
-        "copilot":  ("npm install -g @github/copilot", True),
-        "opencode": ("npm install -g opencode-ai", True),
-        "claude":   ("npm install -g @anthropic-ai/claude-code", True),
-        "codex":    ("npm install -g @openai/codex", True),
-        # DİKKAT: npm'deki 'agy'/'antigravity-cli' paketleri Google'ın DEĞİL
-        # (squatter) — agy yalnız resmi installer'la kurulur (LOCALAPPDATA\agy\bin).
-        "agy":      ("irm 'https://antigravity.google/cli/install.ps1' | iex", False),
-    }
-    _LOGIN_CMDS = {
-        "cursor":   "agent login",
-        "copilot":  "copilot login",
-        "codex":    "codex login",
-        "opencode": "opencode auth login",
-        "claude":   "claude",   # claude login akışı interaktif oturum içinde (/login)
-        "agy":      "agy",      # login subcommand'ı yok — ilk interaktif açılış Google girişini başlatır
-    }
-
-    def _open_visible_terminal(ps_command: str) -> None:
-        import subprocess as sp
-        import sys as _sys
-        if _sys.platform != "win32":
-            raise HTTPException(501, "Şimdilik yalnız Windows'ta destekleniyor.")
-        CREATE_NEW_CONSOLE = 0x00000010
-        sp.Popen(["powershell", "-NoExit", "-ExecutionPolicy", "Bypass", "-Command", ps_command],
-                 creationflags=CREATE_NEW_CONSOLE)
-
     @router.post("/cli-install/{cli}")
     async def cli_install(cli: str, x_session_token: str = Header(alias="X-Session-Token", default="")):
         import shutil
-        entry = _INSTALL_CMDS.get(cli)
+        install_map = _MAC_INSTALL_CMDS if sys.platform == "darwin" else _WINDOWS_INSTALL_CMDS
+        entry = install_map.get(cli)
         if not entry:
             raise HTTPException(404, f"'{cli}' için otomatik kurulum desteklenmiyor.")
         cmd, needs_npm = entry
-        if needs_npm and not shutil.which("npm"):
+        # Windows GUI süreci terminalle aynı PATH'i görür. macOS'ta npm nvm/fnm
+        # üzerinden yalnız interaktif shell'de bulunabilir; kontrol terminal
+        # scriptinin içinde yapılır.
+        if sys.platform == "win32" and needs_npm and not shutil.which("npm"):
             raise HTTPException(412, "Bu CLI'ın kurulumu için Node.js gerekiyor. Önce nodejs.org'dan Node.js kurun (npm ile birlikte gelir).")
-        _open_visible_terminal(
-            f"Write-Host '=== {cli} kurulumu basliyor ===' -ForegroundColor Cyan; {cmd}; "
-            f"Write-Host ''; Write-Host '=== Bitti. Bu pencereyi kapatip uygulamada Yenile''ye basabilirsiniz. ===' -ForegroundColor Green")
+        _open_visible_terminal(_install_terminal_command(cli, cmd, needs_npm, sys.platform))
         _doctor_cache.clear()
         return {"status": "started", "message": "Kurulum penceresi açıldı."}
 
     @router.post("/cli-login/{cli}")
     async def cli_login(cli: str, x_session_token: str = Header(alias="X-Session-Token", default="")):
-        cmd = _LOGIN_CMDS.get(cli)
+        login_map = _MAC_LOGIN_CMDS if sys.platform == "darwin" else _WINDOWS_LOGIN_CMDS
+        cmd = login_map.get(cli)
         if not cmd:
             raise HTTPException(404, f"'{cli}' için giriş akışı desteklenmiyor.")
-        _open_visible_terminal(
-            f"Write-Host '=== {cli} girisi: acilan tarayicida hesabinizla giris yapin ===' -ForegroundColor Cyan; {cmd}")
+        if sys.platform == "darwin":
+            visible_cmd = (
+                f"echo '=== {cli} girisi: acilan tarayicida hesabinizla giris yapin ==='; "
+                f"{_MAC_CLI_PATH}; {cmd}"
+            )
+        else:
+            visible_cmd = (
+                f"Write-Host '=== {cli} girisi: acilan tarayicida hesabinizla giris yapin ===' "
+                f"-ForegroundColor Cyan; {cmd}"
+            )
+        _open_visible_terminal(visible_cmd)
         _doctor_cache.clear()
         return {"status": "started", "message": "Giriş penceresi açıldı."}
 

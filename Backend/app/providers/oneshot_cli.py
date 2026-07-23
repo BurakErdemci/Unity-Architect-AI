@@ -18,7 +18,9 @@ shim'i tamamen ATLAYIP gerçek entry point'i doğrudan spawn ederiz:
   • cursor  : <LOCALAPPDATA>/cursor-agent/versions/<en yeni>/node.exe + index.js
   • copilot : node + <APPDATA>/npm/node_modules/@github/copilot/npm-loader.js
   • opencode: <APPDATA>/npm/node_modules/opencode-ai/bin/opencode.exe (native!)
-macOS/Linux'ta bunlar POSIX binary/script olduğundan shutil.which yeterli.
+macOS/Linux'ta bunlar POSIX binary/script'tir. Finder'dan açılan uygulamanın
+PATH'i kullanıcı bin dizinlerini taşımayabildiğinden yaygın kurulum yolları da
+doğrudan taranır.
 """
 import os
 import sys
@@ -85,6 +87,50 @@ def _latest_cursor_version_dir() -> Optional[str]:
     return max(dirs, key=os.path.basename)
 
 
+def resolve_posix_cli(name: str) -> Optional[str]:
+    """GUI uygulamasının PATH'inde görünmeyen yaygın kullanıcı CLI yollarını çöz."""
+    found = shutil.which(name)
+    if found and not found.lower().endswith(".ps1"):
+        return found
+    if sys.platform == "win32":
+        return None
+
+    candidates = [
+        os.path.expanduser(f"~/.local/bin/{name}"),
+        os.path.expanduser(f"~/.volta/bin/{name}"),
+        f"/opt/homebrew/bin/{name}",
+        f"/usr/local/bin/{name}",
+    ]
+    if name == "opencode":
+        candidates.insert(0, os.path.expanduser("~/.opencode/bin/opencode"))
+    elif name == "claude":
+        candidates[:0] = [
+            os.path.expanduser("~/.claude/bin/claude"),
+            os.path.expanduser("~/.claude/local/claude"),
+        ]
+
+    # npm, nvm ve fnm kurulumları Finder'dan başlatılan uygulamanın PATH'inde
+    # olmaz. En yeni node sürümünün global bin dizinini doğrudan tara.
+    candidates.extend(sorted(
+        glob.glob(os.path.expanduser(f"~/.nvm/versions/node/*/bin/{name}")),
+        reverse=True,
+    ))
+    candidates.extend(sorted(
+        glob.glob(os.path.expanduser(f"~/.fnm/node-versions/*/installation/bin/{name}")),
+        reverse=True,
+    ))
+    candidates.extend(sorted(
+        glob.glob(os.path.expanduser(
+            f"~/Library/Application Support/fnm/node-versions/*/installation/bin/{name}"
+        )),
+        reverse=True,
+    ))
+    for candidate in candidates:
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
 def resolve_cursor_cmd() -> Optional[List[str]]:
     """Cursor agent'ı çalıştıracak komut listesi (arg'lar hariç) veya None."""
     if sys.platform == "win32":
@@ -96,8 +142,8 @@ def resolve_cursor_cmd() -> Optional[List[str]]:
                 return [node, entry]
     # POSIX (mac/linux) veya fallback: PATH'teki agent
     for name in ("cursor-agent", "agent"):
-        p = shutil.which(name)
-        if p and not p.lower().endswith(".ps1"):
+        p = resolve_posix_cli(name)
+        if p:
             return [p]
     return None
 
@@ -109,8 +155,8 @@ def resolve_copilot_cmd() -> Optional[List[str]]:
         node = shutil.which("node")
         if node and os.path.exists(loader):
             return [node, loader]
-    p = shutil.which("copilot")
-    if p and not p.lower().endswith(".ps1"):
+    p = resolve_posix_cli("copilot")
+    if p:
         return [p]
     return None
 
@@ -121,8 +167,8 @@ def resolve_opencode_cmd() -> Optional[List[str]]:
         exe = os.path.join(_npm_global_root(), "node_modules", "opencode-ai", "bin", "opencode.exe")
         if os.path.exists(exe):
             return [exe]
-    p = shutil.which("opencode")
-    if p and not p.lower().endswith(".ps1"):
+    p = resolve_posix_cli("opencode")
+    if p:
         return [p]
     return None
 

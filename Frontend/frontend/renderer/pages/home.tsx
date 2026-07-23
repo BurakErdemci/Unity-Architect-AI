@@ -8,6 +8,7 @@ import {
   Zap, Code, Layout, MessageSquare
 } from 'lucide-react';
 import { LangContext, translations, type Lang } from '../lib/i18n';
+import { getUnsavedEditorContext } from '../lib/editor-context';
 
 import { Sidebar } from '../components/home/Sidebar';
 import { EditorPanel } from '../components/home/EditorPanel';
@@ -309,7 +310,10 @@ export default function Home() {
         }
       }
     }
-    chat.sendMessage(input, fs.code, lang, chat.generationMode, thinkingLevel, fs.setPendingGenFiles, fs.setPendingDelete, images, ultracode, videos);
+    // Diskteki açık dosyayı her mesajda yeniden modele basma. Ajan gerektiğinde
+    // dosyayı kendisi okuyabilir; yalnız kaydedilmemiş buffer ayrıca gönderilir.
+    const unsavedEditorContext = getUnsavedEditorContext(fs.code, fs.isDirty);
+    chat.sendMessage(input, unsavedEditorContext, lang, chat.generationMode, thinkingLevel, fs.setPendingGenFiles, fs.setPendingDelete, images, ultracode, videos);
   };
 
   const langCtxValue = { lang, setLang, t: (k: string) => translations[lang][k] ?? k };

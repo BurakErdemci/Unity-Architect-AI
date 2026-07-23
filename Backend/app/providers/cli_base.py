@@ -83,7 +83,11 @@ class BaseCLIProvider(AIProvider):
         → cmd.exe /c ile sarılmalı. .exe / POSIX binary ise doğrudan çalıştırılır."""
         if not cmd:
             return cmd
-        resolved = shutil.which(cmd[0]) or cmd[0]
+        resolved = shutil.which(cmd[0])
+        if not resolved and sys.platform != "win32":
+            from .oneshot_cli import resolve_posix_cli
+            resolved = resolve_posix_cli(cmd[0])
+        resolved = resolved or cmd[0]
         rest = list(cmd[1:])
         if sys.platform == "win32" and resolved.lower().endswith((".cmd", ".bat")):
             return ["cmd", "/c", resolved, *rest]
@@ -94,7 +98,12 @@ class BaseCLIProvider(AIProvider):
         """CLI binary'si PATH'te (Windows'ta PATHEXT ile .cmd/.exe dahil) bulunabiliyor mu?"""
         if os.path.isabs(name):
             return os.path.exists(name)
-        return shutil.which(name) is not None
+        if shutil.which(name) is not None:
+            return True
+        if sys.platform != "win32":
+            from .oneshot_cli import resolve_posix_cli
+            return resolve_posix_cli(name) is not None
+        return False
 
     @staticmethod
     def _ensure_exec(path: str) -> None:

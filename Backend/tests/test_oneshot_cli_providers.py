@@ -268,14 +268,20 @@ class TestModelListParsers(unittest.TestCase):
         self.assertEqual(dict(models)["cursor-auto"], "Auto")
 
     def test_opencode_models_parse(self):
+        from routes.config_routes import _parse_opencode_models
+
         raw = (
             "opencode/big-pickle\n"
             "opencode/deepseek-v4-flash-free\n"
+            "opencode-go/kimi-k3\n"
             "google/gemini-3.5-flash\n"
             "openai/gpt-5.4\n"
         )
-        models = [l for l in raw.splitlines() if l.startswith("opencode/")]
-        self.assertEqual(len(models), 2)  # yalnız opencode/* (ücretsiz) gösterilir
+        models = _parse_opencode_models(raw)
+        ids = [m["id"] for m in models]
+        self.assertEqual(len(models), 3)
+        self.assertIn("opencode:opencode-go/kimi-k3", ids)
+        self.assertNotIn("opencode:google/gemini-3.5-flash", ids)
 
 
 if __name__ == "__main__":

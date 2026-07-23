@@ -1477,15 +1477,51 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
         desired_effort = _map_effort("subscription", self.model_name or "gpt-",
                                      _lvl).get("cli_config", {}).get("model_reasoning_effort")
         _existing = _SESSIONS.get(self.conversation_id)
-        if _existing is not None and getattr(_existing, "effort", None) != desired_effort:
-            logger.info(f"[CodexSession] effort değişti ({_existing.effort}→{desired_effort}); "
-                        f"session yeniden kuruluyor")
+        _workspace = os.path.abspath(self.workspace_path or ".")
+        _effort_changed = (
+            _existing is not None
+            and getattr(_existing, "effort", None) != desired_effort
+        )
+        _workspace_changed = (
+            _existing is not None
+            and os.path.abspath(getattr(_existing, "cwd", None) or ".") != _workspace
+        )
+        if _existing is not None and (_effort_changed or _workspace_changed):
+            reasons = []
+            if _effort_changed:
+                reasons.append(f"effort {_existing.effort}→{desired_effort}")
+            if _workspace_changed:
+                reasons.append("workspace değişti")
+            logger.info(
+                "[CodexSession] %s; session yeniden kuruluyor",
+                ", ".join(reasons),
+            )
             await close_session(self.conversation_id)
+            _existing = None
+
+        if _existing is None:
+            # Kalıcı app-server yolu, BaseCLIProvider.analyze_code üzerinden
+            # geçmediği için eski tek-atımlık Codex yolundaki MCP kayıt yenilemesi
+            # burada açıkça yapılmalı. Aksi halde global config silinmiş/önceki
+            # workspace'i göstermeye devam eder ve tool call startup'ta düşer.
+            from providers.codex_provider import CodexProvider
+            _codex_provider = CodexProvider(binary_name=self.model_name or "codex")
+            try:
+                await asyncio.to_thread(
+                    _codex_provider._write_mcp_config,
+                    _workspace,
+                )
+            except Exception as exc:
+                logger.exception("[CodexSession] MCP kaydı güncellenemedi")
+                yield AgentEvent("error", {
+                    "message": f"Codex MCP yapılandırması güncellenemedi: {exc}",
+                })
+                return
 
         session = get_session(
             self.conversation_id,
             model=self.model_name,
-            cwd=self.workspace_path or ".",
+            cwd=_workspace,
             effort=desired_effort,
         )
         # Oto mod → onay otomatik accept; Adım/Plan modu → her mutasyonda onay kartı.

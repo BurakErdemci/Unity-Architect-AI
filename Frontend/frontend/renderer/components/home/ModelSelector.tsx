@@ -84,7 +84,7 @@ const CLI_GROUPS: CliGroupDef[] = [
     matches: id => id.startsWith('opencode:'),
     dynamic: 'opencode',
     accent: 'text-teal-300', dot: 'bg-teal-300',
-    badge: 'ücretsiz',
+    badge: 'FREE + GO',
   },
 ];
 
