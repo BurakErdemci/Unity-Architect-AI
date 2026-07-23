@@ -6,6 +6,7 @@ from .agy_provider import AgyProvider
 from .cursor_provider import CursorProvider
 from .copilot_provider import CopilotProvider
 from .opencode_provider import OpenCodeProvider
+from .kimi_provider import KimiProvider
 from .cli_base import BaseCLIProvider as CLIProvider
 from .base import AIProvider
 
@@ -30,7 +31,8 @@ class AIProviderManager:
         elif p_type == "openrouter" and api_key:
             return OpenAICompatibleProvider(api_key=api_key, base_url="https://openrouter.ai/api/v1", model_name=m_name or "openai/gpt-5.5")
         elif p_type == "moonshot" and api_key:
-            return OpenAICompatibleProvider(api_key=api_key, base_url="https://api.moonshot.cn/v1", model_name=m_name or "kimi-k2.7-code")
+            # Uluslararası endpoint (.ai) — K3 dahil; .cn Çin bölgesine özel
+            return OpenAICompatibleProvider(api_key=api_key, base_url="https://api.moonshot.ai/v1", model_name=m_name or "kimi-k3")
         elif p_type == "z-ai" and api_key:
             return OpenAICompatibleProvider(api_key=api_key, base_url="https://api.z.ai/api/paas/v4", model_name=m_name or "glm-5.2")
         elif p_type == "nvidia" and api_key:
@@ -48,6 +50,8 @@ class AIProviderManager:
                 return OpenCodeProvider(binary_name=name)
             elif name.startswith("gpt-"):
                 return CodexProvider(binary_name=name)
+            elif name.startswith("kimi-"):
+                return KimiProvider(binary_name=name)
             elif name.startswith(("gemini", "agy-")):
                 return AgyProvider(binary_name=name)
             else:  # claude-* ve diğerleri

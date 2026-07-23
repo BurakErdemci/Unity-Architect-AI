@@ -58,3 +58,5 @@ ROADMAP.md
 docs/superpowers/
 .mcp.json
 .claude/worktrees/
+
+.delegate-runs/

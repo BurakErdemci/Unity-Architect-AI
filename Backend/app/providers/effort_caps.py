@@ -57,6 +57,8 @@ def get_effort_caps(provider_type: str, model_name: str) -> dict:
                          "opencode.json model seçeneğiyle uygulanır (bir sonraki turda etkin).")
         if m.startswith("cursor-"):
             return _caps(["auto"], "Cursor CLI reasoning seçimi upstream bug nedeniyle çalışmıyor.")
+        if m.startswith("kimi-"):
+            return _caps(["auto"], "Kimi K3 düşünmesi her zaman açık — ayrı effort seviyesi yok.")
         # gemini/agy-*: agy CLI effort knob'u sunmuyor (model seçimiyle)
         return _caps(["auto"], "Antigravity effort'u model seçimine gömer — ayrı seviye sunmaz.")
 
@@ -123,6 +125,8 @@ def map_effort(provider_type: str, model_name: str, level: str) -> dict:
             return {"cli_flags": ["--effort", lvl]}
         if m.startswith("opencode:"):
             return {"opencode_reasoning": lvl}
+        if m.startswith("kimi-"):
+            return {}
         return {}
 
     if p == "google":

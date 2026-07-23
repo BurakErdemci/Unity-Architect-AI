@@ -24,6 +24,9 @@ _WINDOWS_INSTALL_CMDS = {
     "codex":    ("npm install -g @openai/codex", True),
     # npm'deki 'agy'/'antigravity-cli' paketleri Google'ın değil (squatter).
     "agy":      ("irm 'https://antigravity.google/cli/install.ps1' | iex", False),
+    # Kimi Code CLI resmi olarak macOS/Linux (Python 3.13+); Windows'ta kurulum
+    # denenebilir ama desteklenmez — kurulu değilse UI temiz uyarı verir.
+    "kimi":     ("pip install kimi-cli", False),
 }
 
 # macOS'ta mümkün olan yerlerde sağlayıcının resmi native installer'ını kullan.
@@ -45,6 +48,7 @@ _WINDOWS_LOGIN_CMDS = {
     "opencode": "opencode auth login",
     "claude":   "claude",
     "agy":      "agy",
+    "kimi":     "kimi",
 }
 
 _MAC_LOGIN_CMDS = {
@@ -54,6 +58,7 @@ _MAC_LOGIN_CMDS = {
     "opencode": "opencode auth login",
     "claude":   "claude",
     "agy":      "agy",
+    "kimi":     "kimi",
 }
 
 # Native installer'ların yaygın hedefleri. Script login aşamasına geçtiğinde
@@ -246,7 +251,9 @@ def create_config_router(db):
                 {"id": "claude-sonnet-4-6",       "name": "Claude 4.6 Sonnet",  "provider": "anthropic", "openrouter_id": "anthropic/claude-sonnet-4-6"},
                 {"id": "claude-haiku-4-5",         "name": "Claude 4.5 Haiku",   "provider": "anthropic", "openrouter_id": "anthropic/claude-haiku-4-5"},
                 {"id": "llama-3.3-70b-versatile",  "name": "Llama 3.3 70B",      "provider": "groq",      "openrouter_id": "meta-llama/llama-3.3-70b-instruct"},
+                {"id": "gemini-3.6-flash",              "name": "Gemini 3.6 Flash",      "provider": "google", "openrouter_id": "google/gemini-3.6-flash"},
                 {"id": "gemini-3.5-flash",              "name": "Gemini 3.5 Flash",      "provider": "google", "openrouter_id": "google/gemini-3.5-flash"},
+                {"id": "gemini-3.5-flash-lite",         "name": "Gemini 3.5 Flash Lite", "provider": "google", "openrouter_id": "google/gemini-3.5-flash-lite"},
                 {"id": "gemini-3-flash-preview",        "name": "Gemini 3 Flash",        "provider": "google", "openrouter_id": "google/gemini-3-flash-preview"},
                 {"id": "gemini-3.1-flash-lite-preview", "name": "Gemini 3.1 Flash Lite", "provider": "google", "openrouter_id": "google/gemini-3.1-flash-lite-preview"},
                 {"id": "gemini-3.1-pro-preview",        "name": "Gemini 3.1 Pro",        "provider": "google", "openrouter_id": "google/gemini-3.1-pro-preview", "paid": True},
@@ -260,6 +267,7 @@ def create_config_router(db):
                 {"id": "deepseek-v4-pro",          "name": "DeepSeek V4 Pro",    "provider": "deepseek",  "openrouter_id": "deepseek/deepseek-v4-pro"},
                 {"id": "deepseek-v4-flash",        "name": "DeepSeek V4 Flash",  "provider": "deepseek",  "openrouter_id": "deepseek/deepseek-v4-flash"},
                 {"id": "glm-5.2",                  "name": "GLM 5.2",            "provider": "z-ai",      "openrouter_id": "z-ai/glm-5.2"},
+                {"id": "kimi-k3",                  "name": "Kimi K3",            "provider": "moonshot",  "openrouter_id": "moonshotai/kimi-k3"},
                 {"id": "kimi-k2.7-code",           "name": "Kimi K2.7 Code",     "provider": "moonshot",  "openrouter_id": "moonshotai/kimi-k2.7-code"},
                 {"id": "kimi-k2.6",                "name": "Kimi K2.6",          "provider": "moonshot",  "openrouter_id": "moonshotai/kimi-k2.6"},
                 # NVIDIA NIM (build.nvidia.com) — tek nvapi- key ile ÜCRETSİZ havuz
@@ -287,12 +295,16 @@ def create_config_router(db):
                 {"id": "gpt-5.5",              "name": "Codex (GPT-5.5)",               "provider": "subscription"},
                 {"id": "gpt-5.4",              "name": "Codex (GPT-5.4)",               "provider": "subscription"},
                 {"id": "gpt-5.4-mini",         "name": "Codex (GPT-5.4 Mini)",          "provider": "subscription"},
-                {"id": "gemini-3.5-flash",             "name": "Gemini 3.5 Flash (Önerilen)", "provider": "subscription"},
+                {"id": "kimi-k3",              "name": "Kimi K3 (CLI)",                 "provider": "subscription"},
+                {"id": "kimi-k2.7-code",       "name": "Kimi K2.7 Code (CLI)",          "provider": "subscription"},
+                {"id": "gemini-3.6-flash",             "name": "Gemini 3.6 Flash (Önerilen)", "provider": "subscription"},
+                {"id": "gemini-3.6-flash-medium",      "name": "Gemini 3.6 Flash (Medium)",   "provider": "subscription"},
+                {"id": "gemini-3.5-flash",             "name": "Gemini 3.5 Flash",            "provider": "subscription"},
                 {"id": "gemini-3.5-flash-medium",      "name": "Gemini 3.5 Flash (Medium)",   "provider": "subscription"},
                 {"id": "gemini-3.1-pro-preview",       "name": "Gemini 3.1 Pro (High)",       "provider": "subscription"},
                 {"id": "gemini-3.1-pro-low",           "name": "Gemini 3.1 Pro (Low)",        "provider": "subscription"},
-                {"id": "gemini-3-flash-preview",       "name": "Gemini 3 Flash",              "provider": "subscription"},
-                {"id": "gemini-3.1-flash-lite-preview","name": "Gemini 3.1 Flash Lite",       "provider": "subscription"},
+                # NOT: 3.5 Flash Lite / 3 Flash / 3.1 Flash Lite / 2.5-* agy 1.1.5
+                # `agy models` listesinde YOK — subscription'dan çıkarıldı (Cloud'da geçerli).
                 {"id": "agy-claude-sonnet-4-6",        "name": "Claude Sonnet 4.6 (Thinking)", "provider": "subscription"},
                 {"id": "agy-gpt-oss-120b",             "name": "GPT-OSS 120B (Medium)",       "provider": "subscription"},
                 # GitHub Copilot CLI (statik — copilot'un programatik model listesi yok;
@@ -359,6 +371,7 @@ def create_config_router(db):
             "claude": bool(_resolve_general_cli("claude")),
             "codex": bool(_resolve_general_cli("codex")),
             "agy": agy_ok,
+            "kimi": bool(_resolve_general_cli("kimi")),
             "cursor": cli_installed("cursor"),
             "copilot": cli_installed("copilot"),
             "opencode": cli_installed("opencode"),
@@ -540,6 +553,7 @@ def create_config_router(db):
             "claude":   {"installed": bool(_resolve_general_cli("claude")),  "loggedIn": None},
             "codex":    {"installed": bool(_resolve_general_cli("codex")),   "loggedIn": None},
             "agy":      {"installed": agy_ok,                        "loggedIn": None},
+            "kimi":     {"installed": bool(_resolve_general_cli("kimi")),    "loggedIn": None},
             "cursor":   {"installed": cli_installed("cursor"),       "loggedIn": None},
             "copilot":  {"installed": cli_installed("copilot"),      "loggedIn": None},
             "opencode": {"installed": cli_installed("opencode"),     "loggedIn": True},  # auth opsiyonel (ücretsiz modeller)

@@ -19,8 +19,14 @@ class GeminiProvider(AIProvider):
         self.client = genai.Client(api_key=api_key)
 
         raw_name = model_name.lower() if model_name else ""
-        # Google AI Studio / google-genai SDK - Mayıs 2026 (Minimum desteklenen: v2.0)
-        if "3.1-pro" in raw_name:
+        # Google AI Studio / google-genai SDK - Temmuz 2026 (Minimum desteklenen: v2.0)
+        if "3.6-flash" in raw_name:
+            self.model_id = "gemini-3.6-flash"
+        elif "3.5-flash-lite" in raw_name:
+            self.model_id = "gemini-3.5-flash-lite"
+        elif "3.5-flash" in raw_name:
+            self.model_id = "gemini-3.5-flash"
+        elif "3.1-pro" in raw_name:
             self.model_id = "gemini-3.1-pro"
         elif "3.1-flash-lite" in raw_name:
             self.model_id = "gemini-3.1-flash-lite"
@@ -33,9 +39,10 @@ class GeminiProvider(AIProvider):
         elif "pro" in raw_name:
             self.model_id = "gemini-3.1-pro"
         else:
-            self.model_id = model_name if model_name else "gemini-3.1-pro"
+            self.model_id = model_name if model_name else "gemini-3.6-flash"
 
-    _THINKING_MODELS = ("gemini-3.1", "gemini-3.0", "gemini-2.5")
+    # gemini-3.x (3.6/3.5/3.1/3.0) ve 2.5 düşünme destekler
+    _THINKING_MODELS = ("gemini-3", "gemini-2.5")
 
     def _supports_thinking(self) -> bool:
         return any(self.model_id.startswith(m) for m in self._THINKING_MODELS)
@@ -152,7 +159,12 @@ class OpenAICompatibleProvider(AIProvider):
 
     def _is_kimi(self) -> bool:
         lower_name = self.model_name.lower()
-        return "moonshot" in self.base_url or "moonshotai" in lower_name or "kimi-k2" in lower_name
+        # "kimi-k" tüm nesilleri (k2, k2.6, k2.7-code, k3, gelecekteki k4…) kapsar
+        return "moonshot" in self.base_url or "moonshotai" in lower_name or "kimi-k" in lower_name
+
+    def _is_kimi_k3(self) -> bool:
+        # K3'te düşünme HER ZAMAN açık — thinking.enabled göndermek 400 döndürür.
+        return "kimi-k3" in self.model_name.lower()
 
     def analyze_code(self, prompt: str, max_tokens: int = 4096, images: Optional[List[str]] = None) -> str:
         try:
@@ -207,16 +219,19 @@ class OpenAICompatibleProvider(AIProvider):
                 except Exception:
                     return self.analyze_code(prompt, max_tokens), None, None
 
-        # Kimi K2.x thinking
+        # Kimi K2.x / K3 thinking
         if self._is_kimi():
             try:
                 start = time.time()
-                response = self.client.chat.completions.create(
+                kwargs = dict(
                     model=self.model_name,
                     messages=[{"role": "user", "content": prompt}],
                     max_tokens=max_tokens,
-                    extra_body={"thinking": {"enabled": True}},
                 )
+                # K3: thinking always-on → enable flag YOK (400 verir). K2.x: extra_body ile aç.
+                if not self._is_kimi_k3():
+                    kwargs["extra_body"] = {"thinking": {"enabled": True}}
+                response = self.client.chat.completions.create(**kwargs)
                 duration_ms = int((time.time() - start) * 1000)
                 thinking = getattr(response.choices[0].message, "reasoning_content", None)
                 text = self._clean_response(response.choices[0].message.content)

@@ -25,21 +25,25 @@ class BaseCLIProvider(AIProvider):
     # Race condition önlemi: settings.json yazma + subprocess spawn atomik olmalı
     _AGY_LOCK = asyncio.Lock()
 
-    # model ID → agy settings.json "model" değeri eşlemesi
+    # model ID → agy 1.1.5 `--model` slug'ı. agy 1.1.5 `agy models` çıktısından
+    # CANLI DOĞRULANDI (2026-07-24): --model kebab-case slug alır (eski display-name
+    # DEĞİL); `agy --model gemini-3.6-flash-high --print` → yanıt döndü. Effort, slug
+    # son-ekiyle (-high/-medium/-low) geliyor → ayrı --effort'a gerek yok. Listede
+    # OLMAYAN modeller (3.5-flash-lite, 3-flash, 3.1-flash-lite, 2.5-*) buradan çıkarıldı.
     _AGY_MODEL_MAP = {
-        # Gemini modelleri
-        "gemini-3.5-flash":              "Gemini 3.5 Flash (High)",
-        "gemini-3.5-flash-medium":       "Gemini 3.5 Flash (Medium)",
-        "gemini-3.1-pro-preview":        "Gemini 3.1 Pro (High)",
-        "gemini-3.1-pro-low":            "Gemini 3.1 Pro (Low)",
-        "gemini-3-flash-preview":        "Gemini 3 Flash (High)",
-        "gemini-2.5-pro":                "Gemini 2.5 Pro (High)",
-        "gemini-2.5-flash":              "Gemini 2.5 Flash (High)",
-        "gemini-3.1-flash-lite-preview": "Gemini 3.1 Flash Lite (High)",
-        # Antigravity CLI üzerinden Claude ve GPT modelleri
-        "agy-claude-sonnet-4-6":         "Claude Sonnet 4.6 (Thinking)",
-        "agy-claude-opus-4-6":           "Claude Opus 4.6 (Thinking)",
-        "agy-gpt-oss-120b":              "GPT-OSS 120B (Medium)",
+        # Gemini (effort = slug son-eki)
+        "gemini-3.6-flash":              "gemini-3.6-flash-high",
+        "gemini-3.6-flash-medium":       "gemini-3.6-flash-medium",
+        "gemini-3.6-flash-low":          "gemini-3.6-flash-low",
+        "gemini-3.5-flash":              "gemini-3.5-flash-high",
+        "gemini-3.5-flash-medium":       "gemini-3.5-flash-medium",
+        "gemini-3.5-flash-low":          "gemini-3.5-flash-low",
+        "gemini-3.1-pro-preview":        "gemini-3.1-pro-high",
+        "gemini-3.1-pro-low":            "gemini-3.1-pro-low",
+        # Antigravity CLI üzerinden Claude ve GPT-OSS
+        "agy-claude-sonnet-4-6":         "claude-sonnet-4-6",
+        "agy-claude-opus-4-6":           "claude-opus-4-6-thinking",
+        "agy-gpt-oss-120b":              "gpt-oss-120b-medium",
     }
 
     # agy CLI'ın kendi yerleşik araçlarının isimleri (onaysız çalışmayı engellemek amacıyla devre dışı bırakılır)
@@ -54,7 +58,7 @@ class BaseCLIProvider(AIProvider):
 
     def __init__(self, binary_name: str = "claude"):
         self.binary_name = binary_name
-        self._pending_agy_model = "Gemini 3.5 Flash (High)"
+        self._pending_agy_model = "gemini-3.6-flash-high"
 
     def _backend_dir(self) -> str:
         """Backend kökünü döndürür (run_mcp_server.sh + unityai orada yaşar).
@@ -217,6 +221,7 @@ class BaseCLIProvider(AIProvider):
             # CLI binary bu PC'de kurulu mu? Değilse korkunç traceback yerine temiz uyarı ver.
             if not self._cli_installed(cmd[0]):
                 _labels = {"agy": "Antigravity (agy)", "claude": "Claude Code", "codex": "Codex",
+                           "kimi": "Kimi Code (kimi)",
                            "cursor-agent-not-found": "Cursor CLI (agent)",
                            "copilot-not-found": "GitHub Copilot CLI",
                            "opencode-not-found": "OpenCode"}
@@ -435,12 +440,57 @@ class BaseCLIProvider(AIProvider):
                     self.binary_name.startswith("gpt-") or
                     self.binary_name.startswith("cursor-") or
                     self.binary_name.startswith("copilot-") or
-                    self.binary_name.startswith("opencode:")
+                    self.binary_name.startswith("opencode:") or
+                    self.binary_name.startswith("kimi-")
                 )
                 if _is_json_provider:
                     try:
                         ev = _json.loads(raw)
                         ev_type = ev.get("type", "")
+
+                        # ── Kimi Code stream-json: OpenAI-mesaj şekilli NDJSON (role tabanlı,
+                        #    "type" YOK). Diğer parser dallarına düşmeden burada ele alınır. ──
+                        #    NOT (canlı doğrulanmadı): content'in delta mı yoksa kümülatif mi
+                        #    geldiği bir Kimi hesabıyla doğrulanmalı; delta varsayıyoruz +
+                        #    tam-tekrar koruması var.
+                        if self.binary_name.startswith("kimi-"):
+                            if not _sess_meta_sent:
+                                _ksid = (ev.get("session_id") or ev.get("sessionId")
+                                         or (ev.get("data") or {}).get("session_id"))
+                                if _ksid:
+                                    _sess_meta_sent = True
+                                    yield {"type": "session_meta", "session_id": str(_ksid)}
+                            _krole = ev.get("role", "")
+                            if _krole == "assistant":
+                                _kc = ev.get("content", "")
+                                if isinstance(_kc, str) and _kc and _kc != full_text:
+                                    full_text += _kc
+                                    yield {"type": "delta", "text": _kc}
+                                for _ktc in (ev.get("tool_calls") or []):
+                                    if not isinstance(_ktc, dict):
+                                        continue
+                                    _kfn = _ktc.get("function") or {}
+                                    _ktn = _kfn.get("name", "")
+                                    if not _ktn:
+                                        continue
+                                    _khint = f"🔧 `{_ktn}`"
+                                    try:
+                                        _kargs = _json.loads(_kfn.get("arguments") or "{}")
+                                        if isinstance(_kargs, dict):
+                                            if "path" in _kargs:
+                                                _khint += f" → `{_kargs['path']}`"
+                                            elif "command" in _kargs:
+                                                _khint += f" → `{str(_kargs['command'])[:80]}`"
+                                            elif "action" in _kargs:
+                                                _khint += f" → `{_kargs['action']}`"
+                                    except Exception:
+                                        pass
+                                    yield {"type": "thinking", "text": _khint}
+                            elif _krole == "tool":
+                                _kres = str(ev.get("content", ""))[:200].strip()
+                                if _kres:
+                                    yield {"type": "thinking", "text": f"↩ {_kres}"}
+                            continue
 
                         # ── Resume anahtarı yakalama (cursor: session_id her event'te;
                         #    opencode: sessionID her event'te; copilot: result.sessionId) ──

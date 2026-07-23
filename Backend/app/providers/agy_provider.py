@@ -43,7 +43,7 @@ class AgyProvider(BaseCLIProvider):
         """
         full_id = self.binary_name
         # Tüm agy modelleri: Gemini, Claude Sonnet/Opus, GPT-OSS
-        self._pending_agy_model = self._AGY_MODEL_MAP.get(full_id, "Gemini 3.5 Flash (High)")
+        self._pending_agy_model = self._AGY_MODEL_MAP.get(full_id, "gemini-3.6-flash-high")
         cmd = [self._agy_binary()]
         if workspace:
             cmd += ["--add-dir", workspace]
@@ -51,10 +51,18 @@ class AgyProvider(BaseCLIProvider):
         if resume_uuid:
             cmd += [f"--conversation={resume_uuid}"]
         cmd += ["--print"]  # prompt cli_base'de son arg olarak eklenir
+        # Model'i KOMUT SATIRINDAN sabitle (agy 1.1.5 --model kebab slug; 2026-07-24
+        # canlı doğrulandı: `agy --model gemini-3.6-flash-high --print` → yanıt). Effort
+        # slug son-ekinde (-high/-medium/-low) → ayrı --effort'a gerek yok. Bu sayede
+        # settings.json "model" yazımı gereksizleşti (bkz. _set_agy_model).
+        cmd += ["--model", self._pending_agy_model]
         return cmd
 
     def _set_agy_model(self, agy_model_name: str, workspace: str = ""):
-        """~/.gemini/antigravity-cli/settings.json ve global ~/.gemini/settings.json içindeki modeli, trustedWorkspaces ve disabledTools'u günceller."""
+        """~/.gemini/antigravity-cli/settings.json ve global ~/.gemini/settings.json
+        içindeki trustedWorkspaces, toolPermission ve disabledTools'u günceller.
+        Model ARTIK burada yazılmaz — komut satırında `--model <slug>` ile sabitleniyor
+        (bkz. _build_cmd; agy 1.1.5, canlı doğrulandı). agy_model_name yalnız log için."""
         # 1. Lokal antigravity-cli settings.json
         settings_path = os.path.expanduser("~/.gemini/antigravity-cli/settings.json")
         try:
@@ -62,7 +70,6 @@ class AgyProvider(BaseCLIProvider):
                 settings = json.load(f)
         except Exception:
             settings = {"colorScheme": "dark", "trustedWorkspaces": []}
-        settings["model"] = agy_model_name
         settings["toolPermission"] = "always-proceed"  # --dangerously-skip-permissions flag'i YERİNE (canlı doğrulandı: geçerli değer, flag'siz auto-approve → skill-derail'i tetiklemez)
         settings["disabledTools"] = self._AGY_DISABLED_TOOLS
         if workspace:
@@ -83,7 +90,6 @@ class AgyProvider(BaseCLIProvider):
                 global_settings = json.load(f)
         except Exception:
             global_settings = {}
-        global_settings["model"] = agy_model_name
         global_settings["toolPermission"] = "always-proceed"  # --dangerously-skip-permissions YERİNE (geçerli değer, flag'siz auto-approve)
         global_settings["disabledTools"] = self._AGY_DISABLED_TOOLS
         if workspace:
