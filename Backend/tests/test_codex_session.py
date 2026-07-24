@@ -153,3 +153,34 @@ class TestCodexApprovalResponses(unittest.IsolatedAsyncioTestCase):
             "id": 9,
             "result": {"decision": "accept"},
         })
+
+    async def test_auto_mode_approval_never_creates_a_ui_gate(self):
+        session = CodexSession(4, auto_approve=True)
+        session._out_q = __import__("asyncio").Queue()
+
+        decision = await session._resolve_approval(
+            "item/commandExecution/requestApproval",
+            {"command": "touch Assets/test.txt"},
+        )
+
+        self.assertEqual(decision, "accept")
+        self.assertTrue(session._out_q.empty())
+
+    async def test_auto_mode_structured_question_continues_without_prompting_user(self):
+        session = CodexSession(5, auto_approve=True)
+        session._send = AsyncMock()
+
+        await session._handle_server_request({
+            "id": 10,
+            "method": "item/tool/requestUserInput",
+            "params": {"question": "Should I continue?"},
+        })
+
+        session._send.assert_awaited_once_with({
+            "id": 10,
+            "result": {
+                "value": (
+                    "Proceed using your best judgment without asking for confirmation."
+                ),
+            },
+        })

@@ -648,7 +648,13 @@ class ClaudeSDKSession:
                     except Exception:
                         pass
                 await self._emit({"type": "status",
-                                  "detail": f"🚦 Claude kullanım limiti DOLDU ({info.rate_limit_type or 'pencere'}){when}. CLI sıfırlanmayı bekliyor; Durdur ile iptal edebilirsin.",
+                                  "detail": (
+                                      "🚦 Claude bu isteği kullanım penceresi sinyaliyle "
+                                      f"bekletiyor ({info.rate_limit_type or 'pencere'}){when}. "
+                                      "Bu, hesabındaki tüm Claude erişiminin kapandığı anlamına "
+                                      "gelmeyebilir; CLI otomatik yeniden deniyor. Durdur ile "
+                                      "başka modele geçebilirsin."
+                                  ),
                                   "tokens": self._turn_tokens})
             elif info.status == "allowed_warning":
                 pct = f" (%{int(info.utilization * 100)})" if isinstance(info.utilization, (int, float)) else ""
@@ -889,7 +895,11 @@ class ClaudeSDKSession:
                                           "tokens": self._turn_tokens}
                     stall = int(time.time() - self._last_cli_msg_at)
                     if self._rate_limit and self._rate_limit.get("status") == "rejected":
-                        hb["detail"] = "🚦 Kullanım limiti doldu — sıfırlanma bekleniyor (Durdur ile iptal edebilirsin)"
+                        hb["detail"] = (
+                            "🚦 Claude isteği kullanım penceresi nedeniyle bekliyor — "
+                            "bu tüm hesap erişiminin kapandığı anlamına gelmeyebilir "
+                            "(Durdur ile başka modele geçebilirsin)"
+                        )
                     elif stall >= 90:
                         # CLI'dan uzun süredir hiç mesaj yok → model düşünüyor olabilir ama
                         # limit/yoğunluk backoff'u da olabilir. Kör "düşünüyor" yerine dürüst bilgi.

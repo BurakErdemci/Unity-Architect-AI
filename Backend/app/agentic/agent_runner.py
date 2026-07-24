@@ -82,6 +82,14 @@ _HANDOFF_HEADER = (
     "okuma/tarama/web araması YAPMADAN doğrudan bu geçmişten özetleyerek yanıtla.]"
 )
 
+_CODEX_AUTO_MODE_INSTRUCTION = (
+    "[ÇALIŞMA MODU: OTOMATİK] Kullanıcının verdiği görevi tamamlamak için gerekli "
+    "dosya değişikliklerini, komutları ve MCP araçlarını doğrudan uygula. "
+    "\"Yapayım mı?\", \"devam edeyim mi?\" veya benzeri izin/onay soruları sorma. "
+    "Gerçekten eksik ve sonucu değiştirecek zorunlu bilgi yoksa en iyi teknik "
+    "kararını vererek otonom devam et."
+)
+
 
 class AgentRunner:
     """
@@ -1604,41 +1612,35 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
         if self.context and not session._ctx_injected:
             message = f"{user_message}\n\n{_HANDOFF_HEADER}\n{self.context}"
             session._ctx_injected = True
+        if self.generation_mode == "auto":
+            # Native requestApproval zaten otomatik kabul ediliyor. Bu kısa talimat
+            # modelin ayrıca metin içinde "yapayım mı?" diye durmasını engeller.
+            message = f"{message}\n\n{_CODEX_AUTO_MODE_INSTRUCTION}"
 
         # Görseller Codex'e native 'localImage' input item'ı olarak gider → dosya yolu
         # gerekiyor. Base64'leri tura özel temp klasörüne yaz; tur sonunda temizle.
         from providers._attachments import materialize_images, cleanup_dir
         image_paths, _att_dir = materialize_images(
             self.images, self.workspace_path, f"codex_conv{self.conversation_id}")
-        from providers.oneshot_cli import CODEX_PLAN_ERROR_RE, QUOTA_ERROR_RE, add_blocked_model, remove_blocked_model
-        _saw_plan_error = False
-        _saw_text = False
+        from providers.oneshot_cli import CODEX_PLAN_ERROR_RE, QUOTA_ERROR_RE
         try:
             async for ev in session.stream(message, image_paths=image_paths):
                 etype = ev.pop("type", "text")
                 if etype == "error":
                     _msg = str(ev.get("message", ""))
                     if CODEX_PLAN_ERROR_RE.search(_msg):
-                        # Plan bu modeli desteklemiyor (canlı örnek: gpt-5.6-sol +
-                        # ChatGPT hesabı) → öğren (seçici soluklaştırır) + dostane mesaj.
-                        _saw_plan_error = True
-                        add_blocked_model("codex", self.model_name)
+                        # Codex'in account/plan sinyali tutarsız: hatayı açıkla fakat
+                        # modeli kalıcı olarak kilitleme; sonraki turda yeniden denenebilir.
                         ev["message"] = (
-                            f"🔒 ChatGPT planın **{self.model_name}** modelini desteklemiyor. "
-                            f"Model seçiciden başka bir Codex modeli seç (örn. GPT-5.5) — "
-                            f"bu model artık listede kilitli görünecek.")
+                            f"Codex bu turda **{self.model_name}** modelini hesabın için "
+                            f"kabul etmedi. Başka bir Codex modeli deneyebilir veya erişim "
+                            f"yenilendiğinde bu modeli tekrar seçebilirsin.\n\n{_msg[:200]}")
                     elif QUOTA_ERROR_RE.search(_msg):
                         ev["message"] = (
                             "⏳ Codex kullanım hakkın dolmuş görünüyor (plan kotası). "
                             "Kota yenilenene kadar başka bir sağlayıcı seçebilirsin "
                             "(örn. NVIDIA ücretsiz havuzu veya OpenCode).\n\n" + _msg[:200])
-                elif etype == "text":
-                    _saw_text = True
                 yield AgentEvent(etype, ev)
-            # Model plan hatasız yanıt üretti → varsa öğrenilmiş kilidi kaldır
-            # (plan yükseltmesi sonrası ilk başarılı kullanım kilidi kendisi açar).
-            if _saw_text and not _saw_plan_error:
-                remove_blocked_model("codex", self.model_name)
         except Exception as e:
             logger.exception("[CodexSession] stream hatası")
             yield AgentEvent("error", {"message": f"Codex session hatası: {e}"})

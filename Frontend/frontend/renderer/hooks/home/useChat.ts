@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { Message, Conversation, UserData, AIConfig, GenerationMode, ChatActivity } from '../../components/home/types';
 import { PendingFile } from '../../components/home/FileCreationApproval';
@@ -31,9 +31,23 @@ export const useChat = (
   // Canlı aktivite: Claude'un o an ne yaptığı (düşünüyor/araç/subagent) + token sayacı.
   // Backend status event'lerinden beslenir; done/error/stop'ta temizlenir.
   const [activity, setActivity] = useState<ChatActivity | null>(null);
-  const [generationMode, setGenerationMode] = useState<GenerationMode>('step');
+  // Auto/Adım seçimi uygulama yeniden açılınca kaybolmamalı. SSR ile istemci
+  // arasında hydration farkı üretmemek için ilk render Auto, kayıt hydrate edilir.
+  const [generationMode, setGenerationModeState] = useState<GenerationMode>('auto');
   const [editingId, setEditingId] = useState<number | null>(null);
   const [tempTitle, setTempTitle] = useState('');
+
+  useEffect(() => {
+    const stored = window.localStorage.getItem('unityai-generation-mode');
+    if (stored === 'auto' || stored === 'step') {
+      setGenerationModeState(stored);
+    }
+  }, []);
+
+  const setGenerationMode = useCallback((mode: GenerationMode) => {
+    setGenerationModeState(mode);
+    window.localStorage.setItem('unityai-generation-mode', mode);
+  }, []);
   
   const abortControllerRef = useRef<AbortController | null>(null);
   // Paralel araç çağrılarında (ör. Bash + Write, ya da iki Write) birden fazla

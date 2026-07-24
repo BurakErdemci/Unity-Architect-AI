@@ -432,7 +432,8 @@ def create_config_router(db):
         {"id": "copilot-gemini-3.1-pro-preview", "name": "Gemini 3.1 Pro",          "provider": "subscription"},
     ]
 
-    # Codex modelleri: statik liste (plan-bazlı blocklist bayrakları eklenerek servis edilir)
+    # Codex modelleri: statik liste. Hesap/plan cevabı tutarsız olabildiği için
+    # bunlara kalıcı UI kilidi uygulanmaz; kullanıcı modeli her zaman deneyebilir.
     _CODEX_MODELS = [
         {"id": "gpt-5.6-terra", "name": "GPT-5.6 Terra",  "provider": "subscription"},
         {"id": "gpt-5.6-sol",   "name": "GPT-5.6 Sol",    "provider": "subscription"},
@@ -443,18 +444,17 @@ def create_config_router(db):
     ]
 
     def _apply_plan_caps(cli: str, models: list) -> list:
-        """Plan kısıtlarını işaretle: (a) adlı-modeller-kapalı (cursor/copilot),
-        (b) model-bazlı blocklist (codex: 'not supported with ChatGPT account')."""
-        from providers.oneshot_cli import get_named_models_cap, get_blocked_models
+        """Yalnız Cursor/Copilot'un doğrulanmış ``Auto-only`` planını işaretle.
+
+        Codex account/plan sinyali model erişimiyle tutarlı olmadığı için Codex
+        modelleri hiçbir koşulda burada kilitlenmez.
+        """
+        if cli not in ("cursor", "copilot"):
+            return models
+        from providers.oneshot_cli import get_named_models_cap
         if get_named_models_cap(cli) is False:
             for m in models:
                 if m["id"] not in (f"{cli}-auto",):
-                    m["disabled"] = True
-                    m["disabled_reason"] = "plan"
-        blocked = get_blocked_models(cli)
-        if blocked:
-            for m in models:
-                if m["id"] in blocked:
                     m["disabled"] = True
                     m["disabled_reason"] = "plan"
         return models
@@ -462,7 +462,7 @@ def create_config_router(db):
     @router.get("/cli-models/{cli}")
     async def cli_models(cli: str, x_session_token: str = Header(alias="X-Session-Token", default="")):
         """Cursor/OpenCode: canlı model listesi; Copilot/Codex: statik liste.
-        Plan desteklemeyen modeller disabled=true bayrağıyla döner. 5 dk cache."""
+        Yalnız Cursor/Copilot Auto-only planı disabled bayrağı üretir. 5 dk cache."""
         import time
         from providers.oneshot_cli import resolve_cli_cmd, get_named_models_cap, probe_named_models
 
@@ -516,9 +516,8 @@ def create_config_router(db):
         if not refresh and _doctor_cache.get("t", 0) > time.time() - 60:
             return _doctor_cache["data"]
         if refresh:
-            # Kullanıcı yenilemesi = "durumu baştan öğren": plan kısıtları da
-            # sıfırlanır (plan yükseltince kilitli modeller anında açılabilsin;
-            # kısıt sürüyorsa probe/ilk hata yeniden öğrenir).
+            # Kullanıcı yenilemesi = "durumu baştan öğren": Cursor/Copilot plan
+            # yetenekleri de sıfırlanır ve probe ile yeniden öğrenilir.
             from providers.oneshot_cli import clear_plan_caps
             clear_plan_caps()
             _cli_models_cache.clear()

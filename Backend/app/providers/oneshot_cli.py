@@ -283,77 +283,13 @@ UPSTREAM_ERROR_RE = _re.compile(
 
 
 def clear_plan_caps() -> None:
-    """↻ Yenile: named_models cap'lerini sıfırlar (cursor/copilot ucuz probe ile
-    anında yeniden öğrenir). blocked_models KORUNUR — codex'in probe'u yok,
-    silinince kilitler bir sonraki canlı hataya kadar kayboluyordu. Plan
-    yükseltme yolu kapalı değil: kilitli model yine de seçilebilir, başarılı
-    çalışırsa remove_blocked_model kilidi kendiliğinden düşürür."""
+    """↻ Yenile: Cursor/Copilot named-model yeteneklerini baştan öğren."""
     try:
-        import json as _json
-        caps = get_plan_caps()
-        kept = {
-            cli: {"blocked_models": entry["blocked_models"], "checked_at": entry.get("checked_at", 0)}
-            for cli, entry in caps.items()
-            if entry.get("blocked_models")
-        }
-        if kept:
-            os.makedirs(os.path.dirname(_CAPS_PATH), exist_ok=True)
-            with open(_CAPS_PATH, "w", encoding="utf-8") as f:
-                _json.dump(kept, f, indent=2)
-            logger.info("[plan-caps] named-model cap'leri sıfırlandı (blocklist korundu)")
-        elif os.path.exists(_CAPS_PATH):
+        if os.path.exists(_CAPS_PATH):
             os.remove(_CAPS_PATH)
             logger.info("[plan-caps] sıfırlandı (kullanıcı yenilemesi)")
     except Exception as e:
         logger.warning(f"[plan-caps] sıfırlanamadı: {e}")
-
-
-def get_blocked_models(cli: str) -> set:
-    """Bu planda çalışmadığı ÖĞRENİLMİŞ model id'leri (bizim id formatımızda)."""
-    import time
-    entry = get_plan_caps().get(cli) or {}
-    if time.time() - entry.get("checked_at", 0) > _CAPS_TTL:
-        return set()
-    return set(entry.get("blocked_models") or [])
-
-
-def add_blocked_model(cli: str, our_model_id: str) -> None:
-    try:
-        import json as _json, time
-        caps = get_plan_caps()
-        entry = caps.get(cli) or {}
-        blocked = set(entry.get("blocked_models") or [])
-        blocked.add(our_model_id)
-        entry["blocked_models"] = sorted(blocked)
-        entry["checked_at"] = time.time()
-        caps[cli] = entry
-        os.makedirs(os.path.dirname(_CAPS_PATH), exist_ok=True)
-        with open(_CAPS_PATH, "w", encoding="utf-8") as f:
-            _json.dump(caps, f, indent=2)
-        logger.info(f"[plan-caps] {cli} blocked_models += {our_model_id}")
-    except Exception as e:
-        logger.warning(f"[plan-caps] blocked_models yazılamadı: {e}")
-
-
-def remove_blocked_model(cli: str, our_model_id: str) -> None:
-    """Model bu planda ÇALIŞTI → öğrenilmiş kilidi kaldır. Plan yükseltmesi
-    sonrası ilk başarılı kullanım kilidi kendiliğinden açar (Yenile gerekmez)."""
-    try:
-        import json as _json
-        caps = get_plan_caps()
-        entry = caps.get(cli) or {}
-        blocked = set(entry.get("blocked_models") or [])
-        if our_model_id not in blocked:
-            return
-        blocked.discard(our_model_id)
-        entry["blocked_models"] = sorted(blocked)
-        caps[cli] = entry
-        os.makedirs(os.path.dirname(_CAPS_PATH), exist_ok=True)
-        with open(_CAPS_PATH, "w", encoding="utf-8") as f:
-            _json.dump(caps, f, indent=2)
-        logger.info(f"[plan-caps] {cli} blocked_models -= {our_model_id} (model çalıştı)")
-    except Exception as e:
-        logger.warning(f"[plan-caps] blocked_models güncellenemedi: {e}")
 
 
 async def probe_named_models(cli: str, timeout: float = 30.0) -> Optional[bool]:

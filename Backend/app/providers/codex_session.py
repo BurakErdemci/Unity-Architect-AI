@@ -479,7 +479,14 @@ class CodexSession:
                 else:
                     await self._send({"id": rid, "result": {"decision": decision}})
             elif method == "item/tool/requestUserInput":
-                await self._send({"id": rid, "result": {"value": ""}})
+                # Auto turunda modelin yapılandırılmış soru aracıyla "devam edeyim
+                # mi?" diye beklemesini de engelle. Gerçek onaylar yukarıdaki
+                # requestApproval yollarından zaten otomatik kabul edilir.
+                value = (
+                    "Proceed using your best judgment without asking for confirmation."
+                    if self.auto_approve else ""
+                )
+                await self._send({"id": rid, "result": {"value": value}})
             else:
                 # Bilinmeyen server-request: takılmamak için boş cevap (ör. token refresh)
                 await self._send({"id": rid, "result": {}})

@@ -1,4 +1,5 @@
 """Windows/macOS görünür CLI kurulum ve giriş akışı regresyon testleri."""
+import asyncio
 import os
 import subprocess
 import sys
@@ -10,6 +11,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "app"))
 from routes.config_routes import (
     _MAC_INSTALL_CMDS,
     _MAC_LOGIN_CMDS,
+    create_config_router,
     _install_terminal_command,
     _open_visible_terminal,
 )
@@ -60,6 +62,24 @@ class TestInstallCommands(unittest.TestCase):
         argv = popen_mock.call_args.args[0]
         self.assertEqual(argv[0], "powershell")
         self.assertIn("-NoExit", argv)
+
+
+class TestCliModelPlanCaps(unittest.TestCase):
+    def test_codex_models_are_never_disabled_by_stale_plan_caps(self):
+        router = create_config_router(MagicMock())
+        endpoint = next(
+            route.endpoint
+            for route in router.routes
+            if getattr(route, "path", "") == "/cli-models/{cli}"
+        )
+
+        with patch("routes.config_routes._resolve_general_cli", return_value="/fake/codex"), \
+             patch("providers.oneshot_cli.get_named_models_cap", return_value=False):
+            result = asyncio.run(endpoint(cli="codex", x_session_token=""))
+
+        sol = next(model for model in result["models"] if model["id"] == "gpt-5.6-sol")
+        self.assertNotIn("disabled", sol)
+        self.assertNotIn("disabled_reason", sol)
 
 
 if __name__ == "__main__":
