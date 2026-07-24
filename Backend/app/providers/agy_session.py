@@ -42,6 +42,7 @@ class AgySession:
         self.last_step_idx: int = -1          # db'den okunan son step idx (incremental)
         self.ctx_injected: bool = False       # proje bağlamı ilk turda enjekte edildi mi
         self.auto_approve: bool = False
+        self.active_provider = None            # Durdur için çalışan subprocess sahibi
 
 
 _SESSIONS: Dict[int, AgySession] = {}
@@ -56,11 +57,15 @@ def get_session(conversation_id: int) -> AgySession:
 
 
 async def close_session(conversation_id: int) -> None:
-    _SESSIONS.pop(conversation_id, None)
+    session = _SESSIONS.pop(conversation_id, None)
+    provider = getattr(session, "active_provider", None) if session else None
+    if provider is not None:
+        await provider.cancel_active_process()
 
 
 async def close_all_sessions() -> None:
-    _SESSIONS.clear()
+    for conversation_id in list(_SESSIONS):
+        await close_session(conversation_id)
 
 
 # ── UUID yakalama (yeni .db dosya adı = UUID) ──────────────────────────────

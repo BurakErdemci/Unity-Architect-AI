@@ -1,6 +1,7 @@
 """Kimi CLI, Moonshot ve yeni Gemini model entegrasyonu birim testleri."""
 import os
 import sys
+import asyncio
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -120,6 +121,72 @@ class TestKimiProvider(unittest.TestCase):
         self.assertIn('decision = "deny"', content)
         self.assertIn('pattern = "Write"', content)
         self.assertIn('pattern = "mcp__unityai__*"', content)
+
+    def test_agent_runner_routes_kimi_subscription_to_ephemeral_cli(self):
+        from agentic.agent_runner import AgentEvent, AgentRunner
+
+        runner = AgentRunner(
+            provider_type="subscription",
+            api_key="",
+            model_name="kimi-k3",
+            workspace_path=os.getcwd(),
+            conversation_id=996,
+        )
+        routed = []
+
+        async def fake_oneshot(message, cli_key):
+            routed.append((message, cli_key))
+            yield AgentEvent("done", {"iterations": 1})
+
+        runner._run_oneshot_cli_session = fake_oneshot
+
+        async def collect():
+            return [event async for event in runner.run("merhaba")]
+
+        events = asyncio.run(collect())
+
+        self.assertEqual(routed, [("merhaba", "kimi")])
+        self.assertEqual(events[-1].type, "done")
+
+    def test_kimi_cli_gets_handoff_context_on_every_stateless_turn(self):
+        from agentic.agent_runner import AgentRunner
+        from providers.oneshot_cli import _SESSIONS
+
+        class FakeKimiProvider:
+            resume_session_id = None
+            prompts = []
+
+            async def analyze_code(self, prompt, **kwargs):
+                self.prompts.append(prompt)
+                yield {"type": "final", "text": "tamam"}
+
+        _SESSIONS.clear()
+        provider = FakeKimiProvider()
+        runner = AgentRunner(
+            provider_type="subscription",
+            api_key="",
+            model_name="kimi-k3",
+            workspace_path=os.getcwd(),
+            context="CONTEXT_MARKER",
+            conversation_id=997,
+        )
+
+        async def run_turn(message):
+            return [
+                event
+                async for event in runner._run_oneshot_cli_session(message, "kimi")
+            ]
+
+        with patch(
+            "ai_providers.AIProviderManager.get_provider",
+            return_value=provider,
+        ):
+            asyncio.run(run_turn("ilk"))
+            asyncio.run(run_turn("ikinci"))
+
+        self.assertEqual(len(provider.prompts), 2)
+        self.assertTrue(all("CONTEXT_MARKER" in p for p in provider.prompts))
+        _SESSIONS.clear()
 
 
 if __name__ == "__main__":

@@ -11,6 +11,7 @@ import os
 import sys
 import json
 import asyncio
+import tempfile
 import unittest
 from unittest.mock import patch, MagicMock
 
@@ -138,6 +139,21 @@ class TestBuildCmd(unittest.TestCase):
         self.assertEqual(cmd[cmd.index("-s") + 1], "ses_abc")
         self.assertIn("--format", cmd)
 
+    def test_opencode_mcp_config_gets_ephemeral_approval_token(self):
+        """Aktif tur anahtarı MCP process'ine geçer; auto/step değeri kalıcı yazılmaz."""
+        from providers.opencode_provider import OpenCodeProvider
+
+        p = OpenCodeProvider(binary_name="opencode:opencode-go/kimi-k3")
+        p._approval_turn_token = "one-turn-secret"
+        with tempfile.TemporaryDirectory() as workspace, _mock_unity_mcp():
+            p._register_mcp("unityai-launcher", workspace, "http://localhost:8000")
+            with open(os.path.join(workspace, "opencode.json"), encoding="utf-8") as f:
+                cfg = json.load(f)
+
+        env = cfg["mcp"]["unityai"]["environment"]
+        self.assertEqual(env["UNITYAI_APPROVAL_TURN_TOKEN"], "one-turn-secret")
+        self.assertNotIn("UNITYAI_AUTO_APPROVE", env)
+
 
 class TestEventParsing(unittest.TestCase):
     """cli_base.analyze_code'un JSON satırlarını doğru event'lere çevirdiğini,
@@ -261,6 +277,34 @@ class TestEventParsing(unittest.TestCase):
         self.assertTrue(errors[0]["reset_session"])
         self.assertFalse(any("CLI Bridge Hatası" in e.get("content", "") for e in errors))
 
+    def test_opencode_upstream_error_keeps_resume_session(self):
+        """Provider yoğunluğu/rate-limit session bozulması sayılmamalı."""
+        from providers.opencode_provider import OpenCodeProvider
+
+        p = OpenCodeProvider(binary_name="opencode:opencode-go/kimi-k3")
+        lines = [
+            json.dumps({
+                "type": "error",
+                "sessionID": "ses_rate_limited",
+                "error": {
+                    "name": "APIError",
+                    "data": {
+                        "message": (
+                            "Error from provider (Console Go): "
+                            "Upstream request failed"
+                        ),
+                        "statusCode": 400,
+                    },
+                },
+            }),
+        ]
+
+        evs = self._run_provider(p, lines)
+        error = [e for e in evs if e["type"] == "error"][0]
+        self.assertEqual(error["reason"], "provider_upstream")
+        self.assertTrue(error["retryable"])
+        self.assertNotIn("reset_session", error)
+
     def test_cli_timeout_uses_idle_time_not_five_minute_total_runtime(self):
         """Aktif CLI toplam 5 dakikayı geçti diye öldürülmemeli."""
         from providers.cli_base import BaseCLIProvider
@@ -331,6 +375,427 @@ class TestOneShotSessionRecovery(unittest.TestCase):
         self.assertIsNone(session.session_id)
         self.assertFalse(session.ctx_injected)
         _SESSIONS.clear()
+
+    def test_cancelled_agy_stream_invalidates_disk_resume_session(self):
+        from agentic.agent_runner import AgentRunner
+        from providers.agy_session import _SESSIONS, get_session
+
+        started = asyncio.Event()
+
+        class FakeAgyProvider:
+            async def analyze_code(self, *args, **kwargs):
+                yield {"type": "thinking", "text": "başladı"}
+                started.set()
+                await asyncio.Event().wait()
+
+        _SESSIONS.clear()
+        session = get_session(1000)
+        session.agy_uuid = "agy-partial"
+        session.last_step_idx = 42
+        runner = AgentRunner(
+            provider_type="subscription",
+            api_key="",
+            model_name="gemini-3.6-flash",
+            workspace_path=os.getcwd(),
+            conversation_id=1000,
+        )
+
+        async def cancel_mid_stream():
+            async def consume():
+                async for _ in runner._run_agy_session("başla"):
+                    pass
+
+            task = asyncio.create_task(consume())
+            await started.wait()
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+
+        with patch(
+            "ai_providers.AIProviderManager.get_provider",
+            return_value=FakeAgyProvider(),
+        ):
+            asyncio.run(cancel_mid_stream())
+
+        self.assertIsNone(session.agy_uuid)
+        self.assertEqual(session.last_step_idx, -1)
+        self.assertIsNone(session.active_provider)
+        _SESSIONS.clear()
+
+    def test_closing_oneshot_session_cancels_active_provider(self):
+        from providers.oneshot_cli import _SESSIONS, close_session, get_session
+
+        class FakeProvider:
+            cancelled = False
+
+            async def cancel_active_process(self):
+                self.cancelled = True
+                return True
+
+        _SESSIONS.clear()
+        provider = FakeProvider()
+        session = get_session("opencode", 993)
+        session.session_id = "ses_active"
+        session.active_provider = provider
+
+        asyncio.run(close_session("opencode", 993))
+
+        self.assertTrue(provider.cancelled)
+        self.assertNotIn(("opencode", 993), _SESSIONS)
+
+    def test_cancelled_stream_invalidates_oneshot_resume_session(self):
+        from agentic.agent_runner import AgentRunner
+        from providers.oneshot_cli import _SESSIONS, get_session
+
+        started = asyncio.Event()
+
+        class FakeOpenCodeProvider:
+            resume_session_id = None
+
+            async def analyze_code(self, *args, **kwargs):
+                yield {"type": "session_meta", "session_id": "ses_partial"}
+                started.set()
+                await asyncio.Event().wait()
+
+        _SESSIONS.clear()
+        session = get_session("opencode", 994)
+        runner = AgentRunner(
+            provider_type="subscription",
+            api_key="",
+            model_name="opencode:opencode-go/kimi-k3",
+            workspace_path=os.getcwd(),
+            conversation_id=994,
+        )
+
+        async def cancel_mid_stream():
+            async def consume():
+                async for _ in runner._run_oneshot_cli_session("başla", "opencode"):
+                    pass
+
+            task = asyncio.create_task(consume())
+            await started.wait()
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+
+        with patch(
+            "ai_providers.AIProviderManager.get_provider",
+            return_value=FakeOpenCodeProvider(),
+        ):
+            asyncio.run(cancel_mid_stream())
+
+        self.assertIsNone(session.session_id)
+        self.assertFalse(session.ctx_injected)
+        _SESSIONS.clear()
+
+
+class TestOpenCodeApprovalPolicy(unittest.TestCase):
+    def test_auto_turn_requires_active_token_and_exact_workspace(self):
+        from agentic.approval_policy import (
+            begin_opencode_turn,
+            end_opencode_turn,
+            should_auto_approve,
+        )
+
+        with tempfile.TemporaryDirectory() as workspace, \
+             tempfile.TemporaryDirectory() as other_workspace:
+            token = begin_opencode_turn(workspace, "auto")
+            self.assertTrue(should_auto_approve(token, workspace))
+            self.assertFalse(should_auto_approve(token, other_workspace))
+            self.assertFalse(should_auto_approve("wrong-token", workspace))
+            end_opencode_turn(token)
+            self.assertFalse(should_auto_approve(token, workspace))
+
+    def test_step_turn_never_auto_approves(self):
+        from agentic.approval_policy import (
+            begin_opencode_turn,
+            end_opencode_turn,
+            should_auto_approve,
+        )
+
+        with tempfile.TemporaryDirectory() as workspace:
+            token = begin_opencode_turn(workspace, "step")
+            try:
+                self.assertFalse(should_auto_approve(token, workspace))
+            finally:
+                end_opencode_turn(token)
+
+    def test_agent_runner_limits_auto_policy_to_running_opencode_turn(self):
+        from agentic.agent_runner import AgentRunner
+        from agentic.approval_policy import should_auto_approve
+        from providers.oneshot_cli import _SESSIONS
+
+        class FakeOpenCodeProvider:
+            resume_session_id = None
+            auto_was_active = False
+            captured_token = None
+
+            async def analyze_code(self, *args, **kwargs):
+                self.captured_token = self._approval_turn_token
+                self.auto_was_active = should_auto_approve(
+                    self.captured_token, kwargs["cwd"]
+                )
+                yield {"type": "final", "text": "tamam"}
+
+        _SESSIONS.clear()
+        provider = FakeOpenCodeProvider()
+        with tempfile.TemporaryDirectory() as workspace:
+            runner = AgentRunner(
+                provider_type="subscription",
+                api_key="",
+                model_name="opencode:opencode-go/kimi-k3",
+                workspace_path=workspace,
+                conversation_id=992,
+                generation_mode="auto",
+            )
+
+            async def collect():
+                return [
+                    event
+                    async for event in runner._run_oneshot_cli_session(
+                        "devam et", "opencode"
+                    )
+                ]
+
+            with patch(
+                "ai_providers.AIProviderManager.get_provider",
+                return_value=provider,
+            ):
+                asyncio.run(collect())
+
+            self.assertTrue(provider.auto_was_active)
+            self.assertFalse(
+                should_auto_approve(provider.captured_token, workspace)
+            )
+        _SESSIONS.clear()
+
+    def test_auto_request_skips_pending_card_but_step_request_does_not(self):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from agentic.approval_policy import begin_opencode_turn, end_opencode_turn
+        from routes.conversation_routes import create_conversation_router
+
+        app = FastAPI()
+        app.include_router(create_conversation_router(MagicMock(), {}))
+
+        with tempfile.TemporaryDirectory() as workspace, TestClient(app) as client:
+            auto_token = begin_opencode_turn(workspace, "auto")
+            try:
+                auto = client.post("/mcp-approval-request", json={
+                    "gate_id": "auto-gate",
+                    "tool": "run_terminal_command",
+                    "params": {"command": "echo ok"},
+                    "workspace_path": workspace,
+                    "approval_turn_token": auto_token,
+                })
+                self.assertEqual(auto.status_code, 200)
+                self.assertEqual(auto.json()["status"], "resolved")
+                self.assertTrue(auto.json()["approved"])
+                self.assertNotIn(
+                    "auto-gate",
+                    client.get("/mcp-pending").json()["pending"],
+                )
+            finally:
+                end_opencode_turn(auto_token)
+
+            step_token = begin_opencode_turn(workspace, "step")
+            try:
+                step = client.post("/mcp-approval-request", json={
+                    "gate_id": "step-gate",
+                    "tool": "run_terminal_command",
+                    "params": {"command": "echo ok"},
+                    "workspace_path": workspace,
+                    "approval_turn_token": step_token,
+                })
+                self.assertEqual(step.status_code, 200)
+                self.assertEqual(step.json()["status"], "ok")
+                self.assertIn(
+                    "step-gate",
+                    client.get("/mcp-pending").json()["pending"],
+                )
+            finally:
+                end_opencode_turn(step_token)
+
+    def test_approval_bridge_returns_immediate_auto_result_without_polling(self):
+        from unity_ai_mcp import approval_bridge
+
+        class FakeResponse:
+            status_code = 200
+
+            @staticmethod
+            def json():
+                return {
+                    "status": "resolved",
+                    "approved": True,
+                    "automatic": True,
+                }
+
+        class FakeClient:
+            get_called = False
+
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            async def post(self, *args, **kwargs):
+                return FakeResponse()
+
+            async def get(self, *args, **kwargs):
+                FakeClient.get_called = True
+                raise AssertionError("Auto sonucu için polling yapılmamalı")
+
+        with patch.object(approval_bridge.httpx, "AsyncClient", FakeClient), \
+             patch.dict(os.environ, {
+                 "UNITYAI_APPROVAL_TURN_TOKEN": "one-turn-secret",
+             }):
+            result = asyncio.run(approval_bridge.request_approval(
+                "run_terminal_command",
+                {"command": "echo ok"},
+                os.getcwd(),
+            ))
+
+        self.assertTrue(result["approved"])
+        self.assertFalse(FakeClient.get_called)
+
+    def test_chat_stop_closes_running_opencode_session(self):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from providers.oneshot_cli import _SESSIONS, get_session
+        from routes.conversation_routes import create_conversation_router
+
+        class FakeProvider:
+            cancelled = False
+
+            async def cancel_active_process(self):
+                self.cancelled = True
+                return True
+
+        _SESSIONS.clear()
+        provider = FakeProvider()
+        session = get_session("opencode", 995)
+        session.session_id = "ses_interrupted"
+        session.active_provider = provider
+
+        app = FastAPI()
+        app.include_router(create_conversation_router(MagicMock(), {}))
+        with TestClient(app) as client:
+            response = client.post("/chat-stop/995")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "ok")
+        self.assertTrue(provider.cancelled)
+        self.assertNotIn(("opencode", 995), _SESSIONS)
+
+    def test_chat_stop_closes_every_ephemeral_cli_family(self):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from providers.oneshot_cli import _SESSIONS, get_session
+        from providers.agy_session import (
+            _SESSIONS as _AGY_SESSIONS,
+            get_session as get_agy_session,
+        )
+        from routes.conversation_routes import create_conversation_router
+
+        class FakeProvider:
+            def __init__(self):
+                self.cancelled = False
+
+            async def cancel_active_process(self):
+                self.cancelled = True
+                return True
+
+        _SESSIONS.clear()
+        _AGY_SESSIONS.clear()
+        providers = {}
+        for cli in ("cursor", "copilot", "opencode", "kimi"):
+            provider = FakeProvider()
+            providers[cli] = provider
+            session = get_session(cli, 998)
+            session.active_provider = provider
+
+        agy_provider = FakeProvider()
+        agy_session = get_agy_session(998)
+        agy_session.agy_uuid = "agy-partial"
+        agy_session.active_provider = agy_provider
+
+        app = FastAPI()
+        app.include_router(create_conversation_router(MagicMock(), {}))
+        with TestClient(app) as client:
+            response = client.post("/chat-stop/998")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "ok")
+        self.assertTrue(all(provider.cancelled for provider in providers.values()))
+        self.assertTrue(agy_provider.cancelled)
+        self.assertFalse(any(conv_id == 998 for _, conv_id in _SESSIONS))
+        self.assertNotIn(998, _AGY_SESSIONS)
+
+    def test_chat_stop_preserves_native_claude_and_codex_cancellation(self):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from providers.claude_sdk_session import _SESSIONS as _CLAUDE_SESSIONS
+        from providers.codex_session import _SESSIONS as _CODEX_SESSIONS
+        from routes.conversation_routes import create_conversation_router
+
+        class FakeNativeSession:
+            def __init__(self):
+                self.cancelled = False
+
+            async def cancel_turn(self):
+                self.cancelled = True
+
+        for provider_name, sessions in (
+            ("claude", _CLAUDE_SESSIONS),
+            ("codex", _CODEX_SESSIONS),
+        ):
+            with self.subTest(provider=provider_name):
+                _CLAUDE_SESSIONS.clear()
+                _CODEX_SESSIONS.clear()
+                session = FakeNativeSession()
+                sessions[999] = session
+
+                app = FastAPI()
+                app.include_router(create_conversation_router(MagicMock(), {}))
+                with TestClient(app) as client:
+                    response = client.post("/chat-stop/999")
+
+                self.assertEqual(response.json()["status"], "ok")
+                self.assertTrue(session.cancelled)
+
+        _CLAUDE_SESSIONS.clear()
+        _CODEX_SESSIONS.clear()
+
+    def test_chat_stop_rejects_stale_mcp_approval_gates(self):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from routes.conversation_routes import create_conversation_router
+
+        app = FastAPI()
+        app.include_router(create_conversation_router(MagicMock(), {}))
+        with TestClient(app) as client:
+            pending = client.post("/mcp-approval-request", json={
+                "gate_id": "stop-gate",
+                "tool": "bash",
+                "params": {"command": "echo waiting"},
+                "workspace_path": os.getcwd(),
+            })
+            self.assertEqual(pending.json()["status"], "ok")
+
+            stopped = client.post("/chat-stop/1001")
+            result = client.get("/mcp-approval-result/stop-gate")
+            remaining = client.get("/mcp-pending")
+
+        self.assertEqual(stopped.json()["status"], "ok")
+        self.assertEqual(
+            result.json(),
+            {"status": "resolved", "approved": False},
+        )
+        self.assertNotIn("stop-gate", remaining.json()["pending"])
 
 
 class TestModelListParsers(unittest.TestCase):

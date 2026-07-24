@@ -1,9 +1,8 @@
-"""Cursor / Copilot / OpenCode — one-shot CLI ortak altyapısı.
+"""Cursor / Copilot / OpenCode / Kimi — one-shot CLI ortak altyapısı.
 
-Bu üç CLI, Claude (SDK session) ve Codex (app-server) gibi CANLI bir süreç
-tutmaz; her tur ephemeral bir subprocess'tir. Bağlam sürekliliği CLI'ların
-KENDİ resmi resume mekanizmasıyla sağlanır (agy'nin aksine üçünde de resmi
-ve çalışır durumda — 2026-07-13 canlı doğrulandı):
+Bu CLI'lar Claude (SDK session) ve Codex (app-server) gibi CANLI bir süreç
+tutmaz; her tur ephemeral bir subprocess'tir. Cursor/Copilot/OpenCode bağlamı
+resmi resume mekanizmasıyla, Kimi ise her tur kırpılmış transcript ile sürdürür:
 
   • cursor  : `agent create-chat` ile chatId baştan üretilir; her tur
               `--resume <chatId>`. (stream-json çıktı, Claude formatına çok yakın)
@@ -11,6 +10,7 @@ ve çalışır durumda — 2026-07-13 canlı doğrulandı):
               turlarda --resume=<uuid>. (JSONL çıktı)
   • opencode: İlk turun JSON event'lerindeki sessionID yakalanır; sonraki
               turlarda `-s <sessionID>`. (JSON event çıktı)
+  • kimi     : Doğrulanmış resume yok; her tur sohbet transcript'i enjekte edilir.
 
 Windows'ta npm/ps1 shim'leri cmd.exe sarmalaması gerektirir ve cmd.exe çok
 satırlı argv'yi bozar (claude/codex'te stdin fallback ile çözmüştük). Burada
@@ -31,7 +31,7 @@ from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-CLI_KEYS = ("cursor", "copilot", "opencode")
+CLI_KEYS = ("cursor", "copilot", "opencode", "kimi")
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -44,6 +44,7 @@ class OneShotSession:
         self.session_id: Optional[str] = None  # CLI'ın resume anahtarı
         self.ctx_injected: bool = False        # transcript ilk turda enjekte edildi mi
         self.auto_approve: bool = False
+        self.active_provider = None            # Durdur için çalışan subprocess sahibi
 
 
 _SESSIONS: Dict[Tuple[str, int], OneShotSession] = {}
@@ -59,11 +60,27 @@ def get_session(cli: str, conversation_id: int) -> OneShotSession:
 
 
 async def close_session(cli: str, conversation_id: int) -> None:
-    _SESSIONS.pop((cli, conversation_id), None)
+    session = _SESSIONS.pop((cli, conversation_id), None)
+    provider = getattr(session, "active_provider", None) if session else None
+    if provider is not None:
+        await provider.cancel_active_process()
 
 
 async def close_all_sessions() -> None:
-    _SESSIONS.clear()
+    for cli, conversation_id in list(_SESSIONS):
+        await close_session(cli, conversation_id)
+
+
+async def close_conversation_sessions(conversation_id: int) -> bool:
+    """Bir sohbetin çalışan/bayat tüm one-shot CLI session'larını kapatır."""
+    keys = [
+        (cli, conv_id)
+        for cli, conv_id in list(_SESSIONS)
+        if conv_id == conversation_id
+    ]
+    for cli, conv_id in keys:
+        await close_session(cli, conv_id)
+    return bool(keys)
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -256,6 +273,13 @@ CODEX_PLAN_ERROR_RE = _re.compile(
 QUOTA_ERROR_RE = _re.compile(
     r"(usage limit|rate limit|quota|too many requests|\b429\b|"
     r"out of (free )?credits|limit reached|hakk?ınız)", _re.I)
+
+# OpenCode Go kimi zaman gerçek rate-limit nedenini kendi loguna yazıp JSON
+# event'inde yalnız genel bir upstream hatası döndürüyor.
+UPSTREAM_ERROR_RE = _re.compile(
+    r"(upstream request failed|service unavailable|temporarily unavailable)",
+    _re.I,
+)
 
 
 def clear_plan_caps() -> None:

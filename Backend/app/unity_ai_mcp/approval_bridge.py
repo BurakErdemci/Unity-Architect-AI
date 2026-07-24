@@ -38,6 +38,7 @@ async def request_approval(
 
     # POST — 10 saniye boyunca 1s aralıkla retry
     posted = False
+    immediate_result = None
     for attempt in range(10):
         try:
             async with httpx.AsyncClient(timeout=8.0) as client:
@@ -48,11 +49,17 @@ async def request_approval(
                         "tool": tool_name,
                         "params": params,
                         "workspace_path": workspace_path,
+                        "approval_turn_token": os.environ.get(
+                            "UNITYAI_APPROVAL_TURN_TOKEN", ""
+                        ),
                     },
                     headers=_get_headers(),
                 )
                 if resp.status_code == 200:
                     posted = True
+                    data = resp.json()
+                    if data.get("status") == "resolved":
+                        immediate_result = data
                     logger.info(f"[approval_bridge] POST başarılı (deneme {attempt+1})")
                     break
         except Exception as e:
@@ -65,6 +72,12 @@ async def request_approval(
             "approved": False,
             "error": "Onay servisine ulaşılamadı; işlem güvenlik nedeniyle reddedildi.",
         }
+
+    if immediate_result is not None:
+        logger.info(
+            f"[approval_bridge] Aktif Auto turunda anında çözüldü (gate: {gate_id})"
+        )
+        return immediate_result
 
     # Kullanıcı cevabını bekle — 360 × 0.5s = 180 saniye (diff incelemek için makul süre)
     logger.info(f"[approval_bridge] Kullanıcı cevabı bekleniyor (gate: {gate_id})")

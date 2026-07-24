@@ -146,7 +146,7 @@ class AgentRunner:
         if self.conversation_id is None:
             return
         try:
-            if provider in ("cursor", "copilot", "opencode"):
+            if provider in ("cursor", "copilot", "opencode", "kimi"):
                 from providers.oneshot_cli import close_session as _close_oneshot
                 await _close_oneshot(provider, self.conversation_id)
                 logger.info(f"[handoff] {provider} session resetlendi (CLI değişimi)")
@@ -234,7 +234,7 @@ class AgentRunner:
         elif self.provider_type == "subscription":
             # claude-* → kalıcı interaktif SDK session (native onay + AskUserQuestion + skill/slash).
             # codex (gpt-*) → kalıcı app-server session (native onay). agy → disk-resume CLI.
-            # cursor-*/copilot-*/opencode:* → one-shot CLI + resmi resume (oneshot_cli).
+            # cursor/copilot/opencode → one-shot + resmi resume; Kimi → transcript'li one-shot.
             _name = (self.model_name or "claude").lower()
             if _name.startswith("cursor-"):
                 _cur = "cursor"
@@ -242,6 +242,8 @@ class AgentRunner:
                 _cur = "copilot"
             elif _name.startswith("opencode:"):
                 _cur = "opencode"
+            elif _name.startswith("kimi-"):
+                _cur = "kimi"
             elif _name.startswith("gpt-"):
                 _cur = "codex"
             elif _name.startswith(("gemini", "agy-")):
@@ -264,7 +266,7 @@ class AgentRunner:
             elif _cur == "agy":
                 async for event in self._run_agy_session(user_message):
                     yield event
-            elif _cur in ("cursor", "copilot", "opencode"):
+            elif _cur in ("cursor", "copilot", "opencode", "kimi"):
                 async for event in self._run_oneshot_cli_session(user_message, _cur):
                     yield event
             else:
@@ -1079,42 +1081,54 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
 
         final_text = ""
         ephemeral_files = []
+        got_error = False
+        sess.active_provider = provider
+        try:
+            async for event in provider.analyze_code(
+                enriched_prompt,
+                thinking_level="medium" if self.use_thinking else "off",
+                cwd=self.workspace_path or ".",
+                interactive=True,  # Her zaman ephemeral mod
+            ):
+                etype = event.get("type")
 
-        async for event in provider.analyze_code(
-            enriched_prompt,
-            thinking_level="medium" if self.use_thinking else "off",
-            cwd=self.workspace_path or ".",
-            interactive=True,  # Her zaman ephemeral mod
-        ):
-            etype = event.get("type")
+                if etype == "delta":
+                    yield AgentEvent("text", {"content": event.get("text", "")})
+                elif etype == "thinking":
+                    yield AgentEvent("thinking", {"text": event.get("text", "")})
+                elif etype == "tool_call":
+                    yield AgentEvent("tool_call", {
+                        "tool": event.get("tool", "CLI"),
+                        "arguments": {"summary": event.get("summary", "")},
+                        "iteration": 1,
+                    })
+                elif etype == "tool_result":
+                    yield AgentEvent("tool_result", {
+                        "tool": event.get("tool", "CLI"),
+                        "success": event.get("success", True),
+                        "summary": event.get("summary", ""),
+                    })
+                elif etype == "ephemeral_changes":
+                    ephemeral_files = event.get("files", [])
+                elif etype == "final":
+                    final_text = event.get("text", "")
+                elif etype == "error":
+                    got_error = True
+                    yield AgentEvent("error", {"message": event.get("content", "")})
+                    break
+        except (asyncio.CancelledError, GeneratorExit):
+            # Durdur/SSE kopması sonrası yarım agy disk conversation'ını resume etme.
+            sess.agy_uuid = None
+            sess.last_step_idx = -1
+            raise
+        finally:
+            if sess.active_provider is provider:
+                sess.active_provider = None
+            # agy subprocess bitti/iptal edildi → ekli görsel artık okunmayacak.
+            cleanup_dir(_att_dir)
 
-            if etype == "delta":
-                yield AgentEvent("text", {"content": event.get("text", "")})
-            elif etype == "thinking":
-                yield AgentEvent("thinking", {"text": event.get("text", "")})
-            elif etype == "tool_call":
-                yield AgentEvent("tool_call", {
-                    "tool": event.get("tool", "CLI"),
-                    "arguments": {"summary": event.get("summary", "")},
-                    "iteration": 1,
-                })
-            elif etype == "tool_result":
-                yield AgentEvent("tool_result", {
-                    "tool": event.get("tool", "CLI"),
-                    "success": event.get("success", True),
-                    "summary": event.get("summary", ""),
-                })
-            elif etype == "ephemeral_changes":
-                ephemeral_files = event.get("files", [])
-            elif etype == "final":
-                final_text = event.get("text", "")
-            elif etype == "error":
-                yield AgentEvent("error", {"message": event.get("content", "")})
-                cleanup_dir(_att_dir)
-                return
-
-        # agy subprocess bitti → ekli görsel temp klasörünü temizle (agy artık okumadı).
-        cleanup_dir(_att_dir)
+        if got_error:
+            return
 
         # UUID: resume ise sess'te mevcut; değilse (ilk tur) yeni beliren .db'yi yakala + SAKLA
         # ki sonraki turlar native resume yapsın.
@@ -1181,16 +1195,17 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
         yield AgentEvent("done", {"iterations": 1})
 
     # ═══════════════════════════════════════════════
-    # CURSOR / COPILOT / OPENCODE — one-shot CLI + RESMİ resume
+    # CURSOR / COPILOT / OPENCODE / KIMI — one-shot CLI
     # ═══════════════════════════════════════════════
     async def _run_oneshot_cli_session(self, user_message: str, cli_key: str) -> AsyncGenerator[AgentEvent, None]:
-        """Cursor/Copilot/OpenCode'u tur bazlı (ephemeral subprocess) sürer.
+        """Cursor/Copilot/OpenCode/Kimi'yi tur bazlı (ephemeral subprocess) sürer.
 
         Bağlam, CLI'ların RESMİ resume mekanizmasıyla korunur (agy'nin aksine
-        üçünde de resmi ve çalışır — 2026-07-13 canlı doğrulandı):
+        ilk üçünde resmi ve çalışır — 2026-07-13 canlı doğrulandı):
           cursor  → --resume <chatId>   (chatId ilk turun event'lerinden yakalanır)
           copilot → --session-id=<bizim uuid> (tur 1) / --resume=<uuid> (sonrası)
           opencode→ -s <sessionID>      (sessionID her event'te gelir)
+          kimi    → doğrulanmış resume yok; her tur kırpılmış transcript
         İlk turda (resume anahtarı yokken) tam transcript enjekte edilir;
         sonraki turlarda CLI kendi hafızasından devam eder.
         """
@@ -1229,15 +1244,17 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
 
         # İlk turda transcript enjeksiyonu (sonraki turlarda CLI resume hatırlar).
         enriched_prompt = user_message
-        if self.context and not sess.ctx_injected:
+        # Kimi CLI'nın doğrulanmış resume mekanizması yok; her turda kırpılmış
+        # transcript verilir. Diğer one-shot CLI'lar resmi session resume kullanır.
+        if self.context and (cli_key == "kimi" or not sess.ctx_injected):
             _CTX_CAP = 24000  # Windows argv sınırı (~32K) + mcp_hint payı
             _ctx = self.context
             if len(_ctx) > _CTX_CAP:
                 _ctx = "…[eski geçmiş kırpıldı — en yeni kısım korundu]\n" + _ctx[-_CTX_CAP:]
             enriched_prompt = f"{user_message}\n\n{_HANDOFF_HEADER}\n{_ctx}"
-        sess.ctx_injected = True
+        sess.ctx_injected = (cli_key != "kimi")
 
-        # Görseller: dosyaya yaz + yolu prompt'a enjekte (üç CLI da read aracıyla açar).
+        # Görseller: dosyaya yaz + yolu prompt'a enjekte (CLI read aracıyla açar).
         from providers._attachments import materialize_images, cleanup_dir
         _img_paths, _att_dir = materialize_images(
             self.images, self.workspace_path, f"{cli_key}_conv{self.conversation_id}")
@@ -1253,10 +1270,19 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
         final_text = ""
         got_error = False
         reset_session = False
+        approval_turn_token = None
+        if cli_key == "opencode":
+            from agentic.approval_policy import begin_opencode_turn
+            approval_turn_token = begin_opencode_turn(
+                self.workspace_path or ".",
+                getattr(self, "generation_mode", "auto"),
+            )
+            provider._approval_turn_token = approval_turn_token
         try:
             for attempt in (1, 2):
                 got_error = False
                 _plan_error = False
+                sess.active_provider = provider
                 async for event in provider.analyze_code(
                     enriched_prompt,
                     thinking_level="medium" if self.use_thinking else "off",
@@ -1284,12 +1310,22 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                             _plan_error = True
                         else:
                             got_error = True
-                            from providers.oneshot_cli import QUOTA_ERROR_RE as _QRE
+                            from providers.oneshot_cli import (
+                                QUOTA_ERROR_RE as _QRE,
+                                UPSTREAM_ERROR_RE as _URE,
+                            )
                             if _QRE.search(_msg):
                                 _msg = (f"⏳ {cli_key.capitalize()} kullanım hakkın dolmuş görünüyor "
                                         f"(plan kotası). Kota yenilenene kadar başka bir sağlayıcı "
                                         f"seçebilirsin (örn. NVIDIA ücretsiz havuzu veya OpenCode).\n\n"
                                         + _msg[:200])
+                            elif cli_key == "opencode" and _URE.search(_msg):
+                                _msg = (
+                                    "⏳ Kimi/OpenCode sağlayıcısı isteği geçici olarak "
+                                    "reddetti. Bu genellikle sağlayıcı yoğunluğu veya rate "
+                                    "limit nedeniyle olur; birkaç dakika sonra tekrar dene. "
+                                    "Oturum bağlamı korundu.\n\n" + _msg[:200]
+                                )
                             yield AgentEvent("error", {"message": _msg})
 
                 if not _plan_error:
@@ -1314,7 +1350,18 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                     provider.resume_session_id = None
                 else:
                     provider.resume_session_id = sess.session_id
+        except (asyncio.CancelledError, GeneratorExit):
+            # SSE bağlantısı kesildiğinde sonraki tur yarım OpenCode/Cursor/Copilot
+            # session'ını resume etmesin. Tam transcript temiz session'a verilecek.
+            sess.session_id = None
+            sess.ctx_injected = False
+            raise
         finally:
+            if sess.active_provider is provider:
+                sess.active_provider = None
+            if approval_turn_token:
+                from agentic.approval_policy import end_opencode_turn
+                end_opencode_turn(approval_turn_token)
             cleanup_dir(_att_dir)
 
         if reset_session:

@@ -76,6 +76,11 @@ class OpenCodeProvider(BaseCLIProvider):
             token = os.environ.get("LOCAL_APP_TOKEN", "")
             if token:
                 unityai_env["LOCAL_APP_TOKEN"] = token
+            # Kalıcı bir auto/step bayrağı yazma. Bu tek kullanımlık anahtar yalnız
+            # AgentRunner'daki aktif OpenCode turu boyunca backend'de geçerlidir.
+            approval_turn_token = getattr(self, "_approval_turn_token", "")
+            if approval_turn_token:
+                unityai_env["UNITYAI_APPROVAL_TURN_TOKEN"] = approval_turn_token
 
             mcp = {
                 "unityai": {

@@ -105,6 +105,27 @@ class BaseCLIProvider(AIProvider):
     def __init__(self, binary_name: str = "claude"):
         self.binary_name = binary_name
         self._pending_agy_model = "Gemini 3.6 Flash (High)"
+        self._active_process = None
+        self._cancel_requested = False
+
+    async def cancel_active_process(self) -> bool:
+        """Bu provider'ın çalışan ephemeral CLI sürecini gerçekten sonlandırır."""
+        self._cancel_requested = True
+        process = self._active_process
+        if process is None or process.returncode is not None:
+            return False
+        logger.info(
+            f"[CLIProvider:{self.binary_name}] kullanıcı durdurdu — PID={process.pid} sonlandırılıyor"
+        )
+        try:
+            process.kill()
+        except ProcessLookupError:
+            return False
+        try:
+            await asyncio.wait_for(process.wait(), timeout=3.0)
+        except (asyncio.TimeoutError, ProcessLookupError):
+            pass
+        return True
 
     @classmethod
     def _cli_timeout_reason(cls, *, elapsed: float, idle: float) -> Optional[str]:
@@ -249,6 +270,10 @@ class BaseCLIProvider(AIProvider):
                            images: Optional[List[str]] = None,
                            thinking_level: str = "medium", cwd: Optional[str] = None,
                            interactive: bool = False) -> AsyncGenerator[Dict[str, Any], None]:
+        process = None
+        stderr_task = None
+        _pty_master_fd = None
+        self._cancel_requested = False
         try:
             workspace = cwd or os.getcwd()
             # Güvenlik ağı: seçili workspace klasörü silinmiş/taşınmış olabilir.
@@ -296,7 +321,6 @@ class BaseCLIProvider(AIProvider):
             logger.info(f"[CLIProvider:{self.binary_name}][CWD] {workspace}")
             logger.info(f"[CLIProvider:{self.binary_name}][ENV] LOCAL_APP_TOKEN={'set' if _env.get('LOCAL_APP_TOKEN') else 'unset'} UNITYAI_URL={_env.get('UNITYAI_URL', _env.get('ANTIGRAVITY_URL', 'unset'))}")
 
-            _pty_master_fd = None
             if _is_agy:
                 async with BaseCLIProvider._AGY_LOCK:
                     self._set_agy_model(self._pending_agy_model, workspace)
@@ -395,6 +419,7 @@ class BaseCLIProvider(AIProvider):
                     process.stdin.write(_stdin_prompt.encode("utf-8"))
                     await process.stdin.drain()
                     process.stdin.close()
+            self._active_process = process
             _stdout_reader = process.stdout
             logger.info(f"[CLIProvider:{self.binary_name}] PID={process.pid} başlatıldı")
 
@@ -690,11 +715,24 @@ class BaseCLIProvider(AIProvider):
                                 }
                                 # OpenCode top-level error verdiyse aynı disk session'ını
                                 # tekrar resume etmek çoğunlukla aynı hatayı döndürür.
+                                # Ancak provider yoğunluğu/rate-limit kaynaklı genel
+                                # upstream hatası session bozulması değildir; bağlamı koru.
                                 if self.binary_name.startswith("opencode:"):
-                                    _event.update({
-                                        "reset_session": True,
-                                        "reason": "structured_error",
-                                    })
+                                    if re.search(
+                                        r"upstream request failed|service unavailable|"
+                                        r"temporarily unavailable",
+                                        _err,
+                                        re.I,
+                                    ):
+                                        _event.update({
+                                            "reason": "provider_upstream",
+                                            "retryable": True,
+                                        })
+                                    else:
+                                        _event.update({
+                                            "reset_session": True,
+                                            "reason": "structured_error",
+                                        })
                                 yield _event
 
                         # ── agy / Gemini CLI JSONL (hot-swap) ───────────────
@@ -802,6 +840,7 @@ class BaseCLIProvider(AIProvider):
                     os.close(_pty_master_fd)
                 except OSError:
                     pass
+                _pty_master_fd = None
 
             logger.info(
                 f"[CLIProvider:{self.binary_name}][DONE] "
@@ -809,7 +848,14 @@ class BaseCLIProvider(AIProvider):
                 f"stderr={len(stderr_buffer)} | süre={asyncio.get_event_loop().time()-_start:.1f}s"
             )
 
-            if _termination_reason:
+            if self._cancel_requested:
+                yield {
+                    "type": "error",
+                    "content": "🛑 İşlem kullanıcı tarafından durduruldu.",
+                    "reset_session": True,
+                    "reason": "user_stop",
+                }
+            elif _termination_reason:
                 if _termination_reason == "idle_timeout":
                     _msg = (
                         "⏳ CLI uzun süre hiçbir çıktı veya ilerleme üretmediği için "
@@ -860,9 +906,30 @@ class BaseCLIProvider(AIProvider):
 
             yield {"type": "final", "text": self._clean_response(full_text)}
 
+        except asyncio.CancelledError:
+            # İstemci SSE bağlantısını AbortController ile kapattığında generator
+            # iptal edilir. Alt CLI arkada kalmamalı; cleanup finally'de yapılır.
+            raise
         except Exception as e:
             logger.exception(f"[CLIProvider:{self.binary_name}] Exception in analyze_code")
             yield {"type": "error", "content": f"❌ CLI Bridge Hatası: {str(e)}"}
+        finally:
+            if process is not None and process.returncode is None:
+                try:
+                    process.kill()
+                    await asyncio.wait_for(process.wait(), timeout=3.0)
+                except (ProcessLookupError, asyncio.TimeoutError):
+                    pass
+            if stderr_task is not None and not stderr_task.done():
+                stderr_task.cancel()
+                await asyncio.gather(stderr_task, return_exceptions=True)
+            if _pty_master_fd is not None:
+                try:
+                    os.close(_pty_master_fd)
+                except OSError:
+                    pass
+            if self._active_process is process:
+                self._active_process = None
 
     async def analyze_code_with_thinking(self, prompt: str, max_tokens: int = 4096,
                                          images: Optional[List[str]] = None,
