@@ -1252,6 +1252,7 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
 
         final_text = ""
         got_error = False
+        reset_session = False
         try:
             for attempt in (1, 2):
                 got_error = False
@@ -1276,6 +1277,8 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                         final_text = event.get("text", "")
                     elif etype == "error":
                         _msg = event.get("content", "")
+                        if event.get("reset_session"):
+                            reset_session = True
                         if attempt == 1 and _can_fallback and _PLAN_ERR.search(_msg):
                             # Plan bu modeli desteklemiyor → hatayı GÖSTERME, Auto ile tekrarla.
                             _plan_error = True
@@ -1313,6 +1316,16 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                     provider.resume_session_id = sess.session_id
         finally:
             cleanup_dir(_att_dir)
+
+        if reset_session:
+            # SIGKILL/timeout sonrası CLI'ın disk oturumu yarım kalmış olabilir.
+            # Resume etme; bir sonraki tur temiz session açsın ve request route'un
+            # verdiği tam sohbet transcript'ini yeniden enjekte etsin.
+            sess.session_id = None
+            sess.ctx_injected = False
+            logger.warning(
+                f"[{cli_key}Session] conv={self.conversation_id} yarım/fatal tur "
+                "sonrası resume anahtarı sıfırlandı")
 
         if got_error:
             return

@@ -17,6 +17,41 @@ logger = logging.getLogger(__name__)
 _CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
+def _cli_value_to_text(value: Any) -> str:
+    """CLI JSON event'lerindeki metin-benzeri değerleri güvenle string'e çevirir.
+
+    OpenCode hata event'leri bazen ``{"name": ..., "data": {"message": ...}}``
+    şeklinde yapılandırılmış nesne döndürür. Bu değer doğrudan ``str + dict`` ile
+    biriktirilirse bridge çöker ve asıl hata görünmez.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (int, float, bool)):
+        return str(value)
+    if isinstance(value, list):
+        parts = [_cli_value_to_text(item).strip() for item in value]
+        return "\n".join(part for part in parts if part)
+    if isinstance(value, dict):
+        # Önce kullanıcıya anlamlı mesaj taşıma ihtimali yüksek alanları ara.
+        for key in ("message", "detail", "content", "text"):
+            text = _cli_value_to_text(value.get(key)).strip()
+            if text:
+                name = _cli_value_to_text(value.get("name")).strip()
+                return f"{name}: {text}" if name and name not in text else text
+        for key in ("data", "error", "cause"):
+            text = _cli_value_to_text(value.get(key)).strip()
+            if text:
+                name = _cli_value_to_text(value.get("name")).strip()
+                return f"{name}: {text}" if name and name not in text else text
+        try:
+            return json.dumps(value, ensure_ascii=False)
+        except (TypeError, ValueError):
+            return str(value)
+    return str(value)
+
+
 class BaseCLIProvider(AIProvider):
     """
     Claude Code, Codex ve agy CLI'larını UnityAI MCP Server üzerinden çalıştırır.
@@ -24,6 +59,13 @@ class BaseCLIProvider(AIProvider):
 
     # Race condition önlemi: settings.json yazma + subprocess spawn atomik olmalı
     _AGY_LOCK = asyncio.Lock()
+
+    # Cursor/Copilot/OpenCode gibi one-shot CLI'larda uzun MCP çağrıları dakikalarca
+    # stdout üretmeyebilir. Yalnız GERÇEK hareketsizliği sınırla; toplam çalışma
+    # süresini ayrıca geniş bir güvenlik tavanıyla koru.
+    _CLI_POLL_SECONDS = 15.0
+    _CLI_IDLE_TIMEOUT_SECONDS = 15 * 60
+    _CLI_MAX_RUNTIME_SECONDS = 60 * 60
 
     # model ID → agy settings.json "model" değeri (DISPLAY-NAME formatı).
     # ⚠️ `--model` FLAG'İ KULLANILMAZ — canlı doğrulandı (2026-07-24): agy komut
@@ -63,6 +105,19 @@ class BaseCLIProvider(AIProvider):
     def __init__(self, binary_name: str = "claude"):
         self.binary_name = binary_name
         self._pending_agy_model = "Gemini 3.6 Flash (High)"
+
+    @classmethod
+    def _cli_timeout_reason(cls, *, elapsed: float, idle: float) -> Optional[str]:
+        """Aktif bir CLI sürecinin durdurulma nedenini döndürür.
+
+        ``elapsed`` tek başına 5 dakikayı geçti diye süreç öldürülmez; stdout veya
+        stderr aktivitesi varsa ``idle`` düşük kalır ve uzun MCP turu devam eder.
+        """
+        if elapsed > cls._CLI_MAX_RUNTIME_SECONDS:
+            return "max_runtime"
+        if idle > cls._CLI_IDLE_TIMEOUT_SECONDS:
+            return "idle_timeout"
+        return None
 
     def _backend_dir(self) -> str:
         """Backend kökünü döndürür (run_mcp_server.sh + unityai orada yaşar).
@@ -343,13 +398,19 @@ class BaseCLIProvider(AIProvider):
             _stdout_reader = process.stdout
             logger.info(f"[CLIProvider:{self.binary_name}] PID={process.pid} başlatıldı")
 
+            _loop = asyncio.get_event_loop()
+            _start = _loop.time()
+            _last_activity = _start
+            _termination_reason = None
             stderr_buffer = []
 
             async def _drain_stderr():
+                nonlocal _last_activity
                 while True:
                     line = await process.stderr.readline()
                     if not line:
                         break
+                    _last_activity = _loop.time()
                     decoded = line.decode("utf-8", errors="ignore").rstrip()
                     stderr_buffer.append(decoded)
                     logger.warning(f"[CLIProvider:{self.binary_name}][STDERR] {decoded}")
@@ -358,7 +419,6 @@ class BaseCLIProvider(AIProvider):
 
             full_text = ""
             line_count = 0
-            _start = asyncio.get_event_loop().time()
             # Yeni CLI'lar (cursor/copilot/opencode) için parser durumu:
             _sess_meta_sent = False          # resume anahtarı bir kez yield edilir
             _copilot_streamed = set()        # delta'sı akıtılan messageId'ler (dedup)
@@ -380,9 +440,12 @@ class BaseCLIProvider(AIProvider):
 
             while True:
                 try:
-                    line = await asyncio.wait_for(_stdout_reader.readline(), timeout=15.0)
+                    line = await asyncio.wait_for(
+                        _stdout_reader.readline(),
+                        timeout=self._CLI_POLL_SECONDS,
+                    )
                 except asyncio.TimeoutError:
-                    _now = asyncio.get_event_loop().time()
+                    _now = _loop.time()
                     if process.returncode is not None:
                         logger.error(f"[CLIProvider:{self.binary_name}] Process bitti rc={process.returncode}")
                         break
@@ -409,13 +472,24 @@ class BaseCLIProvider(AIProvider):
                             break
                         continue
 
-                    # Diğer provider'lar (claude/codex/...): onay beklerken sessiz kalabilir;
-                    # 300s hard-kill (approval_bridge 180s bekliyor).
+                    # Diğer provider'lar (claude/codex/...): onay veya uzun MCP işi
+                    # beklerken sessiz kalabilir. Toplam 300 saniyede öldürmek yerine
+                    # son gerçek stdout/stderr aktivitesini esas al.
+                    _idle = _now - _last_activity
+                    _elapsed = _now - _start
                     logger.warning(
-                        f"[CLIProvider:{self.binary_name}][WAIT] {_now-_start:.0f}s stdout yok "
-                        f"(onay/işlem bekleniyor olabilir) | pid={process.pid}")
-                    if _now - _start > 300:
-                        logger.error(f"[CLIProvider:{self.binary_name}] 300s timeout — kill")
+                        f"[CLIProvider:{self.binary_name}][WAIT] idle={_idle:.0f}s "
+                        f"toplam={_elapsed:.0f}s (onay/işlem bekleniyor olabilir) | "
+                        f"pid={process.pid}")
+                    _termination_reason = self._cli_timeout_reason(
+                        elapsed=_elapsed,
+                        idle=_idle,
+                    )
+                    if _termination_reason:
+                        logger.error(
+                            f"[CLIProvider:{self.binary_name}] "
+                            f"{_termination_reason} (idle={_idle:.0f}s / "
+                            f"toplam={_elapsed:.0f}s) — kill")
                         process.kill()
                         break
                     continue
@@ -424,6 +498,7 @@ class BaseCLIProvider(AIProvider):
                     logger.info(f"[CLIProvider:{self.binary_name}] stdout EOF (toplam {line_count} satır)")
                     break
 
+                _last_activity = _loop.time()
                 raw = _strip_ansi(line.decode("utf-8", errors="ignore")).strip()
                 if not raw:
                     continue
@@ -537,7 +612,7 @@ class BaseCLIProvider(AIProvider):
                             if result_text:
                                 yield {"type": "thinking", "text": f"↩ {result_text}"}
                         elif ev_type == "result":
-                            result = ev.get("result", "")
+                            result = _cli_value_to_text(ev.get("result", ""))
                             if result and not full_text:
                                 full_text = result
 
@@ -603,9 +678,30 @@ class BaseCLIProvider(AIProvider):
                         elif ev_type in ("step_start", "step_finish"):
                             pass  # akış iskeleti; step_finish token sayılarını taşır (gerekirse logla)
 
+                        # ── Yapılandırılmış CLI hatası ─────────────────────
+                        elif ev_type == "error":
+                            _err = _cli_value_to_text(
+                                ev.get("content", ev.get("text", ev.get("error", "")))
+                            ).strip()
+                            if _err:
+                                _event = {
+                                    "type": "error",
+                                    "content": f"❌ CLI hatası: {_err}",
+                                }
+                                # OpenCode top-level error verdiyse aynı disk session'ını
+                                # tekrar resume etmek çoğunlukla aynı hatayı döndürür.
+                                if self.binary_name.startswith("opencode:"):
+                                    _event.update({
+                                        "reset_session": True,
+                                        "reason": "structured_error",
+                                    })
+                                yield _event
+
                         # ── agy / Gemini CLI JSONL (hot-swap) ───────────────
-                        elif ev_type in ("content", "error"):
-                            t = ev.get("content", ev.get("text", ev.get("error", "")))
+                        elif ev_type == "content":
+                            t = _cli_value_to_text(
+                                ev.get("content", ev.get("text", ""))
+                            )
                             if t:
                                 if self.binary_name.startswith(("gemini", "agy-")) and "timed out" in t.lower():
                                     yield {"type": "error", "text": "agy zaman aşımına uğradı."}
@@ -713,10 +809,34 @@ class BaseCLIProvider(AIProvider):
                 f"stderr={len(stderr_buffer)} | süre={asyncio.get_event_loop().time()-_start:.1f}s"
             )
 
-            if process.returncode not in (0, 1, None):
+            if _termination_reason:
+                if _termination_reason == "idle_timeout":
+                    _msg = (
+                        "⏳ CLI uzun süre hiçbir çıktı veya ilerleme üretmediği için "
+                        f"{int(self._CLI_IDLE_TIMEOUT_SECONDS // 60)} dakika sonra durduruldu. "
+                        "Sonraki mesaj temiz bir oturumda sohbet geçmişiyle devam edecek."
+                    )
+                else:
+                    _msg = (
+                        "⏳ CLI güvenlik amacıyla "
+                        f"{int(self._CLI_MAX_RUNTIME_SECONDS // 60)} dakikalık toplam çalışma "
+                        "tavanında durduruldu. Sonraki mesaj temiz bir oturumda devam edecek."
+                    )
+                yield {
+                    "type": "error",
+                    "content": _msg,
+                    "reset_session": True,
+                    "reason": _termination_reason,
+                }
+            elif process.returncode not in (0, 1, None):
                 stderr_full = "\n".join(stderr_buffer)
                 logger.error(f"[CLIProvider:{self.binary_name}][FAILED] rc={process.returncode}\nSTDERR:\n{stderr_full}")
-                yield {"type": "error", "content": f"❌ CLI hata (rc={process.returncode}): {stderr_full[:500] or '(boş)'}"}
+                yield {
+                    "type": "error",
+                    "content": f"❌ CLI hata (rc={process.returncode}): {stderr_full[:500] or '(boş)'}",
+                    "reset_session": True,
+                    "reason": "process_exit",
+                }
             elif line_count == 0 and not _is_agy:
                 # NOT: agy --print stdout'u non-TTY'de SESSİZCE kaybolur (repo bug #76) —
                 # bu agy için NORMALDİR (yanıt conversation .db'sinden okunur, bkz.

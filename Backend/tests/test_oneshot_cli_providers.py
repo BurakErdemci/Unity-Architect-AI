@@ -238,6 +238,100 @@ class TestEventParsing(unittest.TestCase):
         hints = [e["text"] for e in evs if e["type"] == "thinking"]
         self.assertTrue(any("bash" in h for h in hints))
 
+    def test_opencode_structured_error_is_reported_without_bridge_crash(self):
+        """OpenCode error.error=dict döndürdüğünde str+dict TypeError oluşmamalı."""
+        from providers.opencode_provider import OpenCodeProvider
+        p = OpenCodeProvider(binary_name="opencode:opencode-go/kimi-k3")
+        lines = [
+            json.dumps({
+                "type": "error",
+                "sessionID": "ses_broken",
+                "error": {
+                    "name": "ProviderError",
+                    "data": {"message": "Interrupted session cannot be resumed"},
+                },
+            }),
+        ]
+
+        evs = self._run_provider(p, lines)
+        errors = [e for e in evs if e["type"] == "error"]
+        self.assertEqual(len(errors), 1)
+        self.assertIn("ProviderError", errors[0]["content"])
+        self.assertIn("Interrupted session cannot be resumed", errors[0]["content"])
+        self.assertTrue(errors[0]["reset_session"])
+        self.assertFalse(any("CLI Bridge Hatası" in e.get("content", "") for e in errors))
+
+    def test_cli_timeout_uses_idle_time_not_five_minute_total_runtime(self):
+        """Aktif CLI toplam 5 dakikayı geçti diye öldürülmemeli."""
+        from providers.cli_base import BaseCLIProvider
+
+        self.assertIsNone(
+            BaseCLIProvider._cli_timeout_reason(elapsed=301, idle=1)
+        )
+        self.assertEqual(
+            BaseCLIProvider._cli_timeout_reason(
+                elapsed=901,
+                idle=BaseCLIProvider._CLI_IDLE_TIMEOUT_SECONDS + 1,
+            ),
+            "idle_timeout",
+        )
+        self.assertEqual(
+            BaseCLIProvider._cli_timeout_reason(
+                elapsed=BaseCLIProvider._CLI_MAX_RUNTIME_SECONDS + 1,
+                idle=0,
+            ),
+            "max_runtime",
+        )
+
+
+class TestOneShotSessionRecovery(unittest.TestCase):
+    def test_fatal_opencode_error_invalidates_resume_session(self):
+        """Öldürülmüş/bozuk OpenCode session'ı sonraki turda resume edilmemeli."""
+        from agentic.agent_runner import AgentRunner
+        from providers.oneshot_cli import _SESSIONS, get_session
+
+        class FakeOpenCodeProvider:
+            resume_session_id = None
+
+            async def analyze_code(self, *args, **kwargs):
+                yield {"type": "session_meta", "session_id": "ses_broken"}
+                yield {
+                    "type": "error",
+                    "content": "CLI hareketsizlik nedeniyle durduruldu.",
+                    "reset_session": True,
+                    "reason": "idle_timeout",
+                }
+
+        _SESSIONS.clear()
+        session = get_session("opencode", 991)
+        session.session_id = "ses_old"
+        session.ctx_injected = True
+        runner = AgentRunner(
+            provider_type="subscription",
+            api_key="",
+            model_name="opencode:opencode-go/kimi-k3",
+            workspace_path=os.getcwd(),
+            context="USER: önceki görev",
+            conversation_id=991,
+        )
+
+        async def collect():
+            events = []
+            async for event in runner._run_oneshot_cli_session("devam et", "opencode"):
+                events.append(event)
+            return events
+
+        with patch(
+            "ai_providers.AIProviderManager.get_provider",
+            return_value=FakeOpenCodeProvider(),
+        ):
+            events = asyncio.run(collect())
+
+        self.assertTrue(any(event.type == "error" for event in events))
+        self.assertIsNone(session.session_id)
+        self.assertFalse(session.ctx_injected)
+        _SESSIONS.clear()
+
 
 class TestModelListParsers(unittest.TestCase):
     def test_cursor_models_parse(self):
