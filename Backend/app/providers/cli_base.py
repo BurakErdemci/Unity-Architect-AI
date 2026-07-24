@@ -66,6 +66,11 @@ class BaseCLIProvider(AIProvider):
     _CLI_POLL_SECONDS = 15.0
     _CLI_IDLE_TIMEOUT_SECONDS = 15 * 60
     _CLI_MAX_RUNTIME_SECONDS = 60 * 60
+    # asyncio subprocess StreamReader varsayılanı 64 KiB'dir. JSONL kullanan
+    # CLI'lar MCP ekran görüntüsü gibi binary/base64 sonuçlarını tek event satırında
+    # döndürebilir (Unity screenshot canlı örneği: ~214 KiB). Tüm CLI stdout/stderr
+    # akışlarına kontrollü, fakat gerçek MCP sonuçlarını taşıyabilecek ortak tavan ver.
+    _CLI_STREAM_LIMIT_BYTES = 32 * 1024 * 1024
 
     # model ID → agy settings.json "model" değeri (DISPLAY-NAME formatı).
     # ⚠️ `--model` FLAG'İ KULLANILMAZ — canlı doğrulandı (2026-07-24): agy komut
@@ -397,6 +402,7 @@ class BaseCLIProvider(AIProvider):
                         env=_env,
                         cwd=workspace,
                         creationflags=_CREATE_NO_WINDOW,
+                        limit=self._CLI_STREAM_LIMIT_BYTES,
                     )
             else:
                 # Windows .cmd shim (cmd /c): cmd.exe komut satırındaki çok satırlı arg'ı
@@ -414,6 +420,7 @@ class BaseCLIProvider(AIProvider):
                     env=_env,
                     cwd=workspace,
                     creationflags=_CREATE_NO_WINDOW,
+                    limit=self._CLI_STREAM_LIMIT_BYTES,
                 )
                 if _stdin_prompt is not None:
                     process.stdin.write(_stdin_prompt.encode("utf-8"))

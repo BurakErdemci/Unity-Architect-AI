@@ -254,6 +254,50 @@ class TestEventParsing(unittest.TestCase):
         hints = [e["text"] for e in evs if e["type"] == "thinking"]
         self.assertTrue(any("bash" in h for h in hints))
 
+    def test_opencode_large_unity_screenshot_event_exceeds_default_asyncio_limit(self):
+        """Unity screenshot gibi 64 KiB üstü tek JSONL event bridge'i düşürmemeli."""
+        from providers.opencode_provider import OpenCodeProvider
+
+        p = OpenCodeProvider(binary_name="opencode:opencode-go/kimi-k3")
+        sid = "ses_large_unity_screenshot"
+        large_screenshot = "data:image/png;base64," + ("A" * 220_000)
+        lines = [
+            json.dumps({
+                "type": "tool_use",
+                "sessionID": sid,
+                "part": {
+                    "type": "tool",
+                    "tool": "unityMCP_manage_camera",
+                    "state": {
+                        "status": "completed",
+                        "title": "screenshot",
+                        "output": large_screenshot,
+                    },
+                },
+            }),
+            json.dumps({
+                "type": "text",
+                "sessionID": sid,
+                "part": {"type": "text", "text": "Kart görünürlüğü doğrulandı."},
+            }),
+        ]
+
+        self.assertGreater(len(lines[0].encode("utf-8")), 64 * 1024)
+        evs = self._run_provider(p, lines)
+
+        self.assertFalse(any(
+            "CLI Bridge Hatası" in e.get("content", "")
+            for e in evs
+            if e["type"] == "error"
+        ))
+        self.assertTrue(any(
+            "unityMCP_manage_camera" in e.get("text", "")
+            for e in evs
+            if e["type"] == "thinking"
+        ))
+        deltas = "".join(e["text"] for e in evs if e["type"] == "delta")
+        self.assertEqual(deltas, "Kart görünürlüğü doğrulandı.")
+
     def test_opencode_structured_error_is_reported_without_bridge_crash(self):
         """OpenCode error.error=dict döndürdüğünde str+dict TypeError oluşmamalı."""
         from providers.opencode_provider import OpenCodeProvider
