@@ -86,6 +86,11 @@ const CLI_GROUPS: CliGroupDef[] = [
     accent: 'text-teal-300', dot: 'bg-teal-300',
     badge: 'FREE + GO',
   },
+  {
+    key: 'kimi', label: 'Kimi Code', brand: 'moonshot', availKey: 'kimi', cliLabel: 'Kimi Code CLI',
+    matches: id => id.startsWith('kimi-'),
+    accent: 'text-fuchsia-300', dot: 'bg-fuchsia-300',
+  },
 ];
 
 type ModelItem = { id: string; name: string; provider?: string; openrouter_id?: string; disabled?: boolean; disabled_reason?: string };

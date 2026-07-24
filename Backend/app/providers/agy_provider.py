@@ -62,7 +62,14 @@ class AgyProvider(BaseCLIProvider):
         """~/.gemini/antigravity-cli/settings.json ve global ~/.gemini/settings.json
         içindeki trustedWorkspaces, toolPermission ve disabledTools'u günceller.
         Model ARTIK burada yazılmaz — komut satırında `--model <slug>` ile sabitleniyor
-        (bkz. _build_cmd; agy 1.1.5, canlı doğrulandı). agy_model_name yalnız log için."""
+        (bkz. _build_cmd; agy 1.1.5, canlı doğrulandı). agy_model_name yalnız log için.
+
+        KRİTİK: eski sürümlerin yazdığı stale "model" key'i (display-name formatı,
+        örn. "Gemini 3.5 Flash (High)") AKTİF OLARAK SİLİNİR — canlı doğrulandı
+        (2026-07-24): bu key settings.json'da kalırsa, --model flag'i DOĞRU modeli
+        seçmesine rağmen agy bunu modelin kendi kimlik algısına enjekte ediyor →
+        model "--model gemini-3.6-flash-high" ile çalıştırılsa bile kendini eski
+        stale değer olan "Gemini 3.5 Flash (High)" sanıp öyle yanıtlıyordu."""
         # 1. Lokal antigravity-cli settings.json
         settings_path = os.path.expanduser("~/.gemini/antigravity-cli/settings.json")
         try:
@@ -70,6 +77,7 @@ class AgyProvider(BaseCLIProvider):
                 settings = json.load(f)
         except Exception:
             settings = {"colorScheme": "dark", "trustedWorkspaces": []}
+        settings.pop("model", None)  # stale display-name temizliği (yukarıdaki not)
         settings["toolPermission"] = "always-proceed"  # --dangerously-skip-permissions flag'i YERİNE (canlı doğrulandı: geçerli değer, flag'siz auto-approve → skill-derail'i tetiklemez)
         settings["disabledTools"] = self._AGY_DISABLED_TOOLS
         if workspace:
@@ -90,6 +98,7 @@ class AgyProvider(BaseCLIProvider):
                 global_settings = json.load(f)
         except Exception:
             global_settings = {}
+        global_settings.pop("model", None)  # stale display-name temizliği (yukarıdaki not)
         global_settings["toolPermission"] = "always-proceed"  # --dangerously-skip-permissions YERİNE (geçerli değer, flag'siz auto-approve)
         global_settings["disabledTools"] = self._AGY_DISABLED_TOOLS
         if workspace:
