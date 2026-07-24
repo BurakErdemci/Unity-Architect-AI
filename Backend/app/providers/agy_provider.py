@@ -43,7 +43,7 @@ class AgyProvider(BaseCLIProvider):
         """
         full_id = self.binary_name
         # Tüm agy modelleri: Gemini, Claude Sonnet/Opus, GPT-OSS
-        self._pending_agy_model = self._AGY_MODEL_MAP.get(full_id, "gemini-3.6-flash-high")
+        self._pending_agy_model = self._AGY_MODEL_MAP.get(full_id, "Gemini 3.6 Flash (High)")
         cmd = [self._agy_binary()]
         if workspace:
             cmd += ["--add-dir", workspace]
@@ -51,25 +51,20 @@ class AgyProvider(BaseCLIProvider):
         if resume_uuid:
             cmd += [f"--conversation={resume_uuid}"]
         cmd += ["--print"]  # prompt cli_base'de son arg olarak eklenir
-        # Model'i KOMUT SATIRINDAN sabitle (agy 1.1.5 --model kebab slug; 2026-07-24
-        # canlı doğrulandı: `agy --model gemini-3.6-flash-high --print` → yanıt). Effort
-        # slug son-ekinde (-high/-medium/-low) → ayrı --effort'a gerek yok. Bu sayede
-        # settings.json "model" yazımı gereksizleşti (bkz. _set_agy_model).
-        cmd += ["--model", self._pending_agy_model]
+        # ⚠️ --model FLAG'İ EKLENMEZ — derail tetikliyor (agy guide-skill'e düşüp
+        # kullanıcının mesajını yanıtlamıyor; 2026-07-24 canlı doğrulandı). Model,
+        # _set_agy_model ile settings.json "model" key'inden seçilir.
         return cmd
 
     def _set_agy_model(self, agy_model_name: str, workspace: str = ""):
         """~/.gemini/antigravity-cli/settings.json ve global ~/.gemini/settings.json
-        içindeki trustedWorkspaces, toolPermission ve disabledTools'u günceller.
-        Model ARTIK burada yazılmaz — komut satırında `--model <slug>` ile sabitleniyor
-        (bkz. _build_cmd; agy 1.1.5, canlı doğrulandı). agy_model_name yalnız log için.
+        içindeki modeli, trustedWorkspaces, toolPermission ve disabledTools'u günceller.
 
-        KRİTİK: eski sürümlerin yazdığı stale "model" key'i (display-name formatı,
-        örn. "Gemini 3.5 Flash (High)") AKTİF OLARAK SİLİNİR — canlı doğrulandı
-        (2026-07-24): bu key settings.json'da kalırsa, --model flag'i DOĞRU modeli
-        seçmesine rağmen agy bunu modelin kendi kimlik algısına enjekte ediyor →
-        model "--model gemini-3.6-flash-high" ile çalıştırılsa bile kendini eski
-        stale değer olan "Gemini 3.5 Flash (High)" sanıp öyle yanıtlıyordu."""
+        Model seçimi SADECE buradan yapılır (komut satırında --model YOK — o derail
+        tetikliyor, bkz. _build_cmd). Her çağrıda "model" key'i GÜNCEL değere yazılır;
+        bu sayede eski stale değer (örn. önceki oturumdan "Gemini 3.5 Flash (High)")
+        üzerine yazılır — canlı doğrulandı (2026-07-24): stale key kalınca model
+        kendini yanlış tanıtıyordu, güncel display-name yazılınca düzeliyor."""
         # 1. Lokal antigravity-cli settings.json
         settings_path = os.path.expanduser("~/.gemini/antigravity-cli/settings.json")
         try:
@@ -77,7 +72,7 @@ class AgyProvider(BaseCLIProvider):
                 settings = json.load(f)
         except Exception:
             settings = {"colorScheme": "dark", "trustedWorkspaces": []}
-        settings.pop("model", None)  # stale display-name temizliği (yukarıdaki not)
+        settings["model"] = agy_model_name
         settings["toolPermission"] = "always-proceed"  # --dangerously-skip-permissions flag'i YERİNE (canlı doğrulandı: geçerli değer, flag'siz auto-approve → skill-derail'i tetiklemez)
         settings["disabledTools"] = self._AGY_DISABLED_TOOLS
         if workspace:
@@ -98,7 +93,7 @@ class AgyProvider(BaseCLIProvider):
                 global_settings = json.load(f)
         except Exception:
             global_settings = {}
-        global_settings.pop("model", None)  # stale display-name temizliği (yukarıdaki not)
+        global_settings["model"] = agy_model_name
         global_settings["toolPermission"] = "always-proceed"  # --dangerously-skip-permissions YERİNE (geçerli değer, flag'siz auto-approve)
         global_settings["disabledTools"] = self._AGY_DISABLED_TOOLS
         if workspace:

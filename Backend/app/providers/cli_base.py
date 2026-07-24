@@ -25,25 +25,29 @@ class BaseCLIProvider(AIProvider):
     # Race condition önlemi: settings.json yazma + subprocess spawn atomik olmalı
     _AGY_LOCK = asyncio.Lock()
 
-    # model ID → agy 1.1.5 `--model` slug'ı. agy 1.1.5 `agy models` çıktısından
-    # CANLI DOĞRULANDI (2026-07-24): --model kebab-case slug alır (eski display-name
-    # DEĞİL); `agy --model gemini-3.6-flash-high --print` → yanıt döndü. Effort, slug
-    # son-ekiyle (-high/-medium/-low) geliyor → ayrı --effort'a gerek yok. Listede
-    # OLMAYAN modeller (3.5-flash-lite, 3-flash, 3.1-flash-lite, 2.5-*) buradan çıkarıldı.
+    # model ID → agy settings.json "model" değeri (DISPLAY-NAME formatı).
+    # ⚠️ `--model` FLAG'İ KULLANILMAZ — canlı doğrulandı (2026-07-24): agy komut
+    # satırında --model görünce "kullanıcı bu flag'i soruyor" sanıp built-in
+    # antigravity-guide skill'ine düşüyor (derail) → kullanıcının gerçek mesajını
+    # yanıtlamıyor, kendinden/CLI flag'lerinden bahsediyor. Aynı derail --mode,
+    # --print-timeout, --dangerously-skip-permissions'ta da var. Model seçimi bu
+    # yüzden SADECE settings.json "model" key'iyle yapılır (bkz. _set_agy_model);
+    # display-name settings.json'da hem modeli seçer hem kimliğini belirler.
+    # 1.1.5'te OLMAYAN modeller (3.5-flash-lite, 3-flash, 3.1-flash-lite, 2.5-*) çıkarıldı.
     _AGY_MODEL_MAP = {
-        # Gemini (effort = slug son-eki)
-        "gemini-3.6-flash":              "gemini-3.6-flash-high",
-        "gemini-3.6-flash-medium":       "gemini-3.6-flash-medium",
-        "gemini-3.6-flash-low":          "gemini-3.6-flash-low",
-        "gemini-3.5-flash":              "gemini-3.5-flash-high",
-        "gemini-3.5-flash-medium":       "gemini-3.5-flash-medium",
-        "gemini-3.5-flash-low":          "gemini-3.5-flash-low",
-        "gemini-3.1-pro-preview":        "gemini-3.1-pro-high",
-        "gemini-3.1-pro-low":            "gemini-3.1-pro-low",
+        # Gemini (effort = display-name son-eki (High/Medium/Low))
+        "gemini-3.6-flash":              "Gemini 3.6 Flash (High)",
+        "gemini-3.6-flash-medium":       "Gemini 3.6 Flash (Medium)",
+        "gemini-3.6-flash-low":          "Gemini 3.6 Flash (Low)",
+        "gemini-3.5-flash":              "Gemini 3.5 Flash (High)",
+        "gemini-3.5-flash-medium":       "Gemini 3.5 Flash (Medium)",
+        "gemini-3.5-flash-low":          "Gemini 3.5 Flash (Low)",
+        "gemini-3.1-pro-preview":        "Gemini 3.1 Pro (High)",
+        "gemini-3.1-pro-low":            "Gemini 3.1 Pro (Low)",
         # Antigravity CLI üzerinden Claude ve GPT-OSS
-        "agy-claude-sonnet-4-6":         "claude-sonnet-4-6",
-        "agy-claude-opus-4-6":           "claude-opus-4-6-thinking",
-        "agy-gpt-oss-120b":              "gpt-oss-120b-medium",
+        "agy-claude-sonnet-4-6":         "Claude Sonnet 4.6 (Thinking)",
+        "agy-claude-opus-4-6":           "Claude Opus 4.6 (Thinking)",
+        "agy-gpt-oss-120b":              "GPT-OSS 120B (Medium)",
     }
 
     # agy CLI'ın kendi yerleşik araçlarının isimleri (onaysız çalışmayı engellemek amacıyla devre dışı bırakılır)
@@ -58,7 +62,7 @@ class BaseCLIProvider(AIProvider):
 
     def __init__(self, binary_name: str = "claude"):
         self.binary_name = binary_name
-        self._pending_agy_model = "gemini-3.6-flash-high"
+        self._pending_agy_model = "Gemini 3.6 Flash (High)"
 
     def _backend_dir(self) -> str:
         """Backend kökünü döndürür (run_mcp_server.sh + unityai orada yaşar).
