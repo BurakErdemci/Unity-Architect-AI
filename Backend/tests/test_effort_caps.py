@@ -6,7 +6,7 @@ from providers.effort_caps import get_effort_caps, map_effort
 
 
 def test_auto_always_first_and_empty_mapping():
-    for p, m in [("subscription", "claude-opus-4-8"), ("openai", "gpt-5.5"),
+    for p, m in [("subscription", "claude-opus-5"), ("subscription", "claude-opus-4-8"), ("openai", "gpt-5.5"),
                  ("nvidia", "z-ai/glm-5.2"), ("google", "gemini-3.5-flash"),
                  ("subscription", "cursor-composer")]:
         caps = get_effort_caps(p, m)
@@ -18,6 +18,7 @@ def test_claude_model_gating():
     assert "xhigh" in get_effort_caps("subscription", "claude-fable-5")["levels"]
     assert "xhigh" not in get_effort_caps("subscription", "claude-sonnet-4-6")["levels"]
     assert get_effort_caps("subscription", "claude-haiku-4-5")["levels"] == ["auto"]
+    assert map_effort("subscription", "claude-opus-5", "max") == {"sdk_effort": "max"}
     assert map_effort("subscription", "claude-opus-4-8", "max") == {"sdk_effort": "max"}
     # Desteklenmeyen seviye → sessizce auto (haiku'ya max istenirse hiçbir şey gitmez)
     assert map_effort("subscription", "claude-haiku-4-5", "max") == {}
@@ -46,6 +47,8 @@ def test_nvidia_glm_toggle_and_nemotron_low():
 
 
 def test_anthropic_extra_body_and_copilot_flags():
+    assert map_effort("anthropic", "claude-opus-5", "xhigh") == {
+        "anthropic_extra_body": {"output_config": {"effort": "xhigh"}}}
     assert map_effort("anthropic", "claude-opus-4-8", "xhigh") == {
         "anthropic_extra_body": {"output_config": {"effort": "xhigh"}}}
     assert map_effort("subscription", "copilot-claude-sonnet-4.6", "max") == {

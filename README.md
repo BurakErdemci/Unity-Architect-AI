@@ -257,7 +257,7 @@ Backend, makinendeki resmi CLI aracını subprocess olarak çağırır; aracın 
 
 | CLI Aracı | Modeller (örnek) | Config Dosyası | Tool Mekanizması |
 |---|---|---|---|
-| **Claude Code** | claude-sonnet-5, claude-fable-5, claude-opus-4-8, claude-haiku-4-5 | `~/.claude.json` (user scope) | MCP native (stdio + HTTP) |
+| **Claude Code** | claude-sonnet-5, claude-fable-5, claude-opus-5, claude-opus-4-8, claude-haiku-4-5 | `~/.claude.json` (user scope) | MCP native (stdio + HTTP) |
 | **Codex** | gpt-5.6-sol/terra/luna, gpt-5.5, gpt-5.4 | `~/.codex/config.toml` | MCP native |
 | **Antigravity (agy)** | Gemini 3.5 Flash + agy üzerinden Claude/GPT-OSS | `~/.gemini/antigravity-cli/` | `run_command` → `unityai` köprüsü |
 | **GitHub Copilot** | copilot-auto + Claude/GPT/Gemini seçenekleri | session-bazlı `--additional-mcp-config` | MCP native (global config'e dokunulmaz) |
@@ -270,7 +270,7 @@ Backend, sağlayıcının resmi SDK'sı veya OpenRouter gateway'i üzerinden ist
 
 | Sağlayıcı | Modeller (örnek) | Notlar |
 |---|---|---|
-| **Anthropic** | claude-sonnet-5, claude-fable-5, claude-opus-4-8, claude-haiku-4-5 | Extended Thinking, tool use |
+| **Anthropic** | claude-sonnet-5, claude-fable-5, claude-opus-5, claude-opus-4-8, claude-haiku-4-5 | Extended Thinking, tool use |
 | **Google** | gemini-3.5-flash, gemini-3.1-pro, gemini-3-flash | Thinking stream, vision |
 | **OpenAI** | gpt-5.6-sol/terra/luna, gpt-5.5-pro, gpt-5.5, gpt-5.4 | Function calling, vision |
 | **NVIDIA NIM** | GLM 5.2, Qwen3 Coder 480B, Nemotron 3 Ultra/Super, Mistral Large 3, Kimi K2.6… | Tek `nvapi-` anahtarıyla **ücretsiz havuz** (40 RPM) |

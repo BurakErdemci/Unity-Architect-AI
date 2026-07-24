@@ -57,6 +57,9 @@ class TestManagerRouting(unittest.TestCase):
         # Mevcut routing bozulmadı:
         self.assertIsInstance(self._get("gpt-5.5"), CodexProvider)
         self.assertIsInstance(self._get("claude-sonnet-5"), ClaudeCodeProvider)
+        opus_5 = self._get("claude-opus-5")
+        self.assertIsInstance(opus_5, ClaudeCodeProvider)
+        self.assertEqual(opus_5.binary_name, "claude-opus-5")
         # copilot-gpt-* Codex'e DÜŞMEMELİ (prefix önceliği):
         self.assertIsInstance(self._get("copilot-gpt-5.6-sol"), CopilotProvider)
 

@@ -84,7 +84,8 @@ export const SettingsModal = ({
     anthropic: [
       { label: `Sonnet 5 (${t('hint.recommended')})`, value: "claude-sonnet-5" },
       { label: "Fable 5", value: "claude-fable-5" },
-      { label: `Opus 4.8 (${t('hint.strongest')})`, value: "claude-opus-4-8" },
+      { label: `Opus 5 (${t('hint.strongest')})`, value: "claude-opus-5" },
+      { label: "Opus 4.8", value: "claude-opus-4-8" },
       { label: "Sonnet 4.6", value: "claude-sonnet-4-6" },
       { label: "Haiku 4.5", value: "claude-haiku-4-5" },
     ],
@@ -150,7 +151,8 @@ export const SettingsModal = ({
     ],
     subscription: [
       { label: "Claude Fable 5", value: "claude-fable-5" },
-      { label: `Claude Opus 4.8 (${t('hint.strongest')})`, value: "claude-opus-4-8" },
+      { label: `Claude Opus 5 (${t('hint.strongest')})`, value: "claude-opus-5" },
+      { label: "Claude Opus 4.8", value: "claude-opus-4-8" },
       { label: `Claude Sonnet 4.6 (${t('hint.recommended')})`, value: "claude-sonnet-4-6" },
       { label: `Claude Haiku 4.5 (${t('hint.fast')})`, value: "claude-haiku-4-5" },
       { label: "Codex GPT-5.6 Terra", value: "gpt-5.6-terra" },

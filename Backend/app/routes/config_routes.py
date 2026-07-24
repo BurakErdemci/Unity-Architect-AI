@@ -247,6 +247,7 @@ def create_config_router(db):
             "cloud": [
                 {"id": "claude-sonnet-5",          "name": "Claude Sonnet 5",    "provider": "anthropic", "openrouter_id": "anthropic/claude-sonnet-5"},
                 {"id": "claude-fable-5",           "name": "Claude Fable 5",     "provider": "anthropic", "openrouter_id": "anthropic/claude-fable-5"},
+                {"id": "claude-opus-5",            "name": "Claude Opus 5",      "provider": "anthropic"},
                 {"id": "claude-opus-4-8",          "name": "Claude 4.8 Opus",    "provider": "anthropic", "openrouter_id": "anthropic/claude-opus-4-8"},
                 {"id": "claude-sonnet-4-6",       "name": "Claude 4.6 Sonnet",  "provider": "anthropic", "openrouter_id": "anthropic/claude-sonnet-4-6"},
                 {"id": "claude-haiku-4-5",         "name": "Claude 4.5 Haiku",   "provider": "anthropic", "openrouter_id": "anthropic/claude-haiku-4-5"},
@@ -286,6 +287,7 @@ def create_config_router(db):
             "subscription": [
                 {"id": "claude-sonnet-5",      "name": "Claude Sonnet 5 (CLI)",         "provider": "subscription"},
                 {"id": "claude-fable-5",       "name": "Claude Fable 5 (CLI)",          "provider": "subscription"},
+                {"id": "claude-opus-5",        "name": "Claude Opus 5 (CLI)",           "provider": "subscription"},
                 {"id": "claude-opus-4-8",      "name": "Claude 4.8 Opus (CLI)",         "provider": "subscription"},
                 {"id": "claude-sonnet-4-6",    "name": "Claude 4.6 Sonnet (CLI)",       "provider": "subscription"},
                 {"id": "claude-haiku-4-5",     "name": "Claude 4.5 Haiku (CLI)",        "provider": "subscription"},

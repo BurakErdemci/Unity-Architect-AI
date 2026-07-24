@@ -265,6 +265,8 @@ class AnthropicProvider(AIProvider):
             self.model_name = "claude-4-6-sonnet"
         elif "fable" in raw_name:
             self.model_name = "claude-fable-5"
+        elif "opus-5" in raw_name:
+            self.model_name = "claude-opus-5"
         elif "opus" in raw_name:
             self.model_name = "claude-opus-4-8"
         elif "haiku-4-5" in raw_name or "haiku" in raw_name:
