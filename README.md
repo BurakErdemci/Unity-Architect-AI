@@ -734,4 +734,18 @@ cd Frontend/frontend && npm test
 
 Unity geliştirme sürecini AI ile kökten dönüştürmek isteyen geliştiriciler için açık kaynaklı bir portfolyo ve araştırma çalışması.
 
-[MIT Lisansı](LICENSE)
+---
+
+## 📄 Lisans
+
+**MIT + [Commons Clause](https://commonsclause.com/)** — bkz. [LICENSE](LICENSE)
+
+Bu proje **her zaman ücretsiz** kalacak şekilde lisanslanmıştır:
+
+- ✅ **Kullanabilirsin** — kişisel, eğitim, araştırma, kurumsal, her amaçla
+- ✅ **İnceleyebilir, değiştirebilir, fork'layabilirsin**
+- ✅ **Yaptığın oyunları satabilirsin** — bu uygulamayla ürettiğin işler tamamen senindir
+- ❌ **Uygulamanın kendisini satamazsın** — fork'layıp ücretli bir ürün/servis olarak sunmak yasaktır
+
+Üçüncü parti bileşenlerin lisansları için: [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)
+(Dağıtılan kurulumlardaki FFmpeg GPL-3.0 lisanslıdır ve ayrı bir süreç olarak çağrılır.)

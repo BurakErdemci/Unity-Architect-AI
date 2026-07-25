@@ -734,4 +734,18 @@ cd Frontend/frontend && npm test
 
 An open-source portfolio and research project for developers who want to fundamentally transform Unity development with AI.
 
-[MIT License](LICENSE)
+---
+
+## 📄 License
+
+**MIT + [Commons Clause](https://commonsclause.com/)** — see [LICENSE](LICENSE)
+
+This project is licensed to stay **free forever**:
+
+- ✅ **Use it** — personal, educational, research, or commercial settings
+- ✅ **Study, modify and fork it**
+- ✅ **Sell the games you make with it** — whatever you create is entirely yours
+- ❌ **You may not sell the application itself** — forking it into a paid product or service is not permitted
+
+For third-party component licenses, see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)
+(FFmpeg, shipped in released installers, is GPL-3.0 licensed and is invoked only as a separate process.)
