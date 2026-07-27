@@ -1,4 +1,7 @@
 using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Reflection;
 using MCPForUnity.Editor.Helpers;
 using MCPForUnity.Editor.Services;
 using Newtonsoft.Json.Linq;
@@ -142,17 +145,7 @@ namespace MCPForUnity.Editor.Tools
 
                 // Project File Sync
                 case "sync_csproj":
-                    try
-                    {
-                        // Dış editör proje dosyalarını (sln/csproj) üret/tazele —
-                        // OmniSharp sidecar'ın referans kaynağı bu dosyalar.
-                        Unity.CodeEditor.CodeEditor.Editor.CurrentCodeEditor.SyncAll();
-                        return new SuccessResponse("csproj/sln senkronize edildi.");
-                    }
-                    catch (Exception e)
-                    {
-                        return new ErrorResponse($"csproj senkronizasyonu başarısız: {e.Message}");
-                    }
+                    return SyncCsproj();
 
                 // Undo/Redo
                 case "undo":
@@ -446,6 +439,110 @@ namespace MCPForUnity.Editor.Tools
             {
                 return new ErrorResponse($"Restore failed: {e.Message}");
             }
+        }
+
+        // --- Project File Sync ---
+
+        /// <summary>
+        /// Regenerates the external-editor .sln/.csproj files. These are the only source
+        /// of truth for C# code intelligence: an editor that reads them can only resolve
+        /// symbols in files they list.
+        ///
+        /// This deliberately does NOT call CodeEditor.CurrentCodeEditor.SyncAll(). When no
+        /// external IDE is installed on the machine, CurrentCodeEditor falls back to
+        /// DefaultExternalCodeEditor, whose SyncAll() body is a single `ret` — verified
+        /// against UnityEditor.CoreModule IL on 2026-07-27. That path reports success while
+        /// writing nothing, which is exactly how a project's csproj files silently stayed
+        /// four days stale while Unity kept compiling. UnityEditor.SyncVS.SyncSolution(),
+        /// CodeEditorProjectSync and the "Assets/Open C# Project" menu item all funnel into
+        /// the same no-op, so none of them is a usable alternative.
+        ///
+        /// Instead a project generator shipped with one of Unity's IDE packages is driven
+        /// directly. Reflection is used on purpose: a direct reference would break
+        /// compilation of this tool whenever the package is absent.
+        ///
+        /// Two details below are load-bearing and both were established by live measurement
+        /// on 2026-07-27, after a wrong guess at each of them cost a round trip.
+        ///
+        /// First, which type. Microsoft.Unity.VisualStudio.Editor.ProjectGeneration is a
+        /// TEMPLATE base class, not a usable generator: its GetProjectHeader assigns
+        /// `headerBuilder = default` and ProjectText then dereferences that null. Driving it
+        /// writes the .sln and throws NullReferenceException before writing a single .csproj.
+        /// Only the concrete subclasses are usable. SdkStyleProjectGeneration is one, but it
+        /// deletes the .sln and replaces it with .slnx, so it is not used here.
+        ///
+        /// Second, which method. Sync() first asks every AssetPostprocessor whether it
+        /// already generated the projects and skips generation entirely if any says yes.
+        /// com.unity.ide.rider answers yes whenever Unity's stored editor path merely *looks*
+        /// like Rider — it checks `FileInfo(path).Name.StartsWith("rider")` with no existence
+        /// check. On a machine where Rider was uninstalled but the preference still points at
+        /// it, that is a dead lock: Rider vetoes everyone else while never generating
+        /// anything itself. Rider's own generator is immune because its Sync() raises the
+        /// flag that disables that veto, so it is tried first; the Visual Studio one is
+        /// reached through GenerateAndWriteSolutionAndProjects(), which contains no veto
+        /// check. Neither needs any setup beyond the constructor.
+        ///
+        /// Registering this application as Unity's external script editor would also work,
+        /// but is deliberately not done — that preference belongs to the user, and someone
+        /// merely trying the app out should not have their Unity setup changed.
+        /// </summary>
+        private static object SyncCsproj()
+        {
+            // Ordered candidates: assembly-qualified type, then the method that writes files.
+            var candidates = new[]
+            {
+                new[] { "Packages.Rider.Editor.ProjectGeneration.ProjectGeneration, Unity.Rider.Editor", "Sync" },
+                new[] { "Microsoft.Unity.VisualStudio.Editor.LegacyStyleProjectGeneration, Unity.VisualStudio.Editor", "GenerateAndWriteSolutionAndProjects" },
+            };
+
+            var attempts = new List<string>();
+            foreach (var candidate in candidates)
+            {
+                var type = Type.GetType(candidate[0]);
+                if (type == null)
+                {
+                    attempts.Add($"{candidate[0]}: type not found");
+                    continue;
+                }
+
+                var method = type.GetMethod(
+                    candidate[1], BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);
+                if (method == null)
+                {
+                    attempts.Add($"{candidate[0]}: {candidate[1]}() not found");
+                    continue;
+                }
+
+                try
+                {
+                    method.Invoke(Activator.CreateInstance(type), null);
+                }
+                catch (Exception e)
+                {
+                    // Reflection wraps whatever the generator throws; the inner exception is
+                    // the one worth reporting, and the failing frame is the only thing that
+                    // says which assumption of a package we do not own was broken.
+                    var cause = (e as TargetInvocationException)?.InnerException ?? e;
+                    attempts.Add($"{candidate[0]}: {cause.Message} @ {cause.StackTrace?.Split('\n')[0]?.Trim()}");
+                    continue;
+                }
+
+                // The count is reported back so the caller can tell a real regeneration from
+                // a silent no-op. The previous implementation could not, and that is the
+                // whole reason this failure went unnoticed for days.
+                var projectDirectory = Directory.GetParent(Application.dataPath)?.FullName;
+                var csprojCount = projectDirectory == null
+                    ? 0
+                    : Directory.GetFiles(projectDirectory, "*.csproj").Length;
+
+                return new SuccessResponse(
+                    $"Project files regenerated ({csprojCount} csproj).",
+                    new { generator = type.FullName, csproj_count = csprojCount });
+            }
+
+            return new ErrorResponse(
+                "Project file regeneration failed: no usable generator.",
+                data: new { attempts });
         }
 
         // --- Helper Methods ---
