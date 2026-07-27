@@ -101,11 +101,19 @@ a = Analysis(
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
-        # Gereksiz büyük paketleri dışla
+        # Gereksiz büyük paketleri dışla.
+        # DİKKAT: buraya bir paket eklemeden önce `grep -rn "import <paket>" app/`
+        # koş — 'PIL' burada duruyordu ve tools/screenshot_tool.py onu import
+        # ediyor; frozen build'de screenshot aracı "Pillow kurulu değil" diyerek
+        # sessizce ölüyordu (kullanıcı bunu eksik özellik sanıyor). Excludes bir
+        # boyut optimizasyonu; çalışan bir kod yolunu kesiyorsa yanlıştır.
         'tkinter',
         'matplotlib',
+        # numpy KALIYOR: app/ altında hiçbir import'u yok (doğrulandı) ve tek
+        # zorunlu gereksinen paketler faiss-cpu/sentence-transformers'tı — ikisi de
+        # requirements.txt'ten kaldırıldı. Pillow numpy'a bağlı DEĞİL. Bayat bir
+        # venv'de kalmış numpy ~50MB'ı bundle'a sokmasın diye savunma amaçlı duruyor.
         'numpy',
-        'PIL',
         'cv2',
     ],
     noarchive=False,

@@ -4,6 +4,7 @@ açılınca spawn, workspace değişince restart, kapanışta kill. Tüm satır/
 import asyncio
 import logging
 import os
+import platform
 import sys
 import time
 import urllib.parse
@@ -57,9 +58,50 @@ def _omnisharp_roots() -> list[str]:
     return roots
 
 
+def _is_apple_silicon() -> bool:
+    """Donanım Apple Silicon mı? platform.machine() YETMİYOR: Rosetta altında
+    koşan bir x86_64 Python 'x86_64' döndürüyor, oysa makine arm64 ve arm64
+    binary'si sorunsuz spawn edilir (subprocess, in-process yüklenmiyor).
+    Kernel sürüm dizesi Rosetta'da bile çevrilmiyor — ölçüldü 2026-07-27:
+    `arch -x86_64 python3` → machine='x86_64', uname().version '…RELEASE_ARM64_T8132'."""
+    if platform.machine().lower() in ("arm64", "aarch64"):
+        return True
+    try:
+        return "ARM64" in os.uname().version.upper()
+    except AttributeError:      # os.uname yok (Windows) — buraya düşmemeli
+        return False
+
+
+def _platform_key() -> str | None:
+    """Bu makine için OmniSharp asset klasör adı; desteklenmiyorsa None.
+
+    Adlar UYDURULMUYOR: tek kaynak scripts/fetch_omnisharp.py ASSETS sözlüğü —
+    orada yalnız win-x64, osx-arm64, linux-x64 var. Özellikle osx-x64 (Intel Mac)
+    ve linux-arm64 release'i indirilmiyor; None dönüp çağıranın anlaşılır hata
+    vermesini sağlıyoruz, yoksa var olmayan bir yol denenip "binary bulunamadı"
+    gibi yanıltıcı bir mesaj çıkıyor."""
+    if os.name == "nt" or sys.platform.startswith("win"):
+        # win-arm64 release'i yok; ARM Windows x64'ü emüle ettiği için win-x64 doğru.
+        return "win-x64"
+    if sys.platform == "darwin":
+        return "osx-arm64" if _is_apple_silicon() else None
+    if sys.platform.startswith("linux"):
+        return "linux-x64" if platform.machine().lower() in ("x86_64", "amd64") else None
+    return None
+
+
+def _unsupported_reason() -> str:
+    """Desteklenmeyen platform için kullanıcıya gösterilecek somut sebep."""
+    return (f"OmniSharp bu platform için dağıtılmıyor: {sys.platform}/{platform.machine()}. "
+            f"Desteklenen: Windows x64, macOS Apple Silicon, Linux x64. "
+            f"C# analizi (hata denetimi, IntelliSense) devre dışı; diğer özellikler çalışır.")
+
+
 def _resolve_binary() -> str | None:
-    exe = "OmniSharp.exe" if os.name == "nt" else "OmniSharp"
-    plat = "win-x64" if os.name == "nt" else "osx-arm64"
+    plat = _platform_key()
+    if plat is None:
+        return None
+    exe = "OmniSharp.exe" if plat.startswith("win") else "OmniSharp"
     for root in _omnisharp_roots():
         cand = os.path.join(root, plat, exe)
         if os.path.exists(cand):
@@ -72,9 +114,12 @@ def _spawn_env() -> dict | None:
     (0-kurulum: kullanıcının PC'sinde .NET olmasa da çalışır). OmniSharp net6.0
     hedefli → DOTNET_ROLL_FORWARD=Major ile gömülü .NET 10 LTS'te koşar (canlı
     LSP initialize testiyle doğrulandı). Windows net472 → dokunma (None = parent env)."""
-    if os.name == "nt":
+    plat = _platform_key()
+    if plat is None or plat.startswith("win"):
         return None
-    plat = "osx-arm64" if sys.platform == "darwin" else "linux-x64"
+    # dotnet-<plat> klasör adı _platform_key ile aynı anahtarı kullanıyor
+    # (fetch_omnisharp.fetch_dotnet da öyle yazıyor) — sabit string yazmak, Intel
+    # Mac'te var olmayan bir dotnet-linux-x64 yolunu aramaya yol açıyordu.
     for root in _omnisharp_roots():
         dotnet_root = os.path.join(root, f"dotnet-{plat}")
         if os.path.exists(os.path.join(dotnet_root, "dotnet")):
@@ -103,8 +148,15 @@ class OmniSharpManager:
             await self._stop_locked()
             binary = _resolve_binary()
             if not binary:
-                self.status = {"state": "error", "detail": "OmniSharp binary bulunamadı"}
-                logger.error("OmniSharp binary yok (scripts/fetch_omnisharp.py koşuldu mu?)")
+                # İki ayrı arıza — kullanıcıya farklı şey söylemeli: platform hiç
+                # desteklenmiyor (yapılacak bir şey yok) vs. binary indirilmemiş
+                # (fetch script'i koşturulunca düzelir).
+                if _platform_key() is None:
+                    detail = _unsupported_reason()
+                else:
+                    detail = "OmniSharp binary bulunamadı (scripts/fetch_omnisharp.py koşuldu mu?)"
+                self.status = {"state": "error", "detail": detail}
+                logger.error("%s", detail)
                 return
             self.status = {"state": "starting", "detail": "C# analizi hazırlanıyor…"}
             self._workspace = workspace

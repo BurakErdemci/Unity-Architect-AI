@@ -2,11 +2,13 @@
 Unity Editor screenshot tool.
 Mac: screencapture + Quartz ile window-specific capture.
 Windows: pywin32 ile minimize/arka planda bile capture.
+Linux: harici CLI aracıyla TAM EKRAN (pencereye özel değil) — best-effort.
 """
 import base64
 import io
 import os
 import platform
+import shutil
 import subprocess
 import tempfile
 
@@ -45,6 +47,46 @@ def _capture_mac() -> bytes:
             )
         with open(path, "rb") as f:
             return f.read()
+    finally:
+        if os.path.exists(path):
+            os.unlink(path)
+
+
+# Linux'ta tek bir standart yok: masaüstü ortamına/oturum tipine (X11 vs Wayland)
+# göre farklı araç kurulu oluyor. İlk BULUNAN kullanılır; hiçbiri yoksa kullanıcıya
+# ne kuracağı söylenir. Hepsi PNG üretir (aşağıdaki Image.open bunu bekliyor).
+# NOT: pencereye özel capture YOK — Wayland altında bir uygulamanın başka bir
+# pencereyi yakalaması compositor izni gerektiriyor; tam ekran alınır. Mac dalı
+# da Quartz yokken aynı fallback'i yapıyor, davranış tutarlı.
+# SINANMADI: bu dal canlı bir Linux masaüstünde çalıştırılmadı (ürün dağıtımı
+# Win+Mac); komut satırları araçların dokümante kullanımına göre yazıldı.
+_LINUX_CAPTURE_COMMANDS = [
+    ("grim", lambda path: ["grim", path]),                                  # Wayland
+    ("gnome-screenshot", lambda path: ["gnome-screenshot", "-f", path]),    # GNOME
+    ("spectacle", lambda path: ["spectacle", "-b", "-n", "-f", "-o", path]),  # KDE
+    ("scrot", lambda path: ["scrot", "-o", path]),                          # X11
+    ("import", lambda path: ["import", "-window", "root", path]),           # ImageMagick
+]
+
+
+def _capture_linux() -> bytes:
+    tool = next((t for t in _LINUX_CAPTURE_COMMANDS if shutil.which(t[0])), None)
+    if tool is None:
+        names = ", ".join(t[0] for t in _LINUX_CAPTURE_COMMANDS)
+        raise RuntimeError(
+            f"Linux'ta ekran görüntüsü için bir CLI aracı bulunamadı. "
+            f"Şunlardan birini kur: {names}"
+        )
+    name, build_cmd = tool
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+        path = f.name
+    try:
+        subprocess.run(build_cmd(path), check=True, timeout=10, capture_output=True)
+        with open(path, "rb") as f:
+            data = f.read()
+        if not data:
+            raise RuntimeError(f"{name} boş dosya üretti (ekran erişim izni var mı?)")
+        return data
     finally:
         if os.path.exists(path):
             os.unlink(path)
@@ -108,11 +150,19 @@ def capture_unity_screenshot() -> dict:
         return {"success": False, "error": "Pillow kurulu değil. 'pip install Pillow' çalıştır."}
 
     try:
+        # Dallanma AÇIK olmalı: eskiden "Windows değilse mac" deniyordu ve Linux'ta
+        # var olmayan `screencapture` çağrılıp anlamsız bir hata dönüyordu.
+        # Bilinmeyen bir OS'te sessizce yanlış aracı denemek yerine adıyla söyle.
         sys_platform = platform.system()
         if sys_platform == "Windows":
             raw = _capture_windows()
-        else:
+        elif sys_platform == "Darwin":
             raw = _capture_mac()
+        elif sys_platform == "Linux":
+            raw = _capture_linux()
+        else:
+            return {"success": False,
+                    "error": f"Ekran görüntüsü bu platformda desteklenmiyor: {sys_platform}"}
 
         img = Image.open(io.BytesIO(raw))
         if img.mode != "RGB":

@@ -46,9 +46,13 @@ uritemplate==4.2.0
 urllib3==2.6.3
 uvicorn==0.39.0
 websockets==15.0.1
-numpy>=2.0.0
-faiss-cpu>=1.13.0
-sentence-transformers>=5.4.0
+# KALDIRILDI (2026-07-27): numpy, faiss-cpu, sentence-transformers.
+# Gerekçe: tüm repoda tek bir `import faiss` / `import sentence_transformers` /
+# `import numpy` yok (grep ile doğrulandı, Backend/ dışı dahil). sentence-transformers
+# torch+transformers+scikit-learn+scipy zincirini getiriyordu (~2GB kurulum, geniş
+# tedarik zinciri yüzeyi). numpy'ı zorunlu gereksinen tek paketler bunlardı; kalan
+# bağımlılıklarda numpy yalnızca opsiyonel extra olarak geçiyor (openai[datalib] vb.).
+# Yeniden gerekirse (vektör arama / embedding) birlikte geri eklenmeli.
 mcp
 fastmcp
 tomli
