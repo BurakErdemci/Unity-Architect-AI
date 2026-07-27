@@ -15,7 +15,7 @@ import {
   isAllowedWorkspaceWriteFile,
 } from './helpers/file-security'
 import {
-  adoptLegacyRoot,
+  confirmLegacyRoot,
   isOwnFrame,
   isTrustedRoot,
   registerTrustedRoot,
@@ -89,7 +89,7 @@ const handleSecure = (
  */
 const untrustedWorkspace = (workspacePath?: string): string | null => {
   if (!workspacePath) return 'Workspace path eksik.'
-  if (isTrustedRoot(workspacePath) || adoptLegacyRoot(workspacePath)) return null
+  if (isTrustedRoot(workspacePath) || confirmLegacyRoot(workspacePath)) return null
   return 'Bu klasör yetkili değil — klasörü uygulama içinden yeniden seçin.'
 }
 
@@ -326,6 +326,14 @@ handleSecure('git-status', async (_event, workspacePath?: string) => {
 
     const toplevel = (await run(['rev-parse', '--show-toplevel'])).trim()
     if (!toplevel) return empty
+    // `--show-toplevel` seçili klasörün DEĞİL, onu içeren reponun kökünü döndürür.
+    // Workspace bir monorepo'nun alt dizini ise burada dışarıdaki bir yol ve onun
+    // altındaki tüm değişiklikler görünür hâle geliyordu — yani kullanıcının
+    // yetkilendirdiğinden fazlası. Kök kütüğün dışına çıkıyorsa repo durumu yok.
+    if (!isTrustedRoot(toplevel)) {
+      console.warn('[git-status] repo kökü yetkili alan dışında, atlanıyor:', toplevel)
+      return empty
+    }
     // -z: NUL ayraçlı (boşluklu/unicode yollar güvenli); untracked dosyalar tek tek
     const raw = await run(['status', '--porcelain', '-z', '--untracked-files=all'])
 
@@ -535,6 +543,15 @@ handleSecure('move-entry', async (_event, sourcePath: string, targetDir: string,
 handleSecure('path-exists', async (_event, targetPath: string) => {
   try {
     if (!targetPath) return false
+    // Bu handler yetkili kök kapısından MUAFTI: `workspacePath` parametresi
+    // olmadığı için untrustedWorkspace() ona hiç uygulanmamıştı. Sonuç, çağıranın
+    // dosya sisteminin herhangi bir yerinde dizin varlığını sorgulayabilmesiydi
+    // — tek başına küçük, ama keşif adımı olarak diğer bulguları besliyor.
+    //
+    // Meşru kullanım DAR: renderer bunu yalnız "önceki workspace hâlâ duruyor mu"
+    // diye çağırıyor (useFileSystem.selectWorkspace). Yetkili köklerle sınırlamak
+    // o kullanımı bozmuyor, çünkü sorulan yol zaten bir zamanlar seçilmiş kök.
+    if (!isTrustedRoot(targetPath)) return false
     return fs.existsSync(targetPath) && fs.statSync(targetPath).isDirectory()
   } catch {
     return false

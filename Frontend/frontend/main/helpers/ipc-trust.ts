@@ -1,6 +1,6 @@
 import fs from 'fs'
 import path from 'path'
-import { app, IpcMainInvokeEvent } from 'electron'
+import { app, dialog, IpcMainInvokeEvent } from 'electron'
 
 /**
  * IPC güven katmanı — 2026-07-27 denetiminin D grubu bulguları.
@@ -123,7 +123,7 @@ const persist = () => {
 /**
  * Bir kökü yetkili listesine ekler. YALNIZCA native klasör diyaloğunun sonucu
  * ve kullanıcının uygulamayı ilk kez bu sürümle açtığındaki tek seferlik devir
- * (bkz. adoptLegacyRoot) buraya girer — renderer'dan gelen bir yol asla.
+ * (bkz. confirmLegacyRoot) buraya girer — renderer'dan gelen bir yol asla.
  */
 export const registerTrustedRoot = (rawPath: string): void => {
   const root = normalize(rawPath)
@@ -144,17 +144,23 @@ export const isTrustedRoot = (rawPath: string): boolean => {
 }
 
 /**
- * Bu sürümden ÖNCE seçilmiş bir workspace kütükte yoktur; kullanıcı hiçbir şey
- * yapmadığı hâlde dosya ağacı ölürdü. Kütük tamamen boşken ilk geçerli dizin bir
- * kez devralınıyor.
+ * Bu sürümden ÖNCE seçilmiş bir workspace kütükte yok; kullanıcı hiçbir şey
+ * yapmadığı hâlde dosya ağacı ölürdü. Migrasyon o yüzden gerekli — ama BEDAVA
+ * değil.
  *
- * Bunun bir taviz olduğu açık yazılsın: kütük boşken ilk isteği yapan taraf kökü
- * belirler. Kabul edilebilir çünkü pencere yalnızca "hiç workspace seçilmemiş"
- * ilk açılışa kadar açık ve o an henüz saldırgan bir sayfa yüklenmiş olamaz —
- * kütük dolduktan sonra bu yol bir daha çalışmıyor. Kalıcı çözüm, kullanıcının
- * klasörü bir kez native diyalogla yeniden seçmesi.
+ * Önceki hâli "kütük boşsa ilk geçerli dizini sessizce devral" idi ve bir
+ * denetim bunu haklı olarak yüksek önemli bir bulgu saydı: kütüğü boşaltabilen
+ * ya da boş olduğu anı yakalayan bir çağıran, KENDİ seçtiği kökü yetkili
+ * yaptırabiliyordu. "Pencere dar" demek "pencere yok" demek değil, ve o kaydı
+ * bir yorumla gerekçelendirmiş olmam kapattığım anlamına gelmiyordu.
+ *
+ * Artık karar kullanıcıya soruluyor — native bir modal ile. Bu kasıtlı: native
+ * diyalogu renderer süremez, yani çağıran ne kadar ele geçmiş olursa olsun
+ * cevabı veren gerçek kullanıcıdır. Bedeli, sürüm yükseltmesinden sonraki İLK
+ * açılışta tek bir onay; ürünün "0 sürtünme" sözünü bir kerelik bir kutu ile
+ * ödüyoruz, sessiz bir güven varsayımıyla değil.
  */
-export const adoptLegacyRoot = (rawPath: string): boolean => {
+export const confirmLegacyRoot = (rawPath: string): boolean => {
   if (load().length > 0) return false
   const root = normalize(rawPath)
   if (!root) return false
@@ -163,7 +169,29 @@ export const adoptLegacyRoot = (rawPath: string): boolean => {
   } catch {
     return false
   }
-  console.warn('[ipc-trust] kütük boştu, mevcut workspace bir kez devralındı:', root)
+
+  // Senkron modal: karar verilmeden hiçbir dosya işlemi ilerlemesin.
+  const { response } = dialog.showMessageBoxSync
+    ? { response: dialog.showMessageBoxSync({
+        type: 'question',
+        buttons: ['Yetkilendir', 'İptal'],
+        defaultId: 1,
+        cancelId: 1,
+        title: 'Çalışma klasörünü yetkilendir',
+        message: 'Bu klasöre erişim izni verilsin mi?',
+        detail:
+          `${root}\n\n` +
+          'Uygulama bu klasörün içindeki dosyaları okuyup yazabilecek. ' +
+          'Bu soruyu bir kez görüyorsun: daha önce seçtiğin çalışma klasörü ' +
+          'yeni güvenlik kaydında yok. Emin değilsen İptal de ve klasörü ' +
+          'uygulama içinden yeniden seç.',
+      }) }
+    : { response: 1 }
+
+  if (response !== 0) {
+    console.warn('[ipc-trust] kullanıcı kök yetkilendirmesini reddetti:', root)
+    return false
+  }
   registerTrustedRoot(root)
   return true
 }

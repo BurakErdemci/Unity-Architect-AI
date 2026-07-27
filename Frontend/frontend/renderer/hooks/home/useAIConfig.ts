@@ -110,7 +110,7 @@ export const useAIConfig = (API: string, user: UserData | null, showToast: (msg:
   const fetchAvailableModels = useCallback(async () => {
     if (!API) return;
     try {
-      const res = await axios.get(`${API}/available-models`);
+      const res = await axios.get(`${API}/available-models`, { headers: { 'X-Session-Token': user?.sessionToken ?? '' } });
       if (res.data) setAvailableModels(res.data);
     } catch (err) { console.error("Modeller alınamadı:", err); }
   }, [API]);

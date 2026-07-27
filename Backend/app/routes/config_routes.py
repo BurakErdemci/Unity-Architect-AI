@@ -241,7 +241,14 @@ def create_config_router(db):
         return {"status": "success"}
 
     @router.get("/available-models")
-    async def get_available_models():
+    async def get_available_models(
+        x_session_token: str = Header(alias="X-Session-Token", default=""),
+    ):
+        # Kimliksizken de iş yapıyordu: yanıt üretmek için Ollama'yı
+        # (127.0.0.1:11434) yokluyor, yani makinede hangi yerel modellerin
+        # kurulu olduğunu doğrulanmamış bir çağırana söylüyordu. Küçük ama
+        # keşif adımı; kapı işten ÖNCE.
+        _check_token(x_session_token)
         models = {
             "local": [],
             "cloud": [
