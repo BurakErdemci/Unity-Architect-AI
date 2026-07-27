@@ -1,3 +1,10 @@
+// Emniyet ağı: Monaco'yu kullanan her bileşen zaten temayı da import ediyor.
+// Loader yapılandırmasını buraya zincirlemek, ileride eklenecek bir üçüncü
+// tüketicinin `monaco-loader` import etmeyi unutup sessizce CDN'e düşmesini
+// engelliyor — eski hatanın tam olarak bu "yapılandırma yoksa uzaktan yükle"
+// sessiz varsayılanı olduğu için önemli. (Tüketiciler ayrıca kendileri de
+// import ediyor; oradaki amaç sıralama garantisi, buradaki unutmaya karşı.)
+import './monaco-loader';
 import type * as Monaco from 'monaco-editor';
 
 export const THEME_NAME = 'unityArchitectDark';

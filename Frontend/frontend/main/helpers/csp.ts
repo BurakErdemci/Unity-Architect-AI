@@ -24,33 +24,21 @@ import { app, session } from 'electron'
  */
 
 /**
- * Monaco editörü CDN'den yükleniyor: `@monaco-editor/react` yerel bir `vs`
- * yolu yapılandırılmadığında `@monaco-editor/loader`'ın gömülü varsayılanına
- * düşüyor. Ölçüldü — prod bundle'da bu URL birebir string olarak duruyor
- * (app/_next/static/chunks içinde) ve editör çalışma anında oradan geliyor.
+ * MONACO ARTIK CDN'DEN GELMİYOR — buradaki jsdelivr izinleri 2026-07-27'de
+ * kaldırıldı. Editör dosyaları `scripts/copy-monaco.js` ile node_modules'tan
+ * `renderer/public/monaco/` altına kopyalanıyor ve uygulamanın kendi
+ * origin'inden (`app://./monaco/vs`, dev'de `/monaco/vs`) servis ediliyor;
+ * yapılandırma renderer/components/home/monaco-loader.ts'te.
  *
- * Yol SEGMENT SEGMENT sabitlenmiş. Sebebi kritik: CSP kaynak ifadeleri yol
- * öneki eşleştirir, yani yalnızca `https://cdn.jsdelivr.net` yazmak jsdelivr
- * üzerindeki HER npm paketini script-src'ye sokardı — saldırgana "istediğin
- * JS'i yükle" demenin uzun yolu, yani CSP'nin kapatmaya çalıştığı deliğin ta
- * kendisi. Ölçüldü: bu sabitle `npm/lodash@4.17.21/lodash.min.js` reddediliyor,
- * monaco geçiyor.
+ * Kaldırılan izinler (her biri politikadan çıkarılıp CANLI doğrulandı):
+ *   - script-src'den jsdelivr öneki  → yerine 'self' yetiyor
+ *   - style-src'den jsdelivr öneki   → editor.main.css artık same-origin
+ * Kazanç: renderer bağlamında (yani `window.ipc`'yi gören bağlamda) çalışan
+ * uzak JavaScript kalmadı, ve editör çevrimdışı açılıyor.
  *
- * BEDELİ: sürüm burada elle sabit. `@monaco-editor/loader` yükseltilirse yeni
- * sürüm bu önekle eşleşmez ve editör SESSİZCE ölürdü. O yüzden
- * __tests__/csp.test.ts bu sabiti loader'ın kendi varsayılanıyla karşılaştırıyor:
- * ayrışma, sahada fark edilmeyen bir bozulma değil, kırmızı bir test oluyor.
- *
- * Not (kapsam dışı ama bilinsin): editörün bir CDN'e bağlı olması aynı zamanda
- * çevrimdışı/kısıtlı ağda editörü çalışmaz kılıyor. Doğru çözüm monaco'yu
- * yerelden servis etmek (`loader.config({ paths: { vs: ... } })`); o yapıldığı
- * gün buradaki tüm jsdelivr izinleri silinebilir ve politika ciddi ölçüde
- * daralır.
+ * KALDIRILMAYAN: `worker-src blob:` — bkz. aşağıdaki direktif yorumu. Yerel
+ * servise geçmek bu ihtiyacı ORTADAN KALDIRMADI; ölçüldü.
  */
-const MONACO_CDN = 'https://cdn.jsdelivr.net/npm/monaco-editor@0.55.1/min/vs/'
-
-/** Loader'ın varsayılanı sondaki `/` olmadan yazılı; test bunu karşılaştırıyor. */
-export const MONACO_CDN_PREFIX = MONACO_CDN
 
 /**
  * Politikayı üretir. `isProd` parametre olarak alınıyor (modül düzeyinde
@@ -62,8 +50,9 @@ export const buildPolicy = (isProd: boolean): string => {
   // üzerinden yükleyip politikayı tek tek daraltmak ve `securitypolicyviolation`
   // olaylarını toplamaktı.
 
-  // 'self' = prod'da app://, dev'de Next dev sunucusu.
-  const scriptSrc = ["'self'", MONACO_CDN]
+  // 'self' = prod'da app://, dev'de Next dev sunucusu. Monaco da buraya dahil:
+  // yerelden servis edildiği için ayrı bir kaynak ifadesi GEREKMİYOR.
+  const scriptSrc = ["'self'"]
   // Backend dinamik portta dinliyor (bkz. background.ts getBackendBaseUrl), o
   // yüzden port joker: sabit bir port yazmak ilk açılışta uygulamayı kırardı.
   // localhost:8080 ayrıca Unity MCP köprüsünün sağlık ucu (TerminalPanel).
@@ -96,11 +85,29 @@ export const buildPolicy = (isProd: boolean): string => {
 
     'script-src': scriptSrc,
 
-    // Monaco kendi dil worker'ını blob: URL'inden kuruyor (cross-origin worker
-    // deseni: blob içinden importScripts(CDN)). Ölçüldü — blob: kaldırılınca
-    // iki ayrı `worker-src <- blob` ihlali düşüyor. DİKKAT: editör bu durumda
-    // yine de "açılıyor" göründü; ölen şey C# tamamlama/teşhis worker'ı oldu.
-    // Yani "editör görünüyor" bu direktifin doğruluğunun kanıtı değil.
+    // blob: KALDI ve bu kasıtlı. Monaco yerelden servis edilmeye geçince "artık
+    // same-origin, blob sarmalayıcısına gerek kalmaz" beklentisi doğaldı —
+    // YANLIŞ ÇIKTI. monaco-editor 0.55.1'in AMD paketi worker'ı KOŞULSUZ blob
+    // üzerinden kuruyor; kaynakta origin karşılaştırması yok:
+    //   min/vs/editor/editor.main.js →
+    //   MonacoEnvironment.getWorker = (_, label) => new Worker(F(<workerUrl>))
+    //   F(e) = URL.createObjectURL(new Blob(["… importScripts(e) …"]))
+    // Yani sarmalayıcı origin'e bakmadan her zaman devrede.
+    // Ayrıca canlı ölçüldü (prod app:// build'i, aşağıdaki iki koşu):
+    //   blob: YOKKEN  → "Refused to create a worker from 'blob:app://./…'"
+    //                   ihlali + json worker hiç boot etmedi (marker gelmedi)
+    //   blob: VARKEN  → sıfır ihlal, worker boot etti, marker geldi
+    // DİKKAT: editör iki durumda da GÖZLE AÇILIYOR görünüyor (editorDom=true,
+    // C# tokenizasyonu çalışıyor). "Editör görünüyor" bu direktifin doğruluğunun
+    // kanıtı DEĞİL; ölen şey dil worker'ı oluyor.
+    // Not: blob: URL sayfanın origin'ini miras alsa da ('blob:app://./…') CSP
+    // kaynak eşleştirmesinde 'self' bunu KARŞILAMIYOR — blob ayrı bir şema.
+    //
+    // 'self' ise ölçüldü ve Monaco için GEREKMİYOR: yalnız `worker-src blob:`
+    // ile de worker boot etti, sıfır ihlal çıktı (worker'ın importScripts
+    // ettiği same-origin dosya script-src'ye tabi, worker-src'ye değil).
+    // Yine de bırakıldı çünkü genişleme yüzeyi yok: 'self' sadece bizim kendi
+    // dosyalarımızdan worker kurmaya izin verir, uzak kod yükletmez.
     'worker-src': ["'self'", 'blob:'],
 
     // 'unsafe-inline' bilinçli bir taviz: Monaco tema/CSS'ini, xterm ve
@@ -109,9 +116,10 @@ export const buildPolicy = (isProd: boolean): string => {
     // Kabul edilebilir olmasının sebebi: satır içi stil KOD ÇALIŞTIRMAZ, ve
     // CSS üzerinden veri sızdırma yolu ayrıca kapalı — stil/görsel/font
     // kaynakları tek tek sayıldığı için CSS keyfi bir origin'e istek atamıyor.
-    // Monaco `editor.main.css`'i CDN'den <link> ile çekiyor (ölçüldü:
-    // kaldırılınca `style-src-elem <- .../vs/editor/editor.main.css` ihlali).
-    'style-src': ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com', MONACO_CDN],
+    // Monaco `editor.main.css`'i hâlâ bir <link> ile çekiyor ama artık
+    // same-origin (`toUrl('vs/editor/editor.main.css')`) → 'self' yetiyor,
+    // jsdelivr izni kaldırıldı.
+    'style-src': ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
 
     // data: ölçülerek eklendi: Monaco'nun codicon ikon fontu bir
     // `data:font/ttf;base64,...` URI'si. İlk politikada yoktu ve tek gerçek

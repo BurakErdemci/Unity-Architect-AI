@@ -1,3 +1,5 @@
+// EN ÜSTTE — gerekçe için bkz. monaco-loader.ts ve EditorPanel.tsx.
+import './monaco-loader';
 import { DiffEditor } from '@monaco-editor/react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { AlertTriangle, Check, CheckCircle2, FileCode, X } from 'lucide-react';

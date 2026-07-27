@@ -12,3 +12,8 @@ next-env.d.ts
 /app
 dist
 build
+
+# Monaco'nun yerel kopyası (~15 MB) — node_modules/monaco-editor'dan ÜRETİLİR.
+# Sürüm package.json'da sabitli; dosyaların kendisi repoda tutulmaz.
+# Tekrar üretmek için: node scripts/copy-monaco.js  (predev/prebuild otomatik koşar)
+/renderer/public/monaco/

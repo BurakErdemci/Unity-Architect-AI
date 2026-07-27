@@ -1,3 +1,7 @@
+// EN ÜSTTE: modüller import sırasına göre değerlendiriliyor. Loader'ın `paths.vs`
+// yapılandırması, `@monaco-editor/react` değerlendirilmeden ÖNCE yazılmalı ki
+// hiçbir Editor mount'u gömülü CDN varsayılanını yakalayamasın.
+import './monaco-loader';
 import React from 'react';
 import { Editor, DiffEditor } from '@monaco-editor/react';
 import { motion } from 'framer-motion';

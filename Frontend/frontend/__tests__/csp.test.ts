@@ -1,5 +1,3 @@
-import fs from 'fs'
-import path from 'path'
 import { describe, it, expect, vi } from 'vitest'
 
 // csp.ts modül tepesinde electron'u import ediyor; jsdom ortamında böyle bir
@@ -9,7 +7,7 @@ vi.mock('electron', () => ({
   session: { defaultSession: { webRequest: { onHeadersReceived: vi.fn() } } },
 }))
 
-import { buildPolicy, MONACO_CDN_PREFIX } from '../main/helpers/csp'
+import { buildPolicy } from '../main/helpers/csp'
 
 const directive = (policy: string, name: string): string => {
   const found = policy
@@ -20,35 +18,74 @@ const directive = (policy: string, name: string): string => {
   return found
 }
 
-describe('CSP — Monaco CDN sabiti', () => {
-  /**
-   * Bu testin varlık sebebi: CSP'deki jsdelivr izni sürüm SEGMENTİNE kadar
-   * sabitlenmiş durumda. `@monaco-editor/loader` yükseltildiğinde yeni sürüm
-   * bu önekle eşleşmez ve editör sahada SESSİZCE ölür — kullanıcı yalnızca boş
-   * bir editör görür, sebebi ise yalnızca konsolda yazar.
-   *
-   * Hatırlamaya bağlı bir kural ateşlenmiyor; o yüzden ayrışma bir teste
-   * bağlandı. Bu test kırıldıysa yapılacak iş: csp.ts'deki MONACO_CDN sabitini
-   * loader'ın yeni varsayılanıyla güncellemek (ya da monaco'yu yerelden
-   * servis edip jsdelivr iznini tamamen kaldırmak).
-   */
-  it('loader varsayılanıyla aynı sürüme işaret eder', () => {
-    const configPath = path.resolve(
-      process.cwd(),
-      'node_modules/@monaco-editor/loader/lib/es/config/index.js'
-    )
-    const source = fs.readFileSync(configPath, 'utf-8')
-    const match = source.match(/vs:\s*['"]([^'"]+)['"]/)
-    expect(match, 'loader config içinde vs yolu bulunamadı').toBeTruthy()
+/**
+ * Bu blok İKİ YÖNÜ birden bağlıyor ve sebebi yaşanmış bir arıza:
+ * eski testlerin hepsi kapının fazla DAR olmadığını sınıyordu, hiçbiri fazla
+ * GENİŞ olmadığını sınamıyordu — ve ürünü kıran/riske atan yön oydu.
+ *
+ *   DAR yön  = politikada gereksiz bir uzak kaynak KALMASIN (güvenlik regresyonu)
+ *   GENİŞ yön = Monaco'nun ÇALIŞMASI için gereken izinler DURSUN (ürün regresyonu)
+ *
+ * Aşağıdaki "gerekli" iddiaların hepsi 2026-07-27'de canlı ölçüldü: prod
+ * (`app://./home`) build'i yüklenip politika tek tek daraltıldı ve hem
+ * `securitypolicyviolation` olayları hem de Monaco dil worker'ının canlılığı
+ * (bozuk JSON'a marker düşüyor mu) izlendi.
+ */
+describe('CSP — Monaco yerelden servis ediliyor', () => {
+  const prod = buildPolicy(true)
+  const dev = buildPolicy(false)
 
-    // CSP yol öneki eşleştirmesi için sondaki '/' şart; loader onsuz yazıyor.
-    expect(MONACO_CDN_PREFIX).toBe(`${match![1]}/`)
+  // ── DAR YÖN ───────────────────────────────────────────────────────────────
+
+  it('hiçbir dalda uzak SCRIPT kaynağı yoktur', () => {
+    // Asıl kazanç bu: `window.ipc`yi gören bağlamda uzaktan JS çalışmıyor.
+    // Monaco eskiden cdn.jsdelivr.net'ten geliyordu; artık app://./monaco/vs.
+    for (const [name, policy] of [['prod', prod], ['dev', dev]] as const) {
+      const scriptSrc = directive(policy, 'script-src')
+      expect(scriptSrc, `${name}: script-src'de uzak kaynak var`).not.toMatch(/https?:\/\//)
+    }
   })
 
-  it('çıplak host değil, yola sabitlenmiş bir önektir', () => {
-    // Çıplak `https://cdn.jsdelivr.net` jsdelivr'daki her npm paketini
-    // script-src'ye sokardı — CSP'nin kapatmaya çalıştığı deliğin kendisi.
-    expect(MONACO_CDN_PREFIX).toMatch(/^https:\/\/cdn\.jsdelivr\.net\/npm\/monaco-editor@[^/]+\/min\/vs\/$/)
+  it('hiçbir dalda uzak STYLE kaynağı yoktur — fonts.googleapis.com hariç', () => {
+    // Monaco'nun editor.main.css'i artık same-origin (ölçüldü:
+    // `app://./monaco/vs/editor/editor.main.css`). Geriye yalnızca globals.css'in
+    // @import ettiği Google Fonts stil dosyası kalıyor.
+    for (const [name, policy] of [['prod', prod], ['dev', dev]] as const) {
+      const remote = directive(policy, 'style-src').match(/https?:\/\/[^\s;]+/g) ?? []
+      expect(remote, `${name}: beklenmeyen uzak style kaynağı`).toEqual(['https://fonts.googleapis.com'])
+    }
+  })
+
+  it('politikanın hiçbir yerinde jsdelivr geçmiyor', () => {
+    // Bu satır kırılırsa: monaco yeniden CDN'e bağlanmış demektir. Doğru
+    // düzeltme izni geri eklemek DEĞİL, scripts/copy-monaco.js + monaco-loader.ts
+    // zincirinin neden koşmadığını bulmaktır.
+    expect(prod).not.toContain('jsdelivr')
+    expect(dev).not.toContain('jsdelivr')
+  })
+
+  // ── GENİŞ YÖN ─────────────────────────────────────────────────────────────
+
+  it("worker-src'de blob: DURUYOR — yerelleştirme bu ihtiyacı kaldırmadı", () => {
+    // Beklenti "same-origin olunca blob gerekmez" idi; YANLIŞ çıktı.
+    // monaco-editor 0.55.1 AMD paketi worker'ı koşulsuz blob'la kuruyor
+    // (editor.main.js: getWorker → new Worker(URL.createObjectURL(new Blob([
+    //  "…importScripts(<workerUrl>)…"])))) — origin karşılaştırması yok.
+    // Ölçüm, blob: çıkarılınca:
+    //   "Refused to create a worker from 'blob:app://./…' … worker-src 'self'"
+    //   + json worker hiç boot etmedi (12sn boyunca marker gelmedi)
+    // AMA editör DOM'u yine kuruldu ve C# tokenizasyonu çalıştı — yani gözle
+    // bakan biri bu regresyonu göremez. Kapı bu yüzden burada.
+    expect(directive(prod, 'worker-src')).toContain('blob:')
+    expect(directive(dev, 'worker-src')).toContain('blob:')
+  })
+
+  it("script-src ve style-src'de 'self' DURUYOR — monaco artık oradan geliyor", () => {
+    // Monaco'nun 14 dosyası app://./monaco/vs altından çekiliyor (ölçüldü);
+    // editor.main.css de aynı origin'den <link> ile geliyor. 'self' düşerse
+    // editör hiç açılmaz.
+    expect(directive(prod, 'script-src')).toContain("'self'")
+    expect(directive(prod, 'style-src')).toContain("'self'")
   })
 })
 
@@ -69,7 +106,8 @@ describe('CSP — prod politikası', () => {
   })
 
   it('ölçülmüş zorunlu kaynakları içerir', () => {
-    expect(directive(policy, 'script-src')).toContain(MONACO_CDN_PREFIX)
+    // Monaco artık same-origin: script-src 'self' onu da kapsıyor.
+    expect(directive(policy, 'script-src')).toContain("'self'")
     // Monaco dil worker'ı blob: üzerinden kuruluyor.
     expect(directive(policy, 'worker-src')).toContain('blob:')
     // Monaco codicon ikon fontu bir data: URI.
@@ -91,9 +129,10 @@ describe('CSP — prod politikası', () => {
   })
 
   it('uzak origin izinleri yalnızca ölçülmüş olanlardır', () => {
+    // Monaco jsdelivr'dan çıktıktan sonra listede yalnızca font/görsel kaldı;
+    // hiçbiri KOD kaynağı değil (script-src'de tek bir uzak origin yok).
     const remoteHosts = policy.match(/https:\/\/[^\s;]+/g) ?? []
     const allowed = new Set([
-      MONACO_CDN_PREFIX,
       'https://fonts.googleapis.com',
       'https://fonts.gstatic.com',
       'https://images.unsplash.com',
