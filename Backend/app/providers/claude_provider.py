@@ -93,13 +93,14 @@ class ClaudeCodeProvider(BaseCLIProvider):
         try:
             sp.run(self._resolve_exec(["claude", "mcp", "remove", "unityMCP", "--scope", "user"]),
                    capture_output=True, timeout=5)
-            if unity_mcp_manager.is_running():
+            unity_mcp_url = unity_mcp_manager.mcp_url()
+            if unity_mcp_url:
                 sp.run(
                     self._resolve_exec([
                         "claude", "mcp", "add", "unityMCP",
                         "--scope", "user",
                         "--transport", "http",
-                        f"http://localhost:{unity_mcp_manager.mcp_port}/mcp",
+                        unity_mcp_url,
                     ]),
                     capture_output=True, timeout=5, check=True,
                 )

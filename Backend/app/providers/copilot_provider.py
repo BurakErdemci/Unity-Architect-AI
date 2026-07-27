@@ -113,10 +113,12 @@ class CopilotProvider(BaseCLIProvider):
                     "tools": ["*"],
                 }
             }
-            if unity_mcp_manager.is_running():
+            # URL sırrı yol segmentinde taşır; sır yoksa kayıt hiç yazılmaz (mcp_url()).
+            unity_mcp_url = unity_mcp_manager.mcp_url()
+            if unity_mcp_url:
                 servers["unityMCP"] = {
                     "type": "http",
-                    "url": f"http://localhost:{unity_mcp_manager.mcp_port}/mcp",
+                    "url": unity_mcp_url,
                     "tools": ["*"],
                 }
 

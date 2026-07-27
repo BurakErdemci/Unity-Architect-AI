@@ -103,10 +103,10 @@ class CursorProvider(BaseCLIProvider):
                     }
                 }
             }
-            if unity_mcp_manager.is_running():
-                config["mcpServers"]["unityMCP"] = {
-                    "url": f"http://localhost:{unity_mcp_manager.mcp_port}/mcp"
-                }
+            # URL sırrı yol segmentinde taşır; sır yoksa kayıt hiç yazılmaz (mcp_url()).
+            unity_mcp_url = unity_mcp_manager.mcp_url()
+            if unity_mcp_url:
+                config["mcpServers"]["unityMCP"] = {"url": unity_mcp_url}
 
             # Kullanıcının kendi .cursor/mcp.json'ı varsa bizim server'ları üstüne
             # ekle, diğer kayıtlarına dokunma.
@@ -118,8 +118,9 @@ class CursorProvider(BaseCLIProvider):
                 except Exception:
                     existing = {}
             merged = {**existing, "mcpServers": {**existing.get("mcpServers", {}), **config["mcpServers"]}}
-            # Unity MCP kapalıysa bayat kaydı temizle (CLI kapalı porta bağlanmaya çalışmasın)
-            if not unity_mcp_manager.is_running():
+            # Unity MCP kapalıysa VEYA sır bizde yoksa bayat kaydı temizle: ikinci
+            # durumda eski URL artık 404 alır, CLI bağlanamayan MCP'de takılır.
+            if not unity_mcp_url:
                 merged["mcpServers"].pop("unityMCP", None)
 
             with open(cfg_path, "w", encoding="utf-8") as f:

@@ -9,18 +9,21 @@ Bu köprü: Codex ile stdio (newline-delimited JSON-RPC) konuşur, mesajları me
 unityMCP HTTP sunucusuna (streamable-http) forward eder. İKİNCİ bir Unity bağlantısı
 AÇMAZ — tek HTTP sunucusunu paylaşır. OAuth yok.
 
-Kullanım:  python codex_unitymcp_bridge.py http://127.0.0.1:8080/mcp
+Kullanım:  UNITY_MCP_URL=http://127.0.0.1:8080/mcp/<sır> python codex_unitymcp_bridge.py
 
 Kapsam (v1): client-initiated request/response + notification akışı (initialize,
 tools/list, tools/call, resources/*, prompts/* ...). Bu, Codex'in tool kullanımını
 tam karşılar. Server-initiated push (uzun işlerde progress notification) v1'de
 köprülenmez — unityMCP tool'ları senkron olduğu için pratikte etkisiz.
 """
+import os
 import sys
 import json
 import urllib.request
 import urllib.error
 
+# Yalnızca son çare: sunucu artık transport'u /mcp/<sır> altında sunuyor, bu yüzden
+# sırsız bu adres 404 alır. Gerçek URL UNITY_MCP_URL ile geliyor (bkz. main()).
 DEFAULT_URL = "http://127.0.0.1:8080/mcp"
 
 
@@ -103,7 +106,12 @@ class Bridge:
 
 
 def main():
-    url = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_URL
+    # URL öncelikle ortamdan: paylaşımlı sırrı yol segmentinde taşıyor ve argv
+    # `ps` ile makinedeki her sürece görünür. argv yolu eski kayıtlar için
+    # geriye dönük uyumluluk (codex config'i yeniden yazılana kadar).
+    url = os.environ.get("UNITY_MCP_URL") or (
+        sys.argv[1] if len(sys.argv) > 1 else DEFAULT_URL
+    )
     Bridge(url).run()
 
 

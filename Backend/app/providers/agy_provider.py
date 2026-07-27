@@ -164,9 +164,14 @@ class AgyProvider(BaseCLIProvider):
         config.pop("disabledTools", None)
 
         from unity_ai_mcp.unity_mcp_manager import unity_mcp_manager
-        if unity_mcp_manager.is_running():
+        # Paylaşımlı sır URL'in yol segmentinde (mcp_url() docstring'i: agy --print
+        # modunda MCP'yi natively yüklemeyip bu URL'i kendi köprü scriptine geçirdiği
+        # için header tabanlı bir şema burada hiç işlemezdi). None → kayıt silinir.
+        # Üç config dosyasının hepsi aynı URL'i yazar; tek yerde hesaplanır.
+        unity_mcp_url = unity_mcp_manager.mcp_url(host="127.0.0.1")
+        if unity_mcp_url:
             config["mcpServers"]["unityMCP"] = {
-                "serverUrl": f"http://127.0.0.1:{unity_mcp_manager.mcp_port}/mcp",
+                "serverUrl": unity_mcp_url,
                 "type": "http", "trust": True,
             }
         else:
@@ -220,9 +225,9 @@ class AgyProvider(BaseCLIProvider):
         settings["mcpServers"]["unityai"] = dict(unityai_entry)
         settings["toolPermission"] = "always-proceed"  # --dangerously-skip-permissions flag'i YERİNE (canlı doğrulandı: geçerli değer, flag'siz auto-approve → skill-derail'i tetiklemez)
         settings["disabledTools"] = self._AGY_DISABLED_TOOLS
-        if unity_mcp_manager.is_running():
+        if unity_mcp_url:
             settings["mcpServers"]["unityMCP"] = {
-                "serverUrl": f"http://127.0.0.1:{unity_mcp_manager.mcp_port}/mcp",
+                "serverUrl": unity_mcp_url,
                 "type": "http", "trust": True,
             }
         else:
@@ -245,9 +250,9 @@ class AgyProvider(BaseCLIProvider):
         global_settings.setdefault("mcpServers", {})["unityai"] = dict(unityai_entry)
         global_settings["toolPermission"] = "always-proceed"  # --dangerously-skip-permissions YERİNE (geçerli değer, flag'siz auto-approve)
         global_settings["disabledTools"] = self._AGY_DISABLED_TOOLS
-        if unity_mcp_manager.is_running():
+        if unity_mcp_url:
             global_settings["mcpServers"]["unityMCP"] = {
-                "serverUrl": f"http://127.0.0.1:{unity_mcp_manager.mcp_port}/mcp",
+                "serverUrl": unity_mcp_url,
                 "type": "http", "trust": True,
             }
         else:

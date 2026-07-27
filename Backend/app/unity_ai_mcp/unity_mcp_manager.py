@@ -4,6 +4,7 @@ import asyncio
 import httpx
 import logging
 import json
+import secrets
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -29,6 +30,9 @@ class UnityMCPManager:
         self._starting = False  # Çift başlatmayı önler
         self._health_cache_ts = 0.0   # is_running() HTTP probe cache (perf)
         self._health_cache_val = False
+        # MCP sunucusunun yerel REST uçlarının (/api/*) paylaşımlı sırrı. Her
+        # start_server'da yenilenir; sunucu bizim değilse None kalır.
+        self.local_api_token: Optional[str] = None
         import sys
         if getattr(sys, "frozen", False):
             # Frozen build: backend.exe = .../resources/Backend/backend.exe →
@@ -248,6 +252,50 @@ class UnityMCPManager:
                 return p
         return "uvx"
 
+    @staticmethod
+    def _load_or_create_local_api_token() -> str:
+        """Yerel paylaşımlı sırrı kalıcı dosyadan okur, yoksa üretip yazar.
+
+        Sır neden her başlatmada YENİDEN ÜRETİLMİYOR: rotasyon HTTP istemcileri
+        için bedavaydı çünkü onların config'ini biz yazıyoruz, ama Unity Editor
+        eklentisi bağlantısını kendi kuruyor ve sırrı bu dosyadan okuyor. Her
+        sunucu açılışında değişen bir sır, eklentiyi her açılışta yeniden
+        eşleşmeye zorlardı. Kalıcılığın bedeli düşük: bu sırrın savunduğu tehdit
+        aynı kullanıcı olarak çalışan başka bir süreç, ve o süreç zaten
+        ~/.codex/config.toml ve .mcp.json içindeki tokenları okuyabiliyor —
+        rotasyon az şey satın alıyordu, kullanılabilirlik çok şey satıyor.
+
+        Yol neden ~/.unity-mcp: unity-mcp'nin Python ve C# taraflarının her
+        platformda zaten paylaştığı tek dizin (port registry, status dosyaları
+        orada). C# eklentisi de sırrı oradan okuyor — ikinci bir konvansiyon
+        icat etmiyoruz. 0600: aynı makinedeki diğer kullanıcılar okuyamasın.
+        """
+        token_dir = os.path.join(os.path.expanduser("~"), ".unity-mcp")
+        os.makedirs(token_dir, exist_ok=True)
+        token_path = os.path.join(token_dir, "local-api-token")
+
+        try:
+            with open(token_path, "r", encoding="utf-8") as f:
+                existing = f.read().strip()
+            if existing:
+                return existing
+        except FileNotFoundError:
+            pass
+
+        token = secrets.token_urlsafe(32)
+        # os.open + 0o600: dosya daha ilk baytı yazılmadan doğru izinle doğuyor.
+        # open() + sonradan chmod, aradaki pencerede sırrı umask'ın izin verdiği
+        # herkese okutur.
+        fd = os.open(token_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(token)
+        # Dosya daha önce (gevşek izinle) varsa O_CREAT modu uygulanmaz; düzelt.
+        try:
+            os.chmod(token_path, 0o600)
+        except OSError:
+            pass
+        return token
+
     def start_server(self) -> bool:
         """
         Unity MCP HTTP sunucusunu başlatır.
@@ -280,7 +328,16 @@ class UnityMCPManager:
         log_path = os.path.join(log_dir, "unity_mcp_server.log")
         try:
             log_file = open(log_path, "a", encoding="utf-8")
-            mcp_env = {**os.environ, "LOCAL_APP_TOKEN": os.environ.get("LOCAL_APP_TOKEN", "")}
+            # /api/command Unity Editor'de keyfi C# çalıştırabiliyor (execute_code) ve
+            # 8080 makinedeki her sürece açık — sunucu bu sır olmadan o uçları hiç
+            # açmıyor (fail-closed). Sadece çocuk sürecin ortamına konur; argv
+            # `ps` ile herkese görünür olduğu için komut satırı bayrağı kullanılmaz.
+            self.local_api_token = self._load_or_create_local_api_token()
+            mcp_env = {
+                **os.environ,
+                "LOCAL_APP_TOKEN": os.environ.get("LOCAL_APP_TOKEN", ""),
+                "UNITY_MCP_LOCAL_API_TOKEN": self.local_api_token,
+            }
             self.process = subprocess.Popen(
                 cmd,
                 stdout=log_file,
@@ -292,6 +349,7 @@ class UnityMCPManager:
             return True
         except Exception as e:
             logger.error(f"[UnityMCP] Başlatılamadı: {e}")
+            self.local_api_token = None  # Sunucu ayakta değil — sır de geçersiz
             self._starting = False
             return False
 
@@ -349,9 +407,42 @@ class UnityMCPManager:
                 logger.warning(f"[UnityMCP] Port temizlenemedi: {e}")
 
         self._starting = False
+        self.local_api_token = None
         logger.info("[UnityMCP] Sunucu durduruldu.")
 
     # ─── Health & Status ─────────────────────────────────────────────────────
+
+    def api_headers(self) -> dict:
+        """Yerel REST uçları (/api/*) için auth başlığı.
+
+        Sunucu bizim değilse (örn. önceki oturumdan kalan ya da Unity'nin kendi
+        başlattığı süreç) sır elimizde yok → başlık boş, uçlar 401 döner. /health
+        korumasız kaldığı için toggle'ın canlılık kontrolü bundan etkilenmez."""
+        return {"X-API-Key": self.local_api_token} if self.local_api_token else {}
+
+    def mcp_url(self, host: str = "localhost") -> Optional[str]:
+        """CLI'lara yazılacak MCP transport URL'i — paylaşımlı sır yol segmentinde.
+
+        Sır header yerine URL'in kendisinde taşınıyor. Sebep istemci uyumluluğu:
+        hedeflediğimiz altı CLI'ın (claude, codex, agy, kimi, cursor, opencode)
+        MCP config şemalarında ortak garanti edilen tek alan URL; `headers` alanını
+        hepsinin desteklediği doğrulanmış değil. Dahası agy --print modunda MCP'yi
+        natively yüklemeyip bu URL'i kendi ürettiği köprü scriptine geçiriyor.
+        Header tabanlı bir şema altı istemcide ayrı ayrı uyarlanmak ve doğrulanmak
+        zorunda kalırdı; URL'i ise hepsi zaten olduğu gibi alıyor.
+
+        None dönerse çağıran unityMCP kaydını HİÇ yazmamalı:
+          - sunucu ayakta değil, ya da
+          - sır bizde yok (sunucuyu biz başlatmadık; örn. Unity kendi başlattı).
+        İkinci durumda sırsız bir URL sunucudan 404 alır — kaydı yazmak CLI'ı
+        bağlanamayan bir MCP'ye kilitler, hiç yazmamak doğru davranış.
+
+        host: çağıran kendi mevcut davranışını korusun diye parametrik
+        (bazı config'ler localhost, bazıları 127.0.0.1 yazıyordu).
+        """
+        if not self.local_api_token or not self.is_running():
+            return None
+        return f"http://{host}:{self.mcp_port}/mcp/{self.local_api_token}"
 
     async def check_health(self) -> bool:
         """HTTP sunucusunun ayakta olduğunu kontrol eder (/health)."""
@@ -375,7 +466,8 @@ class UnityMCPManager:
         try:
             async with httpx.AsyncClient() as client:
                 res = await client.get(
-                    f"http://localhost:{self.mcp_port}/api/instances", timeout=2.0
+                    f"http://localhost:{self.mcp_port}/api/instances",
+                    headers=self.api_headers(), timeout=2.0
                 )
                 if res.status_code == 200:
                     data = res.json()
@@ -406,7 +498,8 @@ class UnityMCPManager:
         try:
             async with httpx.AsyncClient() as client:
                 res = await client.get(
-                    f"http://localhost:{self.mcp_port}/api/instances", timeout=2.0
+                    f"http://localhost:{self.mcp_port}/api/instances",
+                    headers=self.api_headers(), timeout=2.0
                 )
                 instances = res.json().get("instances", []) if res.status_code == 200 else []
         except Exception:

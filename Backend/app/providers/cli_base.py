@@ -252,10 +252,11 @@ class BaseCLIProvider(AIProvider):
         }
         # Unity MCP: sadece aktifse ekle, kapalıysa kesinlikle ekleme
         # (Codex/Claude CLI başlarken bağlanamadığı MCP'de crash yapar)
-        if unity_mcp_manager.is_running():
-            config["mcpServers"]["unityMCP"] = {
-                "url": f"http://localhost:{unity_mcp_manager.mcp_port}/mcp"
-            }
+        # URL paylaşımlı sırrı yol segmentinde taşır (mcp_url() docstring'i: header
+        # yerine URL, istemci uyumluluğu için). Sır yoksa None döner → kayıt yazılmaz.
+        unity_mcp_url = unity_mcp_manager.mcp_url()
+        if unity_mcp_url:
+            config["mcpServers"]["unityMCP"] = {"url": unity_mcp_url}
             logger.info("[CLIProvider] Unity MCP aktif, .mcp.json'a eklendi.")
 
         config_path = os.path.join(workspace, ".mcp.json")

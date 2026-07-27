@@ -102,24 +102,32 @@ class CodexProvider(BaseCLIProvider):
                 ]),
                 capture_output=True, timeout=5, check=True,
             )
-            if unity_mcp_manager.is_running():
+            unity_mcp_url = unity_mcp_manager.mcp_url(host="127.0.0.1")
+            if unity_mcp_url:
                 # Codex 0.14x, yerel FastMCP streamable-HTTP MCP'ye bağlanmayı bozdu
                 # (önce OAuth discovery yapıp initialize'a varmadan düşüyor; openai/codex
                 # #26955, #26072 — canlı doğrulandı: HTTP'de unityMCP tool'ları yüklenmiyor).
                 # ÇÖZÜM: unityMCP'yi HTTP yerine STDIO KÖPRÜSÜ ile ver. Köprü mevcut TEK
                 # HTTP sunucusuna forward eder (ikinci Unity bağlantısı AÇMAZ). Codex'in
                 # stdio transport'u sağlam → 45 tool görünüyor (canlı doğrulandı).
-                mcp_url = f"http://127.0.0.1:{unity_mcp_manager.mcp_port}/mcp"
+                # URL artık paylaşımlı sırrı yol segmentinde taşıyor, bu yüzden köprüye
+                # argv ile DEĞİL --env ile veriliyor: argv `ps` üzerinden makinedeki her
+                # sürece görünür — yani tam olarak bu sırrın savunduğu saldırgana.
+                # (unity_mcp_manager sırrı aynı sebeple ortam değişkeniyle geçiriyor.)
                 if getattr(sys, "frozen", False):
-                    # Paketlenmiş app: backend.exe codex-mcp-bridge <url>
-                    bridge_argv = [sys.executable, "codex-mcp-bridge", mcp_url]
+                    # Paketlenmiş app: backend.exe codex-mcp-bridge
+                    bridge_argv = [sys.executable, "codex-mcp-bridge"]
                 else:
-                    # Dev: python main.py codex-mcp-bridge <url>
+                    # Dev: python main.py codex-mcp-bridge
                     _main_py = os.path.join(
                         os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "main.py")
-                    bridge_argv = [sys.executable, _main_py, "codex-mcp-bridge", mcp_url]
+                    bridge_argv = [sys.executable, _main_py, "codex-mcp-bridge"]
                 sp.run(
-                    self._resolve_exec(["codex", "mcp", "add", "unityMCP", "--", *bridge_argv]),
+                    self._resolve_exec([
+                        "codex", "mcp", "add", "unityMCP",
+                        "--env", f"UNITY_MCP_URL={unity_mcp_url}",
+                        "--", *bridge_argv,
+                    ]),
                     capture_output=True, timeout=10, check=True,
                 )
         except Exception as e:

@@ -143,10 +143,14 @@ class OmniSharpManager:
         if has_sln:
             return
         try:
+            # /api/command paylaşımlı sır ister (sırsız çağrı 401). Sır sunucuyu
+            # başlatan manager'da tutuluyor; import döngüsüne girmemek için yerel import.
+            from ..unity_ai_mcp.unity_mcp_manager import unity_mcp_manager
             req = urllib.request.Request(
                 "http://localhost:8080/api/command", method="POST",
                 data=b'{"type": "manage_editor", "params": {"action": "sync_csproj"}}',
-                headers={"Content-Type": "application/json"})
+                headers={"Content-Type": "application/json",
+                         **unity_mcp_manager.api_headers()})
             urllib.request.urlopen(req, timeout=15)
             logger.info("sync_csproj tetiklendi (.sln yoktu)")
         except Exception:

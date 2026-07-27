@@ -14,8 +14,22 @@ from mcp.client.streamable_http import streamablehttp_client
 
 logger = logging.getLogger(__name__)
 
-UNITY_MCP_URL = "http://127.0.0.1:8080"
-UNITY_MCP_ENDPOINT = f"{UNITY_MCP_URL}/mcp"
+def _endpoint() -> str:
+    """MCP transport adresi — her çağrıda yeniden hesaplanır.
+
+    Sabit olamaz: URL, sunucunun her başlatılışında yenilenen paylaşımlı sırrı
+    yol segmentinde taşıyor (bkz. unity_mcp_manager.mcp_url — sır header yerine
+    URL'de çünkü hedef CLI'ların hepsinde `headers` alanı desteklenmiyor).
+    Modül import anında hesaplansaydı sunucu yeniden başladığında bayat kalırdı.
+    """
+    from unity_ai_mcp.unity_mcp_manager import unity_mcp_manager
+    url = unity_mcp_manager.mcp_url(host="127.0.0.1")
+    if not url:
+        raise RuntimeError(
+            "Unity MCP sunucusu kapalı ya da paylaşımlı sır elimizde değil "
+            "(sunucuyu biz başlatmadık) — MCP transport'una bağlanılamaz."
+        )
+    return url
 
 # Cache — toggle açıldığında doldurulur
 _cached_tools: List[Dict] = []
@@ -26,7 +40,7 @@ _cached_functions: Dict[str, Any] = {}
 
 async def _fetch_tools_from_server() -> List:
     """MCP tools/list ile sunucudaki tüm tool'ları çeker."""
-    async with streamablehttp_client(UNITY_MCP_ENDPOINT) as (read, write, _):
+    async with streamablehttp_client(_endpoint()) as (read, write, _):
         async with ClientSession(read, write) as session:
             await session.initialize()
             result = await session.list_tools()
@@ -35,7 +49,7 @@ async def _fetch_tools_from_server() -> List:
 
 async def _call_tool_on_server(tool_name: str, params: Dict[str, Any]):
     """MCP tools/call ile unity-mcp'de bir tool çalıştırır."""
-    async with streamablehttp_client(UNITY_MCP_ENDPOINT) as (read, write, _):
+    async with streamablehttp_client(_endpoint()) as (read, write, _):
         async with ClientSession(read, write) as session:
             await session.initialize()
             result = await session.call_tool(tool_name, params)
