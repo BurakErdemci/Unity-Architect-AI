@@ -10,17 +10,7 @@ from mcp.server.fastmcp import FastMCP
 from unity_ai_mcp.approval_bridge import request_approval
 from unity_ai_mcp.tools.file_tools import _resolve
 
-_SAFE_PREFIXES = (
-    "ls", "ll", "find ", "grep ", "cat ", "head ", "tail ",
-    "echo ", "pwd", "wc ", "tree ",
-    "git status", "git log", "git diff", "git show",
-    "git branch", "git remote -v", "git stash list",
-)
-
-
-def _is_safe(command: str) -> bool:
-    stripped = command.strip().lower()
-    return any(stripped == s.strip() or stripped.startswith(s) for s in _SAFE_PREFIXES)
+from agentic.command_safety import is_auto_safe as _is_safe  # noqa: F401  (tek kaynak — bkz command_safety.py)
 
 
 def _parse_file_write(command: str):
@@ -97,7 +87,7 @@ def register_bash_tool(mcp: FastMCP, get_workspace: callable):
                 f.write(new_content)
             return f"✅ Yazıldı: {path}"
 
-        if not _is_safe(command):
+        if not _is_safe(command, workspace):
             result = await request_approval(
                 tool_name="bash",
                 params={"command": command},

@@ -16,8 +16,8 @@ KULLANIM (agy run_command ile çağırır):
   unityai bash        --command "git status"
 
 Her tehlikeli operasyon (save/delete/bash) approval_bridge üzerinden
-IDE onayı ister — MCP tool'larıyla aynı davranış. Güvenli okuma/listeleme
-ve _SAFE_PREFIXES komutları direkt çalışır.
+IDE onayı ister — MCP tool'larıyla aynı davranış. Hangi komutun onaysız
+geçebileceğine tek yerden karar verilir: agentic/command_safety.py.
 
 Workspace ve backend bilgisi:
   WORKSPACE     env → yoksa cwd
@@ -163,7 +163,7 @@ def cmd_bash(args) -> int:
         print(f"✅ Yazıldı: {path}")
         return 0
 
-    if not _is_safe(command):
+    if not _is_safe(command, workspace):
         result = asyncio.run(request_approval(
             tool_name="bash",
             params={"command": command},
