@@ -142,10 +142,43 @@ def _embedded_dotnet_root() -> str | None:
     return None
 
 
-def _spawn_env() -> dict | None:
-    """OmniSharp spawn ortamı: GÖMÜLÜ .NET SDK'ya yönlendirir (0-kurulum —
-    kullanıcının makinesinde .NET olmasa da çalışır). OmniSharp net6.0 hedefli →
-    DOTNET_ROLL_FORWARD=Major ile gömülü .NET 10 LTS'te koşar.
+# Alt sürece geçirilecek ortam değişkenlerinin İZİN LİSTESİ. Liste bilerek tek
+# parça: Windows'a özgü adlar da burada duruyor ve yalnız gerçekten VAR olanlar
+# kopyalanıyor, yani macOS'ta hiçbiri eklenmiyor. Alternatif (os.name'e göre
+# dallanmak) Windows dalını macOS'tan sınanamaz kılardı — bu dosyada dallanmayı
+# azaltmak bilinçli bir doğrulanabilirlik kararı (bkz. _spawn_env gerekçesi).
+#
+# Neden allow-list, neden `{**os.environ}` değil (dış denetim, 2026-07-27): canlı
+# probe ile ölçüldü — OmniSharp çocuğu LOCAL_APP_TOKEN ve API_KEY_ENCRYPTION_KEY
+# değişkenlerini görüyordu. İkincisi veritabanı şifreleme anahtarı ve üçüncü parti
+# bir binary'nin ona ihtiyacı yok.
+#
+# ⚠️ Liste DARALTILIRKEN dikkat: buradan çıkarılan her ad, OmniSharp'ın hiç
+# başlamamasına yol açabilir ve arıza sessiz olur (initialize'a yanıt gelmez,
+# yalnız timeout görünür). PATH `dotnet` host'unu bulmak için, HOME/USERPROFILE
+# NuGet ve MSBuild önbelleği için, TMPDIR ailesi MSBuild'in ara dosyaları için
+# zorunlu.
+_ENV_ALLOWLIST = (
+    # POSIX + ortak
+    "PATH", "HOME", "TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL",
+    "USER", "LOGNAME", "SHELL",
+    # Windows
+    "SystemRoot", "SystemDrive", "USERPROFILE", "APPDATA", "LOCALAPPDATA",
+    "ProgramData", "ProgramFiles", "PATHEXT", "COMSPEC", "NUMBER_OF_PROCESSORS",
+)
+
+
+def _spawn_env() -> dict:
+    """OmniSharp spawn ortamı: İZİN LİSTESİYLE kurulmuş minimal ortam, üstüne
+    (varsa) GÖMÜLÜ .NET SDK yönlendirmesi (0-kurulum — kullanıcının makinesinde
+    .NET olmasa da çalışır). OmniSharp net6.0 hedefli → DOTNET_ROLL_FORWARD=Major
+    ile gömülü .NET 10 LTS'te koşar.
+
+    HER İKİ dal da minimal ortam döndürüyor. Eskiden gömülü SDK yokken `None`
+    dönülüyordu ve `None` "ebeveyn ortamını aynen devral" demek — yani sızıntıyı
+    kapatmayan bir daldı. Gömülü SDK yokluğunda yapılması gereken tek şey
+    DOTNET_ROOT'u DAYATMAMAK (sistemdeki kurulum bozulmasın), ortamı olduğu gibi
+    aktarmak değil.
 
     Windows da buradan geçiyor. Eskiden net472 varyantı kullanılıp "runtime
     gerekmez" diye atlanıyordu; bu .NET Framework için doğru ama MSBuild için
@@ -153,15 +186,16 @@ def _spawn_env() -> dict | None:
     2026-07-27, win-x64 ve mono zip'leri açıldı). İki platform artık AYNI kod
     yolundan geçiyor; Windows'u macOS'tan sınayamadığımız için dallanmayı azaltmak
     doğrulanabilirliğin kendisi."""
+    env = {name: os.environ[name] for name in _ENV_ALLOWLIST if name in os.environ}
     root = _embedded_dotnet_root()
-    if root is None:
-        return None  # gömülü SDK yok → eski davranış: sistemdeki .NET'e güven
-    # PATH'e de ekleniyor: OmniSharp MSBuild'i Microsoft.Build.Locator ile çözerken
-    # `dotnet` komutunu çalıştırıyor ve DOTNET_ROOT tek başına onu PATH'e koymuyor.
-    return {**os.environ,
-            "DOTNET_ROOT": root,
-            "DOTNET_ROLL_FORWARD": "Major",
-            "PATH": root + os.pathsep + os.environ.get("PATH", "")}
+    if root is not None:
+        env["DOTNET_ROOT"] = root
+        env["DOTNET_ROLL_FORWARD"] = "Major"
+        # PATH'e de ekleniyor: OmniSharp MSBuild'i Microsoft.Build.Locator ile
+        # çözerken `dotnet` komutunu çalıştırıyor ve DOTNET_ROOT tek başına onu
+        # PATH'e koymuyor.
+        env["PATH"] = root + os.pathsep + os.environ.get("PATH", "")
+    return env
 
 
 def _dotnet_missing_reason() -> str | None:
@@ -249,6 +283,17 @@ def _unwrap_unity_result(body: dict) -> dict:
     return inner if isinstance(inner, dict) else body
 
 
+def _as_int(value) -> int | None:
+    """Sayı alanını güvenle çevirir; çevrilemiyorsa None ("bilinmiyor").
+
+    Bilinmeyeni 0 saymak yanlış olurdu: Unity gerçekten dosya yazmışken sırf alanın
+    biçimi beklenmedik diye kullanıcıya "tazelenemedi" uyarısı gösterilirdi."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _asmdef_name(path: str) -> str | None:
     """asmdef'in `name` alanı üretilecek csproj'un adını belirler."""
     try:
@@ -263,6 +308,7 @@ class OmniSharpManager:
         self._client: LspClient | None = None
         self._workspace: str | None = None
         self._opened: set[str] = set()
+        self._doc_versions: dict[str, int] = {}   # abs path → son gönderilen LSP sürümü
         self._diags: dict[str, list[dict]] = {}   # abs path → problems (eski format)
         self._diag_ping: dict[str, float] = {}    # abs path → son yayın zamanı
         self.status = {"state": "off", "detail": ""}
@@ -381,10 +427,27 @@ class OmniSharpManager:
             # günlerce fark edilmemesinin sebebi tam olarak buydu.
             if not inner.get("success"):
                 raise RuntimeError(str(inner.get("error") or inner.get("message"))[:200])
-            logger.info("sync_csproj tamam (%s) → %s", reason, inner.get("data"))
+            data = inner.get("data")
+            count = _as_int(data.get("csproj_count")) if isinstance(data, dict) else None
+            # `csproj_count` tam olarak "başarılı dedi ama hiçbir dosya yazmadı"
+            # halini yakalamak için Unity tarafına eklenmişti; eskiden yalnızca
+            # LOGLANIYORDU. 0 dosya = sessiz no-op, ve sessiz no-op'u başarı saymak
+            # bu projede zaten bir arızanın günlerce görülmemesine sebep oldu.
+            # Alan yoksa ya da sayıya çevrilemiyorsa (eski/farklı Unity paketi)
+            # sayı üzerinden karar VERİLMİYOR — aşağıdaki sonuç doğrulaması
+            # zaten tek başına yeterli kanıt, uydurma bir varsayım eklemiyoruz.
+            if count is not None and count <= 0:
+                raise RuntimeError("Unity 'başarılı' dedi ama hiç proje dosyası yazılmadı")
+            # ASIL kanıt: raporu değil, dışarıda bıraktığı İZİ ölç. Sync'ten sonra
+            # bayatlık kararı yeniden değerlendiriliyor; hâlâ bir sebep dönüyorsa
+            # dosyalar gerçekten tazelenmemiştir — yanıt ne derse desin.
+            remaining = _csproj_sync_reason(workspace)
+            if remaining is not None:
+                raise RuntimeError(f"tazeleme sonrası hâlâ bayat: {remaining}")
+            logger.info("sync_csproj tamam (%s) → %s", reason, data)
             return None
-        except Exception:
-            logger.info("proje dosyaları bayat (%s) ve Unity'ye ulaşılamadı", reason)
+        except Exception as e:
+            logger.info("proje dosyaları tazelenemedi (%s): %s", reason, e)
             # ⚠️ Mesaj bilerek "Unity'yi açın, düzelir" DEMİYOR. Ölçüldü 2026-07-27:
             # Unity açıkken de tazelenmiyor, çünkü .csproj üretimini Unity'nin harici
             # IDE entegrasyonu yapıyor ve makinede kayıtlı bir IDE yoksa (bu ürünün
@@ -403,6 +466,10 @@ class OmniSharpManager:
             await self._client.stop()
         self._client = None
         self._opened.clear()
+        # Sürüm sayaçları `_opened` ile BİRLİKTE sıfırlanmalı: yeni sunucuya
+        # yeniden didOpen (sürüm 1) gidecek, sayaç eski değerde kalırsa didChange
+        # sürümleri didOpen'la tutarsız olur.
+        self._doc_versions.clear()
         self._diags.clear()
         self.status = {"state": "off", "detail": ""}
 
@@ -424,6 +491,7 @@ class OmniSharpManager:
         uri = _path_to_uri(apath)
         if apath not in self._opened:
             self._opened.add(apath)
+            self._doc_versions[apath] = 1
             self._client.notify("textDocument/didOpen", {"textDocument": {
                 "uri": uri, "languageId": "csharp", "version": 1, "text": text}})
         # didOpen'dan SONRA da her zaman bir tam metinli didChange gönderiliyor.
@@ -442,8 +510,15 @@ class OmniSharpManager:
         # `UnityEngine.Debug` gibi Unity tipleri yine çözülmüyor — onun için csproj
         # tazelenmeli. İkisi çakışmıyor: csproj sonradan yüklendiğinde OmniSharp
         # misc dokümanları gerçek projeye kendisi taşıyor.
+        # Sürüm numarası doküman başına MONOTON bir sayaç. Eskiden `int(time.time())`
+        # idi ve çözünürlüğü 1 saniye: aynı saniyedeki iki senkron AYNI sürümü
+        # üretiyor, LSP sunucusu da "bu sürümü zaten gördüm" diyip ikincisini yok
+        # sayabiliyordu. Artık her senkronda didChange gönderdiğimiz için (yukarıdaki
+        # misc-files gerekçesi) bu çarpışma sık ulaşılabilir hale geldi — hızlı yazan
+        # bir kullanıcıda hover/completion bayat metne bakardı.
+        version = self._doc_versions[apath] = self._doc_versions.get(apath, 1) + 1
         self._client.notify("textDocument/didChange", {
-            "textDocument": {"uri": uri, "version": int(time.time())},
+            "textDocument": {"uri": uri, "version": version},
             "contentChanges": [{"text": text}]})
         # publishDiagnostics async gelir → kısa pencere bekle (yeni yayın ya da timeout)
         sent = time.monotonic()

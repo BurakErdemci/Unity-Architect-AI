@@ -38,6 +38,10 @@ class _FakeClient:
     def notify(self, method: str, params: dict) -> None:
         self.sent.append((method, params))
 
+    async def stop(self) -> None:
+        """`_stop_locked` bunu bekliyor — sunucu değişimini sınayabilmek için var."""
+        self.alive = False
+
     @property
     def methods(self) -> list[str]:
         return [m for m, _ in self.sent]
@@ -98,3 +102,87 @@ class TestSonrakiSenkronlar:
         """Karşıt yön: sunucu yokken bildirim üretmek `None` üzerinde patlardı."""
         mgr = om.OmniSharpManager()
         assert asyncio.run(mgr.sync_document(str(tmp_path / "A.cs"), "class A {}")) == []
+
+
+class TestDokumanSurumu:
+    """Sürüm numarası doküman başına MONOTON artan bir sayaç olmalı.
+
+    Hangi arızadan doğdu (dış denetim, 2026-07-27): sürüm `int(time.time())` idi,
+    yani çözünürlük 1 saniye. Aynı saniyedeki iki senkron AYNI sürümü üretiyor ve
+    LSP sunucusu "bu sürümü zaten gördüm" diyip ikinciyi yok sayabiliyor — hover
+    bayat metne bakar, hiçbir hata görünmez. Artık HER senkronda `didChange`
+    gönderdiğimiz için (bkz. TestIlkSenkron) bu çarpışma sık ulaşılabilir hale
+    geldi: hızlı yazan bir kullanıcı saniyede birden çok senkron üretiyor."""
+
+    def _versions(self, fake) -> list[int]:
+        return [p["textDocument"]["version"] for m, p in fake.sent
+                if m == "textDocument/didChange"]
+
+    def test_the_opening_notification_declares_version_one(self, mgr_with_fake_client):
+        mgr, fake, path = mgr_with_fake_client
+        asyncio.run(mgr.sync_document(path, "class A {}"))
+        _, acilis = fake.sent[0]
+        assert acilis["textDocument"]["version"] == 1
+
+    def test_two_syncs_within_the_same_second_get_different_versions(
+        self, mgr_with_fake_client, monkeypatch
+    ):
+        """Arızanın birebir kendisi: duvar saati DONDURULUYOR. Eski kod bu testte
+        iki kez aynı sayıyı üretirdi; sayaç saate bağlıysa test kırmızıya döner."""
+        mgr, fake, path = mgr_with_fake_client
+        monkeypatch.setattr(om.time, "time", lambda: 1_800_000_000.0)
+        asyncio.run(mgr.sync_document(path, "class A {}"))
+        asyncio.run(mgr.sync_document(path, "class A { int x; }"))
+        surumler = self._versions(fake)
+        assert len(surumler) == 2
+        assert surumler[0] != surumler[1]
+
+    def test_each_change_raises_the_version_strictly_above_the_previous_one(
+        self, mgr_with_fake_client, monkeypatch
+    ):
+        """Farklı olmak yetmez, ARTMASI gerek: LSP'de sürüm sırası dokümanın
+        güncelliğini belirler, geriye giden bir sayı da yok sayılabilir."""
+        mgr, fake, path = mgr_with_fake_client
+        monkeypatch.setattr(om.time, "time", lambda: 1_800_000_000.0)
+        for i in range(5):
+            asyncio.run(mgr.sync_document(path, f"class A {{ int x{i}; }}"))
+        surumler = self._versions(fake)
+        assert surumler == sorted(surumler)
+        assert len(set(surumler)) == len(surumler)
+        # didOpen 1 gönderdi → ilk didChange ondan büyük olmalı, yoksa sunucu
+        # açılış metnini daha yeni sayar.
+        assert surumler[0] > 1
+
+    def test_each_document_carries_its_own_counter(self, mgr_with_fake_client, tmp_path):
+        """Karşıt yön — sayaç GLOBAL olmamalı. LSP'de sürüm doküman başına
+        tanımlı; ortak bir sayaç ikinci dosyaya 1 yerine büyük bir sayıyla
+        başlatır ve o dosyanın sonraki güncellemeleri yok sayılabilir."""
+        mgr, fake, ilk = mgr_with_fake_client
+        ikinci = str(tmp_path / "B.cs")
+        with open(ikinci, "w", encoding="utf-8") as f:
+            f.write("class B {}")
+        mgr._diag_ping[om._norm_key(os.path.abspath(ikinci))] = float("inf")
+        asyncio.run(mgr.sync_document(ilk, "class A {}"))
+        asyncio.run(mgr.sync_document(ilk, "class A { int x; }"))
+        asyncio.run(mgr.sync_document(ikinci, "class B {}"))
+        b_didopen = [p for m, p in fake.sent
+                     if m == "textDocument/didOpen"
+                     and p["textDocument"]["uri"].endswith("B.cs")]
+        assert b_didopen[0]["textDocument"]["version"] == 1
+
+    def test_versions_restart_from_one_after_the_server_is_replaced(
+        self, mgr_with_fake_client
+    ):
+        """Sunucu yeniden başlayınca `_opened` sıfırlanıyor ve dosyaya yeniden
+        `didOpen` (sürüm 1) gidiyor. Sayaç eski değerinde kalırsa didChange
+        sürümleri didOpen'la tutarsız olur; ikisi BİRLİKTE sıfırlanmalı."""
+        mgr, fake, path = mgr_with_fake_client
+        asyncio.run(mgr.sync_document(path, "class A {}"))
+        asyncio.run(mgr.sync_document(path, "class A { int x; }"))
+        asyncio.run(mgr._stop_locked())
+        yeni = _FakeClient()
+        mgr._client = yeni
+        asyncio.run(mgr.sync_document(path, "class A { int y; }"))
+        assert yeni.sent[0][0] == "textDocument/didOpen"
+        assert yeni.sent[0][1]["textDocument"]["version"] == 1
+        assert yeni.sent[1][1]["textDocument"]["version"] == 2

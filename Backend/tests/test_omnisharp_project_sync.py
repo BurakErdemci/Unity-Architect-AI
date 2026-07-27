@@ -161,6 +161,24 @@ class _FakeHttpResponse:
         return False
 
 
+def _stale_ws(ws: str) -> None:
+    """Tazelenmeye MUHTAÇ bir workspace: .sln var ama kaynak ondan yeni."""
+    _touch(os.path.join(ws, "P.sln"), _OLD)
+    _touch(os.path.join(ws, "Assets", "Yeni.cs"), _NEW)
+
+
+def _urlopen_returning(payload: bytes, *, refreshes: str | None = None):
+    """Sahte urlopen. `refreshes` verilirse Unity'nin İŞİ GERÇEKTEN YAPMASINI
+    taklit eder: proje dosyalarını kaynaklardan yeni hale getirir. Bu ayrım testin
+    kendisi — yanıtın "başarılı" demesi ile dosyaların yazılmış olması iki ayrı
+    olgu ve kod artık ikincisine bakıyor."""
+    def _fake(*_a, **_k):
+        if refreshes is not None:
+            _touch(os.path.join(refreshes, "P.sln"), _NEW + 1)
+        return _FakeHttpResponse(payload)
+    return _fake
+
+
 class TestUnityYanitiOkunuyor:
     """Eskiden yalnız "istek gitti mi" bakılıyordu. Unity tarafı hiçbir dosya
     yazmadan `success` dönebiliyordu ve bu fark edilmiyordu — arızanın günlerce
@@ -170,12 +188,10 @@ class TestUnityYanitiOkunuyor:
     def test_a_failure_reported_by_unity_is_surfaced_to_the_user(
         self, unity_ws, monkeypatch
     ):
-        _touch(os.path.join(unity_ws, "P.sln"), _OLD)
-        _touch(os.path.join(unity_ws, "Assets", "Yeni.cs"), _NEW)
+        _stale_ws(unity_ws)
         monkeypatch.setattr(
             om.urllib.request, "urlopen",
-            lambda *_a, **_k: _FakeHttpResponse(
-                b'{"success": false, "error": "paket kurulu degil"}'))
+            _urlopen_returning(b'{"success": false, "error": "paket kurulu degil"}'))
         hint = om.OmniSharpManager()._maybe_sync_csproj(unity_ws)
         assert hint is not None
 
@@ -186,13 +202,13 @@ class TestUnityYanitiOkunuyor:
         döndürüyor (canlı ölçüldü 2026-07-27). Sarmalamayı açmayan bir kod başarılı
         yanıtı başarısız sayıyordu ve bu yalnız Unity bağlıyken ortaya çıkıyordu,
         yani hiçbir birim testi yakalayamazdı."""
-        _touch(os.path.join(unity_ws, "P.sln"), _OLD)
-        _touch(os.path.join(unity_ws, "Assets", "Yeni.cs"), _NEW)
+        _stale_ws(unity_ws)
         monkeypatch.setattr(
             om.urllib.request, "urlopen",
-            lambda *_a, **_k: _FakeHttpResponse(
+            _urlopen_returning(
                 b'{"status": "success", "result": {"success": true, '
-                b'"message": "ok", "data": {"csproj_count": 4}}}'))
+                b'"message": "ok", "data": {"csproj_count": 4}}}',
+                refreshes=unity_ws))
         assert om.OmniSharpManager()._maybe_sync_csproj(unity_ws) is None
 
     def test_a_failure_wrapped_in_the_transport_envelope_is_still_seen(
@@ -201,11 +217,102 @@ class TestUnityYanitiOkunuyor:
         """Sarmalamanın içindeki başarısızlık da görülmeli — dış seviyede
         `status: success` yazması taşımanın çalıştığını söyler, işin yapıldığını
         değil."""
-        _touch(os.path.join(unity_ws, "P.sln"), _OLD)
-        _touch(os.path.join(unity_ws, "Assets", "Yeni.cs"), _NEW)
+        _stale_ws(unity_ws)
         monkeypatch.setattr(
             om.urllib.request, "urlopen",
-            lambda *_a, **_k: _FakeHttpResponse(
+            _urlopen_returning(
                 b'{"status": "success", "result": {"success": false, '
                 b'"error": "paket kurulu degil"}}'))
         assert om.OmniSharpManager()._maybe_sync_csproj(unity_ws) is not None
+
+
+class TestSessizNoOpBasariSayilmiyor:
+    """Bir işlemin başarısı kendi RAPORUNDAN değil, dışarıda bıraktığı İZDEN
+    doğrulanır. `success: true` Unity'nin isteği aldığını söyler; proje
+    dosyalarının yazıldığını söylemez.
+
+    Dış denetim bulgusu (2026-07-27): `csproj_count` tam olarak bu hali yakalamak
+    için eklenmiş, ama yalnızca LOGLANIYORDU — yani kod, sessiz no-op'u başarı
+    sayıyordu. Bu sınıf (sessiz no-op) bu projede zaten bir arızanın günlerce
+    fark edilmemesine sebep oldu."""
+
+    def test_a_success_that_wrote_zero_project_files_is_treated_as_a_failure(
+        self, unity_ws, monkeypatch
+    ):
+        """`csproj_count: 0` = Unity yolu gövdesi boş bir metoda indi. Yanıt
+        "başarılı" olsa da kullanıcı uyarılmalı."""
+        _stale_ws(unity_ws)
+        monkeypatch.setattr(
+            om.urllib.request, "urlopen",
+            _urlopen_returning(
+                b'{"status": "success", "result": {"success": true, '
+                b'"message": "ok", "data": {"csproj_count": 0}}}'))
+        hint = om.OmniSharpManager()._maybe_sync_csproj(unity_ws)
+        assert hint is not None
+        assert "Dosya içi tamamlama" in hint
+
+    def test_a_success_that_leaves_the_files_stale_is_treated_as_a_failure(
+        self, unity_ws, monkeypatch
+    ):
+        """Asıl kapı bu: sayaç İNANDIRICI bir sayı dönse bile (4 dosya) diskte
+        hiçbir şey değişmediyse iş yapılmamıştır. Sonuçtan doğrulama, yanıt
+        şemasının her yalanına karşı çalışan tek kontrol."""
+        _stale_ws(unity_ws)
+        monkeypatch.setattr(
+            om.urllib.request, "urlopen",
+            _urlopen_returning(
+                b'{"status": "success", "result": {"success": true, '
+                b'"message": "ok", "data": {"csproj_count": 4}}}'))
+        assert om.OmniSharpManager()._maybe_sync_csproj(unity_ws) is not None
+
+    def test_zero_written_files_is_a_failure_even_when_the_timestamps_look_fresh(
+        self, unity_ws, monkeypatch
+    ):
+        """`csproj_count` kapısının KENDİ başına gerektiği yer — sonuç doğrulaması
+        buraya kör.
+
+        Sonuç doğrulaması mtime'a bakıyor; Unity ise .sln'i tek başına yeniden
+        yazıp hiç .csproj üretmeyebiliyor (sync yolu gövdesi boş bir metoda
+        indiğinde görülen hal). O anda damgalar TAZE görünür ama OmniSharp'ın
+        evreni yine boştur. İki kapı bu yüzden ayrı ayrı duruyor: biri diskteki
+        ize, diğeri Unity'nin saydığı dosyaya bakıyor.
+
+        ⚠️ Mutasyonla doğrulandı (2026-07-28): yalnız bu kapı kaldırıldığında
+        diğer testlerin hepsi YEŞİL kalıyordu — yani kapıyı ısıran tek test bu."""
+        _stale_ws(unity_ws)
+        monkeypatch.setattr(
+            om.urllib.request, "urlopen",
+            _urlopen_returning(
+                b'{"status": "success", "result": {"success": true, '
+                b'"message": "ok", "data": {"csproj_count": 0}}}',
+                refreshes=unity_ws))
+        assert om.OmniSharpManager()._maybe_sync_csproj(unity_ws) is not None
+
+    def test_a_response_without_the_counter_is_judged_purely_by_the_result(
+        self, unity_ws, monkeypatch
+    ):
+        """Karşıt yön — kapı çok DAR olmamalı. `csproj_count` alanını göndermeyen
+        bir Unity paketi (eski sürüm) yalnızca alan eksik diye başarısız
+        sayılmamalı: dosyalar gerçekten tazelendiyse uyarı çıkmaz."""
+        _stale_ws(unity_ws)
+        monkeypatch.setattr(
+            om.urllib.request, "urlopen",
+            _urlopen_returning(
+                b'{"status": "success", "result": {"success": true, "message": "ok"}}',
+                refreshes=unity_ws))
+        assert om.OmniSharpManager()._maybe_sync_csproj(unity_ws) is None
+
+    def test_an_unparsable_counter_does_not_by_itself_condemn_a_real_refresh(
+        self, unity_ws, monkeypatch
+    ):
+        """Karşıt yönün ikinci yarısı: bilinmeyeni 0 saymak, gerçekten yapılmış
+        bir işi başarısız ilan ederdi. Beklenmedik biçimdeki sayaç yok sayılır,
+        karar diskteki ize bırakılır."""
+        _stale_ws(unity_ws)
+        monkeypatch.setattr(
+            om.urllib.request, "urlopen",
+            _urlopen_returning(
+                b'{"status": "success", "result": {"success": true, '
+                b'"data": {"csproj_count": "bilinmiyor"}}}',
+                refreshes=unity_ws))
+        assert om.OmniSharpManager()._maybe_sync_csproj(unity_ws) is None

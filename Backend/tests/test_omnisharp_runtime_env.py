@@ -99,13 +99,120 @@ class TestSpawnOrtami:
         assert env["DOTNET_ROLL_FORWARD"] == "Major"
         assert env["PATH"].split(os.pathsep)[0] == root
 
-    def test_without_an_embedded_sdk_the_environment_is_left_untouched(
+    def test_without_an_embedded_sdk_no_dotnet_root_is_imposed_on_the_child(
         self, fake_root, monkeypatch
     ):
         """Gömülü SDK yoksa sistemdeki .NET'i BOZMA: kendi (eksik) kökümüzü
-        dayatmak, makinede çalışan bir kurulumu da çalışmaz hale getirirdi."""
+        dayatmak, makinede çalışan bir kurulumu da çalışmaz hale getirirdi.
+
+        Ama bu dal artık `None` DÖNMÜYOR — `None`, subprocess'e "ebeveyn ortamını
+        aynen devral" demek, yani sızıntıyı kapatmayan dal tam olarak buydu
+        (dış denetim, 2026-07-27). Doğru davranış: minimal ortam kur, sadece
+        DOTNET_ROOT'u ekleme."""
         monkeypatch.setattr(om, "_platform_key", lambda: "osx-arm64")
-        assert om._spawn_env() is None
+        env = om._spawn_env()
+        assert isinstance(env, dict)
+        assert "DOTNET_ROOT" not in env
+        assert "DOTNET_ROLL_FORWARD" not in env
+
+
+class TestAltSurecOrtamiSizdirmiyor:
+    """Alt sürece geçen ortam bir İZİN LİSTESİ. Kanıt (canlı probe, 2026-07-27):
+    `{**os.environ}` ile spawn edilen OmniSharp çocuğu LOCAL_APP_TOKEN ve
+    API_KEY_ENCRYPTION_KEY değişkenlerini görüyordu — ikincisi veritabanı şifreleme
+    anahtarı ve üçüncü parti bir binary'nin ona ihtiyacı yok.
+
+    Kapı İKİ yönden de sınanıyor. Çok GENİŞ olmamalı (sır sızmamalı) ama çok DAR
+    da olmamalı: listeden düşen bir ad OmniSharp'ı hiç başlatmaz ve arıza SESSİZ
+    olur (initialize'a yanıt gelmez, kullanıcı yalnız donma görür) — bugün
+    düzeltilen ürün hatasının aynısı geri gelir."""
+
+    _SIRLAR = {"LOCAL_APP_TOKEN": "tok-123",
+               "API_KEY_ENCRYPTION_KEY": "sifreleme-anahtari",
+               "OPENAI_API_KEY": "sk-gizli"}
+
+    def _sirlari_koy(self, monkeypatch):
+        for name, value in self._SIRLAR.items():
+            monkeypatch.setenv(name, value)
+
+    def test_application_secrets_never_reach_the_child_when_an_embedded_sdk_exists(
+        self, fake_root, monkeypatch
+    ):
+        monkeypatch.setattr(om, "_platform_key", lambda: "osx-arm64")
+        _make_dotnet_tree(fake_root, "osx-arm64", with_sdk=True)
+        self._sirlari_koy(monkeypatch)
+        env = om._spawn_env()
+        assert not (self._SIRLAR.keys() & env.keys())
+        # Değerin başka bir ad altında taşınmadığı da sınanıyor: PATH gibi
+        # birleştirilen alanlara sızmış olabilirdi.
+        assert not any(v in "".join(env.values()) for v in self._SIRLAR.values())
+
+    def test_application_secrets_never_reach_the_child_without_an_embedded_sdk_either(
+        self, fake_root, monkeypatch
+    ):
+        """⚠️ Bu dal ayrıca sınanıyor çünkü İKİ dal da sızdırıyordu: SDK yokken
+        fonksiyon `None` dönüyordu ve `None` = ebeveyn ortamının tamamı."""
+        monkeypatch.setattr(om, "_platform_key", lambda: "osx-arm64")
+        self._sirlari_koy(monkeypatch)
+        env = om._spawn_env()
+        assert not (self._SIRLAR.keys() & env.keys())
+
+    def test_the_variables_omnisharp_actually_needs_are_still_handed_down(
+        self, fake_root, monkeypatch
+    ):
+        """Karşıt yön — kapı çok DAR olmamalı. PATH `dotnet` host'unu bulmak,
+        HOME NuGet/MSBuild önbelleği, TMPDIR ailesi MSBuild'in ara dosyaları için
+        gerekli. Biri düşerse OmniSharp sessizce hiç başlamaz."""
+        monkeypatch.setattr(om, "_platform_key", lambda: "osx-arm64")
+        beklenen = {"PATH": "/usr/bin", "HOME": "/Users/test", "TMPDIR": "/tmp/x",
+                    "LANG": "tr_TR.UTF-8", "USER": "test", "LOGNAME": "test",
+                    "SHELL": "/bin/zsh"}
+        for name, value in beklenen.items():
+            monkeypatch.setenv(name, value)
+        env = om._spawn_env()
+        for name, value in beklenen.items():
+            assert env.get(name) == value, f"{name} alt sürece geçmiyor"
+
+    def test_the_embedded_sdk_still_wins_on_path_while_the_rest_stays_minimal(
+        self, fake_root, monkeypatch
+    ):
+        """PATH hem izin listesinden gelir hem gömülü kök onun BAŞINA eklenir;
+        ikisi çakışmamalı — sıralama bozulursa sistemdeki başka bir `dotnet`
+        gömülü SDK'nın önüne geçer."""
+        monkeypatch.setattr(om, "_platform_key", lambda: "osx-arm64")
+        root = _make_dotnet_tree(fake_root, "osx-arm64", with_sdk=True)
+        monkeypatch.setenv("PATH", "/usr/bin")
+        env = om._spawn_env()
+        assert env["PATH"] == root + os.pathsep + "/usr/bin"
+
+    def test_windows_only_variables_are_handed_down_when_the_host_defines_them(
+        self, fake_root, monkeypatch
+    ):
+        """Windows ürünün ANA kitlesi ama macOS'tan sınanamıyor. İzin listesi
+        bilerek TEK parça (os.name'e göre dallanmıyor), böylece Windows'a özgü
+        adların kopyalandığı burada — macOS'ta — doğrulanabiliyor."""
+        monkeypatch.setattr(om, "_platform_key", lambda: "osx-arm64")
+        monkeypatch.setenv("SystemRoot", r"C:\Windows")
+        monkeypatch.setenv("LOCALAPPDATA", r"C:\Users\t\AppData\Local")
+        monkeypatch.setenv("COMSPEC", r"C:\Windows\system32\cmd.exe")
+        env = om._spawn_env()
+        assert env["SystemRoot"] == r"C:\Windows"
+        assert env["LOCALAPPDATA"] == r"C:\Users\t\AppData\Local"
+        assert env["COMSPEC"] == r"C:\Windows\system32\cmd.exe"
+
+    def test_variables_that_do_not_exist_are_not_invented_as_empty_strings(
+        self, fake_root, monkeypatch
+    ):
+        """Boş dizeyle TANIMLI bir değişken, tanımsız olmakla aynı şey değil:
+        MSBuild bazı yolları "var ama boş" görünce onları kullanmayı deniyor.
+        macOS'ta SystemRoot yok — o yüzden ortamda da olmamalı."""
+        monkeypatch.setattr(om, "_platform_key", lambda: "osx-arm64")
+        monkeypatch.delenv("SystemRoot", raising=False)
+        monkeypatch.delenv("LC_ALL", raising=False)
+        env = om._spawn_env()
+        assert "SystemRoot" not in env
+        assert "LC_ALL" not in env
+        assert "" not in env.values()
 
 
 class TestSdkYokkenDavranis:
