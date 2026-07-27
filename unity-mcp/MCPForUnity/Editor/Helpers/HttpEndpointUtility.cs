@@ -123,30 +123,41 @@ namespace MCPForUnity.Editor.Helpers
         /// <summary>
         /// Builds the JSON-RPC endpoint for the currently active scope.
         ///
-        /// In local mode the server mounts the transport at /mcp/&lt;secret&gt;, not /mcp:
-        /// the secret travels in the path because the generated client configs are
-        /// consumed by CLIs whose support for a `headers` field is not uniform. A
-        /// plain /mcp URL is a dead endpoint (404) and silently produced clients that
-        /// could never connect.
-        ///
-        /// Remote mode is unchanged — it authenticates with a header instead.
+        /// The URL carries NO credential. The local server authenticates the
+        /// transport with the X-API-Key header (see ReadLocalApiToken); an
+        /// earlier version embedded the shared secret in the path instead, which
+        /// wrote it into every generated client config on disk. Config builders
+        /// must therefore emit the header alongside this URL in local mode.
         /// </summary>
         public static string GetMcpRpcUrl()
         {
-            string rpc = AppendPathSegment(GetBaseUrl(), "mcp");
-            if (IsRemoteScope()) return rpc;
-            string token = ReadLocalApiToken();
-            return string.IsNullOrEmpty(token) ? rpc : AppendPathSegment(rpc, token);
+            return AppendPathSegment(GetBaseUrl(), "mcp");
         }
 
         /// <summary>
-        /// Builds the local JSON-RPC endpoint (local base + /mcp/&lt;secret&gt;).
+        /// Builds the local JSON-RPC endpoint (local base + /mcp). No credential
+        /// in the URL - pair it with LocalAuthHeaders().
         /// </summary>
         public static string GetLocalMcpRpcUrl()
         {
-            string rpc = AppendPathSegment(GetLocalBaseUrl(), "mcp");
+            return AppendPathSegment(GetLocalBaseUrl(), "mcp");
+        }
+
+        /// <summary>
+        /// Header pair a local MCP client must send, or an empty dictionary when
+        /// the secret is unavailable (server not started by this machine's app).
+        /// Empty means the caller should not write a client config at all: a
+        /// config without the header connects and gets 401.
+        /// </summary>
+        public static System.Collections.Generic.Dictionary<string, string> LocalAuthHeaders()
+        {
             string token = ReadLocalApiToken();
-            return string.IsNullOrEmpty(token) ? rpc : AppendPathSegment(rpc, token);
+            var headers = new System.Collections.Generic.Dictionary<string, string>();
+            if (!string.IsNullOrEmpty(token))
+            {
+                headers[AuthConstants.ApiKeyHeader] = token;
+            }
+            return headers;
         }
 
         /// <summary>

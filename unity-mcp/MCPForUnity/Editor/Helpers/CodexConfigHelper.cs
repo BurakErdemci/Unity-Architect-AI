@@ -39,6 +39,22 @@ namespace MCPForUnity.Editor.Helpers
                 string httpUrl = HttpEndpointUtility.GetMcpRpcUrl();
                 unityMCP["url"] = new TomlString { Value = httpUrl };
 
+                // Codex's key is `http_headers`, NOT `headers`. Measured 2026-07-27:
+                // writing `headers` produces no error, no warning, and no header on
+                // the wire - five real MCP requests carried none, and `codex mcp get`
+                // reports `http_headers: -`. A silently-dropped credential is the
+                // worst failure shape available, so this name is not negotiable.
+                var localHeaders = HttpEndpointUtility.LocalAuthHeaders();
+                if (!HttpEndpointUtility.IsRemoteScope() && localHeaders.Count > 0)
+                {
+                    var headerTable = new TomlTable();
+                    foreach (var kv in localHeaders)
+                    {
+                        headerTable[kv.Key] = new TomlString { Value = kv.Value };
+                    }
+                    unityMCP["http_headers"] = headerTable;
+                }
+
                 // Enable Codex's Rust MCP client for HTTP/SSE transport
                 EnsureRmcpClientFeature(table);
             }
@@ -193,6 +209,22 @@ namespace MCPForUnity.Editor.Helpers
                 // HTTP mode: Use url field
                 string httpUrl = HttpEndpointUtility.GetMcpRpcUrl();
                 unityMCP["url"] = new TomlString { Value = httpUrl };
+
+                // Codex's key is `http_headers`, NOT `headers`. Measured 2026-07-27:
+                // writing `headers` produces no error, no warning, and no header on
+                // the wire - five real MCP requests carried none, and `codex mcp get`
+                // reports `http_headers: -`. A silently-dropped credential is the
+                // worst failure shape available, so this name is not negotiable.
+                var localHeaders = HttpEndpointUtility.LocalAuthHeaders();
+                if (!HttpEndpointUtility.IsRemoteScope() && localHeaders.Count > 0)
+                {
+                    var headerTable = new TomlTable();
+                    foreach (var kv in localHeaders)
+                    {
+                        headerTable[kv.Key] = new TomlString { Value = kv.Value };
+                    }
+                    unityMCP["http_headers"] = headerTable;
+                }
             }
             else
             {

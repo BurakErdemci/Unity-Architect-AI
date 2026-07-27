@@ -11,7 +11,9 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from core.config import config
+from core.constants import API_KEY_HEADER
 from core.local_auth import require_local_token
+from services.api_key_service import ApiKeyService
 from models.models import MCPResponse, ToolDefinitionModel, ToolParameterModel
 from core.logging_decorator import log_execution
 from core.telemetry_decorator import telemetry_tool
@@ -86,8 +88,35 @@ class CustomToolService:
             # whatever is posted here becomes a tool the user's AI clients can
             # see and call. Closing the socket without closing this route would
             # leave the tool-injection path open, so it takes the same secret.
-            # Remote-hosted deployments authenticate via ApiKeyService instead.
-            if not config.http_remote_hosted:
+            #
+            # Both modes authenticate. An earlier version guarded only the local
+            # branch and left a comment asserting that remote deployments were
+            # covered "via ApiKeyService instead" - that assertion was never
+            # verified and is false: ApiKeyService is applied by the WebSocket
+            # hub and the Unity transport, and the only middleware registered on
+            # this app is UnityInstanceMiddleware, which does no authentication.
+            # A remote-hosted deployment therefore accepted tool injection from
+            # anyone who could reach the port. Mirrors plugin_hub's remote path.
+            if config.http_remote_hosted:
+                if not ApiKeyService.is_initialized():
+                    # Startup refuses remote mode without a validation URL, so
+                    # reaching this means the service failed to come up. Refuse
+                    # rather than fall through unauthenticated.
+                    return JSONResponse(
+                        {"success": False, "error": "API key validation unavailable"},
+                        status_code=503,
+                    )
+                api_key = request.headers.get(API_KEY_HEADER, "")
+                if not api_key:
+                    return JSONResponse(
+                        {"success": False, "error": "Missing API key"}, status_code=401
+                    )
+                result = await ApiKeyService.get_instance().validate(api_key)
+                if not result.valid:
+                    return JSONResponse(
+                        {"success": False, "error": "Invalid API key"}, status_code=401
+                    )
+            else:
                 auth_error = require_local_token(request)
                 if auth_error is not None:
                     return auth_error

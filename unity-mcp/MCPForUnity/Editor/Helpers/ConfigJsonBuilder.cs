@@ -88,8 +88,23 @@ namespace MCPForUnity.Editor.Helpers
                 }
                 else
                 {
-                    // Local HTTP doesn't use API keys; remove any stale headers
-                    if (unity["headers"] != null) unity.Remove("headers");
+                    // Local HTTP DOES use a key now. The local transport is reachable
+                    // by every process on this machine and exposes arbitrary C#
+                    // execution in the Editor, so it authenticates with the same
+                    // header remote uses - the secret just comes from the shared
+                    // token file instead of EditorPrefs. Emitting a config without
+                    // it produces a client that connects and gets 401.
+                    var localHeaders = HttpEndpointUtility.LocalAuthHeaders();
+                    if (localHeaders.Count > 0)
+                    {
+                        var headers = new JObject();
+                        foreach (var kv in localHeaders) headers[kv.Key] = kv.Value;
+                        unity["headers"] = headers;
+                    }
+                    else if (unity["headers"] != null)
+                    {
+                        unity.Remove("headers");
+                    }
                 }
 
                 // Cline expects streamableHttp for HTTP endpoints.
