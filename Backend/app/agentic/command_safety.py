@@ -55,7 +55,19 @@ _FIND_DANGEROUS = frozenset({
     "-delete", "-fls", "-fprint", "-fprintf", "-fprint0",
 })
 
-_SAFE_GIT_SUBCOMMANDS = frozenset({"status", "log", "diff", "show", "branch"})
+_SAFE_GIT_SUBCOMMANDS = frozenset({"status", "log", "diff", "show"})
+
+# `branch` bilerek yukarıdaki listede DEĞİL: salt-okunur sanılıyordu ama
+# `git branch X` ref yaratır, `-D X` siler, `-m eski yeni` yeniden adlandırır.
+# 2026-07-27 denetiminde üç biçim de onaysız geçti. Bu yüzden yalnızca
+# listeleme biçimleri otomatik güvenli sayılıyor; değer alan bayraklar
+# (--contains <sha> gibi) kapsam dışı bırakıldı — onay kartı çıkarmaları
+# yanlış negatiftir, ref yaratmaları yanlış pozitif olurdu.
+_GIT_BRANCH_READONLY_FLAGS = frozenset({
+    "-a", "--all", "-r", "--remotes", "-v", "-vv", "--verbose",
+    "-l", "--list", "--show-current", "--color", "--no-color",
+    "-i", "--ignore-case", "--column", "--no-column",
+})
 
 # git'i keyfi program çalıştırmaya ikna eden bayraklar. `git -c alias.x='!sh'` ve
 # GIT_EXTERNAL_DIFF yolu bunlarla açılır; --output dosya yazar.
@@ -75,6 +87,15 @@ def _git_is_auto_safe(tokens: list[str]) -> bool:
     sub = tokens[1].lower()
     if sub in _SAFE_GIT_SUBCOMMANDS:
         return True
+    if sub == "branch":
+        # Çıplak bir kelime (bayrak olmayan) daima "bu adla bir ref yarat"
+        # demektir; bu yüzden yalnızca tanınan listeleme bayrakları geçer.
+        return all(
+            arg in _GIT_BRANCH_READONLY_FLAGS
+            or arg.startswith("--format=")
+            or arg.startswith("--sort=")
+            for arg in tokens[2:]
+        )
     # Bu ikisi yalnızca belirli biçimleriyle salt-okunur.
     if sub == "remote":
         return tokens[2:] == ["-v"]
@@ -83,6 +104,27 @@ def _git_is_auto_safe(tokens: list[str]) -> bool:
     if sub == "fetch":
         return "--dry-run" in tokens[2:]
     return False
+
+
+def _attached_flag_value(token: str) -> str:
+    """Bayrağa BİTİŞİK yazılmış değeri döndürür; değer yoksa boş string.
+
+    Neden var: bir token'ın '-' ile başlaması onun yol taşımadığı anlamına
+    gelmiyor. BSD find başlangıç yolunu bayrağa bitişik kabul ediyor ve bu,
+    2026-07-27'de workspace hapsini tamamen atlattı — ölçüldü:
+
+        find -f../../../README.md   → sınıflandırıcı True, dışarısı listelendi
+
+    Aynı biçim ``grep --file=/etc/passwd`` ve ``--exclude=../x`` için de geçerli.
+    Değeri çıkarıp normal yol kontrolüne veriyoruz.
+
+    Yanlış pozitif üretmiyor çünkü çıkan aday workspace'e GÖRE çözülüyor:
+    ``ls -la`` → "a", ``tail -n100`` → "100" gibi adaylar zaten içeride kalıyor.
+    """
+    if token.startswith("--"):
+        return token.split("=", 1)[1] if "=" in token else ""
+    # Tek harfli bayraktan sonrası aday değerdir: "-f../x" → "../x".
+    return token[2:] if len(token) > 2 else ""
 
 
 def _stays_in_workspace(tokens: list[str], workspace: str | None) -> bool:
@@ -100,16 +142,22 @@ def _stays_in_workspace(tokens: list[str], workspace: str | None) -> bool:
 
     for token in tokens[1:]:
         if token.startswith("-"):
-            continue  # bayrak, yol değil
+            # Bayrağın kendisi yol değil ama BİTİŞİK değeri olabilir
+            # (bkz. _attached_flag_value). Değer yoksa token atlanır.
+            candidate = _attached_flag_value(token)
+            if not candidate:
+                continue
+        else:
+            candidate = token
         # Yalnızca "/" içeren token'lara bakmak YETMİYOR: workspace içindeki
         # `link.txt` adlı bir sembolik bağ dışarıyı gösterebilir ve adında hiç
         # eğik çizgi olmaz. (Kendi regresyon testim bu açığı yakaladı.) Bu yüzden
         # bayrak olmayan HER token workspace'e göre çözülüyor; düz göreli adlar
         # zaten içeride kaldığı için yanlış pozitif üretmiyor.
-        expanded = os.path.expanduser(token)
+        expanded = os.path.expanduser(candidate)
         if root is None:
             # Workspace bilinmiyor: yalnızca düz göreli yollara güveniyoruz.
-            if os.path.isabs(expanded) or token.startswith("~") or ".." in expanded.split(os.sep):
+            if os.path.isabs(expanded) or candidate.startswith("~") or ".." in expanded.split(os.sep):
                 return False
             continue
         resolved = os.path.realpath(os.path.join(root, expanded))

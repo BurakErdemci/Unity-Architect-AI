@@ -131,3 +131,48 @@ def test_single_source_of_truth_is_shared_by_all_call_sites():
 
     assert bash_gate is is_auto_safe
     assert runner_gate is requires_approval
+
+
+# ── 2026-07-27 Codex denetiminin bulduğu iki delik ────────────────────────────
+# İkisi de yukarıdaki 7 saldırının kapatılmasından SONRA duruyordu; yani ilk
+# düzeltme sınıfı kapatmamıştı, yalnızca denenen biçimleri kapatmıştı.
+
+@pytest.mark.parametrize("command", [
+    # BSD find başlangıç yolunu bayrağa bitişik alıyor. Canlı ölçüldü:
+    # `find -f../../../README.md` workspace dışını listeledi, rc=0.
+    "find -f../../../etc/passwd",
+    "find -f/etc",
+    "grep --file=/etc/passwd x",
+    "grep --exclude=../../secret -r x",
+    "cat -f~/.ssh/id_rsa",
+])
+def test_path_attached_to_a_flag_cannot_escape_workspace(command, workspace):
+    assert not is_auto_safe(command, workspace)
+
+
+@pytest.mark.parametrize("command", [
+    "ls -la", "tail -n100 app.log", "grep --color=auto x",
+    "git log --format=%H", "find . -maxdepth 2",
+])
+def test_flags_with_harmless_attached_values_are_not_false_positives(command, workspace):
+    """Bu yön olmadan düzeltme her bayraklı komutu onaya sokardı."""
+    assert is_auto_safe(command, workspace)
+
+
+@pytest.mark.parametrize("command", [
+    "git branch yeni-dal",        # ref YARATIR
+    "git branch -D main",         # ref SİLER
+    "git branch -m eski yeni",    # ref YENİDEN ADLANDIRIR
+    "git branch --delete konu",
+    "git branch -f main HEAD~3",
+])
+def test_mutating_git_branch_forms_require_approval(command, workspace):
+    assert not is_auto_safe(command, workspace)
+
+
+@pytest.mark.parametrize("command", [
+    "git branch", "git branch -a", "git branch -v", "git branch --list",
+    "git branch --show-current", "git branch -r",
+])
+def test_git_branch_listing_forms_still_run_without_approval(command, workspace):
+    assert is_auto_safe(command, workspace)
