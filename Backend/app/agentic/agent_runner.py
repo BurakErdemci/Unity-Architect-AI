@@ -156,6 +156,26 @@ class AgentRunner:
         except Exception as e:
             logger.warning(f"[handoff] {provider} session reset hatası: {e}")
 
+    def _approval_prompt(self, tool_name: str, tool_args: dict) -> str | None:
+        """Onay kartı gerekiyorsa kartta gösterilecek metni, gerekmiyorsa None döner.
+
+        2026-07-27 denetiminde ölçülen asimetri: `rm dosya` onay kartı çıkarıyor
+        ama aynı dosyayı silen `delete_file` çıkarmıyordu — model, kapıyı geçmek
+        yerine kapısı olmayan aracı seçebiliyordu. İki araç aynı geri alınamaz
+        etkiyi üretiyorsa aynı kapıdan geçmeliler.
+
+        `write_file` BİLEREK kapsam dışı: kod yazmak ürünün asıl işi ve her
+        yazımda onay istemek kullanıcıyı refleks-onaya alıştırır — bu kapıyı
+        güçlendirmez, tamamen değersizleştirir. Silme ise seyrek ve geri alınamaz.
+        Yazma zaten `_validate_path` ile workspace'e hapsedilmiş durumda.
+        """
+        if tool_name == "run_command":
+            command = tool_args.get("command", "")
+            return command if _is_dangerous_command(command, self.workspace_path) else None
+        if tool_name == "delete_file":
+            return f"delete_file {tool_args.get('file_path', '?')}"
+        return None
+
     async def _execute_tool_with_approval(
         self, tool_name: str, tool_args: dict
     ) -> tuple[dict, list]:
@@ -435,46 +455,45 @@ Kullanıcıyla {'Türkçe' if self.language == 'tr' else 'İngilizce'} konuş.""
                 })
 
                 # Tehlikeli komut kontrolü ve onay yield'ı
-                if tool_name == "run_command":
-                    command = tool_args.get("command", "")
-                    if _is_dangerous_command(command, self.workspace_path):
-                        # Onay event'ini HEMEN yield et
-                        gate_id = uuid.uuid4().hex[:10]
-                        event = asyncio.Event()
-                        _APPROVAL_GATES[gate_id] = event
-                        _APPROVAL_RESULTS[gate_id] = False
+                _approval_text = self._approval_prompt(tool_name, tool_args)
+                if _approval_text:
+                    # Onay event'ini HEMEN yield et
+                    gate_id = uuid.uuid4().hex[:10]
+                    event = asyncio.Event()
+                    _APPROVAL_GATES[gate_id] = event
+                    _APPROVAL_RESULTS[gate_id] = False
                         
-                        yield AgentEvent("command_approval_needed", {
-                            "command": command,
-                            "gate_id": gate_id,
-                        })
+                    yield AgentEvent("command_approval_needed", {
+                        "command": _approval_text,
+                        "gate_id": gate_id,
+                    })
                         
-                        # Şimdi onayı bekle
-                        try:
-                            await asyncio.wait_for(event.wait(), timeout=60.0)
-                            approved = _APPROVAL_RESULTS.get(gate_id, False)
-                        except asyncio.TimeoutError:
-                            approved = False
-                        finally:
-                            _APPROVAL_GATES.pop(gate_id, None)
-                            _APPROVAL_RESULTS.pop(gate_id, None)
+                    # Şimdi onayı bekle
+                    try:
+                        await asyncio.wait_for(event.wait(), timeout=60.0)
+                        approved = _APPROVAL_RESULTS.get(gate_id, False)
+                    except asyncio.TimeoutError:
+                        approved = False
+                    finally:
+                        _APPROVAL_GATES.pop(gate_id, None)
+                        _APPROVAL_RESULTS.pop(gate_id, None)
 
-                        if not approved:
-                            result = {"success": False, "summary": "❌ Kullanıcı reddetti."}
-                            # Tool result olarak ilet
-                            yield AgentEvent("tool_result", {
-                                "tool": tool_name,
-                                "success": False,
-                                "summary": "❌ Kullanıcı tarafından reddedildi.",
-                            })
-                            # AI'a tool sonucunu bildir (döngü devam etsin diye)
-                            function_response_parts.append(
-                                gtypes.Part(function_response=gtypes.FunctionResponse(
-                                    name=tool_name,
-                                    response=result,
-                                ))
-                            )
-                            continue
+                    if not approved:
+                        result = {"success": False, "summary": "❌ Kullanıcı reddetti."}
+                        # Tool result olarak ilet
+                        yield AgentEvent("tool_result", {
+                            "tool": tool_name,
+                            "success": False,
+                            "summary": "❌ Kullanıcı tarafından reddedildi.",
+                        })
+                        # AI'a tool sonucunu bildir (döngü devam etsin diye)
+                        function_response_parts.append(
+                            gtypes.Part(function_response=gtypes.FunctionResponse(
+                                name=tool_name,
+                                response=result,
+                            ))
+                        )
+                        continue
 
                 # Normal tool execution
                 result, _ = await self._execute_tool_with_approval(tool_name, tool_args)
@@ -682,27 +701,26 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                 })
 
                 # Terminal Onay Katmanı
-                if tool_call.name == "run_command":
-                    command = tool_call.input.get("command", "")
-                    if _is_dangerous_command(command, self.workspace_path):
-                        gate_id = uuid.uuid4().hex[:10]
-                        event = asyncio.Event()
-                        _APPROVAL_GATES[gate_id] = event
-                        yield AgentEvent("command_approval_needed", {"command": command, "gate_id": gate_id})
-                        try:
-                            await asyncio.wait_for(event.wait(), timeout=60.0)
-                            approved = _APPROVAL_RESULTS.get(gate_id, False)
-                        except: approved = False
-                        finally:
-                            _APPROVAL_GATES.pop(gate_id, None)
-                            # RESULTS'ı da düşür: yazan taraf conversation_routes,
-                            # temizleyen yoktu → gate_id başına kalıcı girdi birikiyordu.
-                            _APPROVAL_RESULTS.pop(gate_id, None)
+                _approval_text = self._approval_prompt(tool_call.name, tool_call.input)
+                if _approval_text:
+                    gate_id = uuid.uuid4().hex[:10]
+                    event = asyncio.Event()
+                    _APPROVAL_GATES[gate_id] = event
+                    yield AgentEvent("command_approval_needed", {"command": _approval_text, "gate_id": gate_id})
+                    try:
+                        await asyncio.wait_for(event.wait(), timeout=60.0)
+                        approved = _APPROVAL_RESULTS.get(gate_id, False)
+                    except: approved = False
+                    finally:
+                        _APPROVAL_GATES.pop(gate_id, None)
+                        # RESULTS'ı da düşür: yazan taraf conversation_routes,
+                        # temizleyen yoktu → gate_id başına kalıcı girdi birikiyordu.
+                        _APPROVAL_RESULTS.pop(gate_id, None)
                         
-                        if not approved:
-                            result_str = json.dumps({"success": False, "summary": "Reddedildi"})
-                            tool_results.append({"type": "tool_result", "tool_use_id": tool_call.id, "content": result_str})
-                            continue
+                    if not approved:
+                        result_str = json.dumps({"success": False, "summary": "Reddedildi"})
+                        tool_results.append({"type": "tool_result", "tool_use_id": tool_call.id, "content": result_str})
+                        continue
 
                 result, _ = await self._execute_tool_with_approval(tool_call.name, tool_call.input)
 
@@ -903,26 +921,25 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                 })
 
                 # Terminal Onay Katmanı
-                if tool_name == "run_command":
-                    command = tool_args.get("command", "")
-                    if _is_dangerous_command(command, self.workspace_path):
-                        gate_id = uuid.uuid4().hex[:10]
-                        event = asyncio.Event()
-                        _APPROVAL_GATES[gate_id] = event
-                        yield AgentEvent("command_approval_needed", {"command": command, "gate_id": gate_id})
-                        try:
-                            await asyncio.wait_for(event.wait(), timeout=60.0)
-                            approved = _APPROVAL_RESULTS.get(gate_id, False)
-                        except: approved = False
-                        finally:
-                            _APPROVAL_GATES.pop(gate_id, None)
-                            # RESULTS'ı da düşür: yazan taraf conversation_routes,
-                            # temizleyen yoktu → gate_id başına kalıcı girdi birikiyordu.
-                            _APPROVAL_RESULTS.pop(gate_id, None)
+                _approval_text = self._approval_prompt(tool_name, tool_args)
+                if _approval_text:
+                    gate_id = uuid.uuid4().hex[:10]
+                    event = asyncio.Event()
+                    _APPROVAL_GATES[gate_id] = event
+                    yield AgentEvent("command_approval_needed", {"command": _approval_text, "gate_id": gate_id})
+                    try:
+                        await asyncio.wait_for(event.wait(), timeout=60.0)
+                        approved = _APPROVAL_RESULTS.get(gate_id, False)
+                    except: approved = False
+                    finally:
+                        _APPROVAL_GATES.pop(gate_id, None)
+                        # RESULTS'ı da düşür: yazan taraf conversation_routes,
+                        # temizleyen yoktu → gate_id başına kalıcı girdi birikiyordu.
+                        _APPROVAL_RESULTS.pop(gate_id, None)
                         
-                        if not approved:
-                            messages.append({"role": "tool", "tool_call_id": tool_call.id, "name": tool_name, "content": "Reddedildi"})
-                            continue
+                    if not approved:
+                        messages.append({"role": "tool", "tool_call_id": tool_call.id, "name": tool_name, "content": "Reddedildi"})
+                        continue
 
                 result, _ = await self._execute_tool_with_approval(tool_name, tool_args)
 
