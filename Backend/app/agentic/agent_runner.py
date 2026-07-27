@@ -18,21 +18,7 @@ from typing import Any, AsyncGenerator, Callable, Dict, List, Optional
 
 from agentic.command_gates import APPROVAL_GATES as _APPROVAL_GATES, APPROVAL_RESULTS as _APPROVAL_RESULTS
 
-# Sadece bu prefix/keyword'lerle başlayan komutlar otomatik çalışır (güvenli)
-_SAFE_PREFIXES = (
-    "ls", "ll", "la ", "find ", "grep ", "cat ", "head ", "tail ",
-    "echo ", "pwd", "wc ", "diff ", "tree ",
-    "git status", "git log", "git diff", "git show", "git branch",
-    "git remote -v", "git fetch --dry", "git stash list",
-)
-
-def _is_dangerous_command(command: str) -> bool:
-    """Komutun kullanıcı onayı gerektirip gerektirmediğini kontrol eder."""
-    stripped = command.strip().lower()
-    for safe in _SAFE_PREFIXES:
-        if stripped == safe.strip() or stripped.startswith(safe):
-            return False
-    return True  # Whitelist dışı her komut tehlikeli sayılır
+from agentic.command_safety import requires_approval as _is_dangerous_command
 
 
 from google import genai
@@ -451,7 +437,7 @@ Kullanıcıyla {'Türkçe' if self.language == 'tr' else 'İngilizce'} konuş.""
                 # Tehlikeli komut kontrolü ve onay yield'ı
                 if tool_name == "run_command":
                     command = tool_args.get("command", "")
-                    if _is_dangerous_command(command):
+                    if _is_dangerous_command(command, self.workspace_path):
                         # Onay event'ini HEMEN yield et
                         gate_id = uuid.uuid4().hex[:10]
                         event = asyncio.Event()
@@ -698,7 +684,7 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                 # Terminal Onay Katmanı
                 if tool_call.name == "run_command":
                     command = tool_call.input.get("command", "")
-                    if _is_dangerous_command(command):
+                    if _is_dangerous_command(command, self.workspace_path):
                         gate_id = uuid.uuid4().hex[:10]
                         event = asyncio.Event()
                         _APPROVAL_GATES[gate_id] = event
@@ -707,7 +693,11 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                             await asyncio.wait_for(event.wait(), timeout=60.0)
                             approved = _APPROVAL_RESULTS.get(gate_id, False)
                         except: approved = False
-                        finally: _APPROVAL_GATES.pop(gate_id, None)
+                        finally:
+                            _APPROVAL_GATES.pop(gate_id, None)
+                            # RESULTS'ı da düşür: yazan taraf conversation_routes,
+                            # temizleyen yoktu → gate_id başına kalıcı girdi birikiyordu.
+                            _APPROVAL_RESULTS.pop(gate_id, None)
                         
                         if not approved:
                             result_str = json.dumps({"success": False, "summary": "Reddedildi"})
@@ -764,7 +754,7 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
         elif self.provider_type == "groq":
             client.base_url = "https://api.groq.com/openai/v1"
         elif self.provider_type == "moonshot":
-            client.base_url = "https://api.moonshot.cn/v1"
+            client.base_url = "https://api.moonshot.ai/v1"
         elif self.provider_type == "z-ai":
             client.base_url = "https://api.z.ai/api/paas/v4"
         elif self.provider_type == "nvidia":
@@ -915,7 +905,7 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                 # Terminal Onay Katmanı
                 if tool_name == "run_command":
                     command = tool_args.get("command", "")
-                    if _is_dangerous_command(command):
+                    if _is_dangerous_command(command, self.workspace_path):
                         gate_id = uuid.uuid4().hex[:10]
                         event = asyncio.Event()
                         _APPROVAL_GATES[gate_id] = event
@@ -924,7 +914,11 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                             await asyncio.wait_for(event.wait(), timeout=60.0)
                             approved = _APPROVAL_RESULTS.get(gate_id, False)
                         except: approved = False
-                        finally: _APPROVAL_GATES.pop(gate_id, None)
+                        finally:
+                            _APPROVAL_GATES.pop(gate_id, None)
+                            # RESULTS'ı da düşür: yazan taraf conversation_routes,
+                            # temizleyen yoktu → gate_id başına kalıcı girdi birikiyordu.
+                            _APPROVAL_RESULTS.pop(gate_id, None)
                         
                         if not approved:
                             messages.append({"role": "tool", "tool_call_id": tool_call.id, "name": tool_name, "content": "Reddedildi"})
@@ -1414,13 +1408,17 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
         try:
             from unity_ai_mcp.unity_mcp_manager import unity_mcp_manager
             mcp_servers_cfg = {}
-            if unity_mcp_manager.is_running():
+            # URL'i ELLE KURMA: transport artık /mcp/<sır> altında ve sır her
+            # başlatmada değişiyor; çıplak /mcp 404 döner. mcp_url() tek kaynak,
+            # sunucu bizim değilse ya da ayakta değilse None döner.
+            unity_mcp_url = unity_mcp_manager.mcp_url()
+            if unity_mcp_url:
                 # "type": "http" ZORUNLU — yoksa Claude Code bunu stdio sunucu sanıp
                 # 'command' arar, bulamayınca "invalid MCP server config" ile ATLAR
                 # (Unity araçları manage_scene/manage_gameobject vb. görünmez).
                 mcp_servers_cfg["unityMCP"] = {
                     "type": "http",
-                    "url": f"http://localhost:{unity_mcp_manager.mcp_port}/mcp",
+                    "url": unity_mcp_url,
                 }
             # Temiz .mcp.json yaz (unityai YOK) — eski/bayat kayıtların üstüne yaz
             if self.workspace_path and os.path.isdir(self.workspace_path):
