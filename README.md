@@ -10,7 +10,7 @@
 [![React](https://img.shields.io/badge/React-18-61DAFB?style=for-the-badge&logo=react&logoColor=black)](https://react.dev)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://typescriptlang.org)
 [![Unity MCP](https://img.shields.io/badge/Unity_MCP-Gömülü-7B2FBE?style=for-the-badge&logo=unity&logoColor=white)](./unity-mcp)
-[![License](https://img.shields.io/badge/Lisans-MIT-green?style=for-the-badge)](LICENSE)
+[![License](https://img.shields.io/badge/Lisans-MIT%20%2B%20Commons%20Clause-green?style=for-the-badge)](LICENSE)
 
 *Claude Code, Codex, Antigravity (agy), bulut API'leri ve canlı Unity Editor kontrolü — hepsi aynı sohbet penceresinde, aynı onay sisteminin arkasında, aynı projeyi tanıyarak çalışır.*
 
@@ -53,23 +53,23 @@ Bugün bir Unity geliştiricisi farklı işler için farklı pencereler açmak z
 
 - **aynı sohbet penceresinde** çalışır,
 - **aynı projeyi** workspace olarak görür,
-- **aynı dosya/terminal onay kartlarını** gösterir (hiçbir model onay almadan tek bir byte değiştiremez),
+- **aynı dosya/terminal onay kartlarını** gösterir (kapsamı aşağıda: silme ve tehlikeli komutlar her yolda onaylı; kod yazma CLI yolunda onaylı, bulut API yolunda bilinçli olarak onaysız),
 - ve istenirse **aynı canlı Unity Editor'e** MCP üzerinden komut verir.
 
 ### Ajan × Yetenek Matrisi
 
-| | Sohbet & Analiz | Dosya yaz/düzenle (onaylı) | Terminal (onaylı) | Canlı Unity Editor kontrolü | Auth kaynağı |
+| | Sohbet & Analiz | Dosya yaz/düzenle | Terminal (onaylı) | Canlı Unity Editor kontrolü | Auth kaynağı |
 |---|:---:|:---:|:---:|:---:|---|
-| **Claude Code** (CLI) | ✅ | ✅ MCP | ✅ MCP | ✅ unityMCP | Anthropic aboneliğin |
-| **Codex** (CLI) | ✅ | ✅ MCP | ✅ MCP | ✅ unityMCP | OpenAI aboneliğin |
-| **Antigravity / agy** (CLI) | ✅ | ✅ `unityai` köprüsü | ✅ köprü | ✅ unityMCP (HTTP) | Google aboneliğin |
-| **GitHub Copilot** (CLI) | ✅ | ✅ MCP | ✅ MCP | ✅ unityMCP | Copilot aboneliğin |
-| **Bulut API** (Claude/GPT/Gemini/…) | ✅ | ✅ function calling | ✅ function calling | ✅ function calling | Kendi API anahtarın |
-| **Ollama** (yerel) | ✅ | ✅ (uyumlu modeller) | ✅ | ⚠️ kısmi | Maliyet yok, offline |
+| **Claude Code** (CLI) | ✅ | ✅ MCP — onaylı | ✅ MCP | ✅ unityMCP | Anthropic aboneliğin |
+| **Codex** (CLI) | ✅ | ✅ MCP — onaylı | ✅ MCP | ✅ unityMCP | OpenAI aboneliğin |
+| **Antigravity / agy** (CLI) | ✅ | ✅ `unityai` köprüsü — onaylı | ✅ köprü | ✅ unityMCP (HTTP) | Google aboneliğin |
+| **GitHub Copilot** (CLI) | ✅ | ✅ MCP — onaylı | ✅ MCP | ✅ unityMCP | Copilot aboneliğin |
+| **Bulut API** (Claude/GPT/Gemini/…) | ✅ | ✅ function calling — **onaysız** | ✅ function calling | ✅ function calling | Kendi API anahtarın |
+| **Ollama** (yerel) | ✅ | ✅ (uyumlu modeller) — **onaysız** | ✅ | ⚠️ kısmi | Maliyet yok, offline |
 
 Bu matrisin sağladığı şey basit ama nadir: **kaynak ne olursa olsun deneyim aynı.** Codex'ten Claude Code'a geçmek bir açılır menü; alıştığın diff ekranı, terminal onayı ve Unity entegrasyonu olduğu gibi kalır.
 
-> **Önemli ayrım:** Onay kartları **dosya yazma/silme ve terminal** için çıkar. **Canlı Unity sahne işlemleri** (unityMCP araçları) bilinçli olarak **onaysız** çalışır — yani "sahneye bir karakter ekle" dediğinde AI sahneyi sormadan kurar. Ayrıntı: [Onay kapsamı](#️-onay-kapsamı-neyin-onaylandığı-neyin-onaylanmadığı-dürüstlük-notu).
+> **Önemli ayrım:** Onay kartları **dosya silme ve tehlikeli terminal komutları** için her yolda çıkar; **dosya yazma** için CLI ajanlarında çıkar, **bulut API / Ollama function-calling yolunda çıkmaz**. **Canlı Unity sahne işlemleri** (unityMCP araçları) da bilinçli olarak **onaysız** çalışır — yani "sahneye bir karakter ekle" dediğinde AI sahneyi sormadan kurar. Her iki taviz de gerekçesiyle burada: [Onay kapsamı](#️-onay-kapsamı-neyin-onaylandığı-neyin-onaylanmadığı-dürüstlük-notu).
 
 ---
 
@@ -81,7 +81,7 @@ Unity ekosistemindeki AI araçları genelde iki uçtan birine düşer: ya sadece
 |---|---|
 | Tek sağlayıcıya kilitli | Claude Code, Codex, agy, Copilot CLI, 8+ bulut API (NVIDIA NIM ücretsiz havuz dahil), Ollama — tek menüden |
 | Kod yazar, projeyi görmez | Workspace'teki tüm `.cs` dosyalarını tarar, mimari haritasını çıkarır |
-| Dosya sistemine erişemez | Dosya oku/yaz/sil — her tehlikeli işlem onay kartıyla |
+| Dosya sistemine erişemez | Dosya oku/yaz/sil — hepsi workspace'e kilitli; silme ve tehlikeli komutlar onay kartıyla |
 | Unity Editor'den habersiz | MCP ile sahneye GameObject ekler, bileşen bağlar, konsolu okur |
 | Terminal çalıştıramaz | Güvenli terminal katmanı; tehlikeli komutlar onay ister |
 | Her sohbet sıfırdan başlar | Kalıcı hafıza + proje analizi ile bağlamı korur |
@@ -102,11 +102,11 @@ Unity ekosistemindeki AI araçları genelde iki uçtan birine düşer: ya sadece
 - Her adım canlı (SSE) akar: `thinking` → `tool_call` → `tool_result` → `response`
 - "Durdur" butonu hem SSE bağlantısını keser hem de backend'deki bekleyen tüm onay kapılarını reddeder (iki katmanlı iptal)
 
-### Onay Kapısı Sistemi (her ajan için aynı)
-- Dosya yazma → yan yana **diff görüntüleyici** (mevcut vs. yeni)
-- Dosya silme → içerik önizlemeli silme onayı
-- Terminal komutu → komutu gösteren onay kartı
-- CLI ajanları (MCP/`unityai` köprüsü), bulut API'leri (function calling) — hepsi **aynı** onay UI'ından geçer
+### Onay Kapısı Sistemi
+- Dosya yazma → yan yana **diff görüntüleyici** (mevcut vs. yeni) — **CLI ajanlarında** (MCP / `unityai` köprüsü); bulut API function-calling yolunda yazma onaysızdır, gerekçesi [Onay kapsamı](#️-onay-kapsamı-neyin-onaylandığı-neyin-onaylanmadığı-dürüstlük-notu)'nda
+- Dosya silme → içerik önizlemeli silme onayı — **her yolda**
+- Terminal komutu → komutu gösteren onay kartı (güvenli sayılan komutlar hariç) — **her yolda**
+- Kart çıktığı her durumda CLI ajanları ve bulut API'leri **aynı** onay UI'ından geçer
 
 ### Canlı Unity Editor Kontrolü (gömülü, sıfır kurulum)
 - [CoplayDev/unity-mcp](https://github.com/CoplayDev/unity-mcp) tabanlı 40+ Unity Editor aracı
@@ -114,8 +114,9 @@ Unity ekosistemindeki AI araçları genelde iki uçtan birine düşer: ya sadece
 - `uv` araç zinciri **uygulamaya gömülü** (macOS arm64+x64, Windows x64) — kullanıcının makinesinde `uv` kurulu olmasa da çalışır
 - Tek tıkla toggle: Unity Editor açıkken aç, yeşile dönünce hazır
 
-### Proje Farkındalığı (RAG)
-- Workspace'teki tüm `.cs` dosyaları taranır, anlamlı parçalara (chunk) bölünür ve keyword tabanlı aramayla ilgili kod çekilir
+### Proje Farkındalığı (anahtar kelime tabanlı proje içi arama)
+- Workspace'teki tüm `.cs` dosyaları taranır, ~800 karakterlik satır bazlı parçalara (chunk) bölünür; sorgudaki kelimelerin geçiş sayısına göre puanlanıp en ilgili parçalar bağlama eklenir
+- **Embedding ya da vektör indeksi yoktur** — bu semantik değil, sözcük eşleşmeli bir aramadır (`Backend/app/rag/project_rag.py`). Eş anlamlıyı değil, yazdığın kelimeyi bulur
 - "Projeyi Öğren" → sınıfları, kalıtım ilişkilerini ve önemli metotları çıkarıp **mimari harita** üretir, kullanıcıya özet + kendi hafızasına teknik not yazar
 - `/compact` ile uzun sohbetler AI tarafından özetlenir, bağlam token limiti aşılmadan korunur
 
@@ -242,8 +243,10 @@ unityaıPython/
 │   └── main/background.ts       # Electron ana süreç, LOCAL_APP_TOKEN + updater
 ├── scripts/fetch_omnisharp.py   # OmniSharp + .NET runtime indirir (third_party/, git'e girmez)
 ├── unity-mcp/                   # CoplayDev/unity-mcp fork'u (Server + MCPForUnity eklentisi)
-└── docker-compose.yml
+└── docker-compose.yml           # ⚠️ deneysel / DESTEKLENMİYOR — bkz. aşağıdaki not
 ```
+
+> ⚠️ **Docker yolu çalışmıyor.** Depoda bir `docker-compose.yml` duruyor ama `REQUIRE_LOCAL_APP_TOKEN=1` veriyor ve yanına bir `LOCAL_APP_TOKEN` koymuyor; `Backend/app/main.py` bu kombinasyonda açılışta `RuntimeError` fırlatıyor, yani container ayağa kalkmıyor. Token'ı normalde Electron ana süreci üretip subprocess env'ine geçiriyor (bkz. [Lokal token mimarisi](#4-lokal-token-mimarisi-ephemeral)) — Compose tarafında böyle bir handshake yok. Ayrıca bu bir masaüstü uygulaması: Electron arayüzü, gömülü `uvx`/OmniSharp ve makinedeki CLI ajanları container içinde yok. **Desteklenen kurulum yolu paketlenmiş uygulama ya da yukarıdaki kaynak-kod akışıdır.**
 
 ---
 
@@ -337,22 +340,25 @@ AI bir dosya değiştirmek ister
       Yazılır     "reddedildi" döner
 ```
 
-CLI ajanları, bulut API'leri ve `unityai` köprüsü — **dosya ve terminal** işlemlerinde hepsi **aynı** `approval_bridge` / gate mekanizmasından geçer. Diske onay verilmeden tek byte yazılmaz.
+Yukarıdaki akış **CLI ajanları** (Claude Code, Codex, Copilot) ve **`unityai` köprüsü** (agy) için geçerlidir: bu yollarda dosya yazma `approval_bridge`'ten geçer, onay verilmeden diske tek byte yazılmaz. Bulut API / Ollama function-calling yolunda ise **yazma** bilinçli olarak kapsam dışıdır; **silme** ve **tehlikeli terminal komutları** orada da aynı gate'ten geçer. Ayrıntı ve gerekçe: aşağıdaki tablo.
 
 ### ⚠️ Onay kapsamı: neyin onaylandığı, neyin onaylanmadığı (dürüstlük notu)
 
-Onay kapısı **dosya sistemi ve terminali** korur — Unity Editor'ün **canlı sahnesini** değil. Bu kasıtlı bir tasarım tercihidir:
+Onay kapısı her şeyi kapsamaz. İki bilinçli taviz var: **bulut API yolunda dosya yazma** ve **canlı Unity sahne işlemleri**. Tam tablo:
 
 | İşlem | Hangi araç | Onay? |
 |---|---|:---:|
-| Dosya oluştur / düzenle (.cs vb.) | `save_file` / `unityai save-file` / function calling | ✅ **Diff kartı çıkar** |
-| Dosya sil | `delete_file` | ✅ **Silme kartı çıkar** |
-| Terminal komutu | `bash` / `run_command` | ✅ (güvenli komutlar hariç) |
+| Dosya oluştur / düzenle — **CLI ajanları** | `save_file` (MCP) / `unityai save-file` | ✅ **Diff kartı çıkar** |
+| Dosya oluştur / düzenle — **bulut API & Ollama** | `write_file` (function calling) | ❌ **Onaysız, doğrudan yazar** |
+| Dosya sil | `delete_file` / `unityai` / function calling | ✅ **Silme kartı çıkar** |
+| Terminal komutu | `bash` / `run_command` | ✅ (güvenli sayılan komutlar hariç) |
 | Sahne / GameObject / bileşen / materyal değişikliği | **unityMCP araçları** (`manage_gameobject`, `manage_scene`…) | ❌ **Onaysız, doğrudan çalışır** |
 
-Yani **"PlayerController.cs oluştur"** dersen onay kartı çıkar; ama **"sahneye yürüyen bir karakter yap"** dersen AI, unityMCP araçlarıyla GameObject'leri, bileşenleri ve sahneyi **sormadan** kurar (yalnızca bir `.cs` script yazması gerekirse o adım yine onay ister).
+**Neden `write_file` bulut API yolunda onaysız?** Workspace'e kod yazmak bu ürünün asıl işi. Her yazımda onay istemek kullanıcıyı refleks-onaya alıştırır — bu kapıyı güçlendirmez, tamamen değersizleştirir; sonra gerçekten önemli olan silme kartı da aynı refleksle onaylanır. Yazma buna karşılık `_validate_path` ile **workspace'e hapsedilmiş** durumda: `Path.resolve()` + prefix kontrolü, workspace dışına çıkış yok. Silme ise seyrek ve geri alınamaz olduğu için her yolda kart çıkarır. Karar ve gerekçesi kodda da yazılı: `AgentRunner._approval_prompt` (`Backend/app/agentic/agent_runner.py`).
 
-**Neden böyle?** unityMCP, Unity'nin canlı Editor'üne bağlı, geri-alınabilir (Ctrl+Z) sahne operasyonları yapar; her GameObject ekleme/taşıma için onay istemek akışı kullanılmaz hale getirirdi. Ayrıca bu araçlar CLI ajanlarına `trust: true` / `approval_mode = "approve"` ile sunulur — yani onay kararı bilinçli olarak unityMCP katmanına bırakılmıştır. Diske kalıcı yazma (kod dosyaları) ve terminal ise her zaman onaylıdır.
+> **Pratik sonucu:** bulut API modeliyle **"PlayerController.cs oluştur"** dersen dosya sorulmadan yazılır (git ile geri alabilirsin). Aynı isteği Claude Code / Codex / agy ile yaparsan diff kartı çıkar. Yazma öncesi her değişikliği görmek istiyorsan **CLI ajanlarından birini seç.**
+
+**Neden unityMCP onaysız?** unityMCP, Unity'nin canlı Editor'üne bağlı, geri-alınabilir (Ctrl+Z) sahne operasyonları yapar; her GameObject ekleme/taşıma için onay istemek akışı kullanılmaz hale getirirdi. Ayrıca bu araçlar CLI ajanlarına `trust: true` / `approval_mode = "approve"` ile sunulur — yani onay kararı bilinçli olarak unityMCP katmanına bırakılmıştır. Yani **"sahneye yürüyen bir karakter yap"** dersen AI GameObject'leri, bileşenleri ve sahneyi **sormadan** kurar.
 
 ### 3. Terminal güvenliği
 - Güvenli (salt-okuma) komutlar direkt çalışır; whitelist dışı her komut onay kartı gösterir
@@ -399,7 +405,7 @@ pip install -r requirements.txt
 uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-> API anahtarlarını `.env` ile değil, uygulama içindeki **Ayarlar** ekranından girersin (şifrelenerek saklanır). Backend'i Electron olmadan tek başına çalıştırırsan `LOCAL_APP_TOKEN` boş kalır → token kontrolü atlanır (dev mode).
+> API anahtarlarını `.env` ile değil, uygulama içindeki **Ayarlar** ekranından girersin (şifrelenerek saklanır). Backend'i Electron olmadan tek başına çalıştırırsan `LOCAL_APP_TOKEN` boş kalır ve kontrol **fail-closed** davranır: her istek `503` döner. Dev için token'sız çalışmayı `UNITYAI_ALLOW_NO_TOKEN=1` ile açıkça seçmen gerekir (o zaman `127.0.0.1:8000`'deki tüm uçlar kimliksiz olur — `/chat`, `/write-file`, api-keys dahil).
 
 ### Frontend
 
@@ -446,6 +452,8 @@ cd Frontend/frontend && npm install && npm run build
 - Windows: NSIS installer (`.exe`)
 
 > ⚠️ **x64 dmg tuzağı:** electron-builder her iki mimari için dmg üretir ama backend binary'si yalnızca host mimaride derlenir — Apple Silicon'da alınan x64 dmg **Intel Mac'te çalışmaz**. Intel desteği için backend'i ayrıca x64 Python ile derlemek gerekir.
+>
+> ⚠️ **Intel Mac'te C# kod zekası yok:** OmniSharp çözümleyicisi macOS'ta mimariden bağımsız olarak `osx-arm64` klasörünü arar (`Backend/app/omnisharp/omnisharp_manager.py` → `_resolve_binary` / `_spawn_env`) ve `scripts/fetch_omnisharp.py`'de macOS için tanımlı tek varlık `osx-arm64`'tür — `osx-x64` ne indirilir ne aranır. Yani **desteklenen tek macOS mimarisi Apple Silicon'dur**; Intel Mac'te uygulama açılsa bile OmniSharp başlamaz — Monaco'da hata/tamamlama gelmez, geri kalan özellikler çalışır.
 
 > 🍎 **macOS karantina notu:** dmg imzasızdır; internetten indirilince "hasar görmüş" uyarısı çıkarsa `xattr -cr "/Applications/Unity Architect AI.app"` ile karantina kaldırılır.
 
@@ -467,7 +475,7 @@ Paketlenmiş app'te Python veya .NET kurulu olması **gerekmez** — backend tek
 /compact                                                # uzun sohbeti özetle
 ```
 
-4. **Onayla** — AI dosya/komut işlemi isteyince akış durur, diff/komut kartı açılır; onayla veya reddet.
+4. **Onayla** — AI onay gerektiren bir işlem isteyince akış durur, diff/komut kartı açılır; onayla veya reddet. (Bulut API modellerinde dosya *yazma* kart açmaz — bkz. [Onay kapsamı](#️-onay-kapsamı-neyin-onaylandığı-neyin-onaylanmadığı-dürüstlük-notu).)
 
 ---
 
@@ -483,7 +491,7 @@ Paketlenmiş app'te Python veya .NET kurulu olması **gerekmez** — backend tek
 
 > Paketlenmiş app'te `uv`/`uvx` gömülü olduğu için kullanıcının ayrıca kurmasına gerek yoktur. Unity Editor kapalıysa toggle bağlanamaz — önce Unity'yi aç.
 
-> **Onay davranışı:** unityMCP araçları (sahne/GameObject/bileşen) `trust: true` ile sunulur ve **onay kartı göstermez** — AI sahne değişikliklerini doğrudan yapar (Unity'de Ctrl+Z ile geri alınabilir). Onay yalnızca dosya yazma/silme ve terminal komutlarında çıkar. Bkz. [Onay kapsamı](#️-onay-kapsamı-neyin-onaylandığı-neyin-onaylanmadığı-dürüstlük-notu).
+> **Onay davranışı:** unityMCP araçları (sahne/GameObject/bileşen) `trust: true` ile sunulur ve **onay kartı göstermez** — AI sahne değişikliklerini doğrudan yapar (Unity'de Ctrl+Z ile geri alınabilir). Onay dosya silme ve tehlikeli terminal komutlarında her zaman, dosya yazmada ise yalnızca CLI ajanlarında çıkar. Bkz. [Onay kapsamı](#️-onay-kapsamı-neyin-onaylandığı-neyin-onaylanmadığı-dürüstlük-notu).
 
 ### Araçlar (40+)
 
@@ -520,8 +528,8 @@ Birden fazla proje açıksa hangi instance'a komut gideceği seçilebilir (`set_
 
 ```python
 read_file(file_path)                 # Dosya oku (max 500 satır, özet)
-write_file(file_path, content)       # Dosya yaz (onay)
-delete_file(file_path)               # Dosya sil (onay)
+write_file(file_path, content)       # Dosya yaz — ONAYSIZ, workspace'e kilitli
+delete_file(file_path)               # Dosya sil (onay kartı)
 list_directory(dir_path)             # Klasör listele
 search_in_project(query, exts)       # Proje içi arama
 find_files(pattern)                  # Dosya adı örüntüsü
