@@ -85,13 +85,13 @@ class CodexProvider(BaseCLIProvider):
                 capture_output=True, timeout=5,
             )
 
-            local_app_token = os.environ.get("LOCAL_APP_TOKEN", "")
+            # Token argv'ye KONMUYOR: --env çocuğun ortamını kurar ama ebeveynin
+            # komut satırını gizlemez; kayıt sürerken `ps` çalıştıran aynı-kullanıcı
+            # süreçleri sırrı okuyabiliyordu. 0600 dosyadan okunuyor.
             env_args = [
                 "--env", f"UNITYAI_URL={backend_url}",
                 "--env", f"WORKSPACE={workspace}",
             ]
-            if local_app_token:
-                env_args.extend(["--env", f"LOCAL_APP_TOKEN={local_app_token}"])
 
             # Yeni kaydı ekle
             sp.run(

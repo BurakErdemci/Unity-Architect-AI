@@ -18,8 +18,24 @@ BACKEND_URL = os.environ.get("UNITYAI_URL", os.environ.get("ANTIGRAVITY_URL", "h
 
 
 def _get_headers() -> dict:
-    """Return auth header for backend calls. Empty dict if LOCAL_APP_TOKEN not set (dev mode)."""
-    token = os.environ.get("LOCAL_APP_TOKEN", "")
+    """Backend çağrıları için auth başlığı; token yoksa boş dict (dev modu).
+
+    Token artık ortamda GELMEYEBİLİR: bu süreci claude/codex gibi bir CLI
+    başlatıyor ve bizim ortamımızı miras almıyor. Config dosyasına ya da argv'ye
+    yazmak yerine 0600 bir dosyadan okunuyor — sebebi local_token_file'da.
+    """
+    import sys
+    _app = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if _app not in sys.path:
+        sys.path.insert(0, _app)
+    from local_token_file import read_local_app_token
+
+    token = read_local_app_token()
+    if not token:
+        logger.warning(
+            "[approval_bridge] LOCAL_APP_TOKEN bulunamadı (ne ortamda ne dosyada) "
+            "— backend çağrıları kimliksiz gidiyor ve fail-closed kapıda 503 alacak."
+        )
     return {"X-Session-Token": token} if token else {}
 
 

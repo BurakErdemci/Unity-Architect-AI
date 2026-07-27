@@ -109,7 +109,7 @@ class AgyProvider(BaseCLIProvider):
 
         logger.info(f"[CLIProvider] agy model → {agy_model_name}, trusted → {workspace}")
 
-    def _write_cli_env(self, launcher: str, workspace: str, backend_url: str, local_app_token: str):
+    def _write_cli_env(self, launcher: str, workspace: str, backend_url: str):
         """Backend/.unityai_cli.env yazar — 'unityai' wrapper bu dosyayı source eder.
         launcher = .../Backend/run_mcp_server.sh → backend_dir = .../Backend."""
         backend_dir = os.path.dirname(launcher)
@@ -118,8 +118,7 @@ class AgyProvider(BaseCLIProvider):
             f"UNITYAI_URL={backend_url}",
             f"WORKSPACE={workspace}",
         ]
-        if local_app_token:
-            lines.append(f"LOCAL_APP_TOKEN={local_app_token}")
+        # LOCAL_APP_TOKEN bu env dosyasına yazılmıyor; 0600 dosyadan okunuyor.
         try:
             with open(env_path, "w") as f:
                 f.write("\n".join(lines) + "\n")
@@ -137,14 +136,14 @@ class AgyProvider(BaseCLIProvider):
         kullanılırsa diye tutulur; --print akışında etkisizdir. Asıl iş .unityai_cli.env
         + disabledTools (agy'nin gerçek write araçlarını kapatma) ile yapılır.
         """
-        local_app_token = os.environ.get("LOCAL_APP_TOKEN", "")
+        # Bu env sözlüğü ~/.gemini/settings.json'a yazılıyor — token oraya
+        # girmiyor: dosya paylaşımlı (Jarvan da aynı dosyayı kullanıyor) ve
+        # sırrın config'e yayılması denetimin C grubu bulgusuydu.
         env = {"UNITYAI_URL": backend_url, "WORKSPACE": workspace}
-        if local_app_token:
-            env["LOCAL_APP_TOKEN"] = local_app_token
 
         # 0. unityai CLI env dosyası — agy run_command env'i propagate etmese bile
         #    CLI doğru backend'e/token'a/workspace'e bağlanmayı garanti eder.
-        self._write_cli_env(launcher, workspace, backend_url, local_app_token)
+        self._write_cli_env(launcher, workspace, backend_url)
         unityai_entry = {
             "command": launcher, "args": ["--workspace", workspace],
             "env": env, "trust": True,

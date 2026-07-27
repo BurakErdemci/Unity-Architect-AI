@@ -73,9 +73,8 @@ class OpenCodeProvider(BaseCLIProvider):
         try:
             cfg_path = os.path.join(workspace, "opencode.json")
             unityai_env = {"UNITYAI_URL": backend_url, "WORKSPACE": workspace}
-            token = os.environ.get("LOCAL_APP_TOKEN", "")
-            if token:
-                unityai_env["LOCAL_APP_TOKEN"] = token
+            # Token config dosyasına yazılmıyor — 0600 dosyadan okunuyor
+            # (bkz. local_token_file). Bu dosya model tarafından okunabilir.
             # Kalıcı bir auto/step bayrağı yazma. Bu tek kullanımlık anahtar yalnız
             # AgentRunner'daki aktif OpenCode turu boyunca backend'de geçerlidir.
             approval_turn_token = getattr(self, "_approval_turn_token", "")

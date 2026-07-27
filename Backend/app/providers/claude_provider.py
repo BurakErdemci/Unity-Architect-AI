@@ -79,7 +79,7 @@ class ClaudeCodeProvider(BaseCLIProvider):
                     "claude", "mcp", "add", "unityai",
                     "--scope", "user",
                     "-e", f"UNITYAI_URL={backend_url}",
-                    *(["-e", f"LOCAL_APP_TOKEN={os.environ.get('LOCAL_APP_TOKEN', '')}"] if os.environ.get("LOCAL_APP_TOKEN") else []),
+                    # Token argv'ye konmuyor (ps ile görünürdü) — 0600 dosyadan okunuyor.
                     "-e", f"WORKSPACE={workspace}",
                     "--", launcher, "--workspace", workspace,
                 ]),

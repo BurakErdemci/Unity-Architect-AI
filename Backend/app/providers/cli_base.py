@@ -234,10 +234,10 @@ class BaseCLIProvider(AIProvider):
         launcher = self._launcher_path("run_mcp_server")
         self._ensure_exec(launcher)
         backend_url = os.environ.get("UNITYAI_URL", os.environ.get("ANTIGRAVITY_URL", "http://localhost:8000"))
-        local_app_token = os.environ.get("LOCAL_APP_TOKEN", "")
+        # LOCAL_APP_TOKEN buraya BİLEREK yazılmıyor: bu dosya modelin
+        # okuyabildiği yerde duruyor ve token backend'de tek yetki kanıtı.
+        # Çocuk süreç sırrı 0600 dosyadan okuyor (bkz. local_token_file).
         unityai_env = {"UNITYAI_URL": backend_url}
-        if local_app_token:
-            unityai_env["LOCAL_APP_TOKEN"] = local_app_token
 
         # Claude Code: workspace/.mcp.json
         from unity_ai_mcp.unity_mcp_manager import unity_mcp_manager

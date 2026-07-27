@@ -100,9 +100,8 @@ class CopilotProvider(BaseCLIProvider):
 
         try:
             unityai_env = {"UNITYAI_URL": backend_url, "WORKSPACE": workspace}
-            token = os.environ.get("LOCAL_APP_TOKEN", "")
-            if token:
-                unityai_env["LOCAL_APP_TOKEN"] = token
+            # Token config dosyasına yazılmıyor — 0600 dosyadan okunuyor
+            # (bkz. local_token_file). Bu dosya model tarafından okunabilir.
 
             servers = {
                 "unityai": {

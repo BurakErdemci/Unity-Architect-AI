@@ -81,6 +81,12 @@ if _REQUIRE_LOCAL_APP_TOKEN and not os.environ.get("LOCAL_APP_TOKEN"):
         "LOCAL_APP_TOKEN is required when REQUIRE_LOCAL_APP_TOKEN is enabled."
     )
 
+# Token'ı 0600 bir dosyaya bırak: MCP sunucusunu CLI'lar başlatıyor, bizim
+# ortamımızı miras almıyorlar ve sırrı config/argv üzerinden taşımak onu
+# okunabilir kılıyordu (bkz. local_token_file modül docstring'i).
+from local_token_file import write_local_app_token  # noqa: E402
+write_local_app_token(os.environ.get("LOCAL_APP_TOKEN", ""))
+
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
