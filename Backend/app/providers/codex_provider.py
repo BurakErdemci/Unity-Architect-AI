@@ -1,9 +1,12 @@
+from secret_redaction import redact_secrets
 import os
 import sys
 import logging
 from .cli_base import BaseCLIProvider
 
 logger = logging.getLogger(__name__)
+
+
 
 
 class CodexProvider(BaseCLIProvider):
@@ -131,4 +134,4 @@ class CodexProvider(BaseCLIProvider):
                     capture_output=True, timeout=10, check=True,
                 )
         except Exception as e:
-            logger.warning(f"[CLIProvider] Codex MCP kaydı yapılamadı: {e}")
+            logger.warning(f"[CLIProvider] Codex MCP kaydı yapılamadı: {redact_secrets(str(e))}")

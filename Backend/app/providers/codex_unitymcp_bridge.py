@@ -9,7 +9,7 @@ Bu köprü: Codex ile stdio (newline-delimited JSON-RPC) konuşur, mesajları me
 unityMCP HTTP sunucusuna (streamable-http) forward eder. İKİNCİ bir Unity bağlantısı
 AÇMAZ — tek HTTP sunucusunu paylaşır. OAuth yok.
 
-Kullanım:  UNITY_MCP_URL=http://127.0.0.1:8080/mcp/<sır> python codex_unitymcp_bridge.py
+Kullanım:  UNITY_MCP_URL=http://127.0.0.1:8080/mcp python codex_unitymcp_bridge.py
 
 Kapsam (v1): client-initiated request/response + notification akışı (initialize,
 tools/list, tools/call, resources/*, prompts/* ...). Bu, Codex'in tool kullanımını
@@ -22,15 +22,31 @@ import json
 import urllib.request
 import urllib.error
 
-# Yalnızca son çare: sunucu artık transport'u /mcp/<sır> altında sunuyor, bu yüzden
-# sırsız bu adres 404 alır. Gerçek URL UNITY_MCP_URL ile geliyor (bkz. main()).
 DEFAULT_URL = "http://127.0.0.1:8080/mcp"
+
+
+def _read_shared_secret():
+    """Paylaşımlı sırrı doğrudan token dosyasından okur.
+
+    Neden ortam/argv değil: bu köprü sunucuyla AYNI makinede, AYNI kullanıcıyla
+    koşuyor, yani dosyayı zaten okuyabiliyor. Sırrı config'e ya da komut satırına
+    koymak onu `ps` çıktısına, `.mcp.json`'a ve hata loglarına taşıyordu — bir
+    denetimin dört ayrı bulgusu bundan çıktı. Dosyadan okumak o yolların hepsini
+    kapatıyor ve fazladan hiçbir yetki vermiyor.
+    """
+    path = os.path.join(os.path.expanduser("~"), ".unity-mcp", "local-api-token")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
 
 
 class Bridge:
     def __init__(self, url):
         self.url = url
         self.session_id = None
+        self.api_key = _read_shared_secret()
 
     def _post(self, message):
         """Tek JSON-RPC mesajını HTTP'ye POST eder; JSON-RPC yanıt(lar)ını
@@ -40,6 +56,8 @@ class Bridge:
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
         }
+        if self.api_key:
+            headers["X-API-Key"] = self.api_key
         if self.session_id:
             headers["Mcp-Session-Id"] = self.session_id
         req = urllib.request.Request(self.url, data=data, headers=headers, method="POST")
@@ -106,9 +124,8 @@ class Bridge:
 
 
 def main():
-    # URL öncelikle ortamdan: paylaşımlı sırrı yol segmentinde taşıyor ve argv
-    # `ps` ile makinedeki her sürece görünür. argv yolu eski kayıtlar için
-    # geriye dönük uyumluluk (codex config'i yeniden yazılana kadar).
+    # URL artık sır TAŞIMIYOR (sır X-API-Key başlığında, token dosyasından
+    # okunuyor), yani ortam/argv üzerinden gelmesi bir sızıntı değil.
     url = os.environ.get("UNITY_MCP_URL") or (
         sys.argv[1] if len(sys.argv) > 1 else DEFAULT_URL
     )

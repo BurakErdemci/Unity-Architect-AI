@@ -1,3 +1,4 @@
+from secret_redaction import redact_secrets
 import os
 import json
 import logging
@@ -5,6 +6,8 @@ from .cli_base import BaseCLIProvider
 from .oneshot_cli import resolve_cursor_cmd, split_model_id
 
 logger = logging.getLogger(__name__)
+
+
 
 
 class CursorProvider(BaseCLIProvider):
@@ -102,10 +105,17 @@ class CursorProvider(BaseCLIProvider):
                     }
                 }
             }
-            # URL sırrı yol segmentinde taşır; sır yoksa kayıt hiç yazılmaz (mcp_url()).
+            # ⚠️ DOĞRULANMADI: cursor bu makinede kurulu değil, `headers` alanını
+            # gerçekten gönderip göndermediği ÖLÇÜLEMEDİ. claude/kimi şemasıyla
+            # aynı yazılıyor çünkü ikisi de bu adı kullanıyor; cursor sessizce
+            # yok sayarsa bağlantı 401 alır — sessiz sızıntı değil, gürültülü
+            # arıza. Kurulunca ölçülmeli.
             unity_mcp_url = unity_mcp_manager.mcp_url()
             if unity_mcp_url:
-                config["mcpServers"]["unityMCP"] = {"url": unity_mcp_url}
+                config["mcpServers"]["unityMCP"] = {
+                    "url": unity_mcp_url,
+                    "headers": unity_mcp_manager.api_headers(),
+                }
 
             # Kullanıcının kendi .cursor/mcp.json'ı varsa bizim server'ları üstüne
             # ekle, diğer kayıtlarına dokunma.
@@ -146,4 +156,4 @@ class CursorProvider(BaseCLIProvider):
                 json.dump(cli_existing, f, indent=2)
             logger.info("[CursorProvider] .cursor/cli.json izin politikası yazıldı.")
         except Exception as e:
-            logger.warning(f"[CursorProvider] MCP kaydı yapılamadı: {e}")
+            logger.warning(f"[CursorProvider] MCP kaydı yapılamadı: {redact_secrets(str(e))}")

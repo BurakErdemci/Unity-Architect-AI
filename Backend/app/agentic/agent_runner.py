@@ -1425,9 +1425,8 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
         try:
             from unity_ai_mcp.unity_mcp_manager import unity_mcp_manager
             mcp_servers_cfg = {}
-            # URL'i ELLE KURMA: transport artık /mcp/<sır> altında ve sır her
-            # başlatmada değişiyor; çıplak /mcp 404 döner. mcp_url() tek kaynak,
-            # sunucu bizim değilse ya da ayakta değilse None döner.
+            # URL'i ELLE KURMA: mcp_url() tek kaynak. Sunucu bizim değilse ya da
+            # ayakta değilse None döner. Sır URL'de DEĞİL — api_headers()'tan gelir.
             unity_mcp_url = unity_mcp_manager.mcp_url()
             if unity_mcp_url:
                 # "type": "http" ZORUNLU — yoksa Claude Code bunu stdio sunucu sanıp
@@ -1436,6 +1435,7 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                 mcp_servers_cfg["unityMCP"] = {
                     "type": "http",
                     "url": unity_mcp_url,
+                    "headers": unity_mcp_manager.api_headers(),
                 }
             # Temiz .mcp.json yaz (unityai YOK) — eski/bayat kayıtların üstüne yaz
             if self.workspace_path and os.path.isdir(self.workspace_path):

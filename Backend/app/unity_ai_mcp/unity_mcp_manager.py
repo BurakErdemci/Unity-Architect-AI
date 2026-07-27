@@ -33,6 +33,9 @@ class UnityMCPManager:
         # MCP sunucusunun yerel REST uçlarının (/api/*) paylaşımlı sırrı. Her
         # start_server'da yenilenir; sunucu bizim değilse None kalır.
         self.local_api_token: Optional[str] = None
+        # Bu açılışta cache baypas edilerek kurulan kaynağın özeti; yalnız
+        # sunucu sağlıklı görülünce diske yazılır (bkz. _record_server_source_hash).
+        self._pending_source_hash: Optional[str] = None
         import sys
         if getattr(sys, "frozen", False):
             # Frozen build: backend.exe = .../resources/Backend/backend.exe →
@@ -109,10 +112,19 @@ class UnityMCPManager:
     def _record_server_source_hash(self) -> None:
         """Sunucunun AYAKTA olduğu doğrulandıktan sonra çağrılır.
 
-        Erken yazılırsa yarıda kalmış bir kurulum 'güncel' işaretlenir ve sonraki
-        açılış eksik cache'le cache'li moda düşer.
+        İKİ koşul birden gerekiyor, ve ikincisi bir saha arızasından geldi:
+
+        1. Sunucu gerçekten ayakta (health 200). Erken yazılırsa yarıda kalmış
+           bir kurulum 'güncel' işaretlenir.
+        2. Bu süreç `--no-cache` ile başlatılmış olmalı — yani çalışan build
+           GERÇEKTEN bu kaynaktan derlendi. Aksi halde cache'ten gelen eski bir
+           build'in sağlıklı yanıtı, güncel kaynağı "kurulmuş" saydırıyordu.
+
+        Özet burada yeniden HESAPLANMIYOR, başlatma anında yakalanan değer
+        yazılıyor: başlatmadan sonra kaynağa dokunulmuşsa o değişiklik çalışan
+        sürece girmemiştir ve 'kurulu' sayılmamalıdır.
         """
-        current = self._compute_server_source_hash()
+        current = getattr(self, "_pending_source_hash", None)
         if not current:
             return
         try:
@@ -270,30 +282,28 @@ class UnityMCPManager:
         orada). C# eklentisi de sırrı oradan okuyor — ikinci bir konvansiyon
         icat etmiyoruz. 0600: aynı makinedeki diğer kullanıcılar okuyamasın.
         """
+        # Dosya ilkelleri local_token_file'da ortak: bu sır ve backend bearer'ı
+        # aynı üç kusuru taşıyordu (bağ takibi, var olan 0644'ün sıkılaştırılmaması,
+        # chmod'dan önce yazma) ve üçü de orada tek yerde kapatıldı. İki ayrı kopya
+        # olsaydı düzeltme yalnız birine uygulanırdı — bu denetimin tekrarlayan
+        # bulgusu tam olarak buydu.
+        import sys
+        _app = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if _app not in sys.path:
+            sys.path.insert(0, _app)
+        from local_token_file import _open_secret_for_write, read_secret_file
+
         token_dir = os.path.join(os.path.expanduser("~"), ".unity-mcp")
         os.makedirs(token_dir, exist_ok=True)
         token_path = os.path.join(token_dir, "local-api-token")
 
-        try:
-            with open(token_path, "r", encoding="utf-8") as f:
-                existing = f.read().strip()
-            if existing:
-                return existing
-        except FileNotFoundError:
-            pass
+        existing = read_secret_file(token_path)
+        if existing:
+            return existing
 
         token = secrets.token_urlsafe(32)
-        # os.open + 0o600: dosya daha ilk baytı yazılmadan doğru izinle doğuyor.
-        # open() + sonradan chmod, aradaki pencerede sırrı umask'ın izin verdiği
-        # herkese okutur.
-        fd = os.open(token_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
+        with os.fdopen(_open_secret_for_write(token_path), "w", encoding="utf-8") as f:
             f.write(token)
-        # Dosya daha önce (gevşek izinle) varsa O_CREAT modu uygulanmaz; düzelt.
-        try:
-            os.chmod(token_path, 0o600)
-        except OSError:
-            pass
         return token
 
     def start_server(self) -> bool:
@@ -309,9 +319,17 @@ class UnityMCPManager:
         self._ensure_writable_resources()  # frozen: Server'ı yazılabilir dizine taşı
         uvx = self._get_uvx()
         cmd = [uvx]
+        # Özet BAŞLATMA ANINDA yakalanıyor ve yalnız cache baypas edildiyse
+        # kaydedilecek (bkz. _record_server_source_hash). Sebep ölçüldü
+        # 2026-07-27: özet health anında yeniden hesaplanıyordu ve başarılı bir
+        # /health, çalışan sürecin O KAYNAKTAN doğduğunu kanıtlamıyor — cache'ten
+        # gelen eski bir build de 200 döner. Sonuç, eski bir build'in "güncel"
+        # damgalanması ve sonraki açılışların cache'e düşmesiydi: sunucu aylarca
+        # bayat kod çalıştırabilirdi ve her şey sağlıklı görünürdü.
+        self._pending_source_hash = None
         if self._server_source_changed():
-            # Yalnızca kaynak değiştiyse cache'i baypas et — sebebi §_server_source_changed.
             cmd.append("--no-cache")
+            self._pending_source_hash = self._compute_server_source_hash()
         cmd += [
             "--from", self.server_dir,
             "mcp-for-unity",
@@ -421,20 +439,31 @@ class UnityMCPManager:
         return {"X-API-Key": self.local_api_token} if self.local_api_token else {}
 
     def mcp_url(self, host: str = "localhost") -> Optional[str]:
-        """CLI'lara yazılacak MCP transport URL'i — paylaşımlı sır yol segmentinde.
+        """CLI'lara yazılacak MCP transport URL'i. SIR İÇERMEZ.
 
-        Sır header yerine URL'in kendisinde taşınıyor. Sebep istemci uyumluluğu:
-        hedeflediğimiz altı CLI'ın (claude, codex, agy, kimi, cursor, opencode)
-        MCP config şemalarında ortak garanti edilen tek alan URL; `headers` alanını
-        hepsinin desteklediği doğrulanmış değil. Dahası agy --print modunda MCP'yi
-        natively yüklemeyip bu URL'i kendi ürettiği köprü scriptine geçiriyor.
-        Header tabanlı bir şema altı istemcide ayrı ayrı uyarlanmak ve doğrulanmak
-        zorunda kalırdı; URL'i ise hepsi zaten olduğu gibi alıyor.
+        Sır ARTIK URL'de değil, `api_headers()`'ın döndürdüğü `X-API-Key`
+        başlığında. Çağıran ikisini birlikte yazmalı:
+
+            {"url": mcp_url(), "headers": api_headers()}
+
+        Neden değişti: sır yol segmentindeyken URL'in gittiği HER yere gidiyordu
+        — modelin okuyabildiği `workspace/.mcp.json`'a, kayıt komutlarının
+        argv'sine (yani `ps` çıktısına) ve hata loglarına. Tek bir seçim dört
+        ayrı denetim bulgusu üretti.
+
+        Eski gerekçe "header desteği doğrulanmadı" idi. 2026-07-27'de ÖLÇÜLDÜ:
+        claude, kimi ve codex üçü de yapılandırılan başlığı her MCP isteğinde
+        gönderiyor. Doğrulanmamış bir varsayım güvenlik tasarımının temeli
+        olmuştu; ölçüm onu çürüttü.
+
+        ⚠️ Alan adı CLI'a göre değişiyor ve yanlışı SESSİZ: codex'te doğru anahtar
+        `http_headers`; `headers` yazmak hata vermiyor ama başlığı da göndermiyor
+        (ölçüldü — 5 istekte hiçbiri taşımadı). Config üreten her yer bunu bilmeli.
 
         None dönerse çağıran unityMCP kaydını HİÇ yazmamalı:
           - sunucu ayakta değil, ya da
           - sır bizde yok (sunucuyu biz başlatmadık; örn. Unity kendi başlattı).
-        İkinci durumda sırsız bir URL sunucudan 404 alır — kaydı yazmak CLI'ı
+        İkinci durumda başlıksız bağlantı 401 alır — kaydı yazmak CLI'ı
         bağlanamayan bir MCP'ye kilitler, hiç yazmamak doğru davranış.
 
         host: çağıran kendi mevcut davranışını korusun diye parametrik
@@ -442,7 +471,7 @@ class UnityMCPManager:
         """
         if not self.local_api_token or not self.is_running():
             return None
-        return f"http://{host}:{self.mcp_port}/mcp/{self.local_api_token}"
+        return f"http://{host}:{self.mcp_port}/mcp"
 
     async def check_health(self) -> bool:
         """HTTP sunucusunun ayakta olduğunu kontrol eder (/health)."""

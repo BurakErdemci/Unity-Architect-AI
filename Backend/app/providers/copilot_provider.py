@@ -112,12 +112,14 @@ class CopilotProvider(BaseCLIProvider):
                     "tools": ["*"],
                 }
             }
-            # URL sırrı yol segmentinde taşır; sır yoksa kayıt hiç yazılmaz (mcp_url()).
+            # ⚠️ DOĞRULANMADI: copilot CLI bu makinede kurulu değil, `headers`
+            # desteği ÖLÇÜLEMEDİ. Yok sayarsa 401 (gürültülü arıza). Kurulunca ölç.
             unity_mcp_url = unity_mcp_manager.mcp_url()
             if unity_mcp_url:
                 servers["unityMCP"] = {
                     "type": "http",
                     "url": unity_mcp_url,
+                    "headers": unity_mcp_manager.api_headers(),
                     "tools": ["*"],
                 }
 

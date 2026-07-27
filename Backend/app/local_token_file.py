@@ -24,11 +24,71 @@ ikisi okunabilir olduğu için üçüncüsü seçildi.
 
 import logging
 import os
+import stat
 
 logger = logging.getLogger(__name__)
 
 _TOKEN_DIR = os.path.join(os.path.expanduser("~"), ".unity_architect_ai")
 _TOKEN_PATH = os.path.join(_TOKEN_DIR, "local-app-token")
+
+# ── Sır dosyası ilkelleri — iki sır da (backend bearer'ı ve Unity MCP paylaşımlı
+#    sırrı) buradan geçer. 2026-07-27 denetiminin üç bulgusu tek kökten çıktı ve
+#    üçü de burada kapanıyor:
+#
+#      1. Yazıcılar sembolik bağı TAKİP EDİYORDU. `~/.unity-mcp/local-api-token`
+#         yerine önceden bir bağ kurabilen saldırgan, sırrı seçtiği dosyaya
+#         yazdırabiliyordu. Kanıtlandı, probe ile üretildi.
+#      2. Dosya ZATEN 0644 ile varsa hiç sıkılaştırılmıyordu: okuma yolu erken
+#         dönüyor, yazma yolunda O_CREAT modu var olan dosyaya uygulanmıyor.
+#      3. Var olan gevşek dosyaya bytlar önce yazılıp SONRA chmod ediliyordu —
+#         aradaki pencerede sır 0644'te okunabilir duruyordu.
+
+
+def _open_secret_for_write(path: str) -> int:
+    """Sır yazmak için fd döndürür; dosya açıldığı anda 0600 ve bağ değil.
+
+    Sıra önemli: O_TRUNC ile içerik açılışta boşalıyor, fchmod ondan SONRA ama
+    ilk bayttan ÖNCE koşuyor. Böylece sır hiçbir an gevşek izinle diskte
+    bulunmuyor — (3) numaralı bulgu buydu.
+
+    O_NOFOLLOW yalnız SON bileşeni korur; ara dizinler için ayrı bir saldırı
+    gerekir (~/.unity-mcp dizininin kendisini ele geçirmek), ki o noktada
+    saldırgan zaten ev dizinine yazabiliyor demektir.
+    """
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+    except OSError:
+        os.close(fd)
+        raise
+    return fd
+
+
+def read_secret_file(path: str) -> str:
+    """Sır dosyasını bağ takip etmeden okur ve gevşek izin bulursa SIKILAŞTIRIR.
+
+    Sıkılaştırma burada, çünkü tek okunan yer burası: yalnız yazma yolunu
+    düzeltmek yetmiyordu — mevcut kurulumlarda dosya çoktan 0644'le yaratılmıştı
+    ve okuma yolu erken dönüp onu olduğu gibi bırakıyordu ((2) numaralı bulgu).
+    """
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError:
+        return ""
+    try:
+        mode = stat.S_IMODE(os.fstat(fd).st_mode)
+        if mode & 0o077:
+            try:
+                os.fchmod(fd, 0o600)
+                logger.warning(
+                    f"[local-token] {path} izni {oct(mode)} idi, 0600'e çekildi."
+                )
+            except OSError as e:
+                logger.error(f"[local-token] {path} sıkılaştırılamadı: {e}")
+        with os.fdopen(os.dup(fd), "r", encoding="utf-8") as f:
+            return f.read().strip()
+    finally:
+        os.close(fd)
 
 
 def token_path() -> str:
@@ -48,17 +108,8 @@ def write_local_app_token(token: str) -> bool:
                 os.remove(_TOKEN_PATH)
             return True
         os.makedirs(_TOKEN_DIR, exist_ok=True)
-        # os.open + 0o600: dosya ilk baytı yazılmadan doğru izinle doğar.
-        # open() + sonradan chmod, aradaki pencerede sırrı umask'ın izin
-        # verdiği herkese okuturdu.
-        fd = os.open(_TOKEN_PATH, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
+        with os.fdopen(_open_secret_for_write(_TOKEN_PATH), "w", encoding="utf-8") as f:
             f.write(token)
-        # Dosya daha önce gevşek izinle var idiyse O_CREAT modu uygulanmaz.
-        try:
-            os.chmod(_TOKEN_PATH, 0o600)
-        except OSError:
-            pass
         return True
     except OSError as e:
         logger.error(f"[local-token] yazılamadı: {e}")
@@ -75,8 +126,4 @@ def read_local_app_token() -> str:
     token = os.environ.get("LOCAL_APP_TOKEN", "")
     if token:
         return token
-    try:
-        with open(_TOKEN_PATH, "r", encoding="utf-8") as f:
-            return f.read().strip()
-    except OSError:
-        return ""
+    return read_secret_file(_TOKEN_PATH)

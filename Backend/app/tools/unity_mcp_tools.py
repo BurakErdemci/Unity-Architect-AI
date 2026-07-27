@@ -14,7 +14,7 @@ from mcp.client.streamable_http import streamablehttp_client
 
 logger = logging.getLogger(__name__)
 
-def _endpoint() -> str:
+def _endpoint() -> tuple[str, dict]:
     """MCP transport adresi — her çağrıda yeniden hesaplanır.
 
     Sabit olamaz: URL, sunucunun her başlatılışında yenilenen paylaşımlı sırrı
@@ -29,7 +29,8 @@ def _endpoint() -> str:
             "Unity MCP sunucusu kapalı ya da paylaşımlı sır elimizde değil "
             "(sunucuyu biz başlatmadık) — MCP transport'una bağlanılamaz."
         )
-    return url
+    # Sır başlıkta: URL'de taşımak onu logladığımız her yere sızdırıyordu.
+    return url, unity_mcp_manager.api_headers()
 
 # Cache — toggle açıldığında doldurulur
 _cached_tools: List[Dict] = []
@@ -40,7 +41,8 @@ _cached_functions: Dict[str, Any] = {}
 
 async def _fetch_tools_from_server() -> List:
     """MCP tools/list ile sunucudaki tüm tool'ları çeker."""
-    async with streamablehttp_client(_endpoint()) as (read, write, _):
+    url, headers = _endpoint()
+    async with streamablehttp_client(url, headers=headers) as (read, write, _):
         async with ClientSession(read, write) as session:
             await session.initialize()
             result = await session.list_tools()
@@ -49,7 +51,8 @@ async def _fetch_tools_from_server() -> List:
 
 async def _call_tool_on_server(tool_name: str, params: Dict[str, Any]):
     """MCP tools/call ile unity-mcp'de bir tool çalıştırır."""
-    async with streamablehttp_client(_endpoint()) as (read, write, _):
+    url, headers = _endpoint()
+    async with streamablehttp_client(url, headers=headers) as (read, write, _):
         async with ClientSession(read, write) as session:
             await session.initialize()
             result = await session.call_tool(tool_name, params)

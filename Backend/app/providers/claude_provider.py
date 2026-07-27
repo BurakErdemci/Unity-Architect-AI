@@ -1,8 +1,11 @@
+from secret_redaction import redact_secrets
 import os
 import logging
 from .cli_base import BaseCLIProvider
 
 logger = logging.getLogger(__name__)
+
+
 
 
 class ClaudeCodeProvider(BaseCLIProvider):
@@ -87,7 +90,7 @@ class ClaudeCodeProvider(BaseCLIProvider):
             )
             logger.info("[CLIProvider] Claude unityai MCP kaydedildi (user scope).")
         except Exception as e:
-            logger.warning(f"[CLIProvider] Claude unityai MCP kaydı yapılamadı: {e}")
+            logger.warning(f"[CLIProvider] Claude unityai MCP kaydı yapılamadı: {redact_secrets(str(e))}")
 
         # unityMCP (http) — sadece Unity MCP server çalışıyorsa
         try:
@@ -100,10 +103,17 @@ class ClaudeCodeProvider(BaseCLIProvider):
                         "claude", "mcp", "add", "unityMCP",
                         "--scope", "user",
                         "--transport", "http",
+                        # --header ÖLÇÜLDÜ: claude başlığı her MCP isteğinde
+                        # gönderiyor. Sır argv'de görünüyor ama bu komut yalnız
+                        # kayıt anında koşuyor; kalıcı config'e sır girmiyor.
+                        # (Tam kaçınmak için config.toml'a elle yazmak gerekirdi;
+                        # claude'un böyle bir env-var seçeneği yok.)
+                        *sum([["--header", f"{k}: {v}"]
+                              for k, v in unity_mcp_manager.api_headers().items()], []),
                         unity_mcp_url,
                     ]),
                     capture_output=True, timeout=5, check=True,
                 )
                 logger.info("[CLIProvider] Claude unityMCP kaydedildi (user scope).")
         except Exception as e:
-            logger.warning(f"[CLIProvider] Claude unityMCP kaydı yapılamadı: {e}")
+            logger.warning(f"[CLIProvider] Claude unityMCP kaydı yapılamadı: {redact_secrets(str(e))}")

@@ -163,14 +163,16 @@ class AgyProvider(BaseCLIProvider):
         config.pop("disabledTools", None)
 
         from unity_ai_mcp.unity_mcp_manager import unity_mcp_manager
-        # Paylaşımlı sır URL'in yol segmentinde (mcp_url() docstring'i: agy --print
-        # modunda MCP'yi natively yüklemeyip bu URL'i kendi köprü scriptine geçirdiği
-        # için header tabanlı bir şema burada hiç işlemezdi). None → kayıt silinir.
-        # Üç config dosyasının hepsi aynı URL'i yazar; tek yerde hesaplanır.
+        # ⚠️ DOĞRULANMADI: agy'nin `headers` alanını gönderdiği ölçülemedi — bu
+        # config `~/.gemini/settings.json`'ı paylaşıyor (başka bir asistan da onu
+        # kullanıyor) ve izole bir kopyayla ölçmek mümkün olmadı. Alan yine de
+        # yazılıyor: yok sayılırsa bağlantı 401 alır, yani sessiz sızıntı değil
+        # gürültülü arıza olur. None → kayıt silinir.
         unity_mcp_url = unity_mcp_manager.mcp_url(host="127.0.0.1")
         if unity_mcp_url:
             config["mcpServers"]["unityMCP"] = {
                 "serverUrl": unity_mcp_url,
+                "headers": unity_mcp_manager.api_headers(),
                 "type": "http", "trust": True,
             }
         else:

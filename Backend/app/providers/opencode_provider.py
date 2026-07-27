@@ -89,12 +89,15 @@ class OpenCodeProvider(BaseCLIProvider):
                     "enabled": True,
                 }
             }
-            # URL sırrı yol segmentinde taşır; sır yoksa kayıt hiç yazılmaz (mcp_url()).
+            # ⚠️ DOĞRULANMADI: opencode bu makinede kurulu değil, `headers`
+            # desteği ÖLÇÜLEMEDİ. Yok sayarsa bağlantı 401 alır (gürültülü arıza,
+            # sessiz sızıntı değil). Kurulunca ölçülmeli.
             unity_mcp_url = unity_mcp_manager.mcp_url()
             if unity_mcp_url:
                 mcp["unityMCP"] = {
                     "type": "remote",
                     "url": unity_mcp_url,
+                    "headers": unity_mcp_manager.api_headers(),
                     "enabled": True,
                 }
 
