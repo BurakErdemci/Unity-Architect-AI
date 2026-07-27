@@ -83,17 +83,34 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
     lspCtxRef.current = { apiUrl, sessionToken, openedFilePath, openFile };
   }, [apiUrl, sessionToken, openedFilePath, openFile]);
 
-  const lspPost = async (ep: string, body: any) => {
-    const { apiUrl: api, sessionToken: token } = lspCtxRef.current;
+  // Bir LSP isteğinin uçuşta kalabileceği en uzun süre. Sunucu tarafında C# analizi
+  // başlatılamadığında istek uzun süre asılabiliyordu ve istemcide hiçbir üst sınır
+  // yoktu: Monaco her imleç hareketinde yeni bir hover isteği ürettiği için istekler
+  // birikiyor, Chromium'un host başına 6 bağlantı sınırına dayanıyor ve editör
+  // tümden yanıt veremez hale geliyordu (ölçüldü 2026-07-27).
+  const LSP_TIMEOUT_MS = 8000;
+
+  const lspPost = async (ep: string, body: any, token?: any) => {
+    const { apiUrl: api, sessionToken: sess } = lspCtxRef.current;
     if (!api) return null;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), LSP_TIMEOUT_MS);
+    // Monaco imleç hareket edince kendi CancellationToken'ını iptal ediyor. Bu
+    // dinlenmezse iptal edilmiş bir hover'ın HTTP isteği uçuşta kalmaya devam eder.
+    const onCancel = token?.onCancellationRequested?.(() => ctrl.abort());
     try {
       const r = await fetch(`${api}/lsp/${ep}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Session-Token': token || '' },
+        headers: { 'Content-Type': 'application/json', 'X-Session-Token': sess || '' },
         body: JSON.stringify(body),
+        signal: ctrl.signal,
       });
       return r.ok ? r.json() : null;
     } catch { return null; }
+    finally {
+      clearTimeout(timer);
+      onCancel?.dispose?.();
+    }
   };
 
   const registerCsProviders = (monaco: any) => {
@@ -103,11 +120,11 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
 
     monaco.languages.registerCompletionItemProvider('csharp', {
       triggerCharacters: ['.'],
-      provideCompletionItems: async (model: any, position: any) => {
+      provideCompletionItems: async (model: any, position: any, _ctx: any, token: any) => {
         const data = await lspPost('completion', {
           path: lspCtxRef.current.openedFilePath, text: model.getValue(),
           line: position.lineNumber, column: position.column,
-        });
+        }, token);
         const word = model.getWordUntilPosition(position);
         const range = { startLineNumber: position.lineNumber, endLineNumber: position.lineNumber,
                         startColumn: word.startColumn, endColumn: word.endColumn };
@@ -119,21 +136,21 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
     });
 
     monaco.languages.registerHoverProvider('csharp', {
-      provideHover: async (model: any, position: any) => {
+      provideHover: async (model: any, position: any, token: any) => {
         const data = await lspPost('hover', {
           path: lspCtxRef.current.openedFilePath, text: model.getValue(),
           line: position.lineNumber, column: position.column,
-        });
+        }, token);
         return data?.contents ? { contents: [{ value: data.contents }] } : null;
       },
     });
 
     monaco.languages.registerDefinitionProvider('csharp', {
-      provideDefinition: async (model: any, position: any) => {
+      provideDefinition: async (model: any, position: any, token: any) => {
         const data = await lspPost('definition', {
           path: lspCtxRef.current.openedFilePath, text: model.getValue(),
           line: position.lineNumber, column: position.column,
-        });
+        }, token);
         if (!data?.location) return null;
         // Cross-model çözümü yerine dosyayı uygulama içinde aç
         lspCtxRef.current.openFile?.(data.location.file);

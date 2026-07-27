@@ -2,9 +2,11 @@
 açılınca spawn, workspace değişince restart, kapanışta kill. Tüm satır/kolon
 çevirileri BURADA yapılır: LSP 0 tabanlı ↔ bizim format 1 tabanlı."""
 import asyncio
+import json
 import logging
 import os
 import platform
+import shutil
 import sys
 import time
 import urllib.parse
@@ -15,6 +17,14 @@ from .lsp_client import LspClient, LspError
 logger = logging.getLogger("OmniSharp")
 
 _SEVERITY = {1: "error", 2: "warning", 3: "info", 4: "hint"}
+
+# initialize beklemesi. Eskiden 120 sn'ydi ve kullanıcının gördüğü şey iki dakika
+# donan bir editördü. Sağlıklı bir kurulumda ölçüm 1.5-2.5 sn (macOS arm64, Unity
+# projesi, 4 koşu) — 60 sn yavaş makinede bile geniş bir pay, ama donmayı
+# "bozuk" olarak hissedilebilir bir süreye indiriyor.
+_INIT_TIMEOUT = 60
+# Başarısız başlatmadan sonra yeniden denemeden önceki bekleme.
+_RETRY_COOLDOWN = 30.0
 
 
 def _norm_key(path: str) -> str:
@@ -109,25 +119,143 @@ def _resolve_binary() -> str | None:
     return None
 
 
-def _spawn_env() -> dict | None:
-    """OmniSharp spawn ortamı. macOS/Linux'ta GÖMÜLÜ .NET runtime'a yönlendirir
-    (0-kurulum: kullanıcının PC'sinde .NET olmasa da çalışır). OmniSharp net6.0
-    hedefli → DOTNET_ROLL_FORWARD=Major ile gömülü .NET 10 LTS'te koşar (canlı
-    LSP initialize testiyle doğrulandı). Windows net472 → dokunma (None = parent env)."""
+def _embedded_dotnet_root() -> str | None:
+    """Gömülü .NET SDK kökü; yoksa None.
+
+    `sdk/` klasörünün varlığı ŞART koşuluyor, yalnız `dotnet` host'unun varlığı
+    YETMİYOR: .NET *runtime* paketi de host'u ve `shared/` klasörünü getiriyor,
+    yani host'un orada olması SDK olduğunu kanıtlamıyor. 27 Tem 2026'ya kadar
+    burada yalnız host aranıyordu ve gömülü yük runtime'dı — OmniSharp MSBuild'i
+    çözemeyip `initialize` isteğine hiç yanıt vermiyor, C# hover 120 sn asılıyordu."""
     plat = _platform_key()
-    if plat is None or plat.startswith("win"):
+    if plat is None:
         return None
+    exe = "dotnet.exe" if plat.startswith("win") else "dotnet"
     # dotnet-<plat> klasör adı _platform_key ile aynı anahtarı kullanıyor
     # (fetch_omnisharp.fetch_dotnet da öyle yazıyor) — sabit string yazmak, Intel
     # Mac'te var olmayan bir dotnet-linux-x64 yolunu aramaya yol açıyordu.
     for root in _omnisharp_roots():
-        dotnet_root = os.path.join(root, f"dotnet-{plat}")
-        if os.path.exists(os.path.join(dotnet_root, "dotnet")):
-            return {**os.environ,
-                    "DOTNET_ROOT": dotnet_root,
-                    "DOTNET_ROLL_FORWARD": "Major"}
-    # Gömülü runtime yoksa eski davranış: sistemdeki .NET'e güven (varsa)
+        cand = os.path.join(root, f"dotnet-{plat}")
+        sdk = os.path.join(cand, "sdk")
+        if os.path.exists(os.path.join(cand, exe)) and os.path.isdir(sdk) and os.listdir(sdk):
+            return cand
     return None
+
+
+def _spawn_env() -> dict | None:
+    """OmniSharp spawn ortamı: GÖMÜLÜ .NET SDK'ya yönlendirir (0-kurulum —
+    kullanıcının makinesinde .NET olmasa da çalışır). OmniSharp net6.0 hedefli →
+    DOTNET_ROLL_FORWARD=Major ile gömülü .NET 10 LTS'te koşar.
+
+    Windows da buradan geçiyor. Eskiden net472 varyantı kullanılıp "runtime
+    gerekmez" diye atlanıyordu; bu .NET Framework için doğru ama MSBuild için
+    yanlıştı — hiçbir OmniSharp v1.39.15 asset'i MSBuild paketlemiyor (ölçüldü
+    2026-07-27, win-x64 ve mono zip'leri açıldı). İki platform artık AYNI kod
+    yolundan geçiyor; Windows'u macOS'tan sınayamadığımız için dallanmayı azaltmak
+    doğrulanabilirliğin kendisi."""
+    root = _embedded_dotnet_root()
+    if root is None:
+        return None  # gömülü SDK yok → eski davranış: sistemdeki .NET'e güven
+    # PATH'e de ekleniyor: OmniSharp MSBuild'i Microsoft.Build.Locator ile çözerken
+    # `dotnet` komutunu çalıştırıyor ve DOTNET_ROOT tek başına onu PATH'e koymuyor.
+    return {**os.environ,
+            "DOTNET_ROOT": root,
+            "DOTNET_ROLL_FORWARD": "Major",
+            "PATH": root + os.pathsep + os.environ.get("PATH", "")}
+
+
+def _dotnet_missing_reason() -> str | None:
+    """C# zekası için MSBuild şart ve o yalnız .NET SDK'da var. SDK hiç yoksa
+    ANINDA anlaşılır hata döndürülüyor; yoksa OmniSharp initialize'a yanıt
+    vermeden sessizce bekletiyor ve kullanıcı yalnız uzun bir donma görüyor."""
+    if _embedded_dotnet_root() is not None:
+        return None
+    if shutil.which("dotnet"):
+        return None      # sistemde dotnet var — dene, sonucu stderr söyler
+    return ("C# zekası için .NET SDK gerekli ama gömülü SDK bulunamadı "
+            "(scripts/fetch_omnisharp.py koşuldu mu?) ve sistemde de .NET yok. "
+            "Diğer özellikler çalışır.")
+
+
+# Kaynak taramasında atlanacak klasörler: Library/Temp Unity'nin üretim çöplüğü ve
+# on binlerce dosya içerebiliyor, obj/bin derleme çıktısı.
+_SKIP_DIRS = frozenset({"Library", "Temp", "Logs", "obj", "bin", "Build", "Builds",
+                        ".git", ".vs", "node_modules"})
+_SOURCE_EXTS = (".cs", ".asmdef")
+
+
+def _csproj_sync_reason(workspace: str) -> str | None:
+    """Unity'nin ürettiği .sln/.csproj tazelenmeli mi? Gerekiyorsa SEBEBİ döndürür.
+
+    Neden gerekli (ölçüldü 2026-07-27): Unity'nin ürettiği csproj **legacy** MSBuild
+    formatında (`ToolsVersion 4.0`, `Microsoft.CSharp.targets`) — yani glob YOK,
+    dosya listesi tam olarak yazılı olan kadar. Sahadaki projede csproj'lar 23 Tem'de,
+    ortada Unity şablonunun yalnız 2 dosyası varken üretilmişti; sonraki 31 dosya ve
+    2 asmdef hiç girmedi. OmniSharp sorunsuz açılıp `ready` diyordu ama evreninde 2
+    dosya vardı, bu yüzden hover/completion/definition sessizce BOŞ dönüyordu.
+
+    Eski koşul yalnızca "workspace'te hiç .sln yok" idi — yani kapı çok DARDI:
+    var ama bayat olan bir .sln arızayı kalıcı hale getiriyordu."""
+    try:
+        entries = os.listdir(workspace)
+    except OSError:
+        return None
+    project_files = [f for f in entries if f.endswith((".sln", ".csproj"))]
+    if not project_files:
+        return "proje dosyaları hiç üretilmemiş"
+
+    try:
+        newest_project = max(os.path.getmtime(os.path.join(workspace, f))
+                             for f in project_files)
+    except OSError:
+        return None
+
+    assets = os.path.join(workspace, "Assets")
+    scan_root = assets if os.path.isdir(assets) else workspace
+    existing = {f.lower() for f in project_files}
+    for dirpath, dirnames, filenames in os.walk(scan_root):
+        dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS]
+        for name in filenames:
+            if not name.endswith(_SOURCE_EXTS):
+                continue
+            full = os.path.join(dirpath, name)
+            # asmdef → kendi adıyla ayrı bir csproj üretilmeli. asmdef csproj'dan
+            # sonra oluşturulmuşsa o proje HİÇ yaratılmamış oluyor; mtime kontrolü
+            # bunu zaten yakalar ama asmdef sonradan dokunulmamışsa yakalamaz.
+            if name.endswith(".asmdef"):
+                asm_name = _asmdef_name(full)
+                if asm_name and f"{asm_name.lower()}.csproj" not in existing:
+                    return f"{asm_name} için proje dosyası yok"
+            try:
+                if os.path.getmtime(full) > newest_project:
+                    return "kaynak dosyalar proje dosyalarından yeni"
+            except OSError:
+                continue
+    return None
+
+
+def _unwrap_unity_result(body: dict) -> dict:
+    """Unity MCP `/api/command` yanıtının gerçek gövdesini çıkarır.
+
+    İki farklı biçim dönebiliyor ve ikisi de sahada görüldü (ölçüldü 2026-07-27):
+
+        {"status": "success", "result": {"success": true, "message": …, "data": …}}
+        {"success": false, "error": "…"}          ← rotanın kendi ürettiği hatalar
+
+    Yalnız dış seviyedeki `success` alanına bakmak, BAŞARILI bir yanıtı başarısız
+    saymaya yol açıyordu — canlı ölçüm olmasa fark edilmezdi, çünkü hatalı dal
+    yalnız Unity bağlıyken çalışıyor."""
+    inner = body.get("result")
+    return inner if isinstance(inner, dict) else body
+
+
+def _asmdef_name(path: str) -> str | None:
+    """asmdef'in `name` alanı üretilecek csproj'un adını belirler."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f).get("name") or None
+    except (OSError, ValueError):
+        return None
 
 
 class OmniSharpManager:
@@ -139,11 +267,18 @@ class OmniSharpManager:
         self._diag_ping: dict[str, float] = {}    # abs path → son yayın zamanı
         self.status = {"state": "off", "detail": ""}
         self._lock = asyncio.Lock()
+        self._retry_after: float = 0.0            # başarısız başlatma sonrası bekleme
 
     # ── yaşam döngüsü ────────────────────────────────────────────────
     async def ensure_started(self, workspace: str) -> None:
         async with self._lock:
             if self._workspace == workspace and self._client and self._client.alive:
+                return
+            # Başarısız bir başlatmayı HER istekte tekrarlama. Monaco hover/completion
+            # her imleç hareketinde istek üretiyor; başlatma pahalıysa (ya da asılıp
+            # timeout'a düşüyorsa) bu kilit üzerinde kuyruk oluşuyor ve editör
+            # tamamen donuyor. Soğuma penceresi boyunca hızlıca son hatayı döndür.
+            if self._workspace == workspace and time.monotonic() < self._retry_after:
                 return
             await self._stop_locked()
             binary = _resolve_binary()
@@ -155,18 +290,29 @@ class OmniSharpManager:
                     detail = _unsupported_reason()
                 else:
                     detail = "OmniSharp binary bulunamadı (scripts/fetch_omnisharp.py koşuldu mu?)"
-                self.status = {"state": "error", "detail": detail}
-                logger.error("%s", detail)
+                self._fail(workspace, detail)
+                return
+            missing = _dotnet_missing_reason()
+            if missing:
+                # Ön kontrol: SDK yoksa süreci hiç başlatma. OmniSharp bu durumda
+                # `initialize`'a NE result NE error frame'i gönderiyor ve süreci de
+                # kapatmıyor, yani tek geri bildirim timeout oluyor. Burada anında
+                # ve NEDENİYLE birlikte düşmek, dakikalarca donmaktan iyidir.
+                self._fail(workspace, missing)
                 return
             self.status = {"state": "starting", "detail": "C# analizi hazırlanıyor…"}
             self._workspace = workspace
-            self._maybe_sync_csproj(workspace)
+            # to_thread: içerideki urlopen SENKRON. `async def` içinden doğrudan
+            # çağrılınca tüm event loop'u 15 sn'ye kadar donduruyordu — yani yalnız
+            # C# değil, backend'e giden HER istek bekliyordu.
+            sync_hint = await asyncio.to_thread(self._maybe_sync_csproj, workspace)
             client = LspClient()
             # Bayrak adları Task 1 Step 3'te doğrulandı (--help çıktısına göre güncel)
             cmd = [binary, "-z", "-s", workspace, "--languageserver", "--encoding", "utf-8"]
             try:
                 await client.start(cmd, cwd=workspace, env=_spawn_env())
                 client.on_notification("textDocument/publishDiagnostics", self._on_diags)
+                client.on_notification("window/logMessage", self._on_log_message)
                 await client.request("initialize", {
                     "processId": os.getpid(),
                     "rootUri": _path_to_uri(workspace),
@@ -176,24 +322,48 @@ class OmniSharpManager:
                         "completion": {"completionItem": {"snippetSupport": False}},
                         "hover": {"contentFormat": ["markdown", "plaintext"]},
                     }},
-                }, timeout=120)
+                }, timeout=_INIT_TIMEOUT)
                 client.notify("initialized", {})
                 self._client = client
-                self.status = {"state": "ready", "detail": ""}
+                # `ready` ama detail dolu olabilir: sunucu ayakta VE proje dosyaları
+                # bayat. Bu tam olarak sahada görülen hal — durum "hazır" görünüyor,
+                # hover sessizce boş dönüyordu. Sebep artık yüzeye çıkıyor.
+                self.status = {"state": "ready", "detail": sync_hint or ""}
+                self._retry_after = 0.0
                 logger.info("OmniSharp hazır: %s", workspace)
             except Exception as e:
-                self.status = {"state": "error", "detail": str(e)[:200]}
+                # stderr kuyruğu iliştiriliyor: OmniSharp asıl sebebi (örn.
+                # "No .NET SDKs were found.") LSP kanalına değil stderr'e yazıyor,
+                # o yüzden çıplak timeout mesajı tek başına hiçbir şey anlatmıyor.
+                tail = client.stderr_tail
+                detail = f"{e}"[:200] + (f" | OmniSharp: {tail[-300:]}" if tail else "")
                 logger.exception("OmniSharp başlatılamadı")
                 await client.stop()
+                self._fail(workspace, detail)
 
-    def _maybe_sync_csproj(self, workspace: str) -> None:
-        """Workspace'te .sln yoksa Unity'den üretmeyi dene (MCP REST, best-effort)."""
-        try:
-            has_sln = any(f.endswith(".sln") for f in os.listdir(workspace))
-        except OSError:
-            has_sln = True
-        if has_sln:
-            return
+    def _fail(self, workspace: str, detail: str) -> None:
+        """Arızayı kaydet ve soğuma penceresi aç (bkz. ensure_started'daki gerekçe)."""
+        self._workspace = workspace
+        self.status = {"state": "error", "detail": detail}
+        self._retry_after = time.monotonic() + _RETRY_COOLDOWN
+        logger.error("OmniSharp: %s", detail)
+
+    def _on_log_message(self, params: dict) -> None:
+        """Sunucunun window/logMessage bildirimleri. MSBuild çözümlenemediğinde
+        OmniSharp arızayı YALNIZCA buradan duyuruyor ve isteği yanıtsız bırakıyor —
+        bu kanal dinlenmezse geriye hiçbir iz kalmıyor."""
+        # Yalnız type=1 (error) yükseltiliyor. type=2 (warning) sağlıklı çalışmada
+        # da onlarca kez geliyor ("Tried to send request … will be sent later"),
+        # WARNING'e basmak logu kullanılmaz kılıyor.
+        if int(params.get("type", 4)) == 1:
+            logger.warning("OmniSharp: %s", str(params.get("message", ""))[:500])
+
+    def _maybe_sync_csproj(self, workspace: str) -> str | None:
+        """Proje dosyaları bayatsa Unity'den tazelemeyi dene (MCP REST, best-effort).
+        Tazelenemezse kullanıcıya gösterilecek ipucunu döndürür."""
+        reason = _csproj_sync_reason(workspace)
+        if reason is None:
+            return None
         try:
             # /api/command paylaşımlı sır ister (sırsız çağrı 401). Sır sunucuyu
             # başlatan manager'da tutuluyor; import döngüsüne girmemek için yerel import.
@@ -203,10 +373,26 @@ class OmniSharpManager:
                 data=b'{"type": "manage_editor", "params": {"action": "sync_csproj"}}',
                 headers={"Content-Type": "application/json",
                          **unity_mcp_manager.api_headers()})
-            urllib.request.urlopen(req, timeout=15)
-            logger.info("sync_csproj tetiklendi (.sln yoktu)")
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                body = json.loads(resp.read().decode("utf-8", "replace"))
+            inner = _unwrap_unity_result(body)
+            # Yanıt gövdesi OKUNUYOR. Eskiden yalnız "istek gitti mi" bakılıyordu ve
+            # Unity tarafı hiçbir şey yazmadan "başarılı" dönebiliyordu — arızanın
+            # günlerce fark edilmemesinin sebebi tam olarak buydu.
+            if not inner.get("success"):
+                raise RuntimeError(str(inner.get("error") or inner.get("message"))[:200])
+            logger.info("sync_csproj tamam (%s) → %s", reason, inner.get("data"))
+            return None
         except Exception:
-            logger.info(".sln yok ve Unity'ye ulaşılamadı — 'Unity'yi bir kez aç' durumu")
+            logger.info("proje dosyaları bayat (%s) ve Unity'ye ulaşılamadı", reason)
+            # ⚠️ Mesaj bilerek "Unity'yi açın, düzelir" DEMİYOR. Ölçüldü 2026-07-27:
+            # Unity açıkken de tazelenmiyor, çünkü .csproj üretimini Unity'nin harici
+            # IDE entegrasyonu yapıyor ve makinede kayıtlı bir IDE yoksa (bu ürünün
+            # hedef kullanıcısının normal hali) hiç üretilmiyor. Kullanıcıya
+            # doğrulanmamış bir çare söylemek, arızayı onun üstüne yıkmak olurdu.
+            return ("C# zekası sınırlı: Unity proje dosyaları güncel değil "
+                    f"({reason}). Dosya içi tamamlama ve hata denetimi çalışır; "
+                    "Unity API'leri (Debug, GameObject gibi) tanınmayabilir.")
 
     async def stop(self) -> None:
         async with self._lock:
@@ -240,10 +426,25 @@ class OmniSharpManager:
             self._opened.add(apath)
             self._client.notify("textDocument/didOpen", {"textDocument": {
                 "uri": uri, "languageId": "csharp", "version": 1, "text": text}})
-        else:
-            self._client.notify("textDocument/didChange", {
-                "textDocument": {"uri": uri, "version": int(time.time())},
-                "contentChanges": [{"text": text}]})
+        # didOpen'dan SONRA da her zaman bir tam metinli didChange gönderiliyor.
+        #
+        # Sebebi ölçüldü (2026-07-27): OmniSharp'ın "miscellaneous files" çalışma
+        # alanı — yüklü bir projeye ait olmayan dosyaları taşıyan alan — her zaman
+        # açık, ama ona giden TEK tetikleyici `BufferManager.UpdateBufferAsync` ve
+        # LSP'de onu çağıran tek bildirim `didChange`. `didOpen` yalnızca
+        # `FileOpenService`'e gidiyor, o da workspace'te ZATEN var olan dokümanı
+        # açıyor. Dolayısıyla csproj'da listelenmeyen bir dosyada ilk hover
+        # garantili boş dönüyordu.
+        #
+        # Ölçülen kazanç (gerçek Unity dosyası, bayat csproj ile): hover 'PitchBuilder'
+        # boş → `class MatchOfficial.EditorTools.PitchBuilder`, completion 0 → 191 öğe.
+        # SINIRI da ölçüldü: misc proje yalnız temel .NET referanslarını alıyor, yani
+        # `UnityEngine.Debug` gibi Unity tipleri yine çözülmüyor — onun için csproj
+        # tazelenmeli. İkisi çakışmıyor: csproj sonradan yüklendiğinde OmniSharp
+        # misc dokümanları gerçek projeye kendisi taşıyor.
+        self._client.notify("textDocument/didChange", {
+            "textDocument": {"uri": uri, "version": int(time.time())},
+            "contentChanges": [{"text": text}]})
         # publishDiagnostics async gelir → kısa pencere bekle (yeni yayın ya da timeout)
         sent = time.monotonic()
         key = _norm_key(apath)
@@ -258,7 +459,18 @@ class OmniSharpManager:
         return {"textDocument": {"uri": _path_to_uri(os.path.abspath(path))},
                 "position": {"line": line - 1, "character": column - 1}}
 
+    def _ready(self) -> bool:
+        """İstek göndermeden önce ZORUNLU kontrol. `ensure_started` başarısız
+        olduğunda `_client` None kalıyor; buraya bakılmazsa `None.request`
+        AttributeError'ı handler'dan dışarı çıkıyor ve CORSMiddleware'in ALTINDAKİ
+        katmanda 500'e dönüşüyor — o yanıtta Access-Control-Allow-Origin olmadığı
+        için tarayıcı bunu ağ hatası sayıp "Failed to fetch" gösteriyor. Yani
+        kullanıcının gördüğü hata mesajı, gerçek sebebi tamamen gizliyordu."""
+        return bool(self._client and self._client.alive)
+
     async def completion(self, path: str, text: str, line: int, column: int) -> list[dict]:
+        if not self._ready():
+            return []
         await self.sync_document(path, text)
         try:
             res = await self._client.request("textDocument/completion",
@@ -274,6 +486,8 @@ class OmniSharpManager:
         return out
 
     async def hover(self, path: str, text: str, line: int, column: int) -> str | None:
+        if not self._ready():
+            return None
         await self.sync_document(path, text)
         try:
             res = await self._client.request("textDocument/hover",
@@ -290,6 +504,8 @@ class OmniSharpManager:
         return str(c) if c else None
 
     async def definition(self, path: str, text: str, line: int, column: int) -> dict | None:
+        if not self._ready():
+            return None
         await self.sync_document(path, text)
         try:
             res = await self._client.request("textDocument/definition",

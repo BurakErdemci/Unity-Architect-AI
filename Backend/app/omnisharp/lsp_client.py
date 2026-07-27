@@ -1,11 +1,14 @@
 """Minimal LSP/JSON-RPC stdio istemcisi (Content-Length framing).
 OmniSharp'a özgü hiçbir şey içermez — sadece taşıma katmanı."""
 import asyncio
+import collections
 import itertools
 import json
 import logging
 
 logger = logging.getLogger("LspClient")
+
+_STDERR_KEEP = 20        # tanı için saklanan son stderr satırı sayısı
 
 
 class LspError(Exception):
@@ -19,21 +22,56 @@ class LspClient:
         self._pending: dict[int, asyncio.Future] = {}
         self._handlers: dict[str, list] = {}
         self._reader_task: asyncio.Task | None = None
+        self._stderr_task: asyncio.Task | None = None
+        self._stderr: collections.deque[str] = collections.deque(maxlen=_STDERR_KEEP)
         self._write_lock = asyncio.Lock()
 
     @property
     def alive(self) -> bool:
         return self._proc is not None and self._proc.returncode is None
 
+    @property
+    def stderr_tail(self) -> str:
+        """Sunucunun son stderr satırları — arıza mesajına iliştirmek için."""
+        return "\n".join(self._stderr)
+
     async def start(self, cmd: list[str], cwd: str, env: dict | None = None) -> None:
         self._proc = await asyncio.create_subprocess_exec(
             *cmd, cwd=cwd,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
+            # stderr DEVNULL DEĞİL: 27 Tem 2026'da C# hover'ın 120 sn asılmasının
+            # teşhisi tam üç gün bu tek satır yüzünden konulamadı. OmniSharp arızayı
+            # stdout'taki LSP kanalına DEĞİL stderr'e yazıyor ("No .NET SDKs were
+            # found.") ve initialize'a hiç yanıt vermiyor — stderr çöpe giderse
+            # geriye yalnız sessiz bir timeout kalıyor.
+            stderr=asyncio.subprocess.PIPE,
             env=env,  # None → parent env aynen (mevcut davranış)
         )
         self._reader_task = asyncio.create_task(self._read_loop())
+        self._stderr_task = asyncio.create_task(self._drain_stderr())
+
+    async def _drain_stderr(self) -> None:
+        """stderr'i sürekli oku: hem loga düşür hem sakla. Okunmayan bir PIPE
+        dolduğunda yazan süreç bloke olur — DEVNULL'dan PIPE'a geçmenin bedeli
+        bu drenajı ZORUNLU kılmak."""
+        try:
+            while True:
+                line = await self._proc.stderr.readline()
+                if not line:
+                    return
+                s = line.decode("utf-8", "replace").rstrip()
+                if s:
+                    self._stderr.append(s)
+                    # DEBUG: OmniSharp sağlıklı çalışırken de stderr'e onlarca satır
+                    # yazıyor ("Tried to send request … will be sent later"), WARNING'e
+                    # basmak logu kullanılmaz kılıyor. Arıza anındaki asıl mesaj yine
+                    # kaybolmuyor: `stderr_tail` başlatma hatasına iliştiriliyor.
+                    logger.debug("OmniSharp stderr: %s", s[:500])
+        except (asyncio.CancelledError, asyncio.IncompleteReadError):
+            pass
+        except Exception:
+            logger.exception("stderr drenaj hatası")
 
     async def _read_loop(self) -> None:
         try:
@@ -123,6 +161,7 @@ class LspClient:
             pass
         if self.alive:
             self._proc.kill()
-        if self._reader_task:
-            self._reader_task.cancel()
+        for task in (self._reader_task, self._stderr_task):
+            if task:
+                task.cancel()      # stderr drenajı da iptal edilmeli, yoksa görev sızar
         self._proc = None
