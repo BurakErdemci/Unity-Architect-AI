@@ -1,10 +1,89 @@
 import {
   screen,
+  shell,
   BrowserWindow,
   BrowserWindowConstructorOptions,
   Rectangle,
 } from 'electron'
 import Store from 'electron-store'
+
+const isProd = process.env.NODE_ENV === 'production'
+
+// Nextron dev'de pencereyi `electron . <port>` diye başlatır; background.ts de
+// dev sayfasını process.argv[2]'den okuduğu portla yükler. Prod'da argv[2] port
+// değil (paketlenmiş exe'ye OS'un geçirdiği herhangi bir argüman olabilir), bu
+// yüzden yalnızca sayı ise ve yalnızca dev'de kabul ediliyor.
+const devPort = /^\d+$/.test(process.argv[2] || '') ? process.argv[2] : null
+
+// shell.openExternal işletim sistemine URL'i olduğu gibi verir: `file:` yerel bir
+// dosyayı/exe'yi, özel şemalar da kayıtlı bir protokol handler'ını çalıştırabilir.
+// O yüzden dışarı yalnızca http(s) çıkıyor — şema kontrolü pazarlık konusu değil.
+const isExternallyOpenable = (rawUrl: string): boolean => {
+  try {
+    const protocol = new URL(rawUrl).protocol
+    return protocol === 'http:' || protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
+const openExternally = (rawUrl: string) => {
+  if (!isExternallyOpenable(rawUrl)) return
+  shell.openExternal(rawUrl).catch((err) => {
+    console.error('[nav-policy] harici link açılamadı:', err?.message || err)
+  })
+}
+
+// Uygulamanın kendi origin'i: prod'da electron-serve'ün `app://./home` adresi
+// (host '.'), dev'de Next dev sunucusu. Non-special şema olduğu için url.origin
+// "null" döner — bu yüzden protocol + host ayrı ayrı karşılaştırılıyor.
+const isOwnOrigin = (rawUrl: string): boolean => {
+  let url: URL
+  try {
+    url = new URL(rawUrl)
+  } catch {
+    return false
+  }
+
+  if (isProd) {
+    return url.protocol === 'app:' && (url.host === '.' || url.host === '')
+  }
+
+  if (url.protocol !== 'http:') return false
+  if (url.hostname !== 'localhost' && url.hostname !== '127.0.0.1') return false
+  // Port bilinmiyorsa (argv[2] verilmeden elle başlatılan dev oturumu) loopback'in
+  // tamamına izin ver; aksi halde HMR reload'ları engellenir. Prod'a sızmaz çünkü
+  // bu dal yalnızca dev'de çalışıyor.
+  return devPort === null || url.port === devPort
+}
+
+/**
+ * Pencerenin gezinme politikası. Sebebi somut bir zincir: model çıktısı Markdown
+ * olarak render ediliyor, `[x](https://attacker/)` sıradan bir <a href> oluyor ve
+ * tıklanınca TEK BrowserWindow uzak sayfaya gidiyordu. preload `window.ipc`'yi
+ * koşulsuz expose ettiği için uzak sayfa terminal-spawn/write-file uçlarını
+ * devralıp kullanıcı yetkisiyle kod çalıştırabiliyordu. Kapı burada kapanıyor.
+ */
+const applyNavigationPolicy = (win: BrowserWindow) => {
+  // Yeni pencere/popup asla açılmaz: açılsaydı aynı preload'u ve dolayısıyla
+  // window.ipc'yi miras alırdı. Dış linkler işletim sisteminin tarayıcısına gider.
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    openExternally(url)
+    return { action: 'deny' }
+  })
+
+  win.webContents.on('will-navigate', (event, url) => {
+    if (isOwnOrigin(url)) return
+    event.preventDefault()
+    openExternally(url)
+  })
+
+  // Uygulama hiç <webview> kullanmıyor; enjekte edilen bir webview politikayı
+  // atlatan ikinci bir webContents açacağı için baştan reddediliyor.
+  win.webContents.on('will-attach-webview', (event) => {
+    event.preventDefault()
+  })
+}
 
 export const createWindow = (
   windowName: string,
@@ -79,6 +158,10 @@ export const createWindow = (
       ...options.webPreferences,
     },
   })
+
+  // Politika createWindow'un içinde: her pencere buradan doğduğu için ileride
+  // eklenecek bir pencerenin bunu unutması mümkün olmuyor.
+  applyNavigationPolicy(win)
 
   win.on('close', saveState)
 
