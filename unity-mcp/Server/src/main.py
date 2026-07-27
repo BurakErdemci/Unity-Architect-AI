@@ -467,8 +467,27 @@ def create_mcp_server(project_scoped_tools: bool) -> FastMCP:
         })
 
     @mcp.custom_route("/api/auth/login-url", methods=["GET"])
-    async def auth_login_url(_: Request) -> JSONResponse:
-        """Return the login URL for users to obtain/manage API keys."""
+    async def auth_login_url(request: Request) -> JSONResponse:
+        """Return the login URL for users to obtain/manage API keys.
+
+        Gated in LOCAL mode only, and the exception is the whole point of the
+        route. Upstream leaves it open everywhere; this fork added a local-secret
+        gate to /api and at first applied it here too, which broke remote-hosted
+        mode: there `local_api_token` is deliberately unset (callers authenticate
+        through ApiKeyService), so require_local_token answered 503 to everyone.
+        That closed the one route whose job is to tell a caller who has NO key
+        where to get one -- the Unity package's HTTP Remote "Get API Key" button
+        (MCPForUnity/Editor/Windows/Components/Connection/McpConnectionSection.cs)
+        calls it with no header by design.
+
+        Local mode has no such bootstrap: the secret comes from a 0600 file, not
+        from a web login, so gating it there costs nothing and keeps
+        core.local_auth's promise that every /api route checks the same secret.
+        """
+        if not config.http_remote_hosted:
+            auth_error = require_local_token(request)
+            if auth_error is not None:
+                return auth_error
         if not config.api_key_login_url:
             return JSONResponse(
                 {

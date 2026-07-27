@@ -9,8 +9,12 @@ API_KEY_HEADER = "X-API-Key"
 # argv is world-readable via `ps`.
 LOCAL_API_TOKEN_ENV = "UNITY_MCP_LOCAL_API_TOKEN"
 
-# Base path of the streamable-http MCP transport. In local mode the shared
-# secret is appended as an extra path segment (-> /mcp/<secret>); see
-# resolve_http_transport_path() in main.py for why the secret rides in the URL
-# instead of a header.
+# Base path of the streamable-http MCP transport, and the whole path: the shared
+# secret travels in the X-API-Key header, never in the URL.
+#
+# It used to be appended as a path segment (-> /mcp/<secret>). That form was
+# removed on 2026-07-27 because a secret in the URL leaks into places a URL is
+# allowed to go: the generated client configs (including one the model itself can
+# read), the argv of the registration commands, and error logs. Clients were
+# measured to support headers before the switch -- see core/local_auth.py.
 MCP_TRANSPORT_BASE_PATH = "/mcp"
