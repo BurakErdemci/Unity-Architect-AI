@@ -1,12 +1,15 @@
 """OmniSharp-Roslyn binary'sini ve gömülü .NET SDK'sını indirir (git'e girmeyecek
 kadar büyük — video bins deseni). Build öncesi bir kez koşulur; varsa, sürüm tutuyorsa
 VE hedef ağaç sağlamsa atlar."""
+import glob
 import io
 import os
 import shutil
 import sys
 import tarfile
+import time
 import urllib.request
+import uuid
 import zipfile
 
 # Windows konsolu (cp1252) Türkçe karakterlerde patlamasın — build sırasında
@@ -97,36 +100,139 @@ def _download(url: str) -> bytes:
     return urllib.request.urlopen(url, timeout=900).read()
 
 
+# `filter="data"` desteğinin kesin işareti. `hasattr` ile ölçüldü (2026-07-28):
+# 3.9.6 → False, 3.13.13 → True; `data_filter` ile `filter` parametresi aynı
+# yamada (PEP 706) geldiği için ikisi birebir örtüşüyor.
+_TAR_FILTER_SUPPORTED = hasattr(tarfile, "data_filter")
+
+
 def _extract(data: bytes, url: str, staging: str) -> None:
-    """tar.gz exec bitlerini KORUR, zip KORUMAZ — çağıran zip'ten sonra chmod atmalı."""
+    """tar.gz exec bitlerini KORUR, zip KORUMAZ — çağıran zip'ten sonra chmod atmalı.
+
+    ⚠️ Filtresiz `extractall` KULLANILMIYOR ve eski Python'a sessizce düşülmüyor.
+    Burada eskiden `except TypeError: tf.extractall(staging)` vardı; dış denetimde
+    gerçek 3.9.6 ile ölçüldü (2026-07-28) ve o dalın HİÇBİR içerme kontrolü
+    yapmadığı görüldü: `../ESCAPED.txt` hedefin dışına yazıldı, sembolik bağ +
+    üstüne yazma iki aşamada dışarı çıktı, dizin ve FIFO de öyle. Filtreli dalda
+    hepsi `OutsideDestinationError` / `AbsoluteLinkError` ile reddediliyor.
+
+    Yedek dal teorik de değildi: `Frontend/frontend/package.json` prebuild'i
+    `python … || python3 …` diyor ve Homebrew Python'ı olmayan bir makinede
+    `python3` stok macOS'un 3.9.6'sı oluyor.
+
+    Desteklenmeyen sürümde ÇIKARMA YERİNE HATA veriliyor. Bu bir build script'i:
+    gürültülü başarısızlık, sessizce korumasız çıkarmaktan iyidir.
+
+    Yetenek tespiti `try/except TypeError` ile YAPILMIYOR: o kalıp çağrının
+    tamamını sarıyordu, yani filtreleme sırasında derinlerde doğan herhangi bir
+    TypeError çağrıyı sessizce filtresiz olarak baştan çalıştırıyordu — üstelik
+    ilk geçişte yazılmış dosyaların üstüne (aynı denetimde enjeksiyonla gösterildi)."""
     if url.endswith(".zip"):
+        # zipfile üye adından sürücü harfini, baştaki ayraçları ve `..` bileşenlerini
+        # DÜŞÜRÜYOR, ayrıca bağ meta verisini hiç uygulamıyor (sembolik bağ üyesi
+        # sıradan dosya olarak yazılıyor). Üç yorumlayıcıda ölçüldü: hedefin dışına
+        # yazım yok. Yani zip yolunda ek bir kapıya gerek kalmıyor.
         with zipfile.ZipFile(io.BytesIO(data)) as zf:
             zf.extractall(staging)
         return
+    if not _TAR_FILTER_SUPPORTED:
+        raise RuntimeError(
+            f"Bu Python ({sys.version.split()[0]}) tar çıkarmada 'filter' desteklemiyor, "
+            "ve filtresiz çıkarma arşivin hedef klasör dışına yazmasına izin veriyor. "
+            "Python 3.12+ (ya da 3.11.4+) ile çalıştırın."
+        )
     with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tf:
-        try:
-            tf.extractall(staging, filter="data")
-        except TypeError:      # Python < 3.11.4: filter parametresi yok
-            tf.extractall(staging)
+        tf.extractall(staging, filter="data")
+
+
+# Ölmüş bir koşunun kalıntısı bu yaştan sonra çöp sayılıyor. Üst sınır ölçülebilir:
+# tek indirme `urlopen(timeout=900)` ile sınırlı, çıkarma da onunla aynı mertebede —
+# yani CANLI bir koşunun staging'i pratikte dakikalar yaşında. 6 saat, o üst sınırın
+# çok üstünde bir emniyet payı; daha kısa bir eşik çok yavaş bir ağda hâlâ çalışan
+# komşu koşunun ağacını silme riski taşırdı ki bu tam da düzeltilen arıza olurdu.
+_STALE_LEFTOVER_SECONDS = 6 * 3600
+
+
+def _prune_stale_leftovers(dest: str) -> None:
+    """Süreç çıkarma sırasında ölürse yarım ağaç (dotnet'te ~290 MB) diskte kalıyor.
+    Adlar koşuya özel olduğu için kalıntı bir sonraki kuruluma KARIŞAMAZ, ama birikir.
+    Yaş kapısı şart: ad deseni eşleşen dizin, ŞU AN çalışan başka bir build'in
+    staging'i de olabilir — yaşa bakmadan silmek eski sabit-ad arızasını geri getirir.
+    glob.escape: depo yolu `[` `]` `?` içerebiliyor, desen olarak yorumlanmasın."""
+    now = time.time()
+    for pattern in (".staging-*", ".old-*"):
+        for leftover in glob.glob(glob.escape(dest) + pattern):
+            try:
+                if now - os.path.getmtime(leftover) < _STALE_LEFTOVER_SECONDS:
+                    continue
+            except OSError:
+                continue           # başka koşu az önce sildi — bizim işimiz değil
+            shutil.rmtree(leftover, ignore_errors=True)
 
 
 def _install(data: bytes, url: str, dest: str, stamp_value: str, exec_names: list[str]) -> None:
     """Staging'e çıkar, sonra hedefi TAKAS et. Doğrudan hedefe çıkarmak, yarıda
     kesilen bir indirmede yarım ağaç + eski dosya karışımı bırakıyor; damga en
-    sona yazıldığı için de o karışım bir sonraki koşuda 'sağlam' görünüyordu."""
-    staging = dest + ".staging"
-    shutil.rmtree(staging, ignore_errors=True)
-    os.makedirs(staging, exist_ok=True)
-    _extract(data, url, staging)
-    for name in exec_names:
-        p = os.path.join(staging, name)
-        if os.path.exists(p):
-            os.chmod(p, 0o755)     # zip exec bitini taşımaz; tar'da da garantiye al
-    shutil.rmtree(dest, ignore_errors=True)
-    os.makedirs(os.path.dirname(dest), exist_ok=True)
-    os.replace(staging, dest)
-    with open(os.path.join(dest, ".version"), "w", encoding="utf-8") as f:
-        f.write(stamp_value)
+    sona yazıldığı için de o karışım bir sonraki koşuda 'sağlam' görünüyordu.
+
+    Staging yolu KOŞUYA ÖZEL (pid + rastgele belirteç). Sabit `dest + ".staging"`
+    iki arıza üretiyordu: (1) aynı checkout'ta eşzamanlı iki build birbirinin
+    staging'ini `rmtree` ile siliyordu, (2) ölmüş bir koşunun yarım ağacı yerinde
+    duruyordu. pid tek başına yetmiyor — testler ve prebuild hook'u aynı süreçte
+    art arda kuruluyor —, o yüzden uuid de var. (Aynı desen bu depoda zaten
+    `Frontend/frontend/scripts/copy-monaco.js` içinde kullanılıyor.)
+
+    Takas sırası: eski hedef SİLİNMİYOR, yana alınıyor (rename) ve ancak yeni ağaç
+    yerine oturduktan sonra siliniyor. Eski sıra (`rmtree(dest)` → `os.replace`)
+    arada ne eski ne yeni ağacın olduğu bir pencere bırakıyordu; orada ölen bir
+    süreç `.version` damgasıyla birlikte çalışan kurulumu da götürüyordu. Yeni
+    sırada o pencere iki `rename` syscall'ı arasına iniyor ve orada ölünürse hedef
+    YOK olur, YARIM olmaz — `_intact()` yoku zaten reddedip yeniden indiriyor.
+
+    Damga takastan ÖNCE staging'in içine yazılıyor: ağacın hâlâ en son yazılan
+    dosyası o, ama hedefe geçişi tek bir atomik rename yapıyor. Böylece hedefte
+    "damga var, ağaç yarım" durumu hiç oluşamıyor. `_intact()` staging'e hiç
+    bakmadığı için damganın orada erken var olması bir şey iddia etmiyor."""
+    token = f"{os.getpid()}-{uuid.uuid4().hex[:8]}"
+    staging = f"{dest}.staging-{token}"
+    previous = f"{dest}.old-{token}"
+    os.makedirs(os.path.dirname(dest), exist_ok=True)   # staging dest'in KARDEŞİ
+    _prune_stale_leftovers(dest)
+    try:
+        os.makedirs(staging, exist_ok=True)
+        _extract(data, url, staging)
+        for name in exec_names:
+            p = os.path.join(staging, name)
+            # `islink` kapısı: `os.chmod` bağ TAKİP EDİYOR (follow_symlinks varsayılan
+            # True) ve `os.path.exists` de öyle. Arşivde tam olarak `OmniSharp` ya da
+            # `dotnet` ADINDA bir sembolik bağ varsa, chmod hedefin DIŞINDAKİ dosyanın
+            # modunu değiştiriyordu — dış denetimde ölçüldü (2026-07-28): kurban dosya
+            # 0600'den 0755'e döndü. Artık filtreli çıkarma böyle bir bağı zaten
+            # reddediyor, ama bu kapı ondan bağımsız: zip yolunda filtre yok, ve tek
+            # bir savunmaya dayanmak bu deponun daha önce ödediği bir bedel.
+            # `follow_symlinks=False` tercih edilmedi: Linux'ta chmod için
+            # NotImplementedError atıyor, yani taşınabilir değil.
+            if os.path.islink(p):
+                raise RuntimeError(f"arşivde beklenmedik sembolik bağ: {name}")
+            if os.path.exists(p):
+                os.chmod(p, 0o755)     # zip exec bitini taşımaz; tar'da da garantiye al
+        with open(os.path.join(staging, ".version"), "w", encoding="utf-8") as f:
+            f.write(stamp_value)
+        moved_aside = False
+        if os.path.exists(dest):
+            os.rename(dest, previous)
+            moved_aside = True
+        try:
+            os.replace(staging, dest)
+        except OSError:
+            if moved_aside:
+                os.rename(previous, dest)      # takas tutmadı → eski ağaç geri
+            raise
+    finally:
+        # Başarıda staging artık yok (rename edildi); hata yolunda YALNIZ KENDİ
+        # dizinlerimizi siliyoruz — komşu koşunun kalıntısına dokunmuyoruz.
+        shutil.rmtree(staging, ignore_errors=True)
+        shutil.rmtree(previous, ignore_errors=True)
 
 
 def fetch(platform: str) -> None:
