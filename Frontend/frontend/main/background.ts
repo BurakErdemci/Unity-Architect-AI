@@ -20,6 +20,7 @@ import {
   isTrustedRoot,
   registerTrustedRoot,
 } from './helpers/ipc-trust'
+import { applyContentSecurityPolicy } from './helpers/csp'
 import * as pty from 'node-pty'
 
 const localAppToken = randomUUID()
@@ -720,6 +721,10 @@ if (!gotTheLock) {
 
     ; (async () => {
       await app.whenReady()
+
+      // CSP, pencere açılmadan ÖNCE kuruluyor: politika ilk belge yanıtına
+      // yetişmezse ana sayfa korumasız yüklenir ve bu sessizce olur.
+      applyContentSecurityPolicy(isProd)
 
       // Windows görev çubuğu ikonu: AppUserModelId set edilmezse taskbar default
       // Electron ikonunu gösterir (window/exe ikonundan bağımsız). appId ile eşle.
