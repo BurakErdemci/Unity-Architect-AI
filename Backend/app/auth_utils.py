@@ -30,7 +30,17 @@ def _check_token(token) -> None:
             detail="LOCAL_APP_TOKEN tanımlı değil. Dev için UNITYAI_ALLOW_NO_TOKEN=1 kullanın.",
         )
     # compare_digest: token uzunluğu/eşleşme süresi üzerinden sızıntıyı kapatır.
-    if not hmac.compare_digest(str(token or ""), app_token):
+    # BAYT üzerinden, str üzerinden DEĞİL: compare_digest'in str aşırı yüklemesi
+    # ASCII dışı girdide TypeError fırlatıyor ("comparing strings with non-ASCII
+    # characters is not supported"). Başlık değeri saldırgan denetiminde ve tel
+    # üzerinde bayt olduğu için, 0x80-0xFF gönderen bir yerel soket eskiden her
+    # korumalı uçta kimliksiz 500 üretebiliyordu (ölçüldü 2026-07-27). Ayrıca
+    # LOCAL_APP_TOKEN'a elle Türkçe karakterli bir değer yazılırsa DOĞRU token
+    # bile 500 veriyordu — paketlenmiş app randomUUID() ürettiği için oraya
+    # düşmüyor, ama .env'i elle dolduran biri backend'i kilitliyordu.
+    # Aynı tuzak gömülü sunucuda zaten biliniyordu: unity-mcp/Server/src/core/
+    # local_auth.py bunu bayta çevirerek çözmüş; backend o dersi almamıştı.
+    if not hmac.compare_digest(str(token or "").encode("utf-8"), app_token.encode("utf-8")):
         raise HTTPException(status_code=401, detail="Geçersiz uygulama token'ı")
 
 

@@ -188,7 +188,30 @@ async def lifespan(app: FastAPI):
 
 
 db_path = _resolve_db_path()
-app = FastAPI(title="Unity Architect AI", lifespan=lifespan)
+
+# İnteraktif API dökümanı (/docs, /redoc, /openapi.json) yalnız KAYNAKTAN
+# koşarken açık. Sebebi: bu üç uç her ucun adını ve gövde şemasını kimliksiz
+# açıklıyor — veri vermiyor, yan etkisi yok, ama makinedeki her sürece hazır bir
+# saldırı yüzeyi haritası veriyor. Geliştirirken faydası gerçek, dağıtılan üründe
+# yok.
+#
+# Gösterge PyInstaller'ın `sys.frozen` işareti. İlk hâli "LOCAL_APP_TOKEN var mı"
+# idi ve ÖLÇÜLDÜ Kİ İKİ YÖNDE DE YANLIŞTI (2026-07-27 denetimi):
+#   - background.ts token'ı DEV'DE DE üretip veriyor → geliştiricinin dökümanı
+#     kapanıyordu, yani korunmak istenen kullanım bozuluyordu;
+#   - donmuş binary Electron sarmalayıcısı olmadan doğrudan çalıştırılınca token
+#     olmuyor → paketlenmiş süreç dökümanın tamamını açıyordu.
+# Token bir İSTEK KİMLİĞİ, dağıtım biçimi göstergesi değil. `sys.frozen` ise
+# doğrudan sorulan soruyu cevaplıyor: bu ikili paketlenmiş mi?
+_DOCS_ENABLED = not getattr(sys, "frozen", False)
+
+app = FastAPI(
+    title="Unity Architect AI",
+    lifespan=lifespan,
+    docs_url="/docs" if _DOCS_ENABLED else None,
+    redoc_url="/redoc" if _DOCS_ENABLED else None,
+    openapi_url="/openapi.json" if _DOCS_ENABLED else None,
+)
 db = DatabaseManager(db_path=db_path)
 PROGRESS_STORE = {}
 
