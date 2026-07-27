@@ -140,7 +140,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
   const fetchDoctor = async (refresh = false) => {
     if (refresh) setDoctorRefreshing(true);
     try {
-      const res = await axios.get(`${API}/cli-doctor${refresh ? '?refresh=true' : ''}`);
+      const res = await axios.get(`${API}/cli-doctor${refresh ? '?refresh=true' : ''}`, { headers: { 'X-Session-Token': user?.sessionToken ?? '' } });
       setDoctor(res.data || {});
       if (refresh) showToast('CLI durumları güncellendi.', 'success');
     } catch {
@@ -167,7 +167,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
   const installCli = async (g: CliGroupDef) => {
     setBusyCli(g.key);
     try {
-      await axios.post(`${API}/cli-install/${g.availKey}`);
+      await axios.post(`${API}/cli-install/${g.availKey}`, null, { headers: { 'X-Session-Token': user?.sessionToken ?? '' } });
       showToast('Kurulum penceresi açıldı — bittiğinde buradaki ↻ Yenile ile kontrol et.', 'info');
     } catch (e: any) {
       showToast(e?.response?.data?.detail || 'Kurulum başlatılamadı.', 'error');
@@ -176,7 +176,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
   const loginCli = async (g: CliGroupDef) => {
     setBusyCli(g.key);
     try {
-      await axios.post(`${API}/cli-login/${g.availKey}`);
+      await axios.post(`${API}/cli-login/${g.availKey}`, null, { headers: { 'X-Session-Token': user?.sessionToken ?? '' } });
       showToast('Giriş penceresi açıldı — tarayıcıda hesabınla giriş yap, sonra ↻ Yenile.', 'info');
     } catch (e: any) {
       showToast(e?.response?.data?.detail || 'Giriş başlatılamadı.', 'error');
@@ -191,7 +191,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
     if (!force && dynModels[cli]) return;
     setDynLoading(prev => ({ ...prev, [cli]: true }));
     try {
-      const res = await axios.get(`${API}/cli-models/${cli}`);
+      const res = await axios.get(`${API}/cli-models/${cli}`, { headers: { 'X-Session-Token': user?.sessionToken ?? '' } });
       setDynModels(prev => ({ ...prev, [cli]: res.data?.models || [] }));
     } catch {
       // force-tazelemede eldeki listeyi SİLME (geçici ağ hatası kilitli/kilitsiz

@@ -9,7 +9,7 @@ import urllib.request
 
 from fastapi import APIRouter, Header, HTTPException
 
-from auth_utils import get_current_user, require_user
+from auth_utils import _check_token, get_current_user, require_user
 from schemas import AIConfigRequest, APIKeySaveRequest
 
 
@@ -356,6 +356,9 @@ def create_config_router(db):
     ):
         """Aktif provider+model'in GERÇEKTEN desteklediği effort seviyeleri.
         Frontend seçici bunu gösterir — desteklenmeyen seviye hiç listelenmez."""
+        # Bu uç yan etkili/bilgi sızdırıcı: token SORULUYOR ama 2026-07-27
+        # denetimine kadar HİÇ doğrulanmıyordu (imzada vardı, gövdede yoktu).
+        _check_token(x_session_token)
         from providers.effort_caps import get_effort_caps
         return get_effort_caps(provider, model)
 
@@ -364,6 +367,7 @@ def create_config_router(db):
         """CLI sağlayıcılarının kullanıcı PC'sinde kurulu olup olmadığını döner.
         Bunlar gömülü DEĞİL — kullanıcının kurmuş olması gerekir.
         Frontend, kurulu olmayan bir CLI modeli seçilince uyarı gösterir."""
+        _check_token(x_session_token)
         from providers.agy_provider import AgyProvider
         from providers.oneshot_cli import cli_installed
 
@@ -465,6 +469,7 @@ def create_config_router(db):
     async def cli_models(cli: str, x_session_token: str = Header(alias="X-Session-Token", default="")):
         """Cursor/OpenCode: canlı model listesi; Copilot/Codex: statik liste.
         Yalnız Cursor/Copilot Auto-only planı disabled bayrağı üretir. 5 dk cache."""
+        _check_token(x_session_token)
         import time
         from providers.oneshot_cli import resolve_cli_cmd, get_named_models_cap, probe_named_models
 
@@ -511,6 +516,7 @@ def create_config_router(db):
 
     @router.get("/cli-doctor")
     async def cli_doctor(refresh: bool = False, x_session_token: str = Header(alias="X-Session-Token", default="")):
+        _check_token(x_session_token)
         import time
         from providers.oneshot_cli import cli_installed, resolve_cli_cmd
         from providers.agy_provider import AgyProvider
@@ -577,6 +583,7 @@ def create_config_router(db):
     #    penceresi açar (kurulum çıktısı + tarayıcı login akışı orada yaşar). ──
     @router.post("/cli-install/{cli}")
     async def cli_install(cli: str, x_session_token: str = Header(alias="X-Session-Token", default="")):
+        _check_token(x_session_token)
         import shutil
         install_map = _MAC_INSTALL_CMDS if sys.platform == "darwin" else _WINDOWS_INSTALL_CMDS
         entry = install_map.get(cli)
@@ -594,6 +601,7 @@ def create_config_router(db):
 
     @router.post("/cli-login/{cli}")
     async def cli_login(cli: str, x_session_token: str = Header(alias="X-Session-Token", default="")):
+        _check_token(x_session_token)
         login_map = _MAC_LOGIN_CMDS if sys.platform == "darwin" else _WINDOWS_LOGIN_CMDS
         cmd = login_map.get(cli)
         if not cmd:
