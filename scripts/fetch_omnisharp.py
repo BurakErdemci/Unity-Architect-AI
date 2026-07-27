@@ -1,7 +1,9 @@
-"""OmniSharp-Roslyn binary'sini indirir (git'e girmeyecek kadar büyük — video
-bins deseni). Build öncesi bir kez koşulur; varsa ve sürüm tutuyorsa atlar."""
+"""OmniSharp-Roslyn binary'sini ve gömülü .NET SDK'sını indirir (git'e girmeyecek
+kadar büyük — video bins deseni). Build öncesi bir kez koşulur; varsa, sürüm tutuyorsa
+VE hedef ağaç sağlamsa atlar."""
 import io
 import os
+import shutil
 import sys
 import tarfile
 import urllib.request
@@ -15,23 +17,32 @@ except Exception:
     pass
 
 VERSION = "v1.39.15"
+# TÜM platformlarda net6.0 varyantı + gömülü .NET SDK kullanılıyor: tek mekanizma.
+# Windows'ta eskiden net472 varyantı vardı ve "runtime GEREKMEZ" diye not düşülmüştü;
+# bu .NET Framework için doğru ama MSBuild için yanlıştı — ölçüldü 2026-07-27:
+# hiçbir OmniSharp v1.39.15 asset'i MSBuild paketlemiyor (win-x64 net472 ve mono
+# zip'leri açılıp bakıldı: yalnız Microsoft.Build.Locator.dll var, .msbuild klasörü yok).
+# Yani her platformda sistemde ya da gömülü olarak bir .NET SDK şart.
 ASSETS = {
-    # Windows: net472 build → .NET Framework 4.8 Win10/11'de hazır, runtime GEREKMEZ.
-    "win-x64": f"https://github.com/OmniSharp/omnisharp-roslyn/releases/download/{VERSION}/omnisharp-win-x64.zip",
-    # macOS (Apple Silicon): net6.0 build. Runtime GÖMÜLÜR (aşağıda fetch_dotnet) —
-    # kullanıcı HİÇBİR ŞEY kurmaz (0-kurulum prensibi). Roll-forward ile .NET 10'da koşar.
+    "win-x64": f"https://github.com/OmniSharp/omnisharp-roslyn/releases/download/{VERSION}/omnisharp-win-x64-net6.0.zip",
     "osx-arm64": f"https://github.com/OmniSharp/omnisharp-roslyn/releases/download/{VERSION}/omnisharp-osx-arm64-net6.0.zip",
-    # Linux (net6.0) — dev/CI için; ürün dağıtımı Win+Mac.
     "linux-x64": f"https://github.com/OmniSharp/omnisharp-roslyn/releases/download/{VERSION}/omnisharp-linux-x64-net6.0.zip",
 }
 
-# Gömülü .NET runtime (yalnız mac/linux — Windows net472 kullanır, gerekmez).
-# .NET 10 = LTS (EOL 2028-11); OmniSharp net6.0 hedefli ama DOTNET_ROLL_FORWARD=Major
-# ile 10'da çalıştığı canlı LSP initialize testiyle doğrulandı (2026-07-16, macOS arm64).
-DOTNET_VERSION = "10.0.10"
+# Gömülü .NET **SDK** (runtime DEĞİL). OmniSharp proje yüklemek için MSBuild'i
+# SDK'dan çözüyor; yalnız runtime gömüldüğünde `hostfxr_resolve_sdk2` başarısız
+# oluyor ve — kritik — OmniSharp `initialize` isteğine NE result NE error frame'i
+# gönderiyor, süreci de kapatmıyor. İstemcinin future'ı hiç tamamlanmıyor, istek
+# timeout dolana kadar asılıyor. Ölçüldü 2026-07-27 (macOS arm64):
+#   runtime-only  → 25 sn boyunca initialize yanıtı yok, "Failed to find all
+#                   versions of .NET Core MSBuild" yalnız window/logMessage'ta
+#   gerçek SDK    → initialize yanıtı 3.0 sn'de geldi
+# .NET 10 = LTS (EOL 2028-11). OmniSharp net6.0 hedefli → DOTNET_ROLL_FORWARD=Major.
+DOTNET_VERSION = "10.0.100"
 DOTNET_ASSETS = {
-    "osx-arm64": f"https://builds.dotnet.microsoft.com/dotnet/Runtime/{DOTNET_VERSION}/dotnet-runtime-{DOTNET_VERSION}-osx-arm64.tar.gz",
-    "linux-x64": f"https://builds.dotnet.microsoft.com/dotnet/Runtime/{DOTNET_VERSION}/dotnet-runtime-{DOTNET_VERSION}-linux-x64.tar.gz",
+    "osx-arm64": f"https://builds.dotnet.microsoft.com/dotnet/Sdk/{DOTNET_VERSION}/dotnet-sdk-{DOTNET_VERSION}-osx-arm64.tar.gz",
+    "linux-x64": f"https://builds.dotnet.microsoft.com/dotnet/Sdk/{DOTNET_VERSION}/dotnet-sdk-{DOTNET_VERSION}-linux-x64.tar.gz",
+    "win-x64": f"https://builds.dotnet.microsoft.com/dotnet/Sdk/{DOTNET_VERSION}/dotnet-sdk-{DOTNET_VERSION}-win-x64.zip",
 }
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEST = os.path.join(ROOT, "third_party", "omnisharp")
@@ -46,52 +57,103 @@ def default_platform() -> str:
     return "linux-x64"
 
 
+def omnisharp_marker(platform: str) -> str:
+    """Çıkarılmış OmniSharp ağacının sağlamlık kanıtı: host binary'nin kendisi."""
+    return "OmniSharp.exe" if platform.startswith("win") else "OmniSharp"
+
+
+def dotnet_markers(platform: str) -> list[str]:
+    """SDK ağacının sağlamlık kanıtı. `sdk/` ÖZELLİKLE aranıyor: runtime paketi de
+    `dotnet` host'unu ve `shared/` klasörünü getiriyor, yani host'un varlığı SDK
+    olduğunu KANITLAMAZ — 27 Tem 2026'daki 120 sn asılma arızasının tam sebebi buydu."""
+    return ["dotnet.exe" if platform.startswith("win") else "dotnet", "sdk"]
+
+
+def _intact(dest: str, stamp_value: str, markers: list[str]) -> bool:
+    """Damga tek başına yetmez: damga doğru ama ağaç eksik/bozuk olabilir (yarıda
+    kesilmiş çıkarma, elle silinmiş klasör). Bu sınıf hata bu repoda iki ayrı
+    denetimde çıktı — damgaya ek olarak hedefin İÇİNE bakılıyor."""
+    stamp = os.path.join(dest, ".version")
+    if not os.path.exists(stamp):
+        return False
+    try:
+        with open(stamp, encoding="utf-8") as f:
+            if f.read().strip() != stamp_value:
+                return False
+    except OSError:
+        return False
+    for m in markers:
+        p = os.path.join(dest, m)
+        if not os.path.exists(p):
+            return False
+        # `sdk` bir klasör: var ama boşsa MSBuild yine çözülemez.
+        if os.path.isdir(p) and not os.listdir(p):
+            return False
+    return True
+
+
+def _download(url: str) -> bytes:
+    print(f"[fetch_omnisharp] indiriliyor: {url}")
+    return urllib.request.urlopen(url, timeout=900).read()
+
+
+def _extract(data: bytes, url: str, staging: str) -> None:
+    """tar.gz exec bitlerini KORUR, zip KORUMAZ — çağıran zip'ten sonra chmod atmalı."""
+    if url.endswith(".zip"):
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            zf.extractall(staging)
+        return
+    with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tf:
+        try:
+            tf.extractall(staging, filter="data")
+        except TypeError:      # Python < 3.11.4: filter parametresi yok
+            tf.extractall(staging)
+
+
+def _install(data: bytes, url: str, dest: str, stamp_value: str, exec_names: list[str]) -> None:
+    """Staging'e çıkar, sonra hedefi TAKAS et. Doğrudan hedefe çıkarmak, yarıda
+    kesilen bir indirmede yarım ağaç + eski dosya karışımı bırakıyor; damga en
+    sona yazıldığı için de o karışım bir sonraki koşuda 'sağlam' görünüyordu."""
+    staging = dest + ".staging"
+    shutil.rmtree(staging, ignore_errors=True)
+    os.makedirs(staging, exist_ok=True)
+    _extract(data, url, staging)
+    for name in exec_names:
+        p = os.path.join(staging, name)
+        if os.path.exists(p):
+            os.chmod(p, 0o755)     # zip exec bitini taşımaz; tar'da da garantiye al
+    shutil.rmtree(dest, ignore_errors=True)
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    os.replace(staging, dest)
+    with open(os.path.join(dest, ".version"), "w", encoding="utf-8") as f:
+        f.write(stamp_value)
+
+
 def fetch(platform: str) -> None:
     dest = os.path.join(DEST, platform)
-    stamp = os.path.join(dest, ".version")
-    if os.path.exists(stamp) and open(stamp, encoding="utf-8").read().strip() == VERSION:
+    marker = omnisharp_marker(platform)
+    if _intact(dest, VERSION, [marker]):
         print(f"[fetch_omnisharp] {platform} zaten {VERSION} — atlandı.")
         return
     url = ASSETS[platform]
-    print(f"[fetch_omnisharp] indiriliyor: {url}")
-    data = urllib.request.urlopen(url, timeout=300).read()
-    os.makedirs(dest, exist_ok=True)
-    with zipfile.ZipFile(io.BytesIO(data)) as zf:
-        zf.extractall(dest)
-    # zipfile.extractall exec bitini KORUMAZ → macOS/Linux'ta OmniSharp host
-    # binary'si spawn edilemez (PermissionError). Windows'ta gereksiz/zararsız.
-    if not sys.platform.startswith("win"):
-        host = os.path.join(dest, "OmniSharp")
-        if os.path.exists(host):
-            os.chmod(host, 0o755)
-    with open(stamp, "w", encoding="utf-8") as f:
-        f.write(VERSION)
+    _install(_download(url), url, dest, VERSION, [marker])
     print(f"[fetch_omnisharp] tamam: {dest}")
 
 
 def fetch_dotnet(platform: str) -> None:
-    """Gömülü .NET runtime'ı third_party/omnisharp/dotnet-<plat>/ altına indirir.
+    """Gömülü .NET SDK'sını third_party/omnisharp/dotnet-<plat>/ altına indirir.
     electron-builder omnisharp klasörünü olduğu gibi kopyaladığı için pakete otomatik
     girer; omnisharp_manager spawn'da DOTNET_ROOT'u buraya yönlendirir."""
     if platform not in DOTNET_ASSETS:
-        return  # win-x64: net472, runtime gerekmez
+        return
     dest = os.path.join(DEST, f"dotnet-{platform}")
-    stamp = os.path.join(dest, ".version")
-    if os.path.exists(stamp) and open(stamp, encoding="utf-8").read().strip() == DOTNET_VERSION:
+    markers = dotnet_markers(platform)
+    if _intact(dest, DOTNET_VERSION, markers):
         print(f"[fetch_omnisharp] dotnet-{platform} zaten {DOTNET_VERSION} — atlandı.")
         return
     url = DOTNET_ASSETS[platform]
-    print(f"[fetch_omnisharp] .NET runtime indiriliyor: {url}")
-    data = urllib.request.urlopen(url, timeout=300).read()
-    os.makedirs(dest, exist_ok=True)
-    # tar.gz seçildi: tarfile exec bitlerini KORUR (zip'in aksine) → dotnet host çalışır kalır.
-    with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tf:
-        tf.extractall(dest)
-    host = os.path.join(dest, "dotnet")
-    if os.path.exists(host):
-        os.chmod(host, 0o755)  # savunma amaçlı — tarfile korur ama garantiye al
-    with open(stamp, "w", encoding="utf-8") as f:
-        f.write(DOTNET_VERSION)
+    print(f"[fetch_omnisharp] .NET SDK indiriliyor (~200-290 MB, sürebilir)")
+    _install(_download(url), url, dest, DOTNET_VERSION, [markers[0]])
     print(f"[fetch_omnisharp] dotnet tamam: {dest}")
 
 
