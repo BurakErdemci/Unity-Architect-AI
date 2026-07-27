@@ -63,6 +63,11 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         private int _connectionGen;
         private TransportState _state = TransportState.Disconnected(TransportDisplayName, "Transport not started");
         private string _apiKey;
+        // Local scope reads its secret from a file that may appear after this
+        // transport started (the server writes it on first launch), so every
+        // connection attempt re-reads it. Captured on the main thread because
+        // the scope itself comes from EditorPrefs.
+        private bool _useLocalTokenFile;
         private bool _disposed;
 
         public WebSocketTransportClient(IToolDiscoveryService toolDiscoveryService = null)
@@ -87,9 +92,10 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             _projectName = ProjectIdentityUtility.GetProjectName();
             _projectHash = ProjectIdentityUtility.GetProjectHash();
             _unityVersion = Application.unityVersion;
-            _apiKey = HttpEndpointUtility.IsRemoteScope()
-                ? EditorPrefs.GetString(EditorPrefKeys.ApiKey, string.Empty)
-                : string.Empty;
+            _useLocalTokenFile = !HttpEndpointUtility.IsRemoteScope();
+            _apiKey = _useLocalTokenFile
+                ? ReadLocalApiToken()
+                : EditorPrefs.GetString(EditorPrefKeys.ApiKey, string.Empty);
 
             if (HttpEndpointUtility.IsRemoteScope()
                 && !HttpEndpointUtility.IsCurrentRemoteUrlAllowed(out string remoteUrlError))
@@ -260,6 +266,14 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         {
             await StopConnectionLoopsAsync().ConfigureAwait(false);
 
+            // Re-read on every attempt: the file is created when the local server
+            // first launches, which can be after this Editor session started. Plain
+            // file I/O, no Unity API, so it is safe off the main thread.
+            if (_useLocalTokenFile)
+            {
+                _apiKey = ReadLocalApiToken();
+            }
+
             int gen = Interlocked.Increment(ref _connectionGen);
 
             _connectionCts?.Dispose();
@@ -284,7 +298,10 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
                 // client pong'lar; client ayrıca 15 sn'de bir kendi pong'unu yollar.
                 _socket.Options.KeepAliveInterval = TimeSpan.Zero;
 
-                // Add API key header if configured (for remote-hosted mode)
+                // Credential for the handshake: the user's API key in remote-hosted
+                // mode, the machine-local shared secret otherwise. It rides in a
+                // header rather than the URL so it stays out of access logs and out
+                // of the endpoint string we surface in TransportState.
                 if (!string.IsNullOrEmpty(_apiKey))
                 {
                     _socket.Options.SetRequestHeader(AuthConstants.ApiKeyHeader, _apiKey);
@@ -859,6 +876,42 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
             finally
             {
                 Interlocked.Exchange(ref _isReconnectingFlag, 0);
+            }
+        }
+
+        /// <summary>
+        /// Reads the shared secret that guards a local (non-remote-hosted) MCP server.
+        /// </summary>
+        /// <remarks>
+        /// A local server's plugin hub answers every process running as this user, and
+        /// treats whatever connects as a Unity Editor: it can register itself as an
+        /// instance and push tool definitions that the user's AI clients then see and
+        /// call. The server therefore requires the same shared secret it uses for its
+        /// /api routes, sent as an X-API-Key handshake header.
+        ///
+        /// The server persists that secret to a file instead of regenerating it per
+        /// start precisely so this side can pick it up with nothing for the user to
+        /// configure. ~/.unity-mcp is the directory this package already shares with
+        /// the Python server on every platform (port registry, status files).
+        ///
+        /// Returns empty when the file is absent — an older or third-party server, or
+        /// one that never wrote it. The handshake then goes out without the header and
+        /// the server decides; a local server built with the gate will refuse it.
+        /// </remarks>
+        private static string ReadLocalApiToken()
+        {
+            try
+            {
+                string path = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                    ".unity-mcp",
+                    "local-api-token");
+                return File.Exists(path) ? File.ReadAllText(path).Trim() : string.Empty;
+            }
+            catch (Exception ex)
+            {
+                McpLog.Warn($"[WebSocket] Could not read local API token: {ex.Message}");
+                return string.Empty;
             }
         }
 
