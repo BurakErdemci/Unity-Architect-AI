@@ -36,6 +36,10 @@ class UnityMCPManager:
         # Bu açılışta cache baypas edilerek kurulan kaynağın özeti; yalnız
         # sunucu sağlıklı görülünce diske yazılır (bkz. _record_server_source_hash).
         self._pending_source_hash: Optional[str] = None
+        # start_server'ın başarısızlık SEBEBİ. Port çakışmasında kullanıcıya
+        # gösterilecek metin buradan geliyor; sadece "başlatılamadı" demek
+        # kullanıcıyı çözümsüz bırakıyordu.
+        self.last_error: Optional[str] = None
         import sys
         if getattr(sys, "frozen", False):
             # Frozen build: backend.exe = .../resources/Backend/backend.exe →
@@ -314,6 +318,26 @@ class UnityMCPManager:
         """
         if self._starting or self.is_running():
             return True
+        self.last_error = None
+
+        # Port başkasının elindeyse eskiden uvx bind edemeden ölüyordu:
+        # start_server yine True dönüyor, hata yalnız log dosyasına düşüyor ve
+        # toggle sonsuza kadar sarıda kalıyordu. Portu zorla boşaltmak da
+        # seçenek değil — o süreç bizim değil. Kalan tek doğru davranış:
+        # başlatmayı reddet ve sebebi söyle.
+        from .mcp_port_guard import foreign_port_owners, port_busy_message
+        try:
+            foreign = foreign_port_owners(self.mcp_port)
+        except Exception as e:
+            # Sorgu aracı yoksa/patlarsa engelleme: yanlışlıkla reddetmek,
+            # eski (ve çoğu zaman çalışan) davranışa düşmekten daha kötü.
+            logger.debug(f"[UnityMCP] Port sahibi sorgulanamadı: {e}")
+            foreign = []
+        if foreign:
+            self.last_error = port_busy_message(self.mcp_port, foreign)
+            logger.error(f"[UnityMCP] {self.last_error}")
+            return False
+
         self._starting = True
 
         self._ensure_writable_resources()  # frozen: Server'ı yazılabilir dizine taşı
@@ -367,6 +391,7 @@ class UnityMCPManager:
             return True
         except Exception as e:
             logger.error(f"[UnityMCP] Başlatılamadı: {e}")
+            self.last_error = f"Unity MCP sunucusu başlatılamadı: {e}"
             self.local_api_token = None  # Sunucu ayakta değil — sır de geçersiz
             self._starting = False
             return False
@@ -374,8 +399,26 @@ class UnityMCPManager:
     def stop_server(self) -> None:
         """
         MCP sunucusunu durdurur.
-        Kendi subprocess'imiz varsa onu, yoksa port 8080'deki süreci öldürür.
+
+        Portu tutan süreç kendi `Popen` çocuğumuz DEĞİL, torunumuz: `uvx` aracı
+        ayrı bir süreç olarak çalıştırıyor. O yüzden `self.process`'i kapatmak
+        tek başına portu boşaltmaya yetmiyor ve porta ikinci bir geçiş şart.
+        Ama o geçiş artık porttaki her şeyi değil, yalnız kimliği doğrulanan
+        süreçleri kapatıyor (bkz. mcp_port_guard).
         """
+        from .mcp_port_guard import collect_owned_listeners, terminate_port_listeners
+
+        # Ata zinciri, ARADAKİ uvx ölmeden önce örneklenmeli: uvx gidince
+        # dinleyici torun init'e evlat ediniliyor (ppid=1) ve "bizim" olduğu bir
+        # daha ebeveynlikle kanıtlanamıyor.
+        owned_pids = set()
+        had_own_process = self.process is not None
+        if had_own_process:
+            try:
+                owned_pids = collect_owned_listeners(self.mcp_port)
+            except Exception as e:
+                logger.debug(f"[UnityMCP] Süreç ağacı okunamadı: {e}")
+
         # Kendi subprocess'imizi durdur
         if self.process:
             self.process.terminate()
@@ -385,42 +428,18 @@ class UnityMCPManager:
                 self.process.kill()
             self.process = None
 
-        # Port 8080'i sadece LISTEN state'inde tutan süreçleri öldür.
-        # -sTCP:LISTEN olmadan Unity Editor gibi CLIENT bağlantıları da listede çıkar
-        # ve onları öldürmek tüm Unity'yi kapatır.
-        if self.is_running():
-            import signal, sys
+        # `had_own_process` şartı is_running()'e ek: sunucumuzu biz başlattıysak
+        # /health bir an cevap vermese bile torun süreci sızdırmadan kapatmalıyız.
+        if had_own_process or self.is_running():
             try:
-                if sys.platform == "win32":
-                    # Windows: netstat ile LISTENING port sahibini bul, taskkill /T ile öldür.
-                    result = subprocess.run(
-                        ["netstat", "-ano", "-p", "TCP"],
-                        capture_output=True, text=True
+                cleanup = terminate_port_listeners(self.mcp_port, owned_pids=owned_pids)
+                if cleanup.killed:
+                    logger.info(
+                        f"[UnityMCP] Port {self.mcp_port} LISTEN temizlendi "
+                        f"(PID'ler: {cleanup.killed})"
                     )
-                    pids = set()
-                    for line in result.stdout.splitlines():
-                        parts = line.split()
-                        if (len(parts) >= 5 and parts[3] == "LISTENING"
-                                and parts[1].endswith(f":{self.mcp_port}")):
-                            pids.add(parts[4])
-                    for pid in pids:
-                        subprocess.run(["taskkill", "/PID", pid, "/T", "/F"],
-                                       capture_output=True)
-                    if pids:
-                        logger.info(f"[UnityMCP] Port {self.mcp_port} LISTEN temizlendi (PID'ler: {sorted(pids)})")
-                else:
-                    result = subprocess.run(
-                        ["lsof", "-ti", f":{self.mcp_port}", "-sTCP:LISTEN"],
-                        capture_output=True, text=True
-                    )
-                    pids = [p for p in result.stdout.strip().split() if p]
-                    for pid in pids:
-                        try:
-                            os.kill(int(pid), signal.SIGTERM)
-                        except ProcessLookupError:
-                            pass
-                    if pids:
-                        logger.info(f"[UnityMCP] Port {self.mcp_port} LISTEN temizlendi (PID'ler: {pids})")
+                if cleanup.refused:
+                    logger.warning(f"[UnityMCP] {cleanup.message}")
             except Exception as e:
                 logger.warning(f"[UnityMCP] Port temizlenemedi: {e}")
 

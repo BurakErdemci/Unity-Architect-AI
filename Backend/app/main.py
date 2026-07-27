@@ -139,38 +139,18 @@ def _resolve_db_path() -> str:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Backend başlarken: 8080'de orphan süreç varsa temizle (geçen oturumdan kalmış olabilir)
-    # Sadece LISTEN state'indeki server process'lerini temizle — Unity Editor client
-    # olarak bağlıysa onun PID'si de listede çıkar ve öldürmek Unity'yi kapatır.
+    # Backend başlarken: 8080'de geçen oturumdan kalmış KENDİ MCP sunucumuz varsa
+    # temizle. Eskiden porttaki her LISTEN sahibi öldürülüyordu; 8080 çok yaygın
+    # bir port olduğu için kullanıcının alakasız bir dev server'ı da haber
+    # verilmeden ölüyordu. Artık kimliği doğrulanan süreç öldürülüyor, doğrulanamayan
+    # yalnız loglanıyor — gerekçe ve yöntem için bkz. mcp_port_guard modül docstring'i.
     try:
-        import subprocess, signal, os as _os
-        if sys.platform == "win32":
-            # Windows: netstat -ano ile LISTENING port sahibini bul, taskkill /T ile ağacı öldür.
-            result = subprocess.run(
-                ["netstat", "-ano", "-p", "TCP"],
-                capture_output=True, text=True, timeout=3
-            )
-            pids = set()
-            for line in result.stdout.splitlines():
-                parts = line.split()
-                if len(parts) >= 5 and parts[3] == "LISTENING" and parts[1].endswith(":8080"):
-                    pids.add(parts[4])
-            for pid in pids:
-                subprocess.run(["taskkill", "/PID", pid, "/T", "/F"],
-                               capture_output=True, timeout=5)
-                logger.info(f"[Startup] Orphan MCP süreci temizlendi (PID: {pid})")
-        else:
-            result = subprocess.run(
-                ["lsof", "-ti", ":8080", "-sTCP:LISTEN"],
-                capture_output=True, text=True, timeout=3
-            )
-            pids = [p for p in result.stdout.strip().split() if p]
-            for pid in pids:
-                try:
-                    _os.kill(int(pid), signal.SIGTERM)
-                    logger.info(f"[Startup] Orphan MCP süreci temizlendi (PID: {pid})")
-                except ProcessLookupError:
-                    pass
+        from unity_ai_mcp.mcp_port_guard import DEFAULT_MCP_PORT, terminate_port_listeners
+        cleanup = terminate_port_listeners(DEFAULT_MCP_PORT)
+        for pid in cleanup.killed:
+            logger.info(f"[Startup] Orphan MCP süreci temizlendi (PID: {pid})")
+        if cleanup.refused:
+            logger.warning(f"[Startup] {cleanup.message}")
     except Exception as e:
         logger.debug(f"[Startup] Port temizleme atlandı: {e}")
 

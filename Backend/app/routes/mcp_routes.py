@@ -37,9 +37,14 @@ async def toggle_unity_mcp(req: MCPToggleRequest, background_tasks: BackgroundTa
 
         success = unity_mcp_manager.start_server()
         if not success:
+            # Sebebi olduğu gibi geçir: en sık vaka 8080'in başka bir süreçte
+            # olması ve o süreci öldürmek artık seçenek değil, dolayısıyla
+            # kullanıcının ne yapacağını bilmesi tek çıkış yolu.
             raise HTTPException(
+                # Durum kodu bilerek 500'de bırakıldı: 409 bu uçta zaten "Unity
+                # açık değil" anlamına geliyor ve frontend onu ayrı ele alıyor.
                 status_code=500,
-                detail="Unity MCP sunucusu başlatılamadı."
+                detail=unity_mcp_manager.last_error or "Unity MCP sunucusu başlatılamadı."
             )
 
         package_installed = False
