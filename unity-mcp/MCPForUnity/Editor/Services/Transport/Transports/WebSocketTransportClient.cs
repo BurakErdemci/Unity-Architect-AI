@@ -898,22 +898,9 @@ namespace MCPForUnity.Editor.Services.Transport.Transports
         /// one that never wrote it. The handshake then goes out without the header and
         /// the server decides; a local server built with the gate will refuse it.
         /// </remarks>
-        private static string ReadLocalApiToken()
-        {
-            try
-            {
-                string path = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                    ".unity-mcp",
-                    "local-api-token");
-                return File.Exists(path) ? File.ReadAllText(path).Trim() : string.Empty;
-            }
-            catch (Exception ex)
-            {
-                McpLog.Warn($"[WebSocket] Could not read local API token: {ex.Message}");
-                return string.Empty;
-            }
-        }
+        // Delegates to HttpEndpointUtility so the token location is defined once.
+        // A second copy of this path would drift the moment either side moves.
+        private static string ReadLocalApiToken() => HttpEndpointUtility.ReadLocalApiToken();
 
         private static Uri BuildWebSocketUri(string baseUrl)
         {

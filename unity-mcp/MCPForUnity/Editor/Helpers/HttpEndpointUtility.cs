@@ -93,19 +93,60 @@ namespace MCPForUnity.Editor.Helpers
         }
 
         /// <summary>
-        /// Builds the JSON-RPC endpoint for the currently active scope (base + /mcp).
+        /// Reads the shared secret the server writes to ~/.unity-mcp/local-api-token.
+        /// Returns an empty string when the file is absent, which callers must treat
+        /// as "no local transport available" rather than "no auth required".
+        ///
+        /// Read on every call rather than cached: the server may create the file
+        /// while the Editor is already running, and a cached empty value would keep
+        /// the client locked out until the next Editor restart.
         /// </summary>
-        public static string GetMcpRpcUrl()
+        public static string ReadLocalApiToken()
         {
-            return AppendPathSegment(GetBaseUrl(), "mcp");
+            try
+            {
+                string path = System.IO.Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                    ".unity-mcp",
+                    "local-api-token");
+                return System.IO.File.Exists(path)
+                    ? System.IO.File.ReadAllText(path).Trim()
+                    : string.Empty;
+            }
+            catch (Exception ex)
+            {
+                McpLog.Warn($"[HttpEndpoint] Could not read local API token: {ex.Message}");
+                return string.Empty;
+            }
         }
 
         /// <summary>
-        /// Builds the local JSON-RPC endpoint (local base + /mcp).
+        /// Builds the JSON-RPC endpoint for the currently active scope.
+        ///
+        /// In local mode the server mounts the transport at /mcp/&lt;secret&gt;, not /mcp:
+        /// the secret travels in the path because the generated client configs are
+        /// consumed by CLIs whose support for a `headers` field is not uniform. A
+        /// plain /mcp URL is a dead endpoint (404) and silently produced clients that
+        /// could never connect.
+        ///
+        /// Remote mode is unchanged — it authenticates with a header instead.
+        /// </summary>
+        public static string GetMcpRpcUrl()
+        {
+            string rpc = AppendPathSegment(GetBaseUrl(), "mcp");
+            if (IsRemoteScope()) return rpc;
+            string token = ReadLocalApiToken();
+            return string.IsNullOrEmpty(token) ? rpc : AppendPathSegment(rpc, token);
+        }
+
+        /// <summary>
+        /// Builds the local JSON-RPC endpoint (local base + /mcp/&lt;secret&gt;).
         /// </summary>
         public static string GetLocalMcpRpcUrl()
         {
-            return AppendPathSegment(GetLocalBaseUrl(), "mcp");
+            string rpc = AppendPathSegment(GetLocalBaseUrl(), "mcp");
+            string token = ReadLocalApiToken();
+            return string.IsNullOrEmpty(token) ? rpc : AppendPathSegment(rpc, token);
         }
 
         /// <summary>
