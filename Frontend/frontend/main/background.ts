@@ -14,6 +14,12 @@ import {
   isAllowedWorkspaceReadFile,
   isAllowedWorkspaceWriteFile,
 } from './helpers/file-security'
+import {
+  adoptLegacyRoot,
+  isOwnFrame,
+  isTrustedRoot,
+  registerTrustedRoot,
+} from './helpers/ipc-trust'
 import * as pty from 'node-pty'
 
 const localAppToken = randomUUID()
@@ -45,10 +51,52 @@ function fileLog(level: string, args: any[]) {
   fileLog('INFO', [`=== APP BAŞLADI === isProd=${isProd} resourcesPath=${process.resourcesPath} platform=${process.platform}`])
 }
 
+// --- IPC KAPILARI (2026-07-27 denetimi, D grubu) ---
+
+/**
+ * `ipcMain.handle` yerine bunu kullan. Tek işi: çağrının bizim sayfamızdan
+ * geldiğini doğrulamak.
+ *
+ * Sebebi somut — preload `window.ipc`'yi KOŞULSUZ expose ediyor, yani renderer'da
+ * çalışan her belge (uzak bir sayfa, enjekte bir script) 24 kanalın hepsine
+ * erişebiliyordu: `app-token-get` ile backend bearer'ı, `terminal-spawn` +
+ * `terminal-write` ile kullanıcının kabuğu. Gezinme politikası bu belgenin
+ * renderer'a GİRMESİNİ engelliyor; burası o politika delinirse diye ikinci kilit.
+ *
+ * Reddedilen çağrı sessiz kalmıyor: log'a düşüyor, çünkü sessiz bir ret meşru bir
+ * regresyonla saldırıyı ayırt edilemez kılar.
+ */
+const handleSecure = (
+  channel: string,
+  listener: (event: Electron.IpcMainInvokeEvent, ...args: any[]) => any,
+) => {
+  ipcMain.handle(channel, (event, ...args) => {
+    if (!isOwnFrame(event)) {
+      console.error(`[ipc-trust] '${channel}' reddedildi — gönderen:`, event.senderFrame?.url ?? '(bilinmiyor)')
+      throw new Error('IPC reddedildi: gönderen çerçeve uygulamaya ait değil.')
+    }
+    return listener(event, ...args)
+  })
+}
+
+/**
+ * Workspace kökünün kendisi çağırandan geliyordu; yani hapsi hapsedilen
+ * seçiyordu. `read-file($HOME/.codex/auth.json, $HOME)` bu yüzden kimlik
+ * bilgisi okuyabiliyordu — yol "iddia edilen kök"ün içinde kalıyor.
+ *
+ * Artık kök, kullanıcının native diyalogla seçtiği kütüğe karşı doğrulanıyor.
+ * Hata döndürürse çağıran handler kendi boş/başarısız değerini vermeli.
+ */
+const untrustedWorkspace = (workspacePath?: string): string | null => {
+  if (!workspacePath) return 'Workspace path eksik.'
+  if (isTrustedRoot(workspacePath) || adoptLegacyRoot(workspacePath)) return null
+  return 'Bu klasör yetkili değil — klasörü uygulama içinden yeniden seçin.'
+}
+
 // --- TERMINAL YÖNETİMİ ---
 const ptyProcesses: Map<string, pty.IPty> = new Map();
 
-ipcMain.handle('terminal-spawn', (event, { id, cwd }) => {
+handleSecure('terminal-spawn', (event, { id, cwd }) => {
   const isWin = process.platform === 'win32';
   
   // Profesyonel Shell Tespiti
@@ -68,6 +116,15 @@ ipcMain.handle('terminal-spawn', (event, { id, cwd }) => {
     finalCwd = path.join(homeDir || '', finalCwd.slice(1));
   }
   if (finalCwd && !fs.existsSync(finalCwd)) finalCwd = homeDir || '.';
+
+  // cwd çağırandan geliyor ve kabuk o dizinde açılıyor. Yetkili bir workspace
+  // değilse ev dizinine düşürülüyor: kabuk zaten kullanıcının yetkisiyle
+  // çalışıyor, ama saldırganın SEÇTİĞİ bir dizinde başlaması (ör. bir git
+  // reposunun içi, bir kimlik bilgisi klasörü) fazladan bilgi ve kolaylık verir.
+  if (!isTrustedRoot(finalCwd)) {
+    console.warn('[Terminal] yetkisiz cwd, ev dizinine düşülüyor:', finalCwd);
+    finalCwd = homeDir || '.';
+  }
 
   console.log(`[Terminal] Profesyonel Başlatma: ${shell} @ ${finalCwd}`);
 
@@ -113,7 +170,7 @@ ipcMain.handle('terminal-spawn', (event, { id, cwd }) => {
   }
 });
 
-ipcMain.handle('terminal-write', (_event, { id, data }) => {
+handleSecure('terminal-write', (_event, { id, data }) => {
   const ptyProcess = ptyProcesses.get(id);
   if (ptyProcess) {
     ptyProcess.write(data);
@@ -122,7 +179,7 @@ ipcMain.handle('terminal-write', (_event, { id, data }) => {
   return { success: false, error: 'Terminal bulunamadı' };
 });
 
-ipcMain.handle('terminal-resize', (_event, { id, cols, rows }) => {
+handleSecure('terminal-resize', (_event, { id, cols, rows }) => {
   const ptyProcess = ptyProcesses.get(id);
   if (ptyProcess) {
     ptyProcess.resize(cols, rows);
@@ -145,7 +202,7 @@ if (isProd) {
 }
 
 // --- IPC: DOSYA İŞLEMLERİ ---
-ipcMain.handle('open-file-dialog', async () => {
+handleSecure('open-file-dialog', async () => {
   const result = await dialog.showOpenDialog({
     properties: ['openFile'],
     filters: [
@@ -160,7 +217,7 @@ ipcMain.handle('open-file-dialog', async () => {
 
 // Video için: içerik OKUNMAZ (video büyük) — sadece mutlak yol(lar) döner.
 // Electron 34'te File.path kaldırıldığı için renderer yolu buradan alır.
-ipcMain.handle('open-video-dialog', async () => {
+handleSecure('open-video-dialog', async () => {
   const result = await dialog.showOpenDialog({
     properties: ['openFile', 'multiSelections'],
     filters: [
@@ -171,15 +228,19 @@ ipcMain.handle('open-video-dialog', async () => {
   return result.filePaths.map(p => ({ path: p, name: path.basename(p) }))
 })
 
-ipcMain.handle('open-folder-dialog', async () => {
+handleSecure('open-folder-dialog', async () => {
   const result = await dialog.showOpenDialog({
     properties: ['openDirectory']
   })
   if (result.canceled || result.filePaths.length === 0) return null
+  // Yetkili kök kütüğüne YALNIZCA buradan giriliyor: kullanıcının native
+  // diyalogda kendi eliyle seçtiği klasör. Renderer'ın önerdiği hiçbir yol
+  // kendiliğinden yetkili olmuyor (bkz. helpers/ipc-trust.ts).
+  registerTrustedRoot(result.filePaths[0])
   return result.filePaths[0]
 })
 
-ipcMain.handle('save-file-dialog', async (_event, options) => {
+handleSecure('save-file-dialog', async (_event, options) => {
   const result = await dialog.showSaveDialog(options)
   if (result.canceled) return null
   return result.filePath
@@ -188,7 +249,7 @@ ipcMain.handle('save-file-dialog', async (_event, options) => {
 // Hafıza export/import gibi kullanıcı-tetikli akışlar için atomik dialog+yazma/okuma.
 // write-file kasıtlı olarak workspace .cs dosyalarına kısıtlı; bu handler kullanıcı
 // dialog'dan onayladığı path'i doğrudan kullandığı için ayrı kanaldan gidiyor.
-ipcMain.handle('export-text-file', async (_event, defaultName: string, content: string) => {
+handleSecure('export-text-file', async (_event, defaultName: string, content: string) => {
   const result = await dialog.showSaveDialog({
     title: 'Hafıza Kaydet',
     defaultPath: defaultName,
@@ -203,7 +264,7 @@ ipcMain.handle('export-text-file', async (_event, defaultName: string, content: 
   }
 })
 
-ipcMain.handle('import-text-file', async (_event, options?: { filters?: { name: string; extensions: string[] }[] }) => {
+handleSecure('import-text-file', async (_event, options?: { filters?: { name: string; extensions: string[] }[] }) => {
   const result = await dialog.showOpenDialog({
     title: 'Hafıza Yükle',
     properties: ['openFile'],
@@ -218,9 +279,10 @@ ipcMain.handle('import-text-file', async (_event, options?: { filters?: { name: 
   }
 })
 
-ipcMain.handle('read-directory', async (_event, dirPath: string, workspacePath?: string) => {
+handleSecure('read-directory', async (_event, dirPath: string, workspacePath?: string) => {
   try {
     if (!workspacePath) return [];
+    const _ws = untrustedWorkspace(workspacePath); if (_ws) return [];
     const fullPath = path.isAbsolute(dirPath) ? dirPath : path.join(workspacePath, dirPath);
     if (!isAllowedWorkspacePath(fullPath, workspacePath)) {
       return []
@@ -248,10 +310,13 @@ ipcMain.handle('read-directory', async (_event, dirPath: string, workspacePath?:
 
 // VSCode tarzı git durum rozetleri: workspace bir git reposuysa değişen/yeni/
 // silinen dosyaların mutlak-yol → durum haritasını döner (dosya ağacı boyar).
-ipcMain.handle('git-status', async (_event, workspacePath?: string) => {
+handleSecure('git-status', async (_event, workspacePath?: string) => {
   const empty = { isRepo: false, files: {}, dirs: {} }
   try {
     if (!workspacePath || !fs.existsSync(workspacePath)) return empty
+    // Kök doğrulanmasaydı `git -C <herhangi bir dizin>` çalıştırılabilirdi:
+    // kullanıcının makinesindeki başka bir reponun dosya listesi ve durumu.
+    if (untrustedWorkspace(workspacePath)) return empty
     const { execFile } = require('child_process') as typeof import('child_process')
     const run = (args: string[]) => new Promise<string>((resolve, reject) => {
       execFile('git', ['-C', workspacePath, ...args], {
@@ -303,9 +368,10 @@ ipcMain.handle('git-status', async (_event, workspacePath?: string) => {
   }
 })
 
-ipcMain.handle('read-file', async (_event, filePath: string, workspacePath?: string) => {
+handleSecure('read-file', async (_event, filePath: string, workspacePath?: string) => {
   try {
     if (!workspacePath) return null;
+    const _ws = untrustedWorkspace(workspacePath); if (_ws) return null;
     const fullPath = path.isAbsolute(filePath) ? filePath : path.join(workspacePath, filePath);
     if (!isAllowedWorkspaceReadFile(fullPath, workspacePath)) {
       return { error: 'unsupported' }
@@ -319,11 +385,12 @@ ipcMain.handle('read-file', async (_event, filePath: string, workspacePath?: str
   } catch { return null }
 })
 
-ipcMain.handle('write-file', async (_event, filePath: string, content: string, workspacePath?: string) => {
+handleSecure('write-file', async (_event, filePath: string, content: string, workspacePath?: string) => {
   try {
     const isAbsolute = path.isAbsolute(filePath);
 
     if (!workspacePath && !isAbsolute) return { success: false, error: 'Workspace path eksik.' };
+    const _ws = untrustedWorkspace(workspacePath); if (_ws) return { success: false, error: _ws };
 
     const fullPath = isAbsolute ? filePath : path.join(workspacePath!, filePath);
 
@@ -341,8 +408,9 @@ ipcMain.handle('write-file', async (_event, filePath: string, content: string, w
   }
 })
 
-ipcMain.handle('file-exists', async (_event, filePath: string, workspacePath?: string) => {
+handleSecure('file-exists', async (_event, filePath: string, workspacePath?: string) => {
   if (!workspacePath) return false;
+  const _ws = untrustedWorkspace(workspacePath); if (_ws) return false;
   const fullPath = path.isAbsolute(filePath) ? filePath : path.join(workspacePath, filePath);
   if (!isAllowedWorkspaceWriteFile(fullPath, workspacePath)) {
     return false
@@ -350,9 +418,10 @@ ipcMain.handle('file-exists', async (_event, filePath: string, workspacePath?: s
   return fs.existsSync(fullPath)
 })
 
-ipcMain.handle('write-multiple-files', async (_event, files: { path: string; content: string }[], workspacePath?: string) => {
+handleSecure('write-multiple-files', async (_event, files: { path: string; content: string }[], workspacePath?: string) => {
   const results: { path: string; success: boolean; error?: string }[] = []
   if (!workspacePath) return results;
+  const _ws = untrustedWorkspace(workspacePath); if (_ws) return results;
 
   for (const file of files) {
     try {
@@ -375,8 +444,9 @@ ipcMain.handle('write-multiple-files', async (_event, files: { path: string; con
 })
 
 // --- IPC: DOSYA YÖNETİMİ ---
-ipcMain.handle('create-file', async (_event, filePath: string, workspacePath?: string) => {
+handleSecure('create-file', async (_event, filePath: string, workspacePath?: string) => {
   if (!workspacePath) return { success: false, error: 'Workspace path eksik.' }
+  const _ws = untrustedWorkspace(workspacePath); if (_ws) return { success: false, error: _ws };
   const fullPath = path.isAbsolute(filePath) ? filePath : path.join(workspacePath, filePath)
   if (!isAllowedWorkspacePath(fullPath, workspacePath)) return { success: false, error: 'Dosya workspace dışında.' }
   if (fs.existsSync(fullPath)) return { success: false, error: 'Dosya zaten var.' }
@@ -385,9 +455,10 @@ ipcMain.handle('create-file', async (_event, filePath: string, workspacePath?: s
   return { success: true, path: fullPath }
 })
 
-ipcMain.handle('delete-file', async (_event, relativePath: string, workspacePath?: string) => {
+handleSecure('delete-file', async (_event, relativePath: string, workspacePath?: string) => {
   try {
     if (!workspacePath) return { success: false, error: 'Workspace path eksik.' };
+    const _ws = untrustedWorkspace(workspacePath); if (_ws) return { success: false, error: _ws };
     const fullPath = path.isAbsolute(relativePath) ? relativePath : path.join(workspacePath, relativePath);
     if (!isAllowedWorkspacePath(fullPath, workspacePath)) {
       return { success: false, error: 'Dosya workspace dışında.' };
@@ -403,8 +474,9 @@ ipcMain.handle('delete-file', async (_event, relativePath: string, workspacePath
   }
 });
 
-ipcMain.handle('create-folder', async (_event, folderPath: string, workspacePath?: string) => {
+handleSecure('create-folder', async (_event, folderPath: string, workspacePath?: string) => {
   if (!workspacePath) return { success: false, error: 'Workspace path eksik.' }
+  const _ws = untrustedWorkspace(workspacePath); if (_ws) return { success: false, error: _ws };
   const fullPath = path.isAbsolute(folderPath) ? folderPath : path.join(workspacePath, folderPath)
   if (!isAllowedWorkspacePath(fullPath, workspacePath)) return { success: false, error: 'Klasör workspace dışında.' }
   if (fs.existsSync(fullPath)) return { success: false, error: 'Klasör zaten var.' }
@@ -412,19 +484,32 @@ ipcMain.handle('create-folder', async (_event, folderPath: string, workspacePath
   return { success: true, path: fullPath }
 })
 
-ipcMain.handle('rename-entry', async (_event, oldPath: string, newName: string, workspacePath?: string) => {
+handleSecure('rename-entry', async (_event, oldPath: string, newName: string, workspacePath?: string) => {
   if (!workspacePath) return { success: false, error: 'Workspace path eksik.' }
+  const _ws = untrustedWorkspace(workspacePath); if (_ws) return { success: false, error: _ws };
   const fullOldPath = path.isAbsolute(oldPath) ? oldPath : path.join(workspacePath, oldPath)
   if (!isAllowedWorkspacePath(fullOldPath, workspacePath)) return { success: false, error: 'Dosya workspace dışında.' }
   if (!fs.existsSync(fullOldPath)) return { success: false, error: 'Dosya bulunamadı.' }
+  // `newName` bir AD olmalı, yol değil. Doğrulanmadığında Node traversal
+  // segmentlerini normalize ediyordu ve dosya workspace dışına taşınıyordu:
+  //   path.join('/trusted/workspace', '../../escaped.txt') → '/escaped.txt'
+  // Bu, meşru arayüzden de tetiklenir — kullanıcı adlandırma kutusuna '../'
+  // yazması yeterdi. Önce ayraç/traversal reddediliyor, sonra hedef de tıpkı
+  // kaynak gibi workspace hapsine sokuluyor (biri yeterli değil: ayraçsız bir
+  // sembolik bağ da dışarı çıkabilir).
+  if (!newName || newName.includes('/') || newName.includes('\\') || newName === '..' || newName === '.') {
+    return { success: false, error: 'Geçersiz ad: yol ayracı içeremez.' }
+  }
   const newPath = path.join(path.dirname(fullOldPath), newName)
+  if (!isAllowedWorkspacePath(newPath, workspacePath)) return { success: false, error: 'Hedef workspace dışında.' }
   if (fs.existsSync(newPath)) return { success: false, error: 'Bu isimde bir dosya zaten var.' }
   fs.renameSync(fullOldPath, newPath)
   return { success: true, newPath }
 })
 
-ipcMain.handle('delete-entry', async (_event, entryPath: string, workspacePath?: string) => {
+handleSecure('delete-entry', async (_event, entryPath: string, workspacePath?: string) => {
   if (!workspacePath) return { success: false, error: 'Workspace path eksik.' }
+  const _ws = untrustedWorkspace(workspacePath); if (_ws) return { success: false, error: _ws };
   const fullPath = path.isAbsolute(entryPath) ? entryPath : path.join(workspacePath, entryPath)
   if (!isAllowedWorkspacePath(fullPath, workspacePath)) return { success: false, error: 'Dosya workspace dışında.' }
   if (!fs.existsSync(fullPath)) return { success: false, error: 'Dosya bulunamadı.' }
@@ -432,8 +517,9 @@ ipcMain.handle('delete-entry', async (_event, entryPath: string, workspacePath?:
   return { success: true }
 })
 
-ipcMain.handle('move-entry', async (_event, sourcePath: string, targetDir: string, workspacePath?: string) => {
+handleSecure('move-entry', async (_event, sourcePath: string, targetDir: string, workspacePath?: string) => {
   if (!workspacePath) return { success: false, error: 'Workspace path eksik.' }
+  const _ws = untrustedWorkspace(workspacePath); if (_ws) return { success: false, error: _ws };
   const fullSource = path.isAbsolute(sourcePath) ? sourcePath : path.join(workspacePath, sourcePath)
   const fullTarget = path.isAbsolute(targetDir) ? targetDir : path.join(workspacePath, targetDir)
   if (!isAllowedWorkspacePath(fullSource, workspacePath) || !isAllowedWorkspacePath(fullTarget, workspacePath)) {
@@ -446,7 +532,7 @@ ipcMain.handle('move-entry', async (_event, sourcePath: string, targetDir: strin
 })
 
 // Bir klasörün hâlâ var olup olmadığını kontrol eder (workspace silinmiş mi?).
-ipcMain.handle('path-exists', async (_event, targetPath: string) => {
+handleSecure('path-exists', async (_event, targetPath: string) => {
   try {
     if (!targetPath) return false
     return fs.existsSync(targetPath) && fs.statSync(targetPath).isDirectory()
@@ -455,8 +541,8 @@ ipcMain.handle('path-exists', async (_event, targetPath: string) => {
   }
 })
 
-ipcMain.handle('app-token-get', () => localAppToken)
-ipcMain.handle('get-backend-base-url', () => getBackendBaseUrl())
+handleSecure('app-token-get', () => localAppToken)
+handleSecure('get-backend-base-url', () => getBackendBaseUrl())
 
 function findAvailablePort(): Promise<number> {
   return new Promise((resolve, reject) => {

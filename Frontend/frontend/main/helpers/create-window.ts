@@ -6,14 +6,11 @@ import {
   Rectangle,
 } from 'electron'
 import Store from 'electron-store'
+import { isOwnOrigin } from './ipc-trust'
 
-const isProd = process.env.NODE_ENV === 'production'
-
-// Nextron dev'de pencereyi `electron . <port>` diye başlatır; background.ts de
-// dev sayfasını process.argv[2]'den okuduğu portla yükler. Prod'da argv[2] port
-// değil (paketlenmiş exe'ye OS'un geçirdiği herhangi bir argüman olabilir), bu
-// yüzden yalnızca sayı ise ve yalnızca dev'de kabul ediliyor.
-const devPort = /^\d+$/.test(process.argv[2] || '') ? process.argv[2] : null
+// Origin tanımı bilerek burada DEĞİL: aynı kural IPC kapısında da gerekiyor ve
+// iki kopya zamanla ayrışır (bu denetimde onay kapısının üç kopyası tam olarak
+// böyle ayrışmıştı). Tek kaynak helpers/ipc-trust.ts.
 
 // shell.openExternal işletim sistemine URL'i olduğu gibi verir: `file:` yerel bir
 // dosyayı/exe'yi, özel şemalar da kayıtlı bir protokol handler'ını çalıştırabilir.
@@ -32,29 +29,6 @@ const openExternally = (rawUrl: string) => {
   shell.openExternal(rawUrl).catch((err) => {
     console.error('[nav-policy] harici link açılamadı:', err?.message || err)
   })
-}
-
-// Uygulamanın kendi origin'i: prod'da electron-serve'ün `app://./home` adresi
-// (host '.'), dev'de Next dev sunucusu. Non-special şema olduğu için url.origin
-// "null" döner — bu yüzden protocol + host ayrı ayrı karşılaştırılıyor.
-const isOwnOrigin = (rawUrl: string): boolean => {
-  let url: URL
-  try {
-    url = new URL(rawUrl)
-  } catch {
-    return false
-  }
-
-  if (isProd) {
-    return url.protocol === 'app:' && (url.host === '.' || url.host === '')
-  }
-
-  if (url.protocol !== 'http:') return false
-  if (url.hostname !== 'localhost' && url.hostname !== '127.0.0.1') return false
-  // Port bilinmiyorsa (argv[2] verilmeden elle başlatılan dev oturumu) loopback'in
-  // tamamına izin ver; aksi halde HMR reload'ları engellenir. Prod'a sızmaz çünkü
-  // bu dal yalnızca dev'de çalışıyor.
-  return devPort === null || url.port === devPort
 }
 
 /**
