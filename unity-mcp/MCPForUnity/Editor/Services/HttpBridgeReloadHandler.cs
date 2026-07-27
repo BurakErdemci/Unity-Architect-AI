@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 using System.Threading.Tasks;
 using MCPForUnity.Editor.Constants;
 using MCPForUnity.Editor.Helpers;
@@ -23,6 +24,12 @@ namespace MCPForUnity.Editor.Services
             TimeSpan.FromSeconds(10),
             TimeSpan.FromSeconds(30)
         };
+
+        // Mirrors WebSocketTransportClient.ReconnectTailInterval — the two paths recover
+        // from the same condition and drifting apart would make the behaviour unpredictable.
+        private static readonly TimeSpan ResumeTailInterval = TimeSpan.FromSeconds(30);
+
+        private static int _tailLoopRunning;
 
         static HttpBridgeReloadHandler()
         {
@@ -154,13 +161,73 @@ namespace MCPForUnity.Editor.Services
                 }
             }
 
-            if (lastException != null)
+            string detail = lastException != null ? $": {lastException.Message}" : string.Empty;
+            McpLog.Warn(
+                $"Failed to resume HTTP MCP bridge after domain reload{detail} — "
+                + $"retrying every {ResumeTailInterval.TotalSeconds:0} s in the background.");
+
+            await ResumeTailLoopAsync();
+        }
+
+        /// <summary>
+        /// Keeps trying to resume after <see cref="ResumeRetrySchedule"/> is exhausted.
+        /// </summary>
+        /// <remarks>
+        /// Without this the finite schedule (~49 s total) is a hard deadline: a server that
+        /// takes longer to become reachable leaves the bridge permanently dead, and the only
+        /// recovery is a manual Connect from the editor window. That breaks the product's
+        /// core promise that the MCP server is driven entirely from the app's toggle with no
+        /// Unity-side steps.
+        ///
+        /// Measured on 2026-07-27: the local server is launched through `uvx --no-cache`,
+        /// which rebuilds its dependencies on every start and took roughly two minutes —
+        /// so the 49 s budget was not merely tight, it was guaranteed to be exceeded, and
+        /// the bridge stayed dead until the user intervened by hand.
+        ///
+        /// WebSocketTransportClient.AttemptReconnectAsync already retries indefinitely for
+        /// the same reason, but it only covers a connection that was established and then
+        /// dropped — not one that never came up after a domain reload. This closes that gap.
+        /// </remarks>
+        private static async Task ResumeTailLoopAsync()
+        {
+            // One tail loop at a time: every domain reload re-enters this handler, and
+            // without the guard each reload would leave another loop running forever.
+            if (Interlocked.CompareExchange(ref _tailLoopRunning, 1, 0) != 0)
             {
-                McpLog.Warn($"Failed to resume HTTP MCP bridge after domain reload: {lastException.Message}");
+                return;
             }
-            else
+
+            try
             {
-                McpLog.Warn("Failed to resume HTTP MCP bridge after domain reload");
+                while (true)
+                {
+                    try { await Task.Delay(ResumeTailInterval); }
+                    catch { return; }
+
+                    // The user may have switched transports while we were waiting.
+                    if (!EditorConfigurationCache.Instance.UseHttpTransport)
+                    {
+                        return;
+                    }
+
+                    try
+                    {
+                        if (await MCPServiceLocator.TransportManager.StartAsync(TransportMode.Http))
+                        {
+                            McpLog.Info("[HTTP Reload] Bridge resumed after extended retry", false);
+                            MCPForUnityEditorWindow.RequestHealthVerification();
+                            return;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        McpLog.Debug($"[HTTP Reload] Tail resume attempt threw: {ex.Message}");
+                    }
+                }
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _tailLoopRunning, 0);
             }
         }
     }
