@@ -11,6 +11,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from core.config import config
+from core.local_auth import require_local_token
 from models.models import MCPResponse, ToolDefinitionModel, ToolParameterModel
 from core.logging_decorator import log_execution
 from core.telemetry_decorator import telemetry_tool
@@ -81,6 +82,15 @@ class CustomToolService:
     def _register_http_routes(self) -> None:
         @self._mcp.custom_route("/register-tools", methods=["POST"])
         async def register_tools(request: Request) -> JSONResponse:
+            # Same capability as the hub's `register_tools` WebSocket message:
+            # whatever is posted here becomes a tool the user's AI clients can
+            # see and call. Closing the socket without closing this route would
+            # leave the tool-injection path open, so it takes the same secret.
+            # Remote-hosted deployments authenticate via ApiKeyService instead.
+            if not config.http_remote_hosted:
+                auth_error = require_local_token(request)
+                if auth_error is not None:
+                    return auth_error
             try:
                 payload = RegisterToolsPayload.model_validate(await request.json())
             except ValidationError as exc:

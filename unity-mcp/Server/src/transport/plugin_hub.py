@@ -15,6 +15,7 @@ from starlette.websockets import WebSocket, WebSocketState
 
 from core.config import config
 from core.constants import API_KEY_HEADER
+from core.local_auth import LOCAL_API_TOKEN_FILE_HINT, local_token_matches
 from models.models import MCPResponse
 from transport.plugin_registry import PluginRegistry
 from services.api_key_service import ApiKeyService
@@ -186,6 +187,29 @@ class PluginHub(WebSocketEndpoint):
             # Store user_id in websocket state for later use during registration
             websocket.state.user_id = result.user_id
             websocket.state.api_key_metadata = result.metadata
+        else:
+            # Local mode. This listener answers every process running as this
+            # user, and whatever connects is treated as a Unity Editor: it can
+            # `register` itself into the instance registry and `register_tools`
+            # to put arbitrary tool definitions in front of the user's AI
+            # clients, which will then see and call them. That is the same class
+            # of authority the /api routes and the MCP transport hold, so it
+            # takes the same shared secret.
+            #
+            # Fail closed. An Editor package older than this gate sends no header
+            # and will not connect -- deliberately: the alternative (accept it
+            # and warn) leaves exactly the hole this closes, and a warning in the
+            # server log is not a control. The message below is the user's only
+            # signal, so it names the fix rather than the symptom.
+            if not local_token_matches(websocket.headers.get(API_KEY_HEADER)):
+                logger.warning(
+                    "Rejected a plugin WebSocket: missing or invalid %s header. "
+                    "Update the MCP for Unity Editor package -- it reads the shared "
+                    "secret from %s and sends it on the WebSocket handshake.",
+                    API_KEY_HEADER, LOCAL_API_TOKEN_FILE_HINT,
+                )
+                await websocket.close(code=4401, reason="API key required")
+                return
 
         await websocket.accept()
         msg = WelcomeMessage(

@@ -8,11 +8,25 @@ from typing import Any, Callable, Dict, Optional, TypeVar
 import httpx
 
 from cli.utils.config import get_config, CLIConfig
+from core.constants import API_KEY_HEADER, LOCAL_API_TOKEN_ENV
 
 
 class UnityConnectionError(Exception):
     """Raised when connection to Unity fails."""
     pass
+
+
+def _auth_headers() -> Dict[str, str]:
+    """Shared secret for the server's local /api/* routes, if one is configured.
+
+    The server rejects those routes without it (and does not expose them at all
+    when it has no secret), so the CLI must be launched with the same
+    LOCAL_API_TOKEN_ENV value as the server process.
+    """
+    import os
+
+    token = os.environ.get(LOCAL_API_TOKEN_ENV)
+    return {API_KEY_HEADER: token} if token else {}
 
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -103,6 +117,7 @@ async def send_command(
             response = await client.post(
                 url,
                 json=payload,
+                headers=_auth_headers(),
                 timeout=timeout or cfg.timeout,
             )
             response.raise_for_status()
@@ -186,7 +201,7 @@ async def list_unity_instances(config: Optional[CLIConfig] = None) -> Dict[str, 
 
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.get(url, timeout=10)
+            response = await client.get(url, headers=_auth_headers(), timeout=10)
             response.raise_for_status()
             data = response.json()
             if "instances" in data:
@@ -227,7 +242,8 @@ async def list_custom_tools(config: Optional[CLIConfig] = None) -> Dict[str, Any
 
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.get(url, params=params, timeout=cfg.timeout)
+            response = await client.get(
+                url, params=params, headers=_auth_headers(), timeout=cfg.timeout)
             response.raise_for_status()
             return response.json()
     except httpx.ConnectError as e:

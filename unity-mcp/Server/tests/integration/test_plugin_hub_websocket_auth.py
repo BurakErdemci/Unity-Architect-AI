@@ -132,17 +132,31 @@ class TestWebSocketAuthGate:
         ws.accept.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_not_remote_hosted_accepts_without_key(self, monkeypatch):
-        """When not remote-hosted, WebSocket accepted without API key."""
+    async def test_local_mode_requires_shared_secret(self, monkeypatch):
+        """Local mode: no secret -> close 4401; correct secret -> accepted.
+
+        Both directions in one test on purpose. A hub that rejects everything
+        would satisfy the rejection half while leaving Unity permanently
+        disconnected, so the acceptance half is part of the same claim.
+        """
         monkeypatch.setattr(config, "http_remote_hosted", False)
+        monkeypatch.setattr(config, "local_api_token", "s3cret-local-token")
 
-        ws = _make_mock_websocket(headers={})
-        hub = _make_hub()
+        anonymous = _make_mock_websocket(headers={})
+        await _make_hub().on_connect(anonymous)
+        anonymous.close.assert_called_once_with(
+            code=4401, reason="API key required")
+        anonymous.accept.assert_not_called()
 
-        await hub.on_connect(ws)
+        wrong = _make_mock_websocket(headers={API_KEY_HEADER: "not-the-token"})
+        await _make_hub().on_connect(wrong)
+        wrong.accept.assert_not_called()
 
-        ws.accept.assert_called_once()
-        ws.close.assert_not_called()
+        authorized = _make_mock_websocket(
+            headers={API_KEY_HEADER: "s3cret-local-token"})
+        await _make_hub().on_connect(authorized)
+        authorized.accept.assert_called_once()
+        authorized.close.assert_not_called()
 
 
 class TestUserIdFlowsToRegistration:

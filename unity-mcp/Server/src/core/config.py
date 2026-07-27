@@ -21,6 +21,12 @@ class ServerConfig:
     # HTTP transport behaviour
     http_remote_hosted: bool = False
 
+    # Shared secret guarding the local REST control plane when http_remote_hosted=False.
+    # Local mode has no per-user auth, and /api/command can run arbitrary C# in the
+    # Editor (execute_code), so without a secret any process on the machine could
+    # drive Unity. None => the local /api/* routes are not registered at all.
+    local_api_token: str | None = None
+
     # API key authentication (required when http_remote_hosted=True)
     api_key_validation_url: str | None = None  # POST endpoint to validate keys
     api_key_login_url: str | None = None       # URL for users to get/manage keys

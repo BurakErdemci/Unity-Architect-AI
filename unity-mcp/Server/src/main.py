@@ -15,6 +15,8 @@ from services.custom_tool_service import (
     resolve_project_id_for_unity_instance,
 )
 from core.config import config
+from core.constants import API_KEY_HEADER, LOCAL_API_TOKEN_ENV, MCP_TRANSPORT_BASE_PATH
+from core.local_auth import require_local_token
 from starlette.routing import WebSocketRoute
 from starlette.responses import JSONResponse
 import argparse
@@ -367,6 +369,73 @@ def _normalize_instance_token(instance_token: str | None) -> tuple[str | None, s
     return None, instance_token
 
 
+def install_secret_redaction(secret: str) -> None:
+    """Keep `secret` out of every log record this process creates.
+
+    The transport path carries the shared secret, so uvicorn's access log would
+    write a working credential into a file that outlives the process ("POST
+    /mcp/<secret> HTTP/1.1"), and FastMCP logs the same URL once at startup.
+
+    This hooks the log record factory instead of attaching filters to particular
+    loggers, because there is no single choke point to attach them to: uvicorn
+    and FastMCP each install their own non-propagating handlers, and uvicorn's
+    are configured later, during server startup. A filter on the root logger
+    would silently miss both.
+    """
+    previous_factory = logging.getLogRecordFactory()
+
+    def scrub(value: Any) -> Any:
+        if isinstance(value, str) and secret in value:
+            return value.replace(secret, "<redacted>")
+        return value
+
+    def factory(*args: Any, **kwargs: Any) -> logging.LogRecord:
+        record = previous_factory(*args, **kwargs)
+        record.msg = scrub(record.msg)
+        if isinstance(record.args, tuple):
+            record.args = tuple(scrub(arg) for arg in record.args)
+        elif isinstance(record.args, dict):
+            record.args = {k: scrub(v) for k, v in record.args.items()}
+        return record
+
+    logging.setLogRecordFactory(factory)
+
+
+def resolve_http_transport_path() -> str | None:
+    """Path to serve the streamable-http MCP transport on.
+
+    In local mode this transport is by far the widest surface the process
+    exposes: every tool is reachable through it, including execute_code, which
+    runs arbitrary C# inside a connected Unity Editor. The listener answers any
+    process running as the same user, so it needs the same shared secret that
+    guards the /api/* routes.
+
+    The secret rides in the URL path rather than in an HTTP header because a URL
+    is the only thing every MCP client is guaranteed to accept: the portable
+    config for an HTTP MCP server is a bare {"url": ...} object, and some clients
+    re-read that URL from config and dial it through a generated bridge instead
+    of speaking MCP themselves. A header-based scheme would have to be plumbed
+    through - and separately verified in - every client.
+
+    Returns None ("serve on the default path") for remote-hosted deployments,
+    which authenticate each request through ApiKeyService instead. Raises
+    SystemExit when a local server has no secret, so that no unauthenticated
+    transport is ever left listening.
+    """
+    if config.http_remote_hosted:
+        return None
+    if not config.local_api_token:
+        logger.error(
+            "Refusing to start the HTTP transport without a shared secret. Set %s "
+            "so the MCP endpoint can be served on %s/<secret>: the listener is "
+            "reachable by every process on this machine and the transport exposes "
+            "arbitrary code execution in a connected Unity Editor.",
+            LOCAL_API_TOKEN_ENV, MCP_TRANSPORT_BASE_PATH,
+        )
+        raise SystemExit(1)
+    return f"{MCP_TRANSPORT_BASE_PATH}/{config.local_api_token}"
+
+
 def create_mcp_server(project_scoped_tools: bool) -> FastMCP:
     mcp = FastMCP(
         name="mcp-for-unity-server",
@@ -403,11 +472,28 @@ def create_mcp_server(project_scoped_tools: bool) -> FastMCP:
             "login_url": config.api_key_login_url,
         })
 
-    # Only expose CLI routes if running locally (not in remote hosted mode)
-    if not config.http_remote_hosted:
+    # Shared with /register-tools and the plugin WebSocket hub so every local
+    # surface answers to the same secret; see core.local_auth.
+    _require_local_token = require_local_token
+
+    # Only expose CLI routes if running locally (not in remote hosted mode).
+    # These routes forward arbitrary command types to Unity - including execute_code,
+    # which runs arbitrary C# in the Editor - and the listener is reachable by every
+    # process on the machine. So they are gated by a shared secret, and we fail closed:
+    # with no secret configured the routes are never registered.
+    if not config.http_remote_hosted and not config.local_api_token:
+        logger.warning(
+            "Local REST API (/api/command, /api/instances, /api/custom-tools) is disabled: "
+            "set %s to a shared secret and send it in the %s header to enable it.",
+            LOCAL_API_TOKEN_ENV, API_KEY_HEADER,
+        )
+    if not config.http_remote_hosted and config.local_api_token:
         @mcp.custom_route("/api/command", methods=["POST"])
         async def cli_command_route(request: Request) -> JSONResponse:
             """REST endpoint for CLI commands to Unity."""
+            auth_error = _require_local_token(request)
+            if auth_error is not None:
+                return auth_error
             try:
                 body = await request.json()
 
@@ -526,8 +612,11 @@ def create_mcp_server(project_scoped_tools: bool) -> FastMCP:
                 return JSONResponse({"success": False, "error": str(e)}, status_code=500)
 
         @mcp.custom_route("/api/instances", methods=["GET"])
-        async def cli_instances_route(_: Request) -> JSONResponse:
+        async def cli_instances_route(request: Request) -> JSONResponse:
             """REST endpoint to list connected Unity instances."""
+            auth_error = _require_local_token(request)
+            if auth_error is not None:
+                return auth_error
             try:
                 sessions = await PluginHub.get_sessions()
                 instances = []
@@ -546,6 +635,9 @@ def create_mcp_server(project_scoped_tools: bool) -> FastMCP:
         @mcp.custom_route("/api/custom-tools", methods=["GET"])
         async def cli_custom_tools_route(request: Request) -> JSONResponse:
             """REST endpoint to list custom tools for the active Unity project."""
+            auth_error = _require_local_token(request)
+            if auth_error is not None:
+                return auth_error
             try:
                 unity_instance = request.query_params.get("instance")
                 instance_name, instance_hash = _normalize_instance_token(
@@ -663,6 +755,11 @@ Environment Variables:
   UNITY_MCP_HTTP_URL   HTTP server URL (default: http://127.0.0.1:8080)
   UNITY_MCP_HTTP_HOST   HTTP server host (overrides URL host)
   UNITY_MCP_HTTP_PORT   HTTP server port (overrides URL port)
+  UNITY_MCP_LOCAL_API_TOKEN   Shared secret guarding a local (non remote-hosted) server.
+                              Sent in the X-API-Key header by the /api/* REST routes, and
+                              appended to the MCP transport path (-> /mcp/<secret>) so that
+                              MCP clients can carry it in the URL alone. Unset => the /api/*
+                              routes are not exposed and HTTP transport refuses to start.
 
 Examples:
   # Use specific Unity project as default
@@ -806,6 +903,10 @@ Examples:
         or os.environ.get("UNITY_MCP_HTTP_REMOTE_HOSTED", "").lower() in ("true", "1", "yes", "on")
     )
 
+    # Shared secret for the local REST control plane. Environment only: a CLI flag
+    # would expose the secret in `ps` output to the very processes it guards.
+    config.local_api_token = os.environ.get(LOCAL_API_TOKEN_ENV) or None
+
     # API key authentication configuration
     config.api_key_validation_url = (
         args.api_key_validation_url
@@ -902,8 +1003,13 @@ Examples:
         host = args.http_host or os.environ.get(
             "UNITY_MCP_HTTP_HOST") or parsed_url.hostname or "127.0.0.1"
         port = args.http_port or _env_port or parsed_url.port or 8080
+        # Secret-bearing transport path; redaction must be installed before the
+        # first request is served, or the access log leaks the credential.
+        mcp_path = resolve_http_transport_path()
+        if config.local_api_token:
+            install_secret_redaction(config.local_api_token)
         logger.info(f"Starting FastMCP with HTTP transport on {host}:{port}")
-        mcp.run(transport=transport, host=host, port=port)
+        mcp.run(transport=transport, host=host, port=port, path=mcp_path)
     else:
         # Use stdio transport for traditional MCP
         logger.info("Starting FastMCP with stdio transport")
