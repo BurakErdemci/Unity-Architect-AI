@@ -404,3 +404,50 @@ class TestArsivHedefinDisinaYazamaz:
         with pytest.raises(RuntimeError, match="sembolik bağ"):
             fetch_mod._install(b"", "x.tar.gz", str(dest), "v1", ["OmniSharp"])
         assert oct(os.stat(kurban).st_mode)[-3:] == "600"
+
+class TestSembolikBagKuruluSayilmaz:
+    """Sembolik bağ üzerinden kalıcı kod çalıştırma zincirini kapatan testler.
+
+    Hangi arızadan doğdu (dış denetim, 2026-07-28, ikinci model ailesi): tek
+    seferlik bir yazma, kalıcı kod çalıştırmaya dönüşebiliyordu. Zincir:
+    `third_party/omnisharp/<plat>/OmniSharp` yerine dışarıyı gösteren bir bağ
+    konur → `_intact()` bunu "sağlam kurulum" sayıp indirmeyi ATLAR → ürün
+    `_resolve_binary()` ile o bağı bulur ve ÇALIŞTIRIR. Ölçüldü: `_intact()`
+    dışarıdaki bir binary için True döndü.
+
+    Sebep her üç yerde de aynı: `os.path.exists` ve `os.chmod` bağ TAKİP EDİYOR.
+    """
+
+    def test_a_symlinked_marker_is_not_a_healthy_installation(self, fetch_mod, tmp_path):
+        """Zincirin ilk halkası. Bu test kırılırsa indirme atlanmaya ve dışarıdaki
+        bir binary 'kurulu OmniSharp' sayılmaya geri döner."""
+        disarida = tmp_path / "DISARIDAKI"
+        disarida.write_text("#!/bin/sh\n")
+        dest = tmp_path / "osx-arm64"
+        dest.mkdir()
+        os.symlink(str(disarida), str(dest / "OmniSharp"))
+        (dest / ".version").write_text("v1")
+        assert fetch_mod._intact(str(dest), "v1", ["OmniSharp"]) is False
+
+    def test_a_real_marker_file_is_still_accepted(self, fetch_mod, tmp_path):
+        """Karşıt yön: gerçek dosya reddedilirse her build yeniden indirir."""
+        dest = tmp_path / "osx-arm64"
+        dest.mkdir()
+        (dest / "OmniSharp").write_text("")
+        (dest / ".version").write_text("v1")
+        assert fetch_mod._intact(str(dest), "v1", ["OmniSharp"]) is True
+
+    def test_a_symlink_named_like_the_stamp_is_refused(self, fetch_mod, tmp_path, monkeypatch):
+        """Damga yazımı da bağ takip ediyordu — yazma hedefin dışına gidiyordu."""
+        dest = tmp_path / "osx-arm64"
+        kurban = tmp_path / "kurban.txt"
+        kurban.write_text("dokunulmamis")
+
+        def _sahte_extract(_data, _url, staging):
+            os.symlink(str(kurban), os.path.join(staging, ".version"))
+
+        monkeypatch.setattr(fetch_mod, "_extract", _sahte_extract)
+        with pytest.raises(RuntimeError, match="sembolik bağ"):
+            fetch_mod._install(b"", "x.tar.gz", str(dest), "v1", [])
+        assert kurban.read_text() == "dokunulmamis"
+

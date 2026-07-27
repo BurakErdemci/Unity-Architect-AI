@@ -302,3 +302,30 @@ class TestBasarisizBaslatmaninTekrari:
 
         asyncio.run(run_two_workspaces())
         assert len(calls) == 2
+
+class TestBinaryCozumlemeBagCalistirmaz:
+    """`_resolve_binary()` zincirin ÇALIŞTIRMA halkası. `os.path.exists` bağ takip
+    ettiği için, binary yerine konmuş bir bağ spawn ediliyordu (dış denetim,
+    2026-07-28). İndirme tarafındaki `_intact()` kapısı ayrı ve ikisi de gerekli:
+    biri kurulumu tazeler, diğeri çalıştırmayı engeller."""
+
+    def test_a_symlinked_binary_is_not_executed(self, fake_root, monkeypatch):
+        monkeypatch.setattr(om, "_platform_key", lambda: "osx-arm64")
+        hedef = os.path.join(fake_root, "DISARIDAKI")
+        with open(hedef, "w") as f:
+            f.write("")
+        plat_dir = os.path.join(fake_root, "osx-arm64")
+        os.makedirs(plat_dir, exist_ok=True)
+        os.symlink(hedef, os.path.join(plat_dir, "OmniSharp"))
+        assert om._resolve_binary() is None
+
+    def test_a_real_binary_is_still_resolved(self, fake_root, monkeypatch):
+        """Karşıt yön: gerçek binary reddedilirse C# zekası hiç çalışmaz."""
+        monkeypatch.setattr(om, "_platform_key", lambda: "osx-arm64")
+        plat_dir = os.path.join(fake_root, "osx-arm64")
+        os.makedirs(plat_dir, exist_ok=True)
+        gercek = os.path.join(plat_dir, "OmniSharp")
+        with open(gercek, "w") as f:
+            f.write("")
+        assert om._resolve_binary() == gercek
+

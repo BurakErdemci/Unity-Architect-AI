@@ -114,6 +114,16 @@ def _resolve_binary() -> str | None:
     exe = "OmniSharp.exe" if plat.startswith("win") else "OmniSharp"
     for root in _omnisharp_roots():
         cand = os.path.join(root, plat, exe)
+        # ⚠️ `islink` kapısı ÇALIŞTIRMADAN önce. `os.path.exists` bağ takip ediyor,
+        # yani `third_party/omnisharp/<plat>/OmniSharp` yerine konmuş bir bağ,
+        # gösterdiği herhangi bir binary'nin bu ürün tarafından spawn edilmesini
+        # sağlıyordu. İndirme tarafındaki `_intact()` de aynı bağı "sağlam kurulum"
+        # sayıp indirmeyi atlıyordu, yani kalıcı hale geliyordu (dış denetim,
+        # 2026-07-28). Bizim kurulumumuz gerçek dosya üretir; burada bağ görmek
+        # beklenmedik bir durumdur ve çalıştırmamak doğru cevaptır.
+        if os.path.islink(cand):
+            logger.error("OmniSharp yolu bir sembolik bağ, çalıştırılmadı: %s", cand)
+            continue
         if os.path.exists(cand):
             return cand
     return None

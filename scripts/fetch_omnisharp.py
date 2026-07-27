@@ -87,6 +87,16 @@ def _intact(dest: str, stamp_value: str, markers: list[str]) -> bool:
         return False
     for m in markers:
         p = os.path.join(dest, m)
+        # ⚠️ `islink` ÖNCE: `os.path.exists` bağ takip ediyor. Dışarıyı gösteren
+        # bir bağ "sağlam kurulum" sayılıyordu ve zinciri şuraya götürüyordu:
+        # indirme atlanır → `_resolve_binary()` o bağı döndürür → ürün onu
+        # ÇALIŞTIRIR. Yani tek seferlik bir yazma, kalıcı kod çalıştırmaya
+        # dönüşüyordu. Dış denetimde ölçüldü (2026-07-28, ikinci model ailesi):
+        # `_intact()` dışarıdaki bir binary için True döndü.
+        # Bizim çıkarmamız gerçek dosya üretir, bağ üretmez — bağ görmek zaten
+        # beklenmedik bir durumdur ve "sağlam değil" doğru cevaptır.
+        if os.path.islink(p):
+            return False
         if not os.path.exists(p):
             return False
         # `sdk` bir klasör: var ama boşsa MSBuild yine çözülemez.
@@ -216,7 +226,14 @@ def _install(data: bytes, url: str, dest: str, stamp_value: str, exec_names: lis
                 raise RuntimeError(f"arşivde beklenmedik sembolik bağ: {name}")
             if os.path.exists(p):
                 os.chmod(p, 0o755)     # zip exec bitini taşımaz; tar'da da garantiye al
-        with open(os.path.join(staging, ".version"), "w", encoding="utf-8") as f:
+        # Damga yazımı da bağ takip ediyordu: arşivde `.version` ADINDA bir bağ
+        # varsa yazma hedefin dışına gidiyordu (dış denetim, 2026-07-28). Filtreli
+        # çıkarma dışarı gösteren bağı zaten reddediyor, ama zip yolunda filtre yok
+        # ve tek savunmaya dayanmak bu deponun daha önce ödediği bir bedel.
+        stamp_path = os.path.join(staging, ".version")
+        if os.path.islink(stamp_path):
+            raise RuntimeError("arşivde beklenmedik sembolik bağ: .version")
+        with open(stamp_path, "w", encoding="utf-8") as f:
             f.write(stamp_value)
         moved_aside = False
         if os.path.exists(dest):
