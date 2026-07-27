@@ -1,3 +1,4 @@
+import hmac
 import os
 from pathlib import Path, PurePath
 from typing import Any
@@ -9,9 +10,27 @@ _LOCAL_USER = (1, "local", "local@localhost", None, None)
 
 def _check_token(token) -> None:
     """LOCAL_APP_TOKEN her çağrıda env'den okunur (import-time değil — test güvenliği).
-    Token set değilse (dev mode) atlanır."""
+
+    Fail-CLOSED: token yoksa istek reddedilir. Eskiden tam tersiydi — token
+    kurulmamışsa kontrol tamamen atlanıyordu, yani backend tek başına
+    çalıştırıldığında (dev, ya da frozen binary'nin doğrudan koşturulması)
+    127.0.0.1:8000'deki her uç kimliksizdi: /write-file, /chat, api-keys… Aynı
+    "yapılandırılmamış = korumasız" kalıbını 2026-07-27 denetiminde Unity MCP
+    kontrol düzleminde de bulduk; sessiz açık kapı, açık kapıdır.
+
+    Paketlenmiş uygulama token'ı zaten veriyor (background.ts). Token'sız
+    çalıştırmak isteyen UNITYAI_ALLOW_NO_TOKEN=1 ile bunu AÇIKÇA seçer.
+    """
     app_token = os.environ.get("LOCAL_APP_TOKEN", "")
-    if app_token and token != app_token:
+    if not app_token:
+        if os.environ.get("UNITYAI_ALLOW_NO_TOKEN", "").lower() in {"1", "true", "yes", "on"}:
+            return
+        raise HTTPException(
+            status_code=503,
+            detail="LOCAL_APP_TOKEN tanımlı değil. Dev için UNITYAI_ALLOW_NO_TOKEN=1 kullanın.",
+        )
+    # compare_digest: token uzunluğu/eşleşme süresi üzerinden sızıntıyı kapatır.
+    if not hmac.compare_digest(str(token or ""), app_token):
         raise HTTPException(status_code=401, detail="Geçersiz uygulama token'ı")
 
 
