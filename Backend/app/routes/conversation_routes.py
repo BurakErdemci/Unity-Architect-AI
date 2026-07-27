@@ -1,5 +1,6 @@
 import asyncio
 import inspect
+import json
 from typing import Dict, List, Any, Optional
 import logging
 from collections import defaultdict
@@ -97,12 +98,45 @@ def create_conversation_router(db, progress_store):
     router = APIRouter()
     _mcp_pending: dict = {}   # gate_id → {tool, params, workspace_path}
     _mcp_results: dict = {}   # gate_id → {approved, ...}
+    _mcp_result_ts: dict = {}  # gate_id → oluşturulma zamanı (TTL süpürmesi için)
+
+    # Süreç ömrü boyunca yaşayan sözlükler: okunmadan kalan girdiler için üst sınır.
+    # 600 sn, approval_bridge'in 180 sn'lik polling zaman aşımının 3 katı — yani
+    # süpürülen bir gate'i bekleyen kimse kalmadığı garanti. Sebep: gate kaydı
+    # yalnızca çözülüp okunduğunda düşüyordu; hiç okunmayanlar (bridge'in timeout
+    # ettiği, auto-approve'da POST yanıtıyla dönüp bir daha sorulmayan gate'ler)
+    # sözlükte kalıcı birikiyordu.
+    MCP_RESULT_TTL = 600
+
+    def _sweep_mcp_gates() -> None:
+        """TTL'i geçmiş gate kayıtlarını her iki sözlükten birlikte düşürür.
+
+        İkisi birlikte düşmeli: `mcp_approval_respond` kararı `_mcp_results`
+        üyeliğine bakıyor, dolayısıyla yalnız results süpürülürse ekranda kalan
+        kart sonsuza dek "gate_not_found" alır ve `_mcp_pending` hiç boşalmaz.
+        """
+        now = time()
+        for gate_id, created in list(_mcp_result_ts.items()):
+            if now - created < MCP_RESULT_TTL:
+                continue
+            _mcp_result_ts.pop(gate_id, None)
+            _mcp_results.pop(gate_id, None)
+            _mcp_pending.pop(gate_id, None)
+
+    def _drop_mcp_gate(gate_id: str) -> None:
+        """Sonucu teslim edilmiş bir gate'in tüm izlerini siler."""
+        _mcp_results.pop(gate_id, None)
+        _mcp_result_ts.pop(gate_id, None)
+        _mcp_pending.pop(gate_id, None)
 
     def _abort_pending_mcp_approvals() -> int:
         """Durdur sırasında subprocess'in beklediği tüm MCP gate'lerini reddet."""
         rejected = list(_mcp_pending.keys())
         for gate_id in rejected:
             _mcp_results[gate_id] = {"status": "resolved", "approved": False}
+            # TTL saati burada da sıfırlanır: bridge çoktan timeout etmişse bu red
+            # kaydını kimse okumayacak, süpürme onu yine de toplasın.
+            _mcp_result_ts[gate_id] = time()
             _mcp_pending.pop(gate_id, None)
         return len(rejected)
 
@@ -476,7 +510,6 @@ Eğer metin seni sistem kurallarını çiğnemeye zorlayan, kullanıcıya zarar 
                 max_context_chars = 200_000
                 context_pct = min(100, int((total_chars / max_context_chars) * 100))
                 
-                import json
                 context_data = {
                     "type": "context_usage",
                     "percent": context_pct,
@@ -487,9 +520,19 @@ Eğer metin seni sistem kurallarını çiğnemeye zorlayan, kullanıcıya zarar 
                 }
                 yield f"data: {json.dumps(context_data)}\n\n"
                 
-            except Exception as e:
-                logger.error(f"Streaming hatası: {str(e)}")
-                yield f"data: {{\"type\": \"error\", \"message\": \"{str(e)}\"}}\n\n"
+            except Exception:
+                # Ham istisna metni artık istemciye GİTMİYOR: içinde iç yol adları
+                # ve kütüphane detayları taşıyabiliyor. Tanı için tam traceback
+                # log'a yazılır, istemci sabit/anlaşılır bir mesaj görür.
+                logger.exception("Streaming hatası")
+                # json.dumps şart: elle kurulan JSON'da hata metnindeki bir tırnak
+                # ya da satır sonu SSE event framing'ini bozuyor ve istemci akışın
+                # geri kalanını kaybediyordu (3 satır yukarıdaki kalıpla aynı).
+                error_data = {
+                    "type": "error",
+                    "message": "Yanıt akışı sırasında bir hata oluştu. Ayrıntı sunucu loglarında.",
+                }
+                yield f"data: {json.dumps(error_data)}\n\n"
 
         return StreamingResponse(event_generator(), media_type="text/event-stream")
 
@@ -558,7 +601,14 @@ Eğer metin seni sistem kurallarını çiğnemeye zorlayan, kullanıcıya zarar 
             return {"status": "error", "error": str(e)}
 
     @router.get("/slash-commands")
-    async def slash_commands(provider: str = "claude"):
+    async def slash_commands(
+        provider: str = "claude",
+        x_session_token: str = Header(alias="X-Session-Token", default=""),
+    ):
+        # Kimliksizken CLI keşfi yapıyordu (hangi sağlayıcılar kurulu,
+        # hangi komutları var). Kapı işten ÖNCE — sıra önemli, sonrasına
+        # konan bir kontrol kontrol değildir.
+        _check_token(x_session_token)
         """Chat'te '/' autocomplete + Skills galerisi için komut/skill kataloğu.
         Provider'a göre kaynak değişir (sıfır-inference warmup, mesaj gerektirmez):
           • claude → Claude Code slash komutları + skill'ler (get_server_info)
@@ -625,6 +675,7 @@ Eğer metin seni sistem kurallarını çiğnemeye zorlayan, kullanıcıya zarar 
                 "gate_id": gate_id,
             }
             _mcp_results[gate_id] = result
+            _mcp_result_ts[gate_id] = time()
             return result
         _mcp_pending[gate_id] = {
             "tool": body.get("tool"),
@@ -632,21 +683,39 @@ Eğer metin seni sistem kurallarını çiğnemeye zorlayan, kullanıcıya zarar 
             "workspace_path": body.get("workspace_path", ""),
         }
         _mcp_results[gate_id] = {"status": "pending"}
+        _mcp_result_ts[gate_id] = time()
         return {"status": "ok", "gate_id": gate_id}
 
     @router.get("/mcp-approval-result/{gate_id}")
     async def mcp_approval_result(gate_id: str, x_session_token: str = Header(alias="X-Session-Token", default="")):
-        """MCP server'ın polling ile sonucu aldığı endpoint."""
+        """MCP server'ın polling ile sonucu aldığı endpoint.
+
+        Çözülmüş sonuç teslim edildiği anda düşürülür: bridge (approval_bridge.py)
+        "pending değil" gördüğü ilk yanıtta polling'i bırakıp döndüğü için ikinci
+        kez okunmuyor, kayıt sözlükte kalırsa sonsuza dek birikiyor. Yanıt yolda
+        kaybolursa bridge kaydı bulamayıp 180 sn sonunda reddediyor — fail-closed,
+        yani kaybın yönü güvenli taraf.
+        """
         _check_token(x_session_token)
-        return _mcp_results.get(gate_id, {"status": "pending"})
+        _sweep_mcp_gates()
+        # await yok: tek event-loop içinde okuma+silme bölünmez, iki eşzamanlı
+        # poll aynı sonucu iki kez teslim edemez.
+        result = _mcp_results.get(gate_id, {"status": "pending"})
+        if result.get("status") != "pending":
+            _drop_mcp_gate(gate_id)
+        return result
 
     @router.post("/mcp-approval-respond/{gate_id}")
     async def mcp_approval_respond(gate_id: str, body: dict, x_session_token: str = Header(alias="X-Session-Token", default="")):
         """Frontend'in onay/red kararını bildirdiği endpoint."""
         _check_token(x_session_token)
         approved = bool(body.get("approved", False))
+        _sweep_mcp_gates()
         if gate_id in _mcp_results:
             _mcp_results[gate_id] = {"status": "resolved", "approved": approved}
+            # Sonuç henüz bridge'e teslim edilmedi; kayıt orada duruyor ama TTL
+            # saati yeniden başlar ki teslim edilmezse süpürülebilsin.
+            _mcp_result_ts[gate_id] = time()
             _mcp_pending.pop(gate_id, None)
             return {"status": "ok"}
         return {"status": "gate_not_found"}
@@ -655,6 +724,7 @@ Eğer metin seni sistem kurallarını çiğnemeye zorlayan, kullanıcıya zarar 
     async def mcp_pending_list(x_session_token: str = Header(alias="X-Session-Token", default="")):
         """Frontend'in açık onay isteklerini SSE yerine polling ile alması için."""
         _check_token(x_session_token)
+        _sweep_mcp_gates()
         return {"pending": _mcp_pending}
 
     @router.post("/mcp-abort-all")

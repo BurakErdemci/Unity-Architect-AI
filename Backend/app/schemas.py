@@ -1,5 +1,5 @@
 from typing import List, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class AuthRequest(BaseModel):
@@ -40,20 +40,31 @@ class NewConversationRequest(BaseModel):
 
 
 class ChatRequest(BaseModel):
+    # Sınırlar yerel bir uç için de gerekli: gövde doğrudan süreç belleğine, oradan
+    # prompt'a giriyor; sınırsız girdi hem RAM'i hem sağlayıcı isteğini şişiriyor.
+    # Sayıların gerekçesi tek tek aşağıda; hepsi "normal kullanımın çok üstünde ama
+    # süreç için hâlâ zararsız" bandında seçildi.
     conversation_id: int
-    message: str
+    # 200k karakter: conversation_routes'taki bağlam tavanıyla (max_context_chars)
+    # aynı — tek bir mesaj bütün sohbetin bağlamından büyük olamaz.
+    message: str = Field(max_length=200_000)
     language: str = "tr"
     user_id: int
     mode: str = "analysis"
-    editor_code: str = ""
+    # 400k karakter: editörde açık dosyanın TAMAMI geliyor; 10 bin satırlık bir Unity
+    # C# scripti (~40 karakter/satır) bile bu sınırın altında kalır.
+    editor_code: str = Field(default="", max_length=400_000)
     use_thinking: bool = False
     thinking_level: str = "medium" # off | low | medium | high
     generation_confirmed: bool = False
     generation_mode: str = "auto"  # auto | plan | step
-    images: Optional[List[str]] = None
+    # 20 görsel: her eleman base64 data-URI, yani tanesi MB'larca olabiliyor. Tek
+    # turda 20'den fazla ekran görüntüsü gönderen gerçek bir akış yok.
+    images: Optional[List[str]] = Field(default=None, max_length=20)
     # Video ekleri: [{"kind":"path","path":...} | {"kind":"url","url":...}]. Backend
     # bunları kare data-URI'leri + transkripte çevirip images'a katar (video_extract).
-    videos: Optional[List[dict]] = None
+    # 5 video: her biri kare çıkarma + transkripsiyon tetikliyor, pahalı taraf orası.
+    videos: Optional[List[dict]] = Field(default=None, max_length=5)
     # Claude-only (subscription + model_name "claude-" ile başlar). Diğer sağlayıcılarda
     # yok sayılır. effort_level → ClaudeAgentOptions.effort; ultracode → mesaj keyword'ü.
     effort_level: str = "medium"  # low | medium | high | max
