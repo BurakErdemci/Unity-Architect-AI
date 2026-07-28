@@ -18,13 +18,86 @@ New-Item -ItemType Directory -Force $dest | Out-Null
 $pinned = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) "scripts/pinned_assets.py"
 $key = "uv/win-x64"
 
-# Windows'ta yorumlayıcının adı `python` (bash tarafında `python3`); CI'da
-# actions/setup-python bu adımdan önce koştuğu için ikisi de mevcut.
-# Native komutun çıkış kodu ErrorActionPreference'a takılmayabilir, o yüzden
-# $LASTEXITCODE ELLE kontrol ediliyor.
-$url = & python $pinned url $key
-if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($url)) {
-    throw "'$key' sabitlenmiş kütükten okunamadı ($pinned)."
+# ── Kütük CLI'ının çıkış kodu SINIFLARI ───────────────────────────────
+# Sözleşme scripts/pinned_assets.py docstring'inde yazılı ve tek kaynağı orası:
+#   0 = tamam
+#   1 = BÜTÜNLÜK arızası - indirilen baytlar pinle uyuşmuyor. ASLA tekrar denenmez.
+#   2 = kullanım / ORTAM hatası - yanlış argüman, desteklenmeyen Python sürümü.
+#   3 = İŞLETİM arızası - anahtar kütükte yok, dosya okunamadı, kütük bozuk.
+#
+# Sınıfları ayırmak ZORUNLU. "sıfır değil -> uyuşmazlık" indirgemesi denetimde iki
+# yanlış teşhis üretti (2026-07-28): okunamayan bir dosya (3) operatöre "baytlar
+# pinle uyuşmuyor" diye raporlanıyordu - projenin doktrini "uyuşmazlık asla tekrar
+# denenmez" olduğu için en pahalı yanlış yönlendirme buydu.
+#
+# Bu betikte HER sınıf build'i KIRIYOR (hepsi `throw`): uv olmadan Unity MCP hiç
+# çalışmıyor. Sonuç aynı olsa da MESAJ ayrı, çünkü operatörün yapacağı iş sınıfa
+# göre değişiyor: pin'i incele / Python'u değiştir / kütüğü onar.
+
+function Invoke-PinnedCli {
+    # Kütük CLI'ını çağırır; çıkış kodunu ve çıktısını döndürür.
+    # Windows'ta yorumlayıcının adı `python` (bash tarafında `python3`); CI'da
+    # actions/setup-python bu adımdan önce koştuğu için ikisi de mevcut.
+    #
+    # $LASTEXITCODE yalnız native komuttan SONRA anlamlı, o yüzden hemen bir sonraki
+    # satırda okunuyor; araya başka bir komut girerse başkasının kodu ölçülür.
+    #
+    # $ErrorActionPreference burada FONKSİYON KAPSAMINDA 'Continue'ye çekiliyor:
+    # dosyanın başındaki 'Stop', python sıfırdan farklı dönünce (PS 7.4+ varsayılanı
+    # $PSNativeCommandUseErrorActionPreference = $true) betiği GENEL bir istisnayla
+    # öldürürdü ve sınıf bilgisi tam orada kaybolurdu. Build yine kırılacak - ama
+    # aşağıda, doğru mesajla.
+    param([string[]]$CliArgs)
+    $ErrorActionPreference = 'Continue'
+    $PSNativeCommandUseErrorActionPreference = $false
+    $out = & python $script:pinned @CliArgs 2>&1
+    return [pscustomobject]@{
+        Code   = $LASTEXITCODE
+        Output = ($out | Out-String).Trim()
+    }
+}
+
+function Write-PinnedFailure {
+    # Sınıfı raporlar ve build'i kırar. Python'un kendi çıktısı ($Detail) ÖNCE
+    # basılıyor ve YUTULMUYOR: asıl teşhis orada, buradaki satırlar yalnız sınıfı
+    # ve "ne yapmalı"yı söylüyor.
+    param([int]$Code, [string]$Key, [string]$Stage, [string]$Detail)
+    if (-not [string]::IsNullOrWhiteSpace($Detail)) { Write-Host $Detail }
+    switch ($Code) {
+        1 {
+            throw ("doğrulama başarısız ($Key - $Stage): indirilen baytlar sabitlenmiş " +
+                   "özetle uyuşmuyor. Tekrar DENENMEZ - 'birkaç kez dene' bir saldırgana " +
+                   "yalnızca birkaç şans daha verir. Build durduruldu.")
+        }
+        2 {
+            throw ("ortam hatası ($Key - $Stage): Python sürümü ya da çağrı biçimi uygun " +
+                   "değil. Bu bir BÜTÜNLÜK arızası DEĞİL: hiçbir asset doğrulanmadı, " +
+                   "hiçbir özet uyuşmazlığı bulunmadı. Çözüm yukarıdaki Python mesajında " +
+                   "(en az Python 3.10 gerekiyor). Build durduruldu.")
+        }
+        3 {
+            throw ("işletim hatası ($Key - $Stage): anahtar kütükte yok, dosya okunamadı " +
+                   "ya da kütük ayrıştırılamadı ($script:pinned). Düzeltilebilir bir durum " +
+                   "ve bütünlük arızasıyla ilgisi YOK. Build durduruldu.")
+        }
+        default {
+            throw ("beklenmedik çıkış kodu $Code ($Key - $Stage). $script:pinned sözleşmesi " +
+                   "yalnız 0/1/2/3 tanımlıyor; bilinmeyen bir kod o sözleşmenin değiştiğine " +
+                   "işaret eder. Bilinen bir sınıfa SOKULMUYOR: yanlış sınıflandırma, " +
+                   "sınıflandırmamaktan pahalıya geliyor. Build durduruldu.")
+        }
+    }
+}
+
+$r = Invoke-PinnedCli @('url', $key)
+if ($r.Code -ne 0) {
+    Write-PinnedFailure -Code $r.Code -Key $key -Stage 'adres okuma' -Detail $r.Output
+}
+$url = $r.Output
+if ([string]::IsNullOrWhiteSpace($url)) {
+    # Kod 0 ama çıktı boş: sözleşmeye göre olamaz, yani sessizce geçilemez.
+    # Boş bir adresle devam etmek Invoke-WebRequest'i anlamsız bir hatayla patlatırdı.
+    throw "'$key' için kütük 0 döndürdü ama BOŞ adres verdi ($script:pinned) - build durduruldu."
 }
 
 $zip = Join-Path $env:TEMP "uv-win-x64.zip"
@@ -35,10 +108,10 @@ Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
 # bakmak, bozuk arşivi zaten açtıktan sonra kontrol etmek olurdu.
 # Uyuşmazlıkta build KIRILIR, atlanmaz: uv olmadan Unity MCP hiç çalışmıyor, yani
 # "uyarı verip devam et" son kullanıcıya sessizce bozuk bir installer göndermektir.
-& python $pinned verify $key $zip
-if ($LASTEXITCODE -ne 0) {
+$v = Invoke-PinnedCli @('verify', $key, $zip)
+if ($v.Code -ne 0) {
     Remove-Item $zip -Force -ErrorAction SilentlyContinue
-    throw "$key bütünlük doğrulaması başarısız — build durduruldu."
+    Write-PinnedFailure -Code $v.Code -Key $key -Stage 'bütünlük doğrulaması' -Detail $v.Output
 }
 
 Expand-Archive -Path $zip -DestinationPath $dest -Force

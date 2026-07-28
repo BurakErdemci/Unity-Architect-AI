@@ -1,0 +1,185 @@
+name: Test (kalite kapısı)
+
+# Neden bu dosya var: 2026-07-28 dış denetimi `missing-security-gate-enforcement`
+# buldu — `.github/workflows/` altında yalnız `release.yml` vardı ve o hiç test
+# koşturmuyor. Yani bugüne kadar eklenen bütün güvenlik kapıları (indirilen
+# ikililerin özet doğrulaması, C# tablosu ↔ kütük ayrışma testi, sembolik bağ
+# kapıları) YALNIZCA biri elle `pytest` yazdığında ateşleniyordu. Hatırlamaya
+# bağlı bir kural bu depoda iki hafta yaşıyor; bu ölçüldü.
+
+on:
+  push:
+    # `tags-ignore` kasıtlı: `release.yml` zaten `tags: ['v*']` üzerinde koşuyor
+    # ve tag her zaman daha önce push edilmiş (yani burada zaten test görmüş) bir
+    # commit'e atılıyor. Tag'i dışlamazsak aynı commit için ikinci bir koşu daha
+    # başlar ve release build'iyle runner kuyruğunu paylaşır.
+    branches: ['**']
+    tags-ignore: ['**']
+  pull_request:
+
+# Aynı dal üzerinde art arda push yapılınca eski koşuyu iptal et: kapının değeri
+# "en son commit yeşil mi" sorusunda, ara commit'lerin sonucunda değil.
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # RUNNER KARARI (üç iş de ubuntu-latest, matris YOK):
+  #  1. Matris testleri KIRARDI, güçlendirmezdi. Frontend testleri POSIX mutlak
+  #     yol varsayıyor (`file-security.test.ts` içinde `/project/MyGame`), yani
+  #     windows-latest'te kırmızı verirdi — matris eklemek yeşil kapıyı kaybettirir.
+  #  2. Backend testleri platform davranışını taklit ediyor, yaşamıyor:
+  #     `_platform_key` monkeypatch ile yamalanıyor (tek istisna
+  #     `test_omnisharp_runtime_env.py`'deki 4 bağ testi, ve orada da x86_64 Linux
+  #     `linux-x64` döndüğü için gerçek bir anahtar var — None değil).
+  #  3. Gerçek platform kapsaması zaten `release.yml`'de var (windows + macos
+  #     build). Buradaki matris 3× süre demek, karşılığında ölçülmüş bir kazanç yok.
+  # Sınır açıkça yazılıyor: Windows'a özgü ÇALIŞMA ZAMANI davranışı (pywin32,
+  # PowerShell ile süreç kimlik doğrulaması) burada da sınanmıyor — bu zaten
+  # bilinen ve kabul edilmiş bir taviz, bu workflow onu kapatmıyor.
+
+  backend:
+    name: Backend testleri (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # `release.yml` ile TUTARLI olmak zorunda: `scripts/pinned_assets.py`
+          # PEP 604 (`str | None`) kullanıyor ve 3.10 altında import'ta patlıyor.
+          python-version: '3.13'
+          cache: 'pip'
+          # Cache anahtarı lockfile'a bağlı. `requirements.txt` tam pinlenmiş,
+          # yani içerik değişince anahtar da değişiyor. Bayat cache'in sessizce
+          # yanlış sürümü test etmesi bu depoda iki kez yaşandı.
+          cache-dependency-path: Backend/requirements.txt
+
+      - name: Bağımlılıklar
+        working-directory: Backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          # Test bağımlılıkları bilerek `requirements.txt`'te DEĞİL: o dosya
+          # PyInstaller'ın dondurduğu çalışma zamanı listesi, test araçları
+          # ürüne girmemeli. Sürümler yerelde 593 testin yeşil olduğu sürümlere
+          # sabitlendi; pinsiz bırakılırsa bir pytest major sürümü kapıyı
+          # ürün değişmeden kırar.
+          pip install pytest==9.0.3 pytest-asyncio==1.3.0
+
+      # `python -m pytest` (çıplak `pytest` değil) ve depo kökünden koşuluyor:
+      # yerelde yeşil ölçülen tam çağrı bu. `asyncio_mode = auto` ayarı
+      # `Backend/pytest.ini`'den geliyor, pytest onu `Backend/tests`'ten yukarı
+      # çıkarak buluyor.
+      - name: pytest
+        run: python -m pytest Backend/tests -q
+
+  frontend:
+    name: Frontend kapısı (tsc + vitest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # `release.yml` ile aynı. Alt sınır serbest değil: vite 8 ve rolldown
+          # `^20.19.0 || >=22.12.0` istiyor, yani 20 hattının SON minor'ı gerekiyor.
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: Frontend/frontend/package-lock.json
+
+      # `--ignore-scripts` kasıtlı: `postinstall` → `electron-builder
+      # install-app-deps`, node-pty'yi Electron için yeniden derliyor ve node-pty
+      # yalnız darwin/win32 için prebuild taşıyor → Linux'ta kaynaktan derleme.
+      # Bu kapının ihtiyacı yok: vitest testleri yalnız `main/helpers` ve
+      # `renderer` TypeScript'ini yüklüyor, hiçbir native modül import etmiyor;
+      # tsc ise paketin `.d.ts`'iyle yetiniyor. Platforma özgü ikililer
+      # (rolldown, lightningcss) optionalDependencies olarak lock'ta duruyor ve
+      # install script'i gerektirmiyor.
+      - name: Bağımlılıklar
+        working-directory: Frontend/frontend
+        run: npm ci --ignore-scripts
+
+      - name: TypeScript (tsc --noEmit)
+        working-directory: Frontend/frontend
+        run: npx tsc --noEmit
+
+      - name: vitest
+        working-directory: Frontend/frontend
+        run: npx vitest run
+
+  powershell:
+    name: PowerShell sözdizimi denetimi
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Neden burada: geliştirme makinesinde `pwsh` YOK, o yüzden
+      # `Backend/vendor/*.ps1` bugüne kadar hiçbir araçtan sözdizimi denetimi
+      # görmedi. Ürünün ana kitlesi Windows ve bir yazım hatası şu an ancak tag
+      # atıldıktan SONRA, release build'inin ortasında görünüyor. GitHub
+      # runner'larında pwsh kurulu geliyor — boşluk burada kapanıyor.
+      #
+      # PARSE, çalıştırma değil: bu betikler ağdan ikili indiriyor.
+      #
+      # Denetimin sınırı açık olsun: bu adım sözdizimini yakalar, çalışma zamanı
+      # hatasını değil. Ayrıca parser pwsh 7'nin parser'ı — `release.yml` de
+      # betikleri `pwsh` ile çağırdığı için yorumlayıcı eşleşiyor, ama Windows
+      # PowerShell 5.1 farkları burada görünmez.
+      - name: Her .ps1 dosyasını ayrıştır
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          # `@(...)` zorunlu: tek dosya bulunduğunda Get-ChildItem skaler döner
+          # ve `.Count` beklenen anlamı vermez.
+          # Filtre yalnız YABANCI ağaçları eliyor (`node_modules`, `venv`,
+          # `.venv` — oradaki `activate.ps1` bizim kodumuz değil ve zaten
+          # .gitignore'da). Temiz bir checkout'ta hiçbiri yok; filtre yerel
+          # koşuya karşı. `build`/`dist` bilerek ELENMİYOR: temiz checkout'ta
+          # yoklar, varsa da bunu bilmek isteriz.
+          # `.venv` açıkça yazılı — PowerShell'in Unix'te nokta ile başlayan
+          # yolları gizli sayıp atlamasına güvenmek örtük bir bağımlılık olurdu.
+          $dosyalar = @(
+            Get-ChildItem -Path . -Filter '*.ps1' -Recurse -File |
+              Where-Object { $_.FullName -notmatch '[\\/]\.?(node_modules|venv)[\\/]' }
+          )
+
+          Write-Host "Bulunan .ps1 dosyası: $($dosyalar.Count)"
+
+          # Sıfır dosyada YEŞİL VERMEK, tam olarak kapatmaya çalıştığımız
+          # "sessiz no-op" sınıfı olurdu: dosyalar taşınır, adım hiçbir şey
+          # denetlemez, kapı yine de yeşil yanar.
+          if ($dosyalar.Count -eq 0) {
+            Write-Host "::error::Hiç .ps1 bulunamadı — bu adım sessizce hiçbir şey denetlemedi."
+            exit 1
+          }
+
+          $bozuk = 0
+          foreach ($dosya in $dosyalar) {
+            $hatalar = $null
+            $goreli = [System.IO.Path]::GetRelativePath($PWD.Path, $dosya.FullName)
+            [void][System.Management.Automation.Language.Parser]::ParseFile(
+              $dosya.FullName, [ref]$null, [ref]$hatalar
+            )
+            if ($hatalar -and $hatalar.Count -gt 0) {
+              $bozuk++
+              Write-Host "HATA  $goreli ($($hatalar.Count) sözdizimi hatası)"
+              foreach ($hata in $hatalar) {
+                $satir = $hata.Extent.StartLineNumber
+                $sutun = $hata.Extent.StartColumnNumber
+                Write-Host "::error file=$goreli,line=$satir,col=$sutun::$($hata.Message)"
+              }
+            } else {
+              Write-Host "OK    $goreli"
+            }
+          }
+
+          if ($bozuk -gt 0) {
+            Write-Host "::error::$bozuk dosyada sözdizimi hatası var."
+            exit 1
+          }
+          Write-Host "$($dosyalar.Count) dosyanın hepsi ayrıştı."

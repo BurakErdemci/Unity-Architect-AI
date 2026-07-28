@@ -24,16 +24,69 @@ Bu modül hem kütüphane hem CLI: `fetch_omnisharp.py` doğrudan import ediyor,
 kabuk betikleri (bash + PowerShell) `python3 scripts/pinned_assets.py …` ile
 çağırıyor. Tek uygulama olması bilinçli — lookup mantığını üç dilde ayrı ayrı
 yazmak, kapatmaya çalıştığımız hata sınıfının ta kendisini üretirdi.
+
+ÇIKIŞ KODU SÖZLEŞMESİ (kabuk çağıranları yalnız bu sayıyı görüyor):
+  0 = tamam
+  1 = BÜTÜNLÜK arızası: indirilen baytlar pinle uyuşmuyor, ya da tazeleme
+      eksik kaldı. ASLA tekrar denenmemeli.
+  2 = kullanım / ORTAM hatası (yanlış argüman, desteklenmeyen Python sürümü).
+  3 = İŞLETİM arızası: kütükte anahtar yok, dosya okunamadı, kütük ayrıştırılamadı.
+      Tekrar denenebilir ve düzeltilebilir; bütünlük arızasıyla ilgisi yok.
+1 ile 3'ün ayrı olması şart: denetimde ölçüldü (2026-07-28), ikisi de 1 dönerken
+okunamayan bir dosya operatöre "baytlar pinle uyuşmuyor" diye raporlanıyordu —
+projenin "uyuşmazlık asla tekrar denenmez" doktrini yüzünden en pahalı yanlış
+yönlendirme buydu.
 """
-import calendar
-import datetime
-import hashlib
-import json
-import os
-import re
+# ─────────────────────────────────────────────────────────────────────────────
+# Python sürüm kapısı — HER ŞEYDEN ÖNCE.
+#
+# Hangi arızadan doğdu: bu modül PEP 604 gösterimi (`dict | None`) kullanıyor ve o
+# gösterim def anında değerlendiriliyor, yani Python < 3.10'da modül IMPORT anında
+# TypeError atıyor. Kabuk betikleri (`fetch_video_bins.sh/.ps1`) yalnız bir python3
+# VAR MI diye bakıp sıfır olmayan her çıkışı "bu anahtar kütükte yok" sayıyordu; stok
+# macOS Python 3.9.6'da build sessizce ffmpeg/yt-dlp'siz paketleniyor ve sebebi
+# YANLIŞ raporlanıyordu (ölçüldü, varsayım değil).
+#
+# Bu blok 3.9'da da koşabilmek zorunda: PEP 604 yok, annotation yok, düz kod.
+# ─────────────────────────────────────────────────────────────────────────────
 import sys
-import urllib.error
-import urllib.request
+
+_MIN_PYTHON = (3, 10)
+
+
+def _python_surum_kapisi(bulunan, stream):
+    """Sürüm yetersizse mesajı yazıp SystemExit(2) atar; yeterliyse sessizce döner.
+
+    Fonksiyona ayrılmasının sebebi sınanabilirlik: burada 3.9 koşturulamıyor, ama
+    kapının KARARI ve mesajı doğrudan çağrılarak sınanabiliyor.
+    """
+    if tuple(bulunan) >= _MIN_PYTHON:
+        return
+    gereken = ".".join(str(x) for x in _MIN_PYTHON)
+    var_olan = ".".join(str(x) for x in bulunan)
+    stream.write(
+        "[pinned] ORTAM HATASI: scripts/pinned_assets.py en az Python " + gereken
+        + " gerektiriyor, bulunan: Python " + var_olan + ".\n"
+        "         Bu bir bütünlük arızası DEĞİL (çıkış kodu 2, 1 değil): hiçbir\n"
+        "         asset doğrulanmadı, hiçbir özet uyuşmazlığı bulunmadı.\n"
+        "         Çözüm: Python " + gereken + "+ kurup betiği onunla çağırın\n"
+        "         (ör. python3.13 scripts/pinned_assets.py …) ya da PATH'teki\n"
+        "         python3'ü güncelleyin. Stok macOS python3 (3.9.6) YETMİYOR.\n"
+    )
+    raise SystemExit(2)
+
+
+_python_surum_kapisi(sys.version_info[:3], sys.stderr)
+
+import calendar  # noqa: E402  (sürüm kapısı bilerek bütün importlardan önce)
+import datetime  # noqa: E402
+import hashlib  # noqa: E402
+import json  # noqa: E402
+import os  # noqa: E402
+import re  # noqa: E402
+import tempfile  # noqa: E402
+import urllib.error  # noqa: E402
+import urllib.request  # noqa: E402
 
 MANIFEST_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pinned_assets.json")
 
@@ -537,8 +590,50 @@ def _replace_field(block: str, name: str, value, key: str) -> str:
     return block
 
 
+def _atomik_yaz(path: str, text: str) -> None:
+    """Aynı dizinde geçici dosyaya yaz → flush + fsync → `os.replace` ile yerine koy.
+
+    Hangi arızadan doğdu: düz `open(path, "w")` dosyayı ÖNCE kesiyor. Kesme ile
+    yazmanın bitmesi arasındaki çökme/disk-dolması/kill, güven kökü olan kütüğü
+    boş ya da yarım bırakıyordu — ve aşağıdaki `json.loads` kapısı yalnız bellekteki
+    metni doğruluyor, yazmanın hayatta kaldığına dair hiçbir şey söylemiyor.
+
+    Geçici dosya HEDEFİN KENDİ dizininde açılıyor: `os.replace` yalnız aynı dosya
+    sistemi içinde atomik, dosya sistemleri arası rename değil.
+
+    `newline="\\n"`: metin modu Windows'ta her satır sonunu CRLF'e çevirip kütüğü
+    baştan sona yeniden yazardı. Bu dosyanın okunabilir diff'i bu kodun kendi
+    yorumlarında güvenlik özelliği sayılıyor (`$aciklama` "diff'i İNCELE" diyor);
+    her satırı değişmiş gösteren bir diff o talimatı boşa çıkarır.
+    """
+    dizin = os.path.dirname(os.path.abspath(path))
+    fd, gecici = tempfile.mkstemp(prefix=".pinned_assets-", suffix=".tmp", dir=dizin)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        # mkstemp 0600 veriyor; hedefin izinleri korunmazsa kütük replace sonrası
+        # okunamaz hale gelebilir (betikleri başka bir kullanıcı koşturuyorsa).
+        try:
+            os.chmod(gecici, os.stat(path).st_mode & 0o7777)
+        except OSError:
+            pass
+        os.replace(gecici, path)
+    except BaseException:
+        # Yerine konamayan geçici dosya ortada bırakılmıyor: dizinde duran yarım bir
+        # kütük kopyası, tam da kapatmaya çalıştığımız "hangisi gerçek" arızası.
+        try:
+            os.unlink(gecici)
+        except OSError:
+            pass
+        raise
+
+
 def _write_updates(updates: dict) -> None:
-    with open(MANIFEST_PATH, encoding="utf-8") as f:
+    # newline="": satır sonları OLDUĞU GİBİ okunuyor. `newline=None` (varsayılan)
+    # CRLF'i LF'e çevirir ve yazma yolu dosyayı sessizce baştan sona değiştirirdi.
+    with open(MANIFEST_PATH, encoding="utf-8", newline="") as f:
         text = f.read()
     for key, fields in updates.items():
         s, e = _block_span(text, key)
@@ -555,8 +650,7 @@ def _write_updates(updates: dict) -> None:
         for name, value in fields.items():
             if data["assets"][key][name] != value:
                 raise RefreshError(f"{key}: '{name}' yazıldıktan sonra doğrulanamadı")
-    with open(MANIFEST_PATH, "w", encoding="utf-8") as f:
-        f.write(text)
+    _atomik_yaz(MANIFEST_PATH, text)
 
 
 def refresh(keys: list[str] | None = None, *, write: bool = False, out=None) -> list[dict]:
@@ -684,8 +778,18 @@ def check(keys: list[str] | None = None, *, out=None) -> list[dict]:
 
 
 def _main(argv: list[str]) -> int:
-    """Kabuk betikleri için ince CLI. Çıkış kodu sözleşmesi:
-    0 = tamam, 1 = doğrulama başarısız ya da anahtar yok, 2 = kullanım hatası."""
+    """Kabuk betikleri için ince CLI. Çıkış kodu sözleşmesi (modül docstring'iyle aynı):
+
+      0 = tamam
+      1 = BÜTÜNLÜK arızası (özet/boyut uyuşmazlığı) ya da eksik kalan tazeleme.
+          ASLA tekrar denenmemeli.
+      2 = kullanım hatası ya da ortam hatası (desteklenmeyen Python sürümü).
+      3 = İŞLETİM arızası: anahtar kütükte yok, dosya okunamadı, kütük bozuk.
+
+    1 ile 3 bilerek AYRI. Çağıran kabuk betikleri yalnız bu sayıyı okuyor; ikisi de
+    1 iken okunamayan bir dosya operatöre "baytlar pinle uyuşmuyor" diye görünüyordu
+    ve o teşhis, doktrini gereği tekrar denenmemesi gereken bir arızayı işaret ediyor.
+    """
     if len(argv) < 2:
         print(__doc__.strip().splitlines()[0], file=sys.stderr)
         print(
@@ -748,9 +852,12 @@ def _main(argv: list[str]) -> int:
         # doğrulandıktan sonra açılıyor), o yüzden kütük bozulmadan kalıyor.
         print(f"[pinned] tazeleme hatası: {e}", file=sys.stderr)
         return 1
-    except (KeyError, OSError) as e:
+    except (KeyError, OSError, json.JSONDecodeError) as e:
+        # 3, 1 DEĞİL: bunlar işletim arızası — anahtar yok, dosya okunamadı, kütük
+        # bozuk. 1 dönerlerken kabuk çağıranı bunları "indirilen baytlar sabitlenmiş
+        # özetle uyuşmuyor" diye raporluyordu; oysa burada hiçbir bayt doğrulanmadı.
         print(f"[pinned] {e}", file=sys.stderr)
-        return 1
+        return 3
 
 
 if __name__ == "__main__":

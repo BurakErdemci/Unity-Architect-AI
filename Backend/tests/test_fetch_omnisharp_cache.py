@@ -193,8 +193,8 @@ class TestEszamanliKoşularBirbiriniBozmaz:
             real_extract(data, url, staging)
 
         monkeypatch.setattr(fetch_mod, "_extract", spy)
-        fetch_mod._install(_sdk_zip("A"), "x.zip", dest, "10.0.100", ["dotnet.exe"])
-        fetch_mod._install(_sdk_zip("B"), "x.zip", dest, "10.0.100", ["dotnet.exe"])
+        fetch_mod._install(_sdk_zip("A"), "x.zip", dest, "10.0.100", ["dotnet.exe"], asset_key=None)
+        fetch_mod._install(_sdk_zip("B"), "x.zip", dest, "10.0.100", ["dotnet.exe"], asset_key=None)
         assert seen[0] != seen[1], f"iki koşu aynı staging'i paylaştı: {seen[0]}"
         assert dest + ".staging" not in seen, "sabit staging adı geri gelmiş"
 
@@ -214,13 +214,13 @@ class TestEszamanliKoşularBirbiriniBozmaz:
             if nested_ran:
                 return
             nested_ran.append(staging)
-            fetch_mod._install(_sdk_zip("B"), "x.zip", dest, "10.0.100", ["dotnet.exe"])
+            fetch_mod._install(_sdk_zip("B"), "x.zip", dest, "10.0.100", ["dotnet.exe"], asset_key=None)
             assert os.path.isfile(os.path.join(staging, "dotnet.exe")), (
                 "ikinci koşu birincinin staging'ini götürdü"
             )
 
         monkeypatch.setattr(fetch_mod, "_extract", extract_then_reenter)
-        fetch_mod._install(_sdk_zip("A"), "x.zip", dest, "10.0.100", ["dotnet.exe"])
+        fetch_mod._install(_sdk_zip("A"), "x.zip", dest, "10.0.100", ["dotnet.exe"], asset_key=None)
 
         assert nested_ran, "iç içe koşu hiç çalışmadı — test kendini sınamıyor"
         # Son yazan kazanır; kabul edilen budur. Kabul EDİLMEYEN, iki ağacın
@@ -237,7 +237,7 @@ class TestBasarisizKurulumIzBirakmaz:
         ve eski kod her başarısız çıkarmada bir tane bırakıyordu."""
         dest = str(tmp_path / "dotnet-win-x64")
         with pytest.raises(Exception):
-            fetch_mod._install(b"bu bir zip degil", "x.zip", dest, "10.0.100", ["dotnet.exe"])
+            fetch_mod._install(b"bu bir zip degil", "x.zip", dest, "10.0.100", ["dotnet.exe"], asset_key=None)
         assert glob.glob(dest + ".staging*") == []
         assert glob.glob(dest + ".old*") == []
 
@@ -248,9 +248,9 @@ class TestBasarisizKurulumIzBirakmaz:
         `rmtree` ile silip sonra takas ediyordu; bu testin koruduğu şey, silmenin
         artık BAŞARILI takastan sonraya alınmış olması."""
         dest = str(tmp_path / "dotnet-win-x64")
-        fetch_mod._install(_sdk_zip("iyi"), "x.zip", dest, "10.0.100", ["dotnet.exe"])
+        fetch_mod._install(_sdk_zip("iyi"), "x.zip", dest, "10.0.100", ["dotnet.exe"], asset_key=None)
         with pytest.raises(Exception):
-            fetch_mod._install(b"bu bir zip degil", "x.zip", dest, "10.0.100", ["dotnet.exe"])
+            fetch_mod._install(b"bu bir zip degil", "x.zip", dest, "10.0.100", ["dotnet.exe"], asset_key=None)
         assert fetch_mod._intact(dest, "10.0.100", ["dotnet.exe", "sdk"]) is True
         assert _read(dest, "dotnet.exe") == "iyi"
 
@@ -263,14 +263,14 @@ class TestBasarisizKurulumIzBirakmaz:
         geri alınabiliyor. Bu testin `os.replace`'i patlatması, o pencereyi süreç
         öldürmeden gözlemlemenin tek ucuz yolu."""
         dest = str(tmp_path / "dotnet-win-x64")
-        fetch_mod._install(_sdk_zip("iyi"), "x.zip", dest, "10.0.100", ["dotnet.exe"])
+        fetch_mod._install(_sdk_zip("iyi"), "x.zip", dest, "10.0.100", ["dotnet.exe"], asset_key=None)
 
         def boom(src, dst):
             raise OSError("takas tutmadı")
 
         monkeypatch.setattr(fetch_mod.os, "replace", boom)
         with pytest.raises(OSError):
-            fetch_mod._install(_sdk_zip("yeni"), "x.zip", dest, "10.0.100", ["dotnet.exe"])
+            fetch_mod._install(_sdk_zip("yeni"), "x.zip", dest, "10.0.100", ["dotnet.exe"], asset_key=None)
         monkeypatch.undo()
         assert fetch_mod._intact(dest, "10.0.100", ["dotnet.exe", "sdk"]) is True
         assert _read(dest, "dotnet.exe") == "iyi"
@@ -289,7 +289,7 @@ class TestBasarisizKurulumIzBirakmaz:
         old = time.time() - fetch_mod._STALE_LEFTOVER_SECONDS - 60
         os.utime(stale, (old, old))
 
-        fetch_mod._install(_sdk_zip("A"), "x.zip", dest, "10.0.100", ["dotnet.exe"])
+        fetch_mod._install(_sdk_zip("A"), "x.zip", dest, "10.0.100", ["dotnet.exe"], asset_key=None)
 
         assert not os.path.exists(stale), "bayat kalıntı süpürülmedi"
         assert os.path.isdir(fresh), "canlı komşunun staging'i silinmiş"
@@ -304,7 +304,7 @@ class TestKurulumSonrasiAgacGuncelSayilir:
         self, fetch_mod, tmp_path
     ):
         dest = str(tmp_path / "dotnet-win-x64")
-        fetch_mod._install(_sdk_zip("A"), "x.zip", dest, "10.0.100", ["dotnet.exe"])
+        fetch_mod._install(_sdk_zip("A"), "x.zip", dest, "10.0.100", ["dotnet.exe"], asset_key=None)
         assert fetch_mod._intact(dest, "10.0.100", ["dotnet.exe", "sdk"]) is True
 
     def test_the_version_stamp_ends_up_inside_the_target_and_not_beside_it(
@@ -313,7 +313,7 @@ class TestKurulumSonrasiAgacGuncelSayilir:
         """Damganın yeri dünkü arızanın düzeltmesiydi: hedefin İÇİNDE olmalı, çünkü
         `_intact` oraya bakıyor ve hedefle birlikte atomik takas edilmesi gereken de o."""
         dest = str(tmp_path / "dotnet-win-x64")
-        fetch_mod._install(_sdk_zip("A"), "x.zip", dest, "10.0.100", ["dotnet.exe"])
+        fetch_mod._install(_sdk_zip("A"), "x.zip", dest, "10.0.100", ["dotnet.exe"], asset_key=None)
         assert _read(dest, ".version") == "10.0.100"
         assert not os.path.exists(dest + ".version")
 
@@ -441,7 +441,7 @@ class TestArsivHedefinDisinaYazamaz:
 
         monkeypatch.setattr(fetch_mod, "_extract", _sahte_extract)
         with pytest.raises(RuntimeError, match="sembolik bağ"):
-            fetch_mod._install(b"", "x.tar.gz", str(dest), "v1", ["OmniSharp"])
+            fetch_mod._install(b"", "x.tar.gz", str(dest), "v1", ["OmniSharp"], asset_key=None)
         assert oct(os.stat(kurban).st_mode)[-3:] == "600"
 
 class TestSembolikBagKuruluSayilmaz:
@@ -487,7 +487,7 @@ class TestSembolikBagKuruluSayilmaz:
 
         monkeypatch.setattr(fetch_mod, "_extract", _sahte_extract)
         with pytest.raises(RuntimeError, match="sembolik bağ"):
-            fetch_mod._install(b"", "x.tar.gz", str(dest), "v1", [])
+            fetch_mod._install(b"", "x.tar.gz", str(dest), "v1", [], asset_key=None)
         assert kurban.read_text() == "dokunulmamis"
 
 
@@ -550,7 +550,7 @@ class TestBozukBaytlarKurulmaz:
         sabitle(self.KEY, _sdk_zip("A"))
         with pytest.raises(fetch_mod.pinned_assets.IntegrityError):
             fetch_mod._install(
-                _sdk_zip("B"), "x.zip", dest, "10.0.100+abc", ["dotnet.exe"], self.KEY
+                _sdk_zip("B"), "x.zip", dest, "10.0.100+abc", ["dotnet.exe"], asset_key=self.KEY
             )
 
     def test_a_refused_download_writes_nothing_at_all_to_the_target(
@@ -564,7 +564,7 @@ class TestBozukBaytlarKurulmaz:
         sabitle(self.KEY, _sdk_zip("A"))
         with pytest.raises(fetch_mod.pinned_assets.IntegrityError):
             fetch_mod._install(
-                _sdk_zip("B"), "x.zip", dest, "10.0.100+abc", ["dotnet.exe"], self.KEY
+                _sdk_zip("B"), "x.zip", dest, "10.0.100+abc", ["dotnet.exe"], asset_key=self.KEY
             )
         assert not os.path.exists(dest), "reddedilen arşiv hedefe yazmış"
         assert glob.glob(dest + ".staging*") == [], "reddedilen arşiv açılmış"
@@ -578,7 +578,7 @@ class TestBozukBaytlarKurulmaz:
         sabitle(self.KEY, _sdk_zip("uzunca-bir-govde"))
         with pytest.raises(fetch_mod.pinned_assets.IntegrityError, match="boyut"):
             fetch_mod._install(
-                _sdk_zip("A"), "x.zip", dest, "10.0.100+abc", ["dotnet.exe"], self.KEY
+                _sdk_zip("A"), "x.zip", dest, "10.0.100+abc", ["dotnet.exe"], asset_key=self.KEY
             )
         assert not os.path.exists(dest)
 
@@ -591,7 +591,7 @@ class TestBozukBaytlarKurulmaz:
         blob = _sdk_zip("A")
         sabitle(self.KEY, blob)
         stamp = fetch_mod._stamp_value("10.0.100", self.KEY)
-        fetch_mod._install(blob, "x.zip", dest, stamp, ["dotnet.exe"], self.KEY)
+        fetch_mod._install(blob, "x.zip", dest, stamp, ["dotnet.exe"], asset_key=self.KEY)
         assert _read(dest, "dotnet.exe") == "A"
         assert fetch_mod._intact(dest, stamp, ["dotnet.exe", "sdk"]) is True
 
@@ -715,9 +715,15 @@ class TestUretimYolundaDogrulamaAtlanamaz:
     def test_every_production_install_passes_a_pinned_asset_key(self):
         """Asıl garanti: üretim yolunda doğrulamasız kurulum yok."""
         for cagri in self._uretim_cagrilari():
-            assert re.search(r"\bkey\b|omnisharp/|dotnet-sdk/", cagri), (
-                "bir _install çağrısı sabitlenmiş asset anahtarı geçirmiyor, yani "
-                f"indirilen baytlar doğrulanmadan kurulur:\n  {cagri}"
+            # ⚠️ Eskiden burada `\bkey\b` aranıyordu ve bu ATLATILABİLİRDİ:
+            # `_install(..., _stamp_value(VERSION, key), [marker])` yazınca `key`
+            # kelimesi geçiyor, kapı "geçti" diyor, ama `asset_key` DÜŞMÜŞ oluyor.
+            # Dış denetimde (2026-07-28) tam bu refactor gösterildi ve iki testi de
+            # sağ geçti. Artık anahtar-kelime biçiminin KENDİSİ aranıyor; `_install`
+            # imzası da `*` ile keyword-only olduğu için konumsal geçmek mümkün değil.
+            assert "asset_key=" in cagri, (
+                "bir _install çağrısı `asset_key=` geçirmiyor, yani indirilen "
+                f"baytlar doğrulanmadan kurulur:\n  {cagri}"
             )
             assert "asset_key=None" not in cagri, (
                 f"doğrulama açıkça kapatılmış:\n  {cagri}"

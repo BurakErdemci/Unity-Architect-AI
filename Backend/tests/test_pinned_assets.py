@@ -24,6 +24,7 @@ import os
 import re
 import shutil
 import urllib.error
+import urllib.parse
 import urllib.request
 
 import pytest
@@ -104,6 +105,69 @@ class TestKutukKendiBicimineUyuyor:
                 assert re.fullmatch(r"yerel:\d{4}-\d{2}-\d{2}", kaynak), (
                     f"{key}: elle hesaplanan özet tarihsiz — 'yerel:YYYY-AA-GG' olmalı"
                 )
+
+
+class TestIndirmeKaynagiAllowlistDisinaCikamaz:
+    """Denetim bulgusu (missing-download-origin-policy): kütük bu deponun bütün
+    build-zamanı indirmelerinin güven kökü, ama HERHANGİ bir https adresi kabul
+    ediliyordu. Bir URL'i ve özetini BİRLİKTE değiştiren bir düzenleme doğrulamayı
+    sorunsuz geçer — çünkü doğrulama "baytlar kütükle uyuşuyor mu" diye sorar,
+    "kütük doğru mu" diye değil. Tek engel diff'i okuyan insandı; yani bir kapı
+    değil, bir süreç. Bu depoda süreçle tutulan hiçbir kural iki haftadan uzun
+    yaşamadı (ölçüldü: 6 lane'in 1'inde uygulandı).
+
+    Host allowlist'i bunu kapıya çeviriyor: özet değiştirmek hâlâ diff'te
+    görünmeyebilir, ama indirmenin NEREDEN geldiğini değiştirmek artık bu dosyaya
+    dokunmadan mümkün değil. Yeni bir host eklemek BİLİNÇLİ bir karardır ve
+    burada, görünür biçimde verilmelidir — bir veri dosyasında sessizce değil.
+    Liste bugün fiilen kullanılan hostlardan türetildi (2026-07-28, 19 girdi).
+
+    Kapının kendisi teste konuldu, `pinned_assets.py`'ye değil: modül hem indirme
+    hem doğrulama yolunda koşuyor, oraya konan bir liste build makinesinde
+    kırılırdı; buradaki ise kütük düzenlenirken, CI'da, insan diff'inden ÖNCE
+    kırılır."""
+
+    # Her satır bir yayıncı. Silmeden/eklemeden önce: bu host'un yayınladığı
+    # baytlar son kullanıcıda çalıştırılıyor.
+    _IZINLI_HOSTLAR = frozenset({
+        "github.com",                    # omnisharp, uv, yt-dlp, ffmpeg/win (BtbN)
+        "api.nuget.org",                 # roslyn/* paketleri
+        "builds.dotnet.microsoft.com",   # dotnet-sdk/*
+        "evermeet.cx",                   # ffmpeg/macos (statik, checksum yayınlamıyor)
+        "johnvansickle.com",             # ffmpeg/linux (statik)
+    })
+
+    @staticmethod
+    def _host(url: str) -> str:
+        # `netloc` DEĞİL `hostname`: netloc userinfo ve port taşıyabiliyor
+        # ('https://github.com@baska.example/x' → netloc 'github.com@baska.example',
+        # hostname 'baska.example'). hostname ayrıca küçük harfe indiriyor, yani
+        # 'GitHub.com' ile kaçamak da kapanıyor.
+        return urllib.parse.urlsplit(url).hostname or ""
+
+    def test_every_asset_url_points_at_an_allowlisted_host(self, entries):
+        for key, e in entries.items():
+            host = self._host(e["url"])
+            assert host in self._IZINLI_HOSTLAR, (
+                f"{key}: '{host}' izinli indirme kaynakları arasında değil.\n"
+                f"  Bu bilerek yapılan bir değişiklikse host'u bu testteki "
+                f"_IZINLI_HOSTLAR listesine ELLE ekle — kararın kütükte değil "
+                f"burada, görünür biçimde verilmesi isteniyor."
+            )
+
+    def test_the_allowlist_names_no_host_that_is_no_longer_used(self, entries):
+        """Kapının çok GENİŞ olmadığı yönü — bu deponun en pahalı dersi tam buydu:
+        bütün testler kapının dar olmadığını sınıyordu, hiçbiri geniş olmadığını
+        sınamıyordu. Artık kullanılmayan bir host listede kalırsa, allowlist
+        zamanla 'fiilen kullanılanlar'dan 'bir zamanlar kullanılmışlar'a döner ve
+        izin verdiği yüzey sessizce büyür."""
+        kullanilan = {self._host(e["url"]) for e in entries.values()}
+        assert kullanilan, "kütükte hiç asset yok — bu testler boşa koşuyor"
+        artakalan = self._IZINLI_HOSTLAR - kullanilan
+        assert not artakalan, (
+            f"allowlist'te artık hiçbir asset'in kullanmadığı host(lar) var: "
+            f"{sorted(artakalan)} — bir asset kaldırıldıysa host'u da kaldır"
+        )
 
 
 class TestDogrulamaIkiYondenDeCalisiyor:
@@ -205,6 +269,37 @@ class TestCSharpTablosuKutukleAyrisamaz:
         for pid, (ver, _digest) in self._csharp_entries().items():
             url = entries[f"roslyn/{pid}"]["url"]
             assert f"/{ver}/" in url, f"{pid}: C# sürümü {ver}, kütük URL'i {url}"
+
+    @staticmethod
+    def _manifest_roslyn_keys(entries) -> set:
+        return {k for k in entries if k.startswith("roslyn/")}
+
+    def test_the_manifest_actually_contains_roslyn_rows(self, entries):
+        """Kendini sınayan test, ters yön için. Anahtar öneki değişirse (örn.
+        'roslyn/' → 'roslyn-') aşağıdaki test BOŞ küme üzerinde koşar ve sessizce
+        geçer — yani kapı, kırılmadan kaybolur. Bu satır o sessizliği engelliyor."""
+        assert len(self._manifest_roslyn_keys(entries)) == 4, (
+            "kütükte beklenen sayıda roslyn/* girdisi yok; paket sayısı gerçekten "
+            "değiştiyse bu sayı ve RoslynInstaller.cs tablosu birlikte güncellenmeli"
+        )
+
+    def test_every_manifest_roslyn_row_exists_in_the_csharp_table(self, entries):
+        """Denetim bulgusu (one-way-drift-gate): yukarıdaki testler C# tablosunu
+        gezip her satırın kütükte olduğunu sınıyordu, yani kapı TEK YÖNLÜYDÜ.
+        Kütüğe bir `roslyn/*` eklenip installer'a satır eklenmediğinde döngü o
+        girdiyi hiç ziyaret etmiyor ve boşluk sessiz kalıyordu — üstelik sessizliği
+        kullanıcı ödüyor: paket kütükte var, Unity tarafında hiç indirilmiyor.
+
+        Aynı arıza sınıfı bu depoda üç kez yaşandı (damga doğru/ağaç eksik,
+        `csproj_count` üretilip tüketilmedi, `didOpen` var `didChange` yok):
+        birbiriyle uyuşması gereken iki yer, ve yalnız bir yönü denetleniyor."""
+        cs = self._csharp_entries()
+        for key in sorted(self._manifest_roslyn_keys(entries)):
+            pid = key.partition("/")[2]
+            assert pid in cs, (
+                f"kütükteki '{key}' RoslynInstaller.cs tablosunda YOK — kütüğe paket "
+                f"eklenmiş ama installer'a satır eklenmemiş; bu paket hiç indirilmez"
+            )
 
     def test_no_csharp_digest_is_left_as_a_placeholder(self):
         """`TODO-DIGEST` bilerek fail-loud bırakılmıştı; dolmadan sürüm çıkmasın."""
@@ -669,3 +764,252 @@ class TestBozukPinKapiyiAcamaz:
         sahte["size"] = len(data)
         monkeypatch.setattr(pinned, "asset", lambda k: sahte)
         pinned.verify_bytes(data, "omnisharp/osx-arm64")
+
+
+def _gecici_kalintilar(dizin) -> list:
+    """Yerine konamamış geçici kütük kopyaları. Dizinde kalan yarım bir kopya,
+    'hangisi gerçek kütük' sorusunu doğurur — düzeltmenin kapatmaya çalıştığı
+    arızanın aynısı."""
+    return [p.name for p in dizin.iterdir() if p.name.startswith(".pinned_assets-")]
+
+
+class TestKutugeYazmaYarimKalamaz:
+    """Kütük güven kökü; yazılması ya TAMAMEN olur ya HİÇ olmaz.
+
+    Hangi arızadan doğdu (dış denetim, 2026-07-28): `refresh --write` kütüğü düz
+    `open(path, "w")` ile yeniden yazıyordu; bu dosyayı ÖNCE kesiyor. Kesme ile
+    yazmanın bitmesi arasındaki bir çökme/disk-dolması güven kökünü boş ya da yarım
+    bırakırdı. Mevcut `json.loads` kapısı bunu görmüyor: o yalnız BELLEKTEKİ metni
+    doğruluyor, yazmanın hayatta kaldığına dair hiçbir şey söylemiyor.
+    """
+
+    def test_a_failed_rename_leaves_the_original_ledger_intact(
+        self, pinned, kutuk, monkeypatch
+    ):
+        """Son adım (`os.replace`) patlarsa kütük DOKUNULMAMIŞ kalmalı."""
+        once = kutuk.read_bytes()
+        gercek_replace = os.replace
+
+        def patlayan_replace(src, dst, *a, **kw):
+            # Yalnız kütüğe yapılan replace patlıyor; testin geri kalanı (pytest'in
+            # kendi dosya işlemleri dahil) gerçek os.replace'i kullanmaya devam etsin.
+            if str(dst) == str(kutuk):
+                raise OSError(28, "sahte: aygıtta yer kalmadı")
+            return gercek_replace(src, dst, *a, **kw)
+
+        monkeypatch.setattr(os, "replace", patlayan_replace)
+        _sahte_ag(monkeypatch, _uv_rotalari())
+        with pytest.raises(OSError):
+            pinned.refresh(["uv/darwin-arm64"], write=True, out=io.StringIO())
+
+        assert kutuk.read_bytes() == once, "yarım kalan yazma kütüğü değiştirdi"
+        json.loads(kutuk.read_text(encoding="utf-8"))   # ayrıştırılabilir mi
+        assert _gecici_kalintilar(kutuk.parent) == [], "geçici dosya ortada bırakıldı"
+
+    def test_a_failed_flush_leaves_the_original_ledger_intact(
+        self, pinned, kutuk, monkeypatch
+    ):
+        """Diğer yön: arıza yazma/fsync sırasında çıkarsa da kütük bozulmamalı.
+
+        Ayrı test, çünkü iki arıza noktası ayrı: `os.replace` patladığında hedefe
+        hiç dokunulmamıştır; fsync patladığında ise geçici dosya YARIM kalmıştır ve
+        asıl soru onun hedefin üstüne konmaması (ve ortada bırakılmaması).
+        """
+        once = kutuk.read_bytes()
+
+        def patlayan_fsync(fd):
+            raise OSError(5, "sahte: G/Ç hatası")
+
+        monkeypatch.setattr(os, "fsync", patlayan_fsync)
+        _sahte_ag(monkeypatch, _uv_rotalari())
+        with pytest.raises(OSError):
+            pinned.refresh(["uv/darwin-arm64"], write=True, out=io.StringIO())
+
+        assert kutuk.read_bytes() == once, "yarım yazılan dosya kütüğün üstüne kondu"
+        json.loads(kutuk.read_text(encoding="utf-8"))
+        assert _gecici_kalintilar(kutuk.parent) == [], "geçici dosya ortada bırakıldı"
+
+    def test_a_successful_write_still_lands_with_the_prose_intact(
+        self, pinned, kutuk, monkeypatch
+    ):
+        """Karşıt yön. Atomik yazma 'hiç yazma' ile geçilebilecek bir kapı değil:
+        başarılı koşuda değerler oturmalı ve `$aciklama`/`$not`/`$roslyn_notu`
+        blokları yerinde kalmalı (bu bloklar ölçülmüş gerekçe taşıyor)."""
+        _sahte_ag(monkeypatch, _uv_rotalari())
+        pinned.refresh(["uv/darwin-arm64"], write=True, out=io.StringIO())
+
+        veri = json.loads(kutuk.read_text(encoding="utf-8"))
+        with open(_MANIFEST, encoding="utf-8") as f:
+            asil = json.load(f)
+        assert veri["assets"]["uv/darwin-arm64"]["url"] == _UV_TAR
+        assert veri["assets"]["uv/darwin-arm64"]["digest"] == "sha256:" + _HEX_A
+        assert veri["$aciklama"] == asil["$aciklama"]
+        assert veri["$roslyn_notu"] == asil["$roslyn_notu"]
+        # `$not` asset bloklarının içinde (üst düzeyde yok): ffmpeg/win'inki pinin
+        # süresinin DOLACAĞINI anlatıyor, kaybolursa 404'ün sebebi yeniden keşfedilir.
+        assert veri["assets"]["ffmpeg/win"]["$not"] == asil["assets"]["ffmpeg/win"]["$not"]
+        assert veri["assets"]["ffmpeg/macos"]["$not"] == asil["assets"]["ffmpeg/macos"]["$not"]
+        assert _gecici_kalintilar(kutuk.parent) == [], "başarılı koşuda geçici dosya kaldı"
+
+    def test_the_write_does_not_rewrite_every_line_ending(
+        self, pinned, kutuk, monkeypatch
+    ):
+        """Metin modu Windows'ta her `\\n`'i CRLF yapıyordu; o da elle incelenmesi
+        istenen diff'i 'her satır değişti'ye çeviriyordu. Kütüğün okunabilir diff'i
+        bu kodun kendi yorumlarında bir güvenlik özelliği sayılıyor."""
+        once = kutuk.read_bytes()
+        assert b"\r" not in once, "başlangıç kütüğü zaten LF değil — test varsayımı çöktü"
+        _sahte_ag(monkeypatch, _uv_rotalari())
+        pinned.refresh(["uv/darwin-arm64"], write=True, out=io.StringIO())
+
+        sonra = kutuk.read_bytes()
+        assert b"\r" not in sonra, "yazma satır sonlarını CRLF'e çevirdi"
+        assert once.count(b"\n") == sonra.count(b"\n"), "satır sayısı değişti"
+        farkli = [a for a, b in zip(once.split(b"\n"), sonra.split(b"\n")) if a != b]
+        assert len(farkli) <= 4, (
+            f"tek bir asset tazelenirken {len(farkli)} satır değişti — diff okunamaz hale gelir"
+        )
+
+    def test_a_crlf_ledger_round_trips_as_crlf(self, pinned, tmp_path, monkeypatch):
+        """Öteki platform yönü: kütük CRLF ile check-out edilmişse (Windows,
+        `core.autocrlf=true`) yazma onu LF'e çevirmemeli. İki yön birlikte
+        'dosya hangi platformda yazılırsa yazılsın bayt bayt kendisi kalır' demek."""
+        crlf = tmp_path / "pinned_assets.json"
+        ham = open(_MANIFEST, "rb").read()
+        crlf.write_bytes(ham.replace(b"\n", b"\r\n"))
+        monkeypatch.setattr(pinned, "MANIFEST_PATH", str(crlf))
+        satir_sonu = crlf.read_bytes().count(b"\r\n")
+
+        _sahte_ag(monkeypatch, _uv_rotalari())
+        pinned.refresh(["uv/darwin-arm64"], write=True, out=io.StringIO())
+
+        sonra = crlf.read_bytes()
+        assert sonra.count(b"\r\n") == satir_sonu, "CRLF kütük LF'e çevrildi"
+        assert sonra.count(b"\n") == sonra.count(b"\r\n"), "satır sonları karıştı"
+        assert json.loads(sonra.decode("utf-8"))["assets"]["uv/darwin-arm64"]["url"] == _UV_TAR
+
+
+class TestCikisKodlariArizaSiniflariniAyiriyor:
+    """Kabuk çağıranları yalnız çıkış kodunu okuyor; kod, arıza SINIFINI taşımak
+    zorunda.
+
+    Hangi arızadan doğdu (dış denetim, 2026-07-28): `IntegrityError` 1 dönüyordu,
+    ama `KeyError`/`OSError` de 1 dönüyordu. Yani okunamayan bir dosya ya da kütükte
+    olmayan bir anahtar operatöre "indirilen baytlar sabitlenmiş özetle uyuşmuyor"
+    diye raporlanıyordu. Bu, mümkün olan en pahalı yanlış yönlendirme: projenin
+    yazılı doktrini bir özet uyuşmazlığının ASLA tekrar denenmemesi.
+    """
+
+    _KEY = "omnisharp/osx-arm64"
+
+    def _butunluk_kodu(self, pinned, tmp_path) -> int:
+        dosya = tmp_path / "indirilmis.bin"
+        dosya.write_bytes(b"bunlar beklenen baytlar degil")
+        return pinned._main(["pinned_assets.py", "verify", self._KEY, str(dosya)])
+
+    def test_an_integrity_failure_still_exits_1(self, pinned, kutuk, tmp_path, capsys):
+        """1'in anlamı korunuyor: kabuk betikleri ona göre yazılmış."""
+        assert self._butunluk_kodu(pinned, tmp_path) == 1
+        assert "BÜTÜNLÜK" in capsys.readouterr().err
+
+    def test_an_unreadable_file_exits_3_not_1(self, pinned, kutuk, tmp_path):
+        """Dosya hiç yok: bu bir G/Ç arızası, doğrulanmış bir uyuşmazlık değil."""
+        yok = tmp_path / "hic-inmemis.bin"
+        assert pinned._main(["pinned_assets.py", "verify", self._KEY, str(yok)]) == 3
+
+    def test_a_missing_key_exits_3_not_1(self, pinned, kutuk):
+        assert pinned._main(["pinned_assets.py", "url", "boyle/bir/anahtar/yok"]) == 3
+
+    def test_a_corrupt_ledger_exits_3_not_1(self, pinned, kutuk):
+        """Ayrıştırılamayan kütük de işletim arızası: hiçbir bayt doğrulanmadı."""
+        kutuk.write_text("{ bu json degil", encoding="utf-8")
+        assert pinned._main(["pinned_assets.py", "keys"]) == 3
+
+    def test_the_two_classes_are_actually_distinguishable(
+        self, pinned, kutuk, tmp_path
+    ):
+        """Testin asıl noktası. Yukarıdaki iki testin ikisi de geçip kodlar EŞİT
+        olsaydı, çağıran hâlâ ayırt edemezdi — o yüzden fark burada açıkça
+        sınanıyor, sabitlere değil ilişkiye bakılarak."""
+        butunluk = self._butunluk_kodu(pinned, tmp_path)
+        islem = pinned._main(["pinned_assets.py", "url", "boyle/bir/anahtar/yok"])
+        assert butunluk != 0 and islem != 0, "iki arıza da başarısızlık olarak dönmeli"
+        assert butunluk != islem, (
+            f"bütünlük arızası ve işletim arızası aynı kodu ({butunluk}) döndürüyor — "
+            "çağıran 'tekrar deneme' ile 'ortamı düzelt'i ayırt edemez"
+        )
+
+    def test_a_usage_error_still_exits_2(self, pinned, kutuk):
+        """2'nin anlamı DEĞİŞMEDİ; 3 ondan da ayrı olmalı."""
+        assert pinned._main(["pinned_assets.py"]) == 2
+        assert pinned._main(["pinned_assets.py", "verify", self._KEY]) == 2
+
+
+class TestPythonSurumKapisi:
+    """Desteklenmeyen yorumlayıcı, 'anahtar kütükte yok' diye teşhis edilmemeli.
+
+    Hangi arızadan doğdu (dış denetim, 2026-07-28, ölçülmüş): modül PEP 604 gösterimi
+    (`dict | None`) kullanıyor, o gösterim def anında değerlendiriliyor, yani Python
+    3.9'da modül IMPORT anında TypeError atıyor. `fetch_video_bins.sh/.ps1` yalnız bir
+    python3 VAR MI diye bakıp sıfır olmayan her çıkışı "bu anahtar kütükte yok" sayıyor
+    ve binary'yi `exit 0` ile atlıyordu. Stok macOS Python 3.9.6'da build sessizce
+    ffmpeg/yt-dlp'siz çıkıyor, üstelik SEBEBİ yanlış raporlanıyordu.
+
+    ⚠️ Burada 3.9 KOŞTURULAMIYOR (bu ortam 3.13). O yüzden kapının kendisi
+    çalıştırılmış gibi yapılmıyor; kapının KARARI, MESAJI, ÇIKIŞ KODU ve modüldeki
+    YERİ doğrudan sınanıyor. Sınanmayan tek şey, 3.9'un bu blok import edilirken
+    gerçekten hata vermemesi — o yalnız blokta PEP 604/walrus kullanılmamasıyla
+    sağlanıyor ve aşağıdaki kaynak testi onu bağlıyor.
+    """
+
+    def test_an_unsupported_interpreter_is_refused_by_name(self, pinned):
+        akis = io.StringIO()
+        with pytest.raises(SystemExit) as cikis:
+            pinned._python_surum_kapisi((3, 9, 6), akis)
+        mesaj = akis.getvalue()
+        assert "3.10" in mesaj, "mesaj GEREKEN en düşük sürümü söylemiyor"
+        assert "3.9.6" in mesaj, "mesaj BULUNAN sürümü söylemiyor — teşhis eksik kalır"
+        assert cikis.value.code == 2
+
+    def test_the_guard_does_not_borrow_the_integrity_exit_code(self, pinned):
+        """1 dönerse operatör 'baytlar pinle uyuşmuyor' okur; oysa hiçbir bayt
+        indirilmedi. Ortam hatası 2, bütünlük hatası 1 — karışmamalı."""
+        with pytest.raises(SystemExit) as cikis:
+            pinned._python_surum_kapisi((3, 9, 6), io.StringIO())
+        assert cikis.value.code != 1
+        assert cikis.value.code == 2
+
+    def test_a_supported_interpreter_passes_silently(self, pinned):
+        """Karşıt yön: kapı çok GENİŞ kapanırsa desteklenen sürümde de build ölür."""
+        for surum in [(3, 10, 0), (3, 12, 7), (3, 13, 13), (4, 0, 0)]:
+            akis = io.StringIO()
+            assert pinned._python_surum_kapisi(surum, akis) is None, surum
+            assert akis.getvalue() == "", f"{surum} için gereksiz uyarı basıldı"
+
+    def test_the_minimum_matches_the_syntax_the_module_actually_uses(self, pinned):
+        """Eşiğin ezbere yazılmadığının kanıtı: modül gerçekten PEP 604 kullanıyor
+        ve PEP 604 tam olarak 3.10'da geldi. Biri gösterimden vazgeçerse ya da
+        eşiği düşürürse ikisi ayrışır ve bu satır kırılır."""
+        assert pinned._MIN_PYTHON == (3, 10)
+        with open(pinned.__file__, encoding="utf-8") as f:
+            kaynak = f.read()
+        assert re.search(r"def \w+\([^)]*: *\w+ \| None", kaynak), (
+            "modülde PEP 604 imzası kalmamış — o zaman 3.10 eşiği gerekçesini "
+            "kaybetti, kapı ya kaldırılmalı ya gerekçesi yenilenmeli"
+        )
+
+    def test_the_guard_runs_before_anything_that_could_break_on_3_9(self, pinned):
+        """Kapının YERİ işlevinin yarısı: PEP 604 taşıyan ilk def'ten sonra
+        konursa 3.9'da modül kapı çalışmadan TypeError ile ölür ve arıza aynen
+        geri gelir. Yapısal olarak sınanıyor, çünkü hatırlamaya bağlanamaz."""
+        with open(pinned.__file__, encoding="utf-8") as f:
+            kaynak = f.read()
+        kapi = kaynak.index("_python_surum_kapisi(sys.version_info")
+        pep604 = re.search(r"def \w+\([^)]*: *\w+ \| None", kaynak).start()
+        assert kapi < pep604, "sürüm kapısı PEP 604 imzasından SONRA koşuyor"
+        # Kapının kendisi 3.9'da ayrıştırılabilir olmalı: bloğun içinde ne PEP 604
+        # ne de `match` var. (3.9'da koşturamadığımız için sınırı burada bağlıyoruz.)
+        blok = kaynak[:kapi]
+        assert "|" not in blok.split("def _python_surum_kapisi", 1)[1], (
+            "sürüm kapısının gövdesinde `|` var — 3.9'da ayrıştırılamayabilir"
+        )

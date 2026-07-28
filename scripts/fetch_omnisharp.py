@@ -252,7 +252,8 @@ def _install(
     dest: str,
     stamp_value: str,
     exec_names: list[str],
-    asset_key: str | None = None,
+    *,
+    asset_key: str | None,
 ) -> None:
     """Baytları DOĞRULA, staging'e çıkar, sonra hedefi TAKAS et. Doğrudan hedefe
     çıkarmak, yarıda kesilen bir indirmede yarım ağaç + eski dosya karışımı
@@ -350,7 +351,7 @@ def fetch(platform: str) -> None:
         print(f"[fetch_omnisharp] {platform} zaten {VERSION} — atlandı.")
         return
     url = ASSETS[platform]
-    _install(_download(url), url, dest, stamp, [marker], key)
+    _install(_download(url), url, dest, stamp, [marker], asset_key=key)
     print(f"[fetch_omnisharp] tamam: {dest}")
 
 
@@ -369,7 +370,7 @@ def fetch_dotnet(platform: str) -> None:
         return
     url = DOTNET_ASSETS[platform]
     print(f"[fetch_omnisharp] .NET SDK indiriliyor (~200-290 MB, sürebilir)")
-    _install(_download(url), url, dest, stamp, [markers[0]], key)
+    _install(_download(url), url, dest, stamp, [markers[0]], asset_key=key)
     print(f"[fetch_omnisharp] dotnet tamam: {dest}")
 
 
