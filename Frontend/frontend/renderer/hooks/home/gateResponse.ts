@@ -44,6 +44,19 @@ export interface GateDelivery {
 export interface GateFailure {
   message: string;
   type: 'warning' | 'error';
+  /**
+   * Teslimatın GERÇEKLEŞİP gerçekleşmediği bilinmiyor mu?
+   *
+   * `false`/tanımsız = kesin başarısızlık: sunucudan bir yanıt ALINDI ve o yanıt
+   * işlemin yapılmadığını söylüyor.
+   * `true` = yanıt hiç alınamadı; işlem yapılmış da olabilir yapılmamış da.
+   *
+   * Neden ayrı bir alan ve neden mesaja gömülmedi: çağrı yerlerinin bu ayrımı
+   * programatik olarak görmesi gerekiyor (ör. otomatik yeniden gönderme ASLA
+   * belirsiz durumda yapılmamalı). Mesajı ayrıştırmak, uyuşması gereken ikinci
+   * bir yer üretirdi.
+   */
+  uncertain?: boolean;
 }
 
 const readStatus = (body: unknown): string | null => {
@@ -55,7 +68,13 @@ const readStatus = (body: unknown): string | null => {
 };
 
 /**
- * Teslimat başarılıysa null döner. Başarısızsa kullanıcıya gösterilecek mesaj.
+ * ÜÇ durum döner, iki değil:
+ *   null                      → teslimat başarılı (yanıt alındı, `status === 'ok'`)
+ *   { uncertain: true, … }    → yanıt HİÇ alınamadı; işlem yapılmış olabilir
+ *   { uncertain: yok, … }     → yanıt alındı ve işlemin yapılmadığı kesin
+ *
+ * Üçüncü durumu ikinciye katlamak, kanıtı olmayan bir iddiadır ve kullanıcıyı
+ * aynı komutu iki kez çalıştırmaya iter — bu tam olarak 2026-07-28 bulgusuydu.
  *
  * Sözleşme kasıtlı olarak "beyaz liste": yalnız `status === 'ok'` başarıdır.
  * Backend ileride yeni bir başarısızlık durumu eklerse (kara liste kullansaydık)
@@ -64,13 +83,40 @@ const readStatus = (body: unknown): string | null => {
 export function gateFailure(action: GateAction, delivery: GateDelivery): GateFailure | null {
   const label = ACTION_LABELS[action];
 
+  // BELİRSİZ dal — üç durumun ortadakisi.
+  //
+  // Dış denetim bulgusu (2026-07-28): `fetch` istisnası "istek gitmedi" ANLAMINA
+  // GELMEZ. POST backend tarafından işlendikten SONRA yanıt yolda kaybolursa
+  // (süreç düştü, soket koptu, kullanıcı pencereyi kapattı) `fetch` yine hata
+  // verir. Buradaki eski mesaj kesin biçimde "İşlem yapılmadı — tekrar deneyin"
+  // diyordu; komut gerçekte çalışmış olabilir ve kullanıcı tekrar gönderip aynı
+  // komutu İKİ KEZ çalıştırabilirdi.
+  //
+  // Bir önceki düzeltme bir aşırı iddiayı (sessizce başarı say) tersiyle
+  // (kesinlikle başarısız say) değiştirmişti; İKİSİ DE yanlış. Elde olan bilgi
+  // "başarısız" değil, "bilinmiyor" — mesaj da tam olarak onu söylemeli ve
+  // kullanıcıyı körlemesine tekrara değil önce DURUM KONTROLÜNE yönlendirmeli.
+  //
+  // Tip `warning`, `error` değil: kırmızı bir "başarısız" rozeti, kanıtımız
+  // olmayan bir sonucu iddia etmenin görsel biçimi olurdu.
   if (delivery.error !== undefined && delivery.error !== null) {
     return {
-      message: `${label} sunucuya ULAŞMADI (bağlantı hatası). İşlem yapılmadı — tekrar deneyin.`,
-      type: 'error',
+      message:
+        `${label} gönderildi ama sunucudan yanıt alınamadı (bağlantı hatası). ` +
+        `ULAŞIP ULAŞMADIĞI BİLİNMİYOR — işlem yapılmış olabilir. Tekrar ` +
+        `göndermeden önce durumu kontrol edin.`,
+      type: 'warning',
+      uncertain: true,
     };
   }
 
+  // Buradan aşağısı KESİN başarısızlık: sunucudan bir yanıt alındı.
+  //
+  // Neden non-2xx belirsiz sayılmıyor: backend yerelde (127.0.0.1) ve araya
+  // proxy/CDN girmiyor, yani 401/503 doğrudan FastAPI'nin kendi reddi
+  // (`_check_token` → Backend/app/auth_utils.py:29). Yanıtı üreten kod, isteği
+  // işlemeyi reddeden kodun kendisi — bunu "bilinmiyor" saymak elimizdeki
+  // bilgiyi atmak olurdu ve kullanıcı boşuna durum arardı.
   if (!delivery.httpOk) {
     const code = delivery.httpStatus ? ` (HTTP ${delivery.httpStatus})` : '';
     return {
@@ -96,9 +142,28 @@ export function gateFailure(action: GateAction, delivery: GateDelivery): GateFai
     return { message: `${label} geçersiz bulundu. İşlem yapılmadı.`, type: 'error' };
   }
 
+  // 2xx alındı ama sonuç OKUNAMADI — bu da BELİRSİZ, kesin başarısızlık değil.
+  //
+  // Buradaki eski metin "İşlem yapılmadı" diyordu ve bu, üstteki `fetch`
+  // istisnası dalında kapattığımız aşırı-iddianın aynısıydı: sınıfı değil tek
+  // yolu kapatmak. Elimizdeki bilgi şu — sunucu 2xx döndü, yani handler isteği
+  // İŞLEDİ; okuyamadığımız şey sonucun kendisi. "Yapılmadı" demek, kanıtımız
+  // olmayan bir sonucu iddia etmek ve kullanıcıyı aynı komutu ikinci kez
+  // çalıştırmaya itmektir.
+  //
+  // İki alt durum da aynı sınıfta:
+  //   status === null  → gövde JSON değil / `status` alanı yok (bozuk yanıt)
+  //   status === "..." → tanınmayan bir durum (backend yeni bir durum eklemiş)
+  // İkincisi beyaz liste sözleşmesini BOZMAZ: tanınmayan durum hâlâ "başarı
+  // değil" sayılıyor, yalnız "başarısız" da denmiyor.
+  const gorulen = status === null ? 'okunamadı' : `tanınmadı: ${status}`;
   return {
-    message: `${label} iletilemedi (sunucu yanıtı: ${status ?? 'boş'}). İşlem yapılmadı.`,
-    type: 'error',
+    message:
+      `${label} gönderildi ve sunucu isteği aldı, ama sonuç ${gorulen}. ` +
+      `İŞLEMİN YAPILIP YAPILMADIĞI BİLİNMİYOR — tekrar göndermeden önce ` +
+      `durumu kontrol edin.`,
+    type: 'warning',
+    uncertain: true,
   };
 }
 

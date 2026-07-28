@@ -208,6 +208,16 @@ def build_spawn_env(family: Optional[str] = None,
     olmakla aynı şey değil (örn. `HTTPS_PROXY=""` gören bir HTTP istemcisi boş
     proxy'yi kullanmayı deneyip bağlantıyı düşürebiliyor).
 
+    Bunun SİMETRİĞİ de kasıtlı: ebeveynde VAR olan boş bir değer (`COLORTERM=""`)
+    çocuğa aynen geçer, elenmez. Sebep aynı ayrımın diğer yönü — elemek, çocuğa
+    ebeveynden farklı bir dünya göstermek olurdu ve "tanımlı ama boş" ile
+    "hiç tanımlı değil" arasında ayrım yapan bir CLI'ı sessizce kırardı. Bu
+    filtre yalnız hangi ADLARIN geçeceğine karar verir, değerlerine karışmaz;
+    boş değer geçişi de bu fonksiyondan önceki `{**os.environ}` davranışıyla
+    aynıdır, yani bir regresyon değil korunmuş davranıştır. (Dış denetim
+    2026-07-28'de üstteki paragrafı "boşlar eleniyor" iddiası sanıp bunu bulgu
+    olarak yazdı; iddia hiç yapılmamıştı — bu paragraf o yanlış okumayı kapatır.)
+
     `overrides` en son uygulanır ve izin listesini EZER: çağrı yerinin bilerek
     dayattığı değerler (NO_COLOR, ya da Unity MCP'nin argv yerine ortamla
     geçirdiği paylaşımlı sır) buradan geçer.

@@ -12,8 +12,31 @@ permissions:
   contents: write
 
 jobs:
+  # KALİTE KAPISI — build'den ÖNCE, ve bilerek `release.yml` içinden çağrılıyor.
+  #
+  # Hangi arızadan doğdu (dış denetim, 2026-07-28): `test.yml` `tags-ignore: ['**']`
+  # taşıyordu ve gerekçesi "tag zaten test görmüş bir commit'e atılır" varsayımına
+  # dayanıyordu. `git push origin <sha>:refs/tags/v1.0` bu varsayımı bozuyor: hiçbir
+  # dala girmemiş bir commit tag'lenebiliyor ve buradaki build onu doğrudan
+  # paketliyordu. Yani kullanıcıya ikili gitmeden önceki son an, test görmeyen tek
+  # andı.
+  #
+  # NEDEN `workflow_call` + `needs`, "v* tag'inde test.yml'i de koştur" DEĞİL:
+  # ikinci seçenek iki BAĞIMSIZ workflow üretir — testler kırmızıyken build yine
+  # koşar ve taslak release yine oluşur. Görünür ama zorlayıcı olmayan bir kapı,
+  # kapı değildir. `needs` ise gerçek bir kilit: kapı kırmızıysa build hiç başlamaz.
+  # Çift koşu maliyeti de burada ödenmiyor — `test.yml` tag push'unda kendi başına
+  # koşmuyor (`tags-ignore` orada bilerek duruyor), bu çağrı tek koşudur.
+  #
+  # `workflow_dispatch` yolunda da koşuyor: dispatch "build'i test et" içindir ve
+  # kapısız bir build denemesi yeşil raporlarsa yanlış güven verir.
+  kalite:
+    name: Kalite kapısı (test.yml)
+    uses: ./.github/workflows/test.yml
+
   build:
     name: Build (${{ matrix.os }})
+    needs: kalite
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false

@@ -275,6 +275,12 @@ describe('postMcpDecision + decisionToast — yanlış başarı iddiası üretme
     })
   })
 
+  it('ağ hatasında belirsizlik postMcpDecision üzerinden de taşınır', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')))
+    const failure = await postMcpDecision(API, 'g1', true, 'tok')
+    expect(failure?.uncertain).toBe(true)
+  })
+
   it('gövde JSON değilse (2xx + bozuk gövde) yine başarı SAYILMAZ', () => {
     // Beyaz liste sözleşmesi: yalnız status==='ok' başarıdır. Kara liste
     // kullansaydık backend yeni bir başarısızlık durumu eklediğinde sessizce
@@ -283,3 +289,116 @@ describe('postMcpDecision + decisionToast — yanlış başarı iddiası üretme
     expect(gateFailure('mcp', { httpOk: true, httpStatus: 200, body: { status: 'yepyeni_hata' } })).not.toBeNull()
   })
 })
+
+/**
+ * Dış denetim bulgusu (2026-07-28): POST backend tarafından İŞLENDİKTEN SONRA
+ * yanıt yolda kaybolursa `fetch` yine istisna atar. UI bunu kesin biçimde
+ * "sunucuya ulaşmadı, işlem YAPILMADI — tekrar deneyin" diye raporluyordu.
+ * Komut gerçekte çalışmış olabilir; kullanıcı tekrar gönderip aynı komutu İKİ
+ * KEZ çalıştırabilir.
+ *
+ * Önceki düzeltme bir aşırı iddiayı (sessizce başarı say) tersiyle (kesinlikle
+ * başarısız say) değiştirmişti. İkisi de yanlış: elde olan bilgi "başarısız"
+ * değil, "BİLİNMİYOR". Bu blok üç durumun BİRBİRİNDEN AYIRT EDİLEBİLİR olmasını
+ * ölçüyor — üçünün de mesaj üretmesi yetmez.
+ */
+describe('gateFailure — belirsiz teslimat kesin başarısızlıktan ayrılır', () => {
+  /**
+   * "İşlem yapılmadı" iddiası mesajda var mı?
+   *
+   * Neden düz `/yapılmadı/i` DEĞİL: JS'in `i` bayrağı basit case-folding yapıyor
+   * ve noktasız `ı` (U+0131) ile ASCII `I`'yı EŞLEŞTİRMİYOR — mesaj "İşlem
+   * YAPILMADI" yazdığı için regex sessizce hiçbir şey bulmuyordu (bu testi
+   * yazarken ölçüldü). `tr` yerelinde küçültmek doğru eşlemeyi (`I` → `ı`) yapar.
+   */
+  const yapilmadiIddiasi = (m: string) => m.toLocaleLowerCase('tr').includes('yapılmadı')
+
+  /** Yanıt ALINDI, backend gate'i bulamadı: işlemin yapılmadığı KESİN. */
+  const kesin = () => gateFailure('command', {
+    httpOk: true, httpStatus: 200, body: { status: 'gate_not_found' },
+  })
+  /** Yanıt HİÇ alınamadı: işlemin yapılıp yapılmadığı bilinmiyor. */
+  const belirsiz = () => gateFailure('command', {
+    httpOk: false, error: new Error('ECONNREFUSED'),
+  })
+
+  it('ağ istisnası belirsiz olarak işaretlenir', () => {
+    expect(belirsiz()?.uncertain).toBe(true)
+  })
+
+  it('belirsiz mesaj "işlem yapılmadı" DEMEZ — yapılmış olabilir', () => {
+    expect(yapilmadiIddiasi(belirsiz()!.message)).toBe(false)
+  })
+
+  it('belirsiz mesaj kullanıcıyı körlemesine tekrar göndermeye çağırmaz', () => {
+    // "tekrar deneyin" tek başına, çift çalıştırmanın tam olarak nedeni.
+    // Beklenti: önce durum kontrolü istensin.
+    expect(belirsiz()!.message).toMatch(/kontrol/i)
+  })
+
+  it('yanıt alınmış başarısızlık KESİN kalır: belirsiz işaretlenmez', () => {
+    // Karşı yön. Her şeyi "belirsiz" saymak, çözdüğümüz sorunun aynadaki hâli
+    // olurdu: gerçekten yapılmamış bir işlem için kullanıcı boşuna durum arar.
+    expect(kesin()?.uncertain).toBeFalsy()
+    expect(yapilmadiIddiasi(kesin()!.message)).toBe(true)
+  })
+
+  it('iki durum kullanıcıya AYNI cümleyi göstermez', () => {
+    // Testin asıl noktası. İkisi de mesaj üretiyor diye geçen bir test,
+    // ayrımın var olduğunu ölçmezdi.
+    expect(belirsiz()!.message).not.toBe(kesin()!.message)
+  })
+
+  it("status==='ok' hâlâ sessiz — yeni durum başarı yolunu kirletmedi", () => {
+    expect(gateFailure('command', { httpOk: true, httpStatus: 200, body: { status: 'ok' } })).toBeNull()
+    expect(gateFailure('mcp', { httpOk: true, httpStatus: 200, body: { status: 'ok' } })).toBeNull()
+  })
+
+  it('non-2xx yanıt da KESİN başarısızlıktır (yanıt alınmıştır)', () => {
+    // Backend yerel (127.0.0.1) ve araya proxy girmiyor: 401/503 doğrudan
+    // FastAPI'nin kendi reddi, yani istek işlenmedi. Bunu belirsiz saymak
+    // bilgiyi atmak olurdu.
+    const f = gateFailure('question', { httpOk: false, httpStatus: 401, body: { detail: 'x' } })
+    expect(f?.uncertain).toBeFalsy()
+    expect(yapilmadiIddiasi(f!.message)).toBe(true)
+  })
+})
+
+// ── 2xx + sonuç okunamadı: BELİRSİZ, kesin başarısızlık değil ────────────────
+//
+// Dış denetim (2026-07-28) `fetch` istisnası dalını belirsize çevirtti, ama bu
+// dal "İşlem yapılmadı" demeye devam ediyordu — kapattığımız sınıfın ikinci
+// yolu. 2xx alındıysa handler isteği İŞLEMİŞTİR; okunamayan şey sonuçtur.
+describe('2xx alındı ama sonuç okunamadı', () => {
+  it('gövde ayrıştırılamadığında kesin başarısızlık DEĞİL, belirsiz döner', () => {
+    const f = gateFailure('command', { httpOk: true, httpStatus: 200, body: undefined });
+    expect(f).not.toBeNull();
+    expect(f!.uncertain).toBe(true);
+    expect(f!.type).toBe('warning');
+    expect(f!.message).not.toMatch(/İşlem yapılmadı/);
+    expect(f!.message).toMatch(/BİLİNMİYOR/);
+  });
+
+  it('tanınmayan bir durum da belirsizdir ama BAŞARI sayılmaz', () => {
+    // Beyaz liste sözleşmesi korunuyor: yalnız 'ok' başarıdır.
+    const f = gateFailure('command', { httpOk: true, httpStatus: 200, body: { status: 'expired' } });
+    expect(f).not.toBeNull();          // başarı DEĞİL
+    expect(f!.uncertain).toBe(true);   // ama "yapılmadı" da denmiyor
+    expect(f!.message).toMatch(/expired/);
+  });
+
+  it('karşı yön: bilinen kesin başarısızlıklar belirsize KAÇMAZ', () => {
+    // gate_not_found ve invalid'de sunucu işlemin yapılmadığını SÖYLÜYOR;
+    // onları belirsize katlamak elimizdeki bilgiyi atmak olurdu.
+    for (const status of ['gate_not_found', 'invalid']) {
+      const f = gateFailure('command', { httpOk: true, httpStatus: 200, body: { status } });
+      expect(f!.uncertain).toBeFalsy();
+    }
+    const nonOk = gateFailure('command', { httpOk: false, httpStatus: 503 });
+    expect(nonOk!.uncertain).toBeFalsy();
+  });
+
+  it('başarı yolu hâlâ sessiz', () => {
+    expect(gateFailure('command', { httpOk: true, httpStatus: 200, body: { status: 'ok' } })).toBeNull();
+  });
+});

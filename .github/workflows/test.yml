@@ -9,18 +9,36 @@ name: Test (kalite kapısı)
 
 on:
   push:
-    # `tags-ignore` kasıtlı: `release.yml` zaten `tags: ['v*']` üzerinde koşuyor
-    # ve tag her zaman daha önce push edilmiş (yani burada zaten test görmüş) bir
-    # commit'e atılıyor. Tag'i dışlamazsak aynı commit için ikinci bir koşu daha
-    # başlar ve release build'iyle runner kuyruğunu paylaşır.
+    # `tags-ignore` KALDI ama gerekçesi değişti — eskisi yanlıştı.
+    #
+    # Eski gerekçe: "tag her zaman daha önce push edilmiş, yani burada zaten test
+    # görmüş bir commit'e atılır". Bu VARSAYIM YANLIŞ ve dış denetimde (2026-07-28)
+    # yeniden üretildi: `git push origin <sha>:refs/tags/v1.0` hiçbir dala hiç
+    # girmemiş bir commit'i tag'leyebiliyor. O commit hiç test görmeden
+    # `release.yml` tarafından paketleniyordu — kapı, en pahalı olduğu anda yoktu.
+    #
+    # Yeni gerekçe: tag yolu artık kapısız değil, `release.yml` bu workflow'u
+    # `workflow_call` ile ÇAĞIRIYOR ve build/release job'ları ona `needs` ile
+    # bağlı. Yani tag push'unda bu dosya yine koşuyor, sadece ikinci bir bağımsız
+    # koşu olarak değil. `tags-ignore`ı kaldırsaydık aynı commit için iki tam
+    # test koşusu olurdu (çift maliyet kaygısı gerçekti ve hâlâ geçerli).
     branches: ['**']
     tags-ignore: ['**']
   pull_request:
+  # `release.yml`'in kapı olarak çağırabilmesi için. Girdisi yok: kapı her
+  # çağrıda aynı şeyi koşmalı, çağırana göre gevşetilebilen bir kapı kapı değildir.
+  workflow_call:
 
 # Aynı dal üzerinde art arda push yapılınca eski koşuyu iptal et: kapının değeri
 # "en son commit yeşil mi" sorusunda, ara commit'lerin sonucunda değil.
+#
+# Gruba `github.workflow` + `github.event_name` girmesi zorunlu: `workflow_call`
+# ile koşulduğunda `github.ref` ÇAĞIRANIN ref'i oluyor. Yalnız ref'e baksaydık,
+# `release.yml` workflow_dispatch ile main üzerinde koşarken main'e gelen sıradan
+# bir push, release'in kalite kapısını `cancel-in-progress` ile iptal ederdi —
+# yarıda kesilen bir kapı, GitHub'da başarısız bir kapıdır ve release'i düşürür.
 concurrency:
-  group: test-${{ github.ref }}
+  group: test-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:

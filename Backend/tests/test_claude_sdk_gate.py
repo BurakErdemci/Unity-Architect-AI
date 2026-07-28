@@ -31,7 +31,9 @@ from agentic.command_gates import APPROVAL_GATES, APPROVAL_RESULTS
 from providers import claude_sdk_session as css
 from providers.claude_sdk_session import (
     ClaudeSDKSession,
+    _glob_literal_root,
     _path_in_workspace,
+    _read_tool_target,
     get_session,
 )
 
@@ -228,6 +230,106 @@ async def test_write_outside_still_hard_denied(symlink_escape):
                                              "content": "x"})
     assert not _is_allow(res)
     assert ev is not None and ev["type"] == "tool_result" and ev["success"] is False
+
+
+# ── DÜZELTME 4: Windows mutlak Glob desenleri kapıyı atlıyordu ───────────────
+#
+# Dış denetim (2026-07-28) ve mimarın kendi ölçümü:
+#
+#   Glob C:\Users\**\*.key      -> hedef=None -> KARTSIZ
+#   Glob C:/Users/**/*.key      -> hedef=None -> KARTSIZ
+#   Glob \\sunucu\pay\**\*.key  -> hedef=None -> KARTSIZ
+#   Glob /Users/**/*.key        -> hedef=/Users -> KART   (kontrol, doğruydu)
+#
+# Sebep: `pat.startswith(("/", "~"))` yalnız POSIX mutlak yolunu tanıyordu; sürücü
+# harfi ve UNC tanınmadığı için hedef None'a düşüyor, None da "workspace içi say"
+# varsayılanını alıyordu. Yani ürünün ANA PLATFORMUNDA (Windows) bu kapı tümüyle
+# atlatılabiliyordu.
+#
+# Testler `_read_tool_target` seviyesinde, uçtan uca kart seviyesinde DEĞİL — ve
+# bu bilinçli: nihai kapsama kararını `_path_in_workspace` veriyor ve o
+# platform-duyarlı. macOS'ta `C:\Users` gerçekten göreli bir yoldur, orada kart
+# çıkmaması DOĞRU davranıştır; Windows'ta aynı kök mutlak çözülür ve kart çıkar.
+# Ölçülebilen ve platformdan bağımsız olan şey şu: desen artık None'a DÜŞMÜYOR,
+# yani karar `_path_in_workspace`'e ULAŞIYOR.
+
+
+@pytest.mark.parametrize("pattern,beklenen_kok", [
+    ("C:\\Users\\**\\*.key", "C:\\Users"),
+    ("C:/Users/**/*.key", "C:/Users"),
+    ("\\\\sunucu\\pay\\**\\*.key", "\\\\sunucu\\pay"),
+    ("/Users/**/*.key", "/Users"),          # kontrol: bu zaten çalışıyordu
+    ("d:/Gizli/**/*.pem", "d:/Gizli"),      # sürücü harfi küçük de olabilir
+])
+def test_absolute_glob_patterns_reach_the_workspace_check(pattern, beklenen_kok):
+    """Beklenen kök elle yazılı, desenden TÜRETİLMİYOR: beklentisini ölçtüğü
+    şeyden üreten bir test hiçbir zaman kırmızı olamaz (bu depoda ölçüldü)."""
+    hedef = _read_tool_target("Glob", {"pattern": pattern})
+    assert hedef is not None, f"{pattern!r} None'a düştü — 'workspace içi' sayılıyor"
+    assert hedef == beklenen_kok
+
+
+@pytest.mark.parametrize("pattern", [
+    "**/*.cs",
+    "Assets/**/*.cs",
+    "Assets\\Scripts\\**\\*.cs",   # göreli ama Windows ayracıyla
+    "*.key",
+    "src/**",
+])
+def test_relative_glob_patterns_stay_cardless(pattern):
+    """Karşı yön — bunun ateşlenMEmesi gerekiyor. Göreli desenler gerçekten
+    workspace'i tarar; onları 'dışarıda' saymak her aramada kart çıkarır ve
+    kullanıcıyı refleks-onaya alıştırır (kapının değerini sıfırlar)."""
+    assert _read_tool_target("Glob", {"pattern": pattern}) is None
+
+
+@pytest.mark.parametrize("pattern,kok", [
+    ("/Users/**/*.key", "/Users"),
+    ("C:\\Users\\**\\*.key", "C:\\Users"),
+    ("/**/*.key", "/"),                       # jokerin önünde yalnız kök var
+    ("/etc/passwd", "/etc/passwd"),           # joker yok → desenin tamamı yol
+    ("\\\\sunucu\\pay\\gizli.key", "\\\\sunucu\\pay\\gizli.key"),
+])
+def test_literal_root_understands_both_separators(pattern, kok):
+    """`os.sep` ile bölmek macOS'ta `C:\\Users\\**\\*.key`'i HİÇ bölmüyordu →
+    kök yanlış çıkardı. Ayraç korunmalı: birleştirmede tek ayraç seçmek UNC
+    önekini (`\\\\sunucu\\pay`) bozar."""
+    assert _glob_literal_root(pattern) == kok
+
+
+def test_grep_pattern_is_still_treated_as_a_regex_not_a_path():
+    """Karşı yön, ikinci kez: `Grep`'in `pattern`'ı REGEX. `/` ile başlayan bir
+    regex'i yol sanmak her aramada kart çıkarırdı."""
+    assert _read_tool_target("Grep", {"pattern": "/Users/.*secret"}) is None
+    assert _read_tool_target("Grep", {"pattern": "C:\\\\Users\\\\.*"}) is None
+
+
+def test_other_read_tools_are_untouched_by_the_glob_fix():
+    """Regresyon: düzeltme yalnız Glob'un pattern dalını ilgilendiriyor."""
+    assert _read_tool_target("Read", {"file_path": "/etc/passwd"}) == "/etc/passwd"
+    assert _read_tool_target("LS", {"path": "C:\\Windows"}) == "C:\\Windows"
+    assert _read_tool_target("NotebookRead", {"notebook_path": "/x.ipynb"}) == "/x.ipynb"
+    assert _read_tool_target("Read", {}) is None
+    # Açık `path` verilmişse desen hiç değerlendirilmemeli — tarama orada yapılır.
+    assert _read_tool_target("Glob", {"pattern": "/Users/**", "path": "/opt"}) == "/opt"
+
+
+async def test_the_glob_root_actually_reaches_the_card(symlink_escape):
+    """Zincirin uçtan uca kapandığını gösteren yön: kök çıkarılıyor VE kapsama
+    kararına gidiyor. Burada bilerek gerçek bir mutlak kök kullanılıyor.
+
+    Neden sürücü harfli desen uçtan uca sınanmıyor: kapsama kararını
+    `_path_in_workspace` veriyor ve o platform-duyarlı. macOS'ta `C:\\Users`
+    GERÇEKTEN göreli bir yoldur, orada kart çıkmaması doğru davranıştır;
+    Windows'ta aynı kök mutlak çözülür ve kart çıkar. Bu testin macOS'ta
+    `C:\\Users` için kart beklemesi, doğru düzeltmeyi kırmızı gösterirdi.
+    Platformdan bağımsız ölçülebilen kısım yukarıdaki `_read_tool_target`
+    testleri: desen artık None'a DÜŞMÜYOR, yani karar kapıya ULAŞIYOR."""
+    ws, outside, _link = symlink_escape
+    s = _mk_session(cwd=ws, auto_approve=False, approval_timeout=2.0)
+    res, ev = await _drive_gate(s, "Glob", {"pattern": outside + "/**/*.key"}, approve=True)
+    assert ev is not None and ev["type"] == "command_approval_needed", \
+        "mutlak desenin kökü workspace dışında ama kart çıkmadı"
 
 
 # ── DÜZELTME 3: session cache anahtarı ───────────────────────────────────────

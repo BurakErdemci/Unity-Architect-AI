@@ -631,6 +631,124 @@ class TestCheckOlenPinleriGoruyor:
         assert pinned._main(["pinned_assets.py", "check"]) == 1
 
 
+class TestCheckOlcemedigineGectiDemiyor:
+    """Dış denetim bulgusu (2026-07-28): `check` ağ hatalarını ve 5xx'i
+    "bilinmiyor" olarak İŞARETLİYOR ama özette hiç saymıyordu — 404/410 yoksa
+    "adreslerin hepsi ayakta" yazıp SIFIR dönüyordu. Yani ağ tamamen kopukken,
+    tek bir adres bile doğrulanamamışken kontrol GEÇMİŞ görünüyordu.
+
+    Bu, deponun kendi yazılı kuralının ihlali: ölçemeyen bir kontrol geçmiş
+    sayılmaz. Ve maliyeti somut: bu yoklamanın tek işi `ffmpeg/win` ile
+    `ffmpeg/linux` pinlerinin sessizce ölmesini build gününden önce yakalamak —
+    sessizce yeşil dönen bir yoklama, hiç koşmayan bir yoklamayla aynı şey.
+    """
+
+    def _ag(self, monkeypatch, *, patlayan=None, kod_5xx=None, olu=None):
+        """URL'ye göre davranış: istisna / HTTP kodu / 200."""
+        def urlopen(req, timeout=None):
+            url = getattr(req, "full_url", req)
+            if patlayan and patlayan in url:
+                raise urllib.error.URLError("ağ yok")
+            if kod_5xx and kod_5xx in url:
+                raise urllib.error.HTTPError(url, 503, "Service Unavailable", {}, None)
+            if olu and olu in url:
+                raise urllib.error.HTTPError(url, 404, "Not Found", {}, None)
+            return _SahteYanit(b"")
+
+        monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+
+    def _url(self, kutuk, key: str) -> str:
+        return json.loads(kutuk.read_text(encoding="utf-8"))["assets"][key]["url"]
+
+    def test_a_network_error_is_not_counted_as_alive(self, pinned, kutuk, monkeypatch):
+        hedef = self._url(kutuk, "uv/win-x64")
+        self._ag(monkeypatch, patlayan=hedef)
+        cikti = io.StringIO()
+        sonuclar = {s["key"]: s["durum"] for s in pinned.check(out=cikti)}
+        assert sonuclar["uv/win-x64"] == "bilinmiyor"
+        metin = cikti.getvalue()
+        assert "hepsi ayakta" not in metin, (
+            "bir adres hiç ölçülemediği halde özet 'hepsi ayakta' diyor:\n" + metin
+        )
+
+    def test_a_5xx_is_not_counted_as_alive_either(self, pinned, kutuk, monkeypatch):
+        """5xx yayıncının geçici arızası: adresin ölü mü diri mi olduğunu
+        SÖYLEMİYOR. 'ayakta' saymak da 'ölü' saymak da uydurma olurdu."""
+        self._ag(monkeypatch, kod_5xx=self._url(kutuk, "uv/win-x64"))
+        cikti = io.StringIO()
+        sonuclar = {s["key"]: s["durum"] for s in pinned.check(out=cikti)}
+        assert sonuclar["uv/win-x64"] == "bilinmiyor"
+        assert "hepsi ayakta" not in cikti.getvalue()
+
+    def test_the_unknown_ones_are_named_so_the_operator_can_recheck(
+        self, pinned, kutuk, monkeypatch
+    ):
+        """Sayı yetmez: hangi adresin ölçülemediği yazılmalı, yoksa operatör
+        elle tekrar yoklayamaz."""
+        self._ag(monkeypatch, patlayan=self._url(kutuk, "uv/win-x64"))
+        cikti = io.StringIO()
+        pinned.check(out=cikti)
+        assert "uv/win-x64" in cikti.getvalue()
+
+    def test_the_cli_does_not_exit_zero_when_nothing_could_be_measured(
+        self, pinned, kutuk, monkeypatch, capsys
+    ):
+        """Otomasyonun gördüğü TEK sinyal bu sayı. Sıfır dönerse CI kontrolü
+        geçmiş sayar."""
+        def urlopen(req, timeout=None):
+            raise urllib.error.URLError("ağ tamamen kopuk")
+
+        monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+        kod = pinned._main(["pinned_assets.py", "check"])
+        capsys.readouterr()
+        assert kod != 0, "hiçbir adres doğrulanamadı ama CLI 'geçti' dedi"
+
+    def test_an_unmeasurable_address_is_an_operational_failure_not_an_integrity_one(
+        self, pinned, kutuk, monkeypatch, capsys
+    ):
+        """Kodun HANGİ sınıf olduğu önemli. Modül docstring'indeki sözleşme:
+        1 = bütünlük (ASLA tekrar denenmez), 3 = işletim (tekrar denenebilir).
+        Ölçülemeyen bir adres tanım gereği tekrar denenebilir — 1 dönseydi
+        operatöre 'bu asla düzelmez' denmiş olurdu ve pin gereksiz yere
+        tazelenirdi.
+
+        Beklenti sabiti elle yazılı, koddan okunmuyor."""
+        self._ag(monkeypatch, patlayan=self._url(kutuk, "uv/win-x64"))
+        kod = pinned._main(["pinned_assets.py", "check"])
+        capsys.readouterr()
+        assert kod == 3, f"ölçülemeyen adres {kod} döndürdü, işletim kodu 3 bekleniyordu"
+
+    def test_a_dead_pin_still_wins_over_an_unknown_one(
+        self, pinned, kutuk, monkeypatch, capsys
+    ):
+        """İkisi birden varsa ölü pin baskın: 404 doğrulanmış bir arıza,
+        ölçülememe ise bilgi yokluğu. Operatörün önce ölüyü görmesi gerekir."""
+        self._ag(
+            monkeypatch,
+            patlayan=self._url(kutuk, "uv/win-x64"),
+            olu=self._url(kutuk, "ffmpeg/win"),
+        )
+        kod = pinned._main(["pinned_assets.py", "check"])
+        capsys.readouterr()
+        assert kod == 1, f"ölü pin varken {kod} döndü, bütünlük kodu 1 bekleniyordu"
+
+    def test_a_fully_measurable_healthy_run_still_exits_zero(
+        self, pinned, kutuk, monkeypatch, capsys
+    ):
+        """KARŞI YÖN — kapının ateşlenMEmesi gereken hali. Bu olmadan yukarıdaki
+        testler 'her zaman sıfırdan farklı dön' ile de geçerdi."""
+        self._ag(monkeypatch)
+        cikti = io.StringIO()
+        sonuclar = pinned.check(out=cikti)
+        assert all(s["durum"] == "ok" for s in sonuclar)
+        assert "hepsi ayakta" in cikti.getvalue(), (
+            "her adres ölçüldü ve ayakta, ama özet bunu söylemiyor"
+        )
+        kod = pinned._main(["pinned_assets.py", "check"])
+        capsys.readouterr()
+        assert kod == 0
+
+
 class TestDotnetSurumDosyasiDogruYerdenOkunuyor:
     """Canlı koşuda ölçülmüş arıza (2026-07-28): dosyalar `release.sdk.files`
     altında, en üst düzeyde `sdk` YOK. Yanlış yol 'aday bulunamadı' hatası

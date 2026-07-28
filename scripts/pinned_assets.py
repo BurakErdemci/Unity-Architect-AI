@@ -768,12 +768,27 @@ def check(keys: list[str] | None = None, *, out=None) -> list[dict]:
         etiket = {"ok": "ayakta ", "olu": "ÖLÜ    ", "bilinmiyor": "?      "}[s["durum"]]
         print(f"  {etiket} {s['key']}  HTTP {s['kod']}"
               + (f"  {s.get('mesaj')}" if s.get("mesaj") else ""), file=out)
+
     olu = [s["key"] for s in sonuclar if s["durum"] == "olu"]
+    bilinmeyen = [s["key"] for s in sonuclar if s["durum"] == "bilinmiyor"]
+    ayakta = sum(1 for s in sonuclar if s["durum"] == "ok")
     print("", file=out)
     if olu:
         print(f"ÖLÜ PİN: {', '.join(olu)} — `refresh` ile tazele ve diff'i incele.", file=out)
-    else:
+    if bilinmeyen:
+        # Ölçülemeyenler AYRI raporlanıyor. Eski hâli 404/410 yoksa "hepsi ayakta"
+        # yazıyordu — ağ tamamen kopukken bile. Bir kontrolün ölçemediği şeyi
+        # geçmiş sayması, bu deponun yazılı kuralının ihlali ("`rc=2` 'geçti'
+        # DEĞİLDİR") ve bu yoklamanın tek işini (ölen pini build gününden önce
+        # yakalamak) sessizce iptal ediyordu.
+        print(f"ÖLÇÜLEMEDİ: {', '.join(bilinmeyen)} — ağ hatası ya da 5xx. Bu adresler"
+              " DOĞRULANMADI; ne ayakta ne ölü sayılıyorlar, tekrar yoklayın.", file=out)
+    if not olu and not bilinmeyen:
+        # "hepsi ayakta" cümlesi ancak GERÇEKTEN hepsi ölçülebildiyse kurulabilir.
         print(f"Özet: {len(sonuclar)} adresin hepsi ayakta.", file=out)
+    else:
+        print(f"Özet: {ayakta} ayakta, {len(olu)} ölü, {len(bilinmeyen)} ölçülemedi"
+              f"  ({len(sonuclar)} adres).", file=out)
     return sonuclar
 
 
@@ -817,7 +832,23 @@ def _main(argv: list[str]) -> int:
             return 1 if any(s["durum"] == "hata" for s in sonuclar) else 0
         if cmd == "check":
             sonuclar = check([a for a in argv[2:]] or None)
-            return 1 if any(s["durum"] == "olu" for s in sonuclar) else 0
+            # Sıra önemli: ölü pin DOĞRULANMIŞ bir arıza, ölçülememe ise bilgi
+            # yokluğu. İkisi birden varsa operatörün önce ölüyü görmesi gerekir.
+            if any(s["durum"] == "olu" for s in sonuclar):
+                return 1
+            # Ölçülemeyen adres sıfır DÖNDÜRMEZ: otomasyonun gördüğü tek sinyal bu
+            # sayı ve hiçbir adres doğrulanamamışken "geçti" demek, yoklamayı
+            # sessizce iptal etmekti (dış denetim bulgusu, 2026-07-28).
+            #
+            # Neden 3, 1 değil: sözleşme gereği 1 = BÜTÜNLÜK ve "ASLA tekrar
+            # denenmemeli". Ağ hatası ya da 5xx tanım gereği tekrar denenebilir;
+            # 1 dönseydi operatöre "bu asla düzelmez, pini tazele" denmiş olurdu
+            # ve sağlam bir pin gereksiz yere değiştirilirdi. 3 = İŞLETİM arızası
+            # tam olarak bu sınıf: hiçbir bayt doğrulanmadı, hiçbir uyuşmazlık
+            # bulunmadı, ortam düzelince tekrar koşulabilir.
+            if any(s["durum"] == "bilinmiyor" for s in sonuclar):
+                return 3
+            return 0
         if cmd == "keys":
             for k in sorted(load_manifest()["assets"]):
                 print(k)

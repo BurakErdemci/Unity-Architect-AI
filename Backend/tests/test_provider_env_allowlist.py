@@ -395,3 +395,30 @@ class TestEnvFamilyCiplakAdlar:
     ])
     def test_both_name_shapes_land_in_the_same_family(self, name, family):
         assert env_family(name) == family
+
+
+class TestBosDegerlerKasitliGeciyor:
+    """Ebeveynde VAR olan boş değer çocuğa geçer — bu karar, kaza değil.
+
+    Dış denetim (2026-07-28) bunu bulgu olarak yazdı: `build_spawn_env`
+    docstring'i `HTTPS_PROXY=""`'nin bağlantı düşürebileceğini anlatıyor ama kod
+    boşları elemiyor. Docstring'in söylediği başka bir şeydi (var olmayan adı
+    uydurma), ama yanlış okunabildiğine göre niyet yoruma bırakılmamalı.
+
+    Elemek ebeveyn davranışını DEĞİŞTİRİR: filtreden önce `{**os.environ}` da
+    boşları geçiriyordu, yani eleme bir düzeltme değil yeni bir davranış olurdu
+    ve "tanımlı ama boş" ile "hiç tanımlı değil" arasında ayrım yapan bir CLI'ı
+    sessizce kırardı. Bu filtre yalnız ADLARA karar verir, DEĞERLERE değil."""
+
+    def test_an_empty_but_defined_value_still_reaches_the_child(self, monkeypatch):
+        monkeypatch.setenv("COLORTERM", "")
+        monkeypatch.setenv("HTTPS_PROXY", "")
+        env = build_spawn_env(family="claude")
+        assert env.get("COLORTERM") == "", "boş değer elendi — ebeveyn davranışı değişti"
+        assert env.get("HTTPS_PROXY") == ""
+
+    def test_an_absent_name_is_never_invented_as_empty(self, monkeypatch):
+        """Karşı yön: tanımsız ad çocukta HİÇ olmamalı, boş dizeyle bile."""
+        monkeypatch.delenv("HTTPS_PROXY", raising=False)
+        env = build_spawn_env(family="claude")
+        assert "HTTPS_PROXY" not in env

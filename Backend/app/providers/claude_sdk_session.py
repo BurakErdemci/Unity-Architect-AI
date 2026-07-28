@@ -30,7 +30,9 @@ AgentEvent'e sarıp SSE'ye basar. Onay/soru beklemeleri command_gates üzerinden
 import asyncio
 import json
 import logging
+import ntpath
 import os
+import posixpath
 import time
 import uuid
 from pathlib import Path
@@ -243,19 +245,69 @@ _GLOB_MAGIC = set("*?[")
 
 
 def _glob_literal_root(pattern: str) -> str:
-    """`/Users/**/*.key` → `/Users`. Desenin joker İÇERMEYEN sabit önekini verir.
+    """`/Users/**/*.key` → `/Users`, `C:\\Users\\**\\*.key` → `C:\\Users`.
+
+    Desenin joker İÇERMEYEN sabit önekini verir.
 
     Neden gerekli: `Glob` yol argümanı olmadan da mutlak desenle çağrılabiliyor
     (ölçülen kaçış tam olarak buydu). Desenin tamamını yol sanmak yanlış olurdu;
     tarama gerçekte bu sabit kökün altında yapılıyor.
+
+    Neden "böl ve birleştir" DEĞİL, "ilk jokerden önceki son ayraçtan kes":
+      1. `os.sep` ile bölmek macOS'ta `C:\\Users\\**\\*.key`'i HİÇ bölmüyordu —
+         tek segment jokerli görünüyor, kök `/` çıkıyordu (ölçüldü 2026-07-28).
+      2. İki ayraçla bölüp TEK ayraçla birleştirmek UNC önekini bozardı:
+         `\\\\sunucu\\pay` → `//sunucu/pay`. Kesme yöntemi desenin kendi ayracını
+         aynen koruyor, yani `_path_in_workspace`'e giden dize Windows'ta da
+         geçerli bir yol olarak kalıyor.
     """
-    parts = []
-    for seg in pattern.split(os.sep):
-        if any(ch in _GLOB_MAGIC for ch in seg):
-            break
-        parts.append(seg)
-    root = os.sep.join(parts)
-    return root or os.sep
+    magic = next((i for i, ch in enumerate(pattern) if ch in _GLOB_MAGIC), -1)
+    if magic < 0:
+        return pattern or os.sep  # joker yok → desenin tamamı yol
+    head = pattern[:magic]
+    kesim = max(head.rfind("/"), head.rfind("\\"))
+    if kesim < 0:
+        return os.sep  # jokerin önünde hiç ayraç yok (ör. `*.key`)
+    # `/**/*.key` gibi durumda kök ayracın KENDİSİ; boş dize döndürmek olmaz.
+    return head[:kesim] or head[:kesim + 1]
+
+
+def _glob_absolute_root(pattern: str) -> Optional[str]:
+    """Mutlak bir Glob deseninin sabit kökü; desen göreli ise None.
+
+    None'ın anlamı `_read_tool_target`'taki ile aynı: "workspace içi say". Göreli
+    desenler gerçekten workspace'i tarar; onları dışarı saymak her aramada kart
+    çıkarır ve kullanıcıyı refleks-onaya alıştırırdı.
+
+    Hangi arızadan doğdu (dış denetim + mimarın kendi ölçümü, 2026-07-28): eski
+    kontrol `pat.startswith(("/", "~"))` idi, yani YALNIZ POSIX mutlak yolunu
+    tanıyordu. Sürücü harfi ve UNC tanınmadığı için
+
+        Glob C:\\Users\\**\\*.key      -> hedef=None -> KARTSIZ
+        Glob C:/Users/**/*.key        -> hedef=None -> KARTSIZ
+        Glob \\\\sunucu\\pay\\**\\*.key -> hedef=None -> KARTSIZ
+
+    üçü de "workspace içi" varsayılanına düşüyordu — ürünün ANA PLATFORMUNDA kapı
+    tümüyle atlatılabiliyordu.
+
+    Neden `ntpath` + `posixpath`, `os.path.isabs` değil: `os.path` koşulan
+    platformun kuralını uygular ve macOS'ta `C:\\Users` mutlak DEĞİLDİR. Tek
+    başına `os.path.isabs` kullansaydık kapı yalnız Windows runner'da doğru
+    davranır, geliştirmede ve CI'da (ikisi de POSIX) sessizce boş kalırdı. Bu iki
+    modül ise koşulan platformdan bağımsız çağrılabiliyor.
+
+    Kapsama kararı BURADA verilmiyor — kök `_path_in_workspace`'e gidiyor ve
+    karar orada, tek yerde kalıyor. İkinci bir yol mantığı yazmak bu depoda
+    tekrar eden "uyuşması gereken iki yer" arızası.
+    """
+    pat = (pattern or "").strip()
+    if not pat:
+        return None
+    if pat.startswith("~"):
+        return _glob_literal_root(os.path.expanduser(pat))
+    if posixpath.isabs(pat) or ntpath.isabs(pat):
+        return _glob_literal_root(pat)
+    return None
 
 
 def _read_tool_target(tool_name: str, inp: dict) -> Optional[str]:
@@ -280,9 +332,9 @@ def _read_tool_target(tool_name: str, inp: dict) -> Optional[str]:
         if p:
             return p
         if tool_name == "Glob":
-            pat = (inp.get("pattern") or "").strip()
-            if pat.startswith(("/", "~")):
-                return _glob_literal_root(os.path.expanduser(pat))
+            # Mutlaksa sabit kök, göreli ise None. İki yol konvansiyonunu da
+            # tanıması şart — gerekçesi `_glob_absolute_root`'ta.
+            return _glob_absolute_root(inp.get("pattern") or "")
         return None
     return None
 
