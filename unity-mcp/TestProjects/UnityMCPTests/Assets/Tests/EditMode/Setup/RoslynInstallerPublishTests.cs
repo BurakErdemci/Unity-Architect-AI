@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Text;
 using MCPForUnity.Editor.Setup;
@@ -125,6 +126,133 @@ namespace MCPForUnityTests.Editor.Setup
             Assert.IsFalse(Directory.Exists(dest),
                 "a failed first install created a half-filled destination folder");
             AssertNoScratchFoldersLeft();
+        }
+
+        [Test]
+        [Platform(Exclude = "Win", Reason = "the leftover folder is made undeletable with a Unix permission bit")]
+        public void UnclearableStagingRemnant_AbortsBeforeCreatingTheDestination()
+        {
+            // Staging carries a fixed name so a killed run's folder gets reclaimed instead of
+            // accumulating. When that reclaim fails, carrying on is what produces the mixed
+            // assembly set the swap exists to prevent: staging survives with a dead run's
+            // files in it, CreateDirectory accepts the folder that is already there, and the
+            // final rename puts those files in the destination. Refusing to start is the only
+            // outcome that keeps the published set equal to the verified input.
+            CreateUnclearableStagingRemnant();
+            try
+            {
+                Assert.Catch<Exception>(() => RoslynInstaller.PublishFolderAtomically(
+                    dest,
+                    new[] { "A.dll" },
+                    new[] { Bytes("alpha") }));
+
+                Assert.IsFalse(Directory.Exists(dest),
+                    "a publish went ahead on top of a staging folder that could not be cleared");
+            }
+            finally
+            {
+                RestoreScratchPermissions();
+            }
+        }
+
+        [Test]
+        [Platform(Exclude = "Win", Reason = "the leftover folder is made undeletable with a Unix permission bit")]
+        public void UnclearableStagingRemnant_NeitherPublishesItNorDisturbsTheInstall()
+        {
+            Directory.CreateDirectory(dest);
+            File.WriteAllText(Path.Combine(dest, "A.dll"), "old-alpha");
+
+            CreateUnclearableStagingRemnant();
+            try
+            {
+                Assert.Catch<Exception>(() => RoslynInstaller.PublishFolderAtomically(
+                    dest,
+                    new[] { "A.dll" },
+                    new[] { Bytes("new-alpha") }));
+
+                Assert.IsFalse(File.Exists(Path.Combine(dest, LockedFolderName, "remnant.dll")),
+                    "a dead run's file was published into the destination");
+                Assert.AreEqual("old-alpha", File.ReadAllText(Path.Combine(dest, "A.dll")),
+                    "the working install was replaced by an install that could not be staged");
+            }
+            finally
+            {
+                RestoreScratchPermissions();
+            }
+        }
+
+        private const string LockedFolderName = "locked";
+
+        /// <summary>
+        /// Leaves behind the staging folder of a run that died mid-swap, and makes it
+        /// impossible to delete. On Unix a file is unlinked by writing to the folder that
+        /// holds it, so dropping the write bit on an inner folder blocks the recursive delete
+        /// while leaving staging itself writable — the same shape as a Windows Editor holding
+        /// one DLL open, which is the ordinary way this happens in the field.
+        /// Callers must run <see cref="RestoreScratchPermissions"/> afterwards, otherwise the
+        /// scratch tree cannot be torn down and the next run starts dirty.
+        /// </summary>
+        private void CreateUnclearableStagingRemnant()
+        {
+            string staging = dest + StagingSuffix;
+            string locked = Path.Combine(staging, LockedFolderName);
+            Directory.CreateDirectory(locked);
+            File.WriteAllText(Path.Combine(locked, "remnant.dll"), "left behind by a dead run");
+
+            if (!Chmod("0555 \"" + locked + "\""))
+                Assert.Fail("chmod could not run, so this environment cannot build the leftover folder under test");
+
+            // Proving the block instead of assuming it. Running as root, or on a filesystem
+            // that ignores permission bits, the delete below succeeds — and the test would
+            // then exercise an ordinary clean staging path while still reporting green.
+            try
+            {
+                Directory.Delete(staging, true);
+            }
+            catch (Exception)
+            {
+                return;
+            }
+
+            Assert.Fail("the staging remnant deleted cleanly despite chmod 0555; this environment cannot reproduce the failure under test");
+        }
+
+        /// <summary>
+        /// Puts the write bit back across the whole scratch tree. Recursive from the root
+        /// rather than aimed at the folder that was locked, because a publish that wrongly
+        /// went ahead has renamed that folder into the destination.
+        /// </summary>
+        private void RestoreScratchPermissions()
+        {
+            Chmod("-R u+rwX \"" + root + "\"");
+        }
+
+        /// <summary>
+        /// Runs /bin/chmod. File.SetUnixFileMode does not exist in the .NET profile Unity
+        /// 2021 ships, so the permission change has to go through the binary.
+        /// </summary>
+        private static bool Chmod(string arguments)
+        {
+            try
+            {
+                ProcessStartInfo psi = new ProcessStartInfo("/bin/chmod", arguments)
+                {
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardError = true
+                };
+
+                using (Process process = Process.Start(psi))
+                {
+                    process.StandardError.ReadToEnd();
+                    process.WaitForExit();
+                    return process.ExitCode == 0;
+                }
+            }
+            catch (Exception)
+            {
+                return false;
+            }
         }
     }
 }

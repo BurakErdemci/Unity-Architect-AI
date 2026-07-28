@@ -273,8 +273,14 @@ namespace MCPForUnity.Editor.Setup
             // Fixed names rather than per-run unique ones: a run killed mid-swap leaves its
             // scratch folders behind, and a fixed name means the next run reclaims them
             // instead of accumulating one more.
-            DeleteDirectoryLoudly(staging);
-            DeleteDirectoryLoudly(backup);
+            //
+            // Reclaiming them has to succeed before anything is published. Logging a failed
+            // delete and carrying on would let a previous run's files ride into staging and
+            // then get renamed onto the destination, producing exactly the mixed assembly set
+            // this atomic publish exists to prevent. On Windows a DLL the Editor still holds
+            // open makes that failure ordinary, no adversary required.
+            RequireScratchFolderCleared(staging);
+            RequireScratchFolderCleared(backup);
 
             bool backupHoldsTheOnlyCopy = false;
             try
@@ -350,6 +356,34 @@ namespace MCPForUnity.Editor.Setup
                 if (!backupHoldsTheOnlyCopy)
                     DeleteDirectoryLoudly(backup);
             }
+        }
+
+        /// <summary>
+        /// Removes a scratch folder and throws if it is still there afterwards. This is the
+        /// pre-flight counterpart to <see cref="DeleteDirectoryLoudly"/>: before the swap a
+        /// leftover folder changes what gets published, so refusing to start is correct, while
+        /// in the finally block the install is already over and throwing would only mask the
+        /// original failure.
+        /// </summary>
+        private static void RequireScratchFolderCleared(string path)
+        {
+            try
+            {
+                if (Directory.Exists(path))
+                    Directory.Delete(path, true);
+            }
+            catch (Exception e)
+            {
+                throw new IOException(
+                    $"Could not clear the leftover folder \"{path}\": {e.Message}. Nothing was " +
+                    "installed. Close Unity (or whatever holds those files open), delete the " +
+                    "folder by hand, and install again.", e);
+            }
+
+            if (Directory.Exists(path))
+                throw new IOException(
+                    $"The leftover folder \"{path}\" is still present after being deleted. " +
+                    "Nothing was installed; delete it by hand and install again.");
         }
 
         /// <summary>
