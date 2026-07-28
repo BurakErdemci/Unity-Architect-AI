@@ -10,6 +10,7 @@
 import { useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
 import { PendingFile } from '../../components/home/FileCreationApproval';
+import { gateFailure } from './gateResponse';
 
 interface MCPApprovalHookParams {
   API: string;
@@ -19,6 +20,9 @@ interface MCPApprovalHookParams {
   setPendingDelete: (val: { path: string; messageId: number } | null) => void;
   setPendingCommand: (val: { command: string; gateId: string; messageId: number } | null) => void;
   setPendingFix: (val: any) => void;
+  // Kararın backend'e ULAŞMADIĞINI kullanıcıya bildirmek için. Opsiyonel:
+  // hook'u test/başka bağlamda toast'sız kurmak mümkün kalsın.
+  showToast?: (msg: string, type: any) => void;
 }
 
 // MCP onay isteği için sanal mesaj ID'si (gerçek chat mesajına bağlı değil)
@@ -32,17 +36,27 @@ export const useMCPApproval = ({
   setPendingDelete,
   setPendingCommand,
   setPendingFix,
+  showToast,
 }: MCPApprovalHookParams) => {
   const seenGates = useRef<Set<string>>(new Set());
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Yanıt gövdesi eskiden okunmuyordu: gate TTL ile süpürüldüyse backend
+  // {"status":"gate_not_found"} dönüyor, kart yine kapanıyor ve kullanıcı
+  // onayladığını sanıyordu. Bridge o gate'i fail-closed reddediyor — yani
+  // dosya yazılmıyor/komut çalışmıyor ama ekranda hiçbir iz yok.
   const respond = useCallback(async (gateId: string, approved: boolean) => {
+    let failure = null as ReturnType<typeof gateFailure>;
     try {
-      await axios.post(`${API}/mcp-approval-respond/${gateId}`, { approved });
+      const res = await axios.post(`${API}/mcp-approval-respond/${gateId}`, { approved });
+      // axios non-2xx'te zaten throw eder; buraya düşen yanıt 2xx'tir.
+      failure = gateFailure('mcp', { httpOk: true, httpStatus: res.status, body: res.data });
     } catch (err) {
       console.warn('[MCP] respond error', err);
+      failure = gateFailure('mcp', { httpOk: false, error: err });
     }
-  }, [API]);
+    if (failure) showToast?.(failure.message, failure.type);
+  }, [API, showToast]);
 
   const poll = useCallback(async () => {
     if (!API) return;

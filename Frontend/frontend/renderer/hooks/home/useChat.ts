@@ -4,6 +4,7 @@ import { Message, Conversation, UserData, AIConfig, GenerationMode, ChatActivity
 import { PendingFile } from '../../components/home/FileCreationApproval';
 import { Task } from '../../components/ui/agent-plan';
 import { confirmDialog } from '../../components/ui/ConfirmDialog';
+import { deliveryFromFetch, gateFailure } from './gateResponse';
 
 const ipc = typeof window !== 'undefined' ? (window as any).ipc : null;
 
@@ -435,26 +436,43 @@ export const useChat = (
       setLoading(false);
     },
     clearHistory, analyzeProject, exportMemory, importMemory, compactConversation,
+    // Kararı backend'e iletir ve İLETİLDİĞİNİ DOĞRULAR. Yanıt gövdesi eskiden
+    // hiç okunmuyordu: gate düşmüşse backend {"status":"gate_not_found"} dönüyor,
+    // kart yine de kapanıyor ve kullanıcı onayladığını sanıyordu (sessiz veri
+    // kaybı, ölçüldü 2026-07-28). Kart yine kapanır — asılı kalması daha kötü —
+    // ama kullanıcı ne olduğunu görür.
     approveCommand: async (gateId: string, approved: boolean) => {
+      let failure = null as ReturnType<typeof gateFailure>;
       try {
-        await fetch(`${API}/command-approval/${gateId}`, {
+        const res = await fetch(`${API}/command-approval/${gateId}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'X-Session-Token': user?.sessionToken ?? '' },
           body: JSON.stringify({ approved }),
         });
-      } catch (err) { console.warn('approveCommand fetch failed', err); }
+        failure = gateFailure('command', await deliveryFromFetch(res));
+      } catch (err) {
+        console.warn('approveCommand fetch failed', err);
+        failure = gateFailure('command', { httpOk: false, error: err });
+      }
+      if (failure) showToast(failure.message, failure.type);
       // Çözüldü → kuyrukta sıradaki onayı göster (yoksa kapat)
       setPendingCommand(pendingCommandQueueRef.current.shift() || null);
     },
     // AskUserQuestion (A/B/C) cevabı: { "<soru metni>": "<seçilen label>" }
     answerQuestion: async (gateId: string, answers: Record<string, string>) => {
+      let failure = null as ReturnType<typeof gateFailure>;
       try {
-        await fetch(`${API}/question-answer/${gateId}`, {
+        const res = await fetch(`${API}/question-answer/${gateId}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'X-Session-Token': user?.sessionToken ?? '' },
           body: JSON.stringify({ answers }),
         });
-      } catch (err) { console.warn('answerQuestion fetch failed', err); }
+        failure = gateFailure('question', await deliveryFromFetch(res));
+      } catch (err) {
+        console.warn('answerQuestion fetch failed', err);
+        failure = gateFailure('question', { httpOk: false, error: err });
+      }
+      if (failure) showToast(failure.message, failure.type);
       // Çözüldü → kuyrukta sıradaki soruyu göster (yoksa kapat)
       setPendingQuestion(pendingQuestionQueueRef.current.shift() || null);
     },

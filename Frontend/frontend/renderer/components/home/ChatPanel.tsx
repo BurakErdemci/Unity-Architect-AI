@@ -22,6 +22,7 @@ import { CommandApproval } from './CommandApproval';
 import { QuestionApproval } from './QuestionApproval';
 import { DiffViewer, DiffData } from './DiffViewer';
 import AgentPlan, { Task as AgentTask } from '../ui/agent-plan';
+import { postMcpDecision, decisionToast } from '../../hooks/home/gateResponse';
 
 interface ChatPanelProps {
   messages: Message[];
@@ -346,15 +347,18 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                         // MCP onayı: gate varsa backend'e bildir, sonra IPC ile yaz
                         if (pendingFix.gateId) {
                           const filePath = pendingFix.data?.editor_hint || openedFilePath;
-                          await fetch(`${(window as any).__API__ || ''}/mcp-approval-respond/${pendingFix.gateId}`, {
-                            method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Session-Token': user?.sessionToken ?? '' },
-                            body: JSON.stringify({ approved: true }),
-                          }).catch(() => {});
+                          // Onay gerçekten iletildi mi? Gate düşmüşse backend
+                          // "gate_not_found" döner ve MCP tarafı isteği fail-closed
+                          // reddeder — eskiden burada koşulsuz "✅ onaylandı" basılıyordu,
+                          // yani kullanıcıya yanlış bilgi veriliyordu.
+                          const failure = await postMcpDecision(
+                            (window as any).__API__ || '', pendingFix.gateId, true, user?.sessionToken ?? '');
                           // MCP server zaten dosyayı yazar, sadece editörü güncelle
-                          if (filePath) setCode(fixedCode);
+                          if (!failure && filePath) setCode(fixedCode);
                           setPendingFix(null);
                           refreshFileTree();
-                          showToast('✅ Değişiklik onaylandı', 'success');
+                          const t = decisionToast(failure, '✅ Değişiklik onaylandı');
+                          showToast(t.message, t.type);
                           return;
                         }
                         // Normal (API) onayı
@@ -369,10 +373,11 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                       }}
                       onReject={async () => {
                         if (pendingFix.gateId) {
-                          await fetch(`${(window as any).__API__ || ''}/mcp-approval-respond/${pendingFix.gateId}`, {
-                            method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Session-Token': user?.sessionToken ?? '' },
-                            body: JSON.stringify({ approved: false }),
-                          }).catch(() => {});
+                          // Reddin iletilmemesi de sessiz kalmamalı: kullanıcı
+                          // reddettiğini sanırken gate zaman aşımıyla düşmüş olabilir.
+                          const failure = await postMcpDecision(
+                            (window as any).__API__ || '', pendingFix.gateId, false, user?.sessionToken ?? '');
+                          if (failure) showToast(failure.message, failure.type);
                         }
                         setPendingFix(null);
                       }}
@@ -438,22 +443,22 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
               onOpenFile={openFile}
               onAcceptOne={async (file) => {
                 const gateId = (window as any).__mcpWriteGate;
-                if (gateId) await fetch(`${(window as any).__API__ || ''}/mcp-approval-respond/${gateId}`, {
-                  method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Session-Token': user?.sessionToken ?? '' },
-                  body: JSON.stringify({ approved: true }),
-                }).catch(() => {});
+                const failure = gateId
+                  ? await postMcpDecision((window as any).__API__ || '', gateId, true, user?.sessionToken ?? '')
+                  : null;
                 refreshFileTree();
-                showToast(`✅ ${file.name} oluşturuldu`, 'success');
+                const t = decisionToast(failure, `✅ ${file.name} oluşturuldu`);
+                showToast(t.message, t.type);
               }}
               onSkipOne={() => {}}
               onAcceptAll={async () => {
                 const gateId = (window as any).__mcpWriteGate;
-                if (gateId) await fetch(`${(window as any).__API__ || ''}/mcp-approval-respond/${gateId}`, {
-                  method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Session-Token': user?.sessionToken ?? '' },
-                  body: JSON.stringify({ approved: true }),
-                }).catch(() => {});
+                const failure = gateId
+                  ? await postMcpDecision((window as any).__API__ || '', gateId, true, user?.sessionToken ?? '')
+                  : null;
                 refreshFileTree();
-                showToast('✅ Dosya oluşturuldu', 'success');
+                const t = decisionToast(failure, '✅ Dosya oluşturuldu');
+                showToast(t.message, t.type);
               }}
               onDone={() => setPendingGenFiles(null)}
             />
@@ -465,25 +470,23 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
               path={pendingDelete.path}
               onConfirm={async () => {
                 const gateId = (window as any).__mcpDeleteGate;
-                if (gateId) {
-                  await fetch(`${(window as any).__API__ || ''}/mcp-approval-respond/${gateId}`, {
-                    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Session-Token': user?.sessionToken ?? '' },
-                    body: JSON.stringify({ approved: true }),
-                  }).catch(() => {});
-                }
+                const failure = gateId
+                  ? await postMcpDecision((window as any).__API__ || '', gateId, true, user?.sessionToken ?? '')
+                  : null;
                 setPendingDelete(null);
                 // MCP server approval'ı polling ile ~500ms gecikmeli görür → dosyayı siler.
                 // Refresh'i geciktirmezsek dosya henüz silinmemiş olur.
                 setTimeout(() => refreshFileTree(), 900);
-                showToast('🗑️ Dosya silindi', 'info');
+                // "Dosya silindi" ancak onay iletildiyse doğru; iletilmediyse dosya YERİNDE.
+                const t = decisionToast(failure, '🗑️ Dosya silindi', 'info');
+                showToast(t.message, t.type);
               }}
               onCancel={async () => {
                 const gateId = (window as any).__mcpDeleteGate;
                 if (gateId) {
-                  await fetch(`${(window as any).__API__ || ''}/mcp-approval-respond/${gateId}`, {
-                    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Session-Token': user?.sessionToken ?? '' },
-                    body: JSON.stringify({ approved: false }),
-                  }).catch(() => {});
+                  const failure = await postMcpDecision(
+                    (window as any).__API__ || '', gateId, false, user?.sessionToken ?? '');
+                  if (failure) showToast(failure.message, failure.type);
                 }
                 setPendingDelete(null);
               }}
@@ -495,24 +498,19 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             <CommandApproval
               command={pendingCommand.command}
               onConfirm={async () => {
-                const gateId = pendingCommand.gateId;
-                await fetch(`${(window as any).__API__ || ''}/mcp-approval-respond/${gateId}`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json', 'X-Session-Token': user?.sessionToken ?? '' },
-                  body: JSON.stringify({ approved: true }),
-                }).catch(() => {});
+                const failure = await postMcpDecision(
+                  (window as any).__API__ || '', pendingCommand.gateId, true, user?.sessionToken ?? '');
                 setPendingCommand(null);
-                showToast('Komut onaylandı — çalışıyor...', 'success');
+                // "çalışıyor..." iddiası onay iletilmediyse yanlış: komut çalışmıyor.
+                const t = decisionToast(failure, 'Komut onaylandı — çalışıyor...');
+                showToast(t.message, t.type);
               }}
               onCancel={async () => {
-                const gateId = pendingCommand.gateId;
-                await fetch(`${(window as any).__API__ || ''}/mcp-approval-respond/${gateId}`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json', 'X-Session-Token': user?.sessionToken ?? '' },
-                  body: JSON.stringify({ approved: false }),
-                }).catch(() => {});
+                const failure = await postMcpDecision(
+                  (window as any).__API__ || '', pendingCommand.gateId, false, user?.sessionToken ?? '');
                 setPendingCommand(null);
-                showToast('Komut iptal edildi', 'info');
+                const t = decisionToast(failure, 'Komut iptal edildi', 'info');
+                showToast(t.message, t.type);
               }}
             />
           </div>

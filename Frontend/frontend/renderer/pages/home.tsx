@@ -97,6 +97,7 @@ export default function Home() {
     setPendingDelete: fs.setPendingDelete,
     setPendingCommand: chat.setPendingCommand,
     setPendingFix: chat.setPendingFix,
+    showToast: showToast as any,
   });
 
   // API URL'yi window'a set et — ChatPanel ve diğer bileşenler erişebilsin
