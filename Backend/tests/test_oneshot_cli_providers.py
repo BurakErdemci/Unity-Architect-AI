@@ -164,19 +164,40 @@ class TestEventParsing(unittest.TestCase):
 
     def _run_provider(self, provider, jsonl_lines):
         """Provider'ın analyze_code'unu sahte komutla çalıştırıp event listesi döner.
-        Sahte komut: python -c ile stdout'a JSONL basar."""
+        Sahte komut: bir python betiği stdout'a JSONL basar.
+
+        Betik argv'ye DEĞİL geçici bir DOSYAYA yazılıyor. `python -c <betik>`
+        biçimi, 64 KB'lık Unity ekran görüntüsü satırını taşıyan testte Linux'ta
+        `OSError: [Errno 7] Argument list too long` veriyordu — argüman başına
+        sınır (`MAX_ARG_STRLEN`, 128 KB) macOS'ta yok, o yüzden yerelde hiç
+        görünmedi ve yalnız runner'da patladı (ölçüldü, CI 2026-07-28).
+        Dosyadan okumak aynı baytları aynı borudan geçiriyor, yani test
+        zayıflamıyor; tersine büyük-satır yolu Linux'ta ARTIK gerçekten
+        sınanabiliyor — eskiden orada kurulum aşamasında ölüyordu.
+        """
         script = "import sys\n" + "".join(
             f"sys.stdout.write({json.dumps(line + chr(10))})\n" for line in jsonl_lines
         )
-        with _mock_unity_mcp(), \
-             patch.object(type(provider), "_build_cmd", lambda self, *a, **k: [sys.executable, "-c", script]), \
-             patch.object(type(provider), "_write_mcp_config", lambda self, ws: ""):
-            async def collect():
-                evs = []
-                async for ev in provider.analyze_code("test", cwd=os.getcwd()):
-                    evs.append(ev)
-                return evs
-            return asyncio.run(collect())
+        fd, script_path = tempfile.mkstemp(prefix="fake_cli_", suffix=".py")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(script)
+            with _mock_unity_mcp(), \
+                 patch.object(type(provider), "_build_cmd", lambda self, *a, **k: [sys.executable, script_path]), \
+                 patch.object(type(provider), "_write_mcp_config", lambda self, ws: ""):
+                async def collect():
+                    evs = []
+                    async for ev in provider.analyze_code("test", cwd=os.getcwd()):
+                        evs.append(ev)
+                    return evs
+                return asyncio.run(collect())
+        finally:
+            # Yaratan adımın silen adımı: aksi hâlde her koşu $TMPDIR'a bir
+            # betik bırakır ve büyük satır testinde bunlar 64 KB'lık.
+            try:
+                os.unlink(script_path)
+            except OSError:
+                pass
 
     def test_cursor_stream(self):
         """Gerçek cursor stream-json örneği: parçalı delta + tam metin tekrarı + result."""

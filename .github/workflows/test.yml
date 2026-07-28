@@ -65,6 +65,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # zsh, `test_cli_install.py`'nin ürettiği macOS kurulum komutlarını
+      # `zsh -n` ile AYRIŞTIRDIĞI için gerekli. Kurulmazsa test kendini
+      # atlıyor (yolu artık `shutil.which` ile çözüyor, sabit değil) ve
+      # sözdizimi kapısı runner'da sessizce hiç koşmuyor — atlanan bir kapı,
+      # olmayan kapıdan ayırt edilemez.
+      - name: zsh (kurulum komutu sözdizimi kapısı için)
+        run: sudo apt-get install -y --no-install-recommends zsh
+
       - uses: actions/setup-python@v5
         with:
           # `release.yml` ile TUTARLI olmak zorunda: `scripts/pinned_assets.py`

@@ -1,6 +1,7 @@
 """Windows/macOS görünür CLI kurulum ve giriş akışı regresyon testleri."""
 import asyncio
 import os
+import shutil
 import subprocess
 import sys
 import unittest
@@ -25,14 +26,24 @@ class TestInstallCommands(unittest.TestCase):
         )
 
     def test_every_mac_install_continues_to_its_interactive_login(self):
+        # zsh yolu SABİT YAZILMAZ. `/bin/zsh` macOS'ta var ama ubuntu runner'da
+        # yok ve bu test orada altı subtest'in altısını birden düşürüyordu
+        # (`FileNotFoundError`, ölçüldü CI 2026-07-28) — yani macOS'ta yeşil
+        # olan bir test Linux'ta ürünle ilgisiz bir sebeple kırmızıydı.
+        # Metin iddiaları her platformda koşmaya devam ediyor; koşulsuz olan
+        # yalnız sözdizimi kapısı, ve zsh kurulu olan her yerde o da koşuyor
+        # (CI iş akışı zsh kuruyor, bkz .github/workflows/test.yml).
+        zsh = shutil.which("zsh")
         for cli, (install_cmd, needs_npm) in _MAC_INSTALL_CMDS.items():
             with self.subTest(cli=cli):
                 command = _install_terminal_command(cli, install_cmd, needs_npm, "darwin")
                 self.assertIn(install_cmd, command)
                 self.assertIn(_MAC_LOGIN_CMDS[cli], command)
                 self.assertIn("install_status", command)
+                if zsh is None:
+                    self.skipTest("zsh bulunamadı — sözdizimi kapısı atlandı, metin iddiaları koştu")
                 parsed = subprocess.run(
-                    ["/bin/zsh", "-n", "-c", command],
+                    [zsh, "-n", "-c", command],
                     capture_output=True,
                     text=True,
                 )
