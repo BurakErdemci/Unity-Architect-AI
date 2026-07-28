@@ -13,6 +13,16 @@ namespace MCPForUnity.Editor.Setup
     {
         private const string PluginsRelPath = "Plugins/Roslyn";
 
+        // Staging and backup sit next to the destination, inside Assets/Plugins/, for two
+        // reasons. Sharing a parent means sharing a volume, so Directory.Move is a rename
+        // the filesystem completes atomically rather than a copy that can stop halfway.
+        // And a trailing '~' makes Unity treat a folder as hidden: the asset pipeline never
+        // imports it, so a DLL is only ever seen by the Editor once the whole set is in
+        // place. A staging folder without that suffix would be imported and loaded, which
+        // is the exact failure this indirection exists to prevent.
+        private const string StagingFolderSuffix = ".mcp-staging~";
+        private const string BackupFolderSuffix = ".mcp-backup~";
+
         // The DLLs installed here are loaded into the Editor app domain and back the
         // runtime_compilation tool, so a downloaded package is directly executed code.
         // Every entry therefore carries the SHA-256 of the exact .nupkg nuget.org serves
@@ -131,14 +141,17 @@ namespace MCPForUnity.Editor.Setup
                     return;
                 }
 
-                Directory.CreateDirectory(destFolder);
+                if (interactive)
+                    EditorUtility.DisplayProgressBar("Installing Roslyn", "Installing DLLs...", 0.9f);
+
+                string[] dllNames = new string[NuGetEntries.Length];
+                for (int i = 0; i < NuGetEntries.Length; i++)
+                    dllNames[i] = NuGetEntries[i].dllName;
+
+                PublishFolderAtomically(destFolder, dllNames, extractedDlls);
 
                 for (int i = 0; i < NuGetEntries.Length; i++)
-                {
-                    string dllName = NuGetEntries[i].dllName;
-                    File.WriteAllBytes(Path.Combine(destFolder, dllName), extractedDlls[i]);
-                    Debug.Log($"[MCP] Extracted {dllName} ({extractedDlls[i].Length / 1024}KB) → Assets/{PluginsRelPath}/{dllName}");
-                }
+                    Debug.Log($"[MCP] Extracted {dllNames[i]} ({extractedDlls[i].Length / 1024}KB) → Assets/{PluginsRelPath}/{dllNames[i]}");
 
                 if (interactive)
                     EditorUtility.DisplayProgressBar("Installing Roslyn", "Refreshing assets...", 0.95f);
@@ -227,6 +240,148 @@ namespace MCPForUnity.Editor.Setup
 
             error = null;
             return true;
+        }
+
+        /// <summary>
+        /// Publishes a whole set of files into <paramref name="destFolder"/> so the folder is
+        /// only ever observed holding all of them or none of them.
+        ///
+        /// Writing the files one by one into the destination was verified-then-torn: the
+        /// digest gate guarantees the bytes are right, but a disk-full, a permission error or
+        /// a crash on the second write still left a folder mixing new and old DLLs. Mixed
+        /// Roslyn assemblies load, then fail at call sites with missing-member errors, so the
+        /// damage surfaces far away from its cause.
+        ///
+        /// The set is therefore assembled in a hidden sibling folder and swapped in with two
+        /// renames. Anything that already lives in the destination (existing .meta files,
+        /// DLLs a user dropped in by hand) is copied into staging first, so the swap replaces
+        /// the folder without dropping its contents — .meta in particular carries the asset
+        /// GUID and the plugin import settings, which a fresh folder would silently reset.
+        /// </summary>
+        public static void PublishFolderAtomically(string destFolder, string[] fileNames, byte[][] fileContents)
+        {
+            if (fileNames == null || fileContents == null || fileNames.Length != fileContents.Length)
+                throw new ArgumentException("fileNames and fileContents must be non-null and the same length");
+
+            string parent = Path.GetDirectoryName(destFolder);
+            string leaf = Path.GetFileName(destFolder);
+            string staging = Path.Combine(parent, leaf + StagingFolderSuffix);
+            string backup = Path.Combine(parent, leaf + BackupFolderSuffix);
+
+            Directory.CreateDirectory(parent);
+
+            // Fixed names rather than per-run unique ones: a run killed mid-swap leaves its
+            // scratch folders behind, and a fixed name means the next run reclaims them
+            // instead of accumulating one more.
+            DeleteDirectoryLoudly(staging);
+            DeleteDirectoryLoudly(backup);
+
+            bool backupHoldsTheOnlyCopy = false;
+            try
+            {
+                Directory.CreateDirectory(staging);
+                if (Directory.Exists(destFolder))
+                    CopyDirectory(destFolder, staging);
+
+                for (int i = 0; i < fileNames.Length; i++)
+                {
+                    string stagedPath = Path.Combine(staging, fileNames[i]);
+                    File.WriteAllBytes(stagedPath, fileContents[i]);
+
+                    // Read back rather than trust the write. A full volume can report success
+                    // and produce a short file, and a truncated assembly is exactly what must
+                    // never reach the destination.
+                    byte[] readBack = File.ReadAllBytes(stagedPath);
+                    if (readBack.Length != fileContents[i].Length)
+                        throw new IOException(
+                            $"{fileNames[i]} was written to staging as {readBack.Length} bytes but should be " +
+                            $"{fileContents[i].Length}; the volume is likely full. Nothing was installed.");
+
+                    for (int b = 0; b < readBack.Length; b++)
+                    {
+                        if (readBack[b] != fileContents[i][b])
+                            throw new IOException(
+                                $"{fileNames[i]} read back differently than it was written (first difference at " +
+                                $"byte {b}). Nothing was installed.");
+                    }
+                }
+
+                bool destMovedAside = false;
+                if (Directory.Exists(destFolder))
+                {
+                    // If the Editor holds the old DLLs open — the normal case on Windows once
+                    // runtime_compilation has run — this throws, and it throws before anything
+                    // has been modified. A reinstall that cannot proceed leaves the previous
+                    // install exactly as it was instead of half-replacing it.
+                    Directory.Move(destFolder, backup);
+                    destMovedAside = true;
+                }
+
+                try
+                {
+                    Directory.Move(staging, destFolder);
+                }
+                catch
+                {
+                    if (destMovedAside)
+                    {
+                        try
+                        {
+                            Directory.Move(backup, destFolder);
+                        }
+                        catch (Exception restoreError)
+                        {
+                            // Both renames failed, so the previous install now exists only under
+                            // the backup name. It must survive cleanup and the user must be told
+                            // where it is; deleting it here would turn a failed install into lost data.
+                            backupHoldsTheOnlyCopy = true;
+                            Debug.LogError(
+                                $"[MCP] Roslyn install failed AND the previous install could not be moved back. " +
+                                $"It is intact at \"{backup}\" — rename that folder to \"{destFolder}\" to restore it. " +
+                                $"Restore error: {restoreError}");
+                        }
+                    }
+                    throw;
+                }
+            }
+            finally
+            {
+                DeleteDirectoryLoudly(staging);
+                if (!backupHoldsTheOnlyCopy)
+                    DeleteDirectoryLoudly(backup);
+            }
+        }
+
+        /// <summary>
+        /// Deletes a scratch folder if it exists. Never throws: it runs from a finally block,
+        /// where throwing would replace the real failure with a cleanup failure. A delete that
+        /// fails is reported instead of swallowed, because a leftover folder changes what the
+        /// next install does.
+        /// </summary>
+        private static void DeleteDirectoryLoudly(string path)
+        {
+            try
+            {
+                if (Directory.Exists(path))
+                    Directory.Delete(path, true);
+            }
+            catch (Exception e)
+            {
+                Debug.LogError(
+                    $"[MCP] Could not remove the temporary folder \"{path}\": {e.Message}. " +
+                    "Unity ignores it (the name ends with '~'), but delete it by hand if it lingers.");
+            }
+        }
+
+        private static void CopyDirectory(string sourceDir, string targetDir)
+        {
+            Directory.CreateDirectory(targetDir);
+
+            foreach (string file in Directory.GetFiles(sourceDir))
+                File.Copy(file, Path.Combine(targetDir, Path.GetFileName(file)), true);
+
+            foreach (string dir in Directory.GetDirectories(sourceDir))
+                CopyDirectory(dir, Path.Combine(targetDir, Path.GetFileName(dir)));
         }
 
         private static byte[] ExtractFileFromZip(byte[] zipBytes, string entryPath)
