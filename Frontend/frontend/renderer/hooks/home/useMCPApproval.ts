@@ -28,6 +28,38 @@ interface MCPApprovalHookParams {
 // MCP onay isteği için sanal mesaj ID'si (gerçek chat mesajına bağlı değil)
 const MCP_MSG_ID = -999;
 
+/**
+ * MCP onay kimliklerinin (gate id) tek saklama/okuma yeri.
+ *
+ * Neden `window` üstünde: kart bileşenleri (ChatPanel) hook'un dönüşünü değil
+ * `pendingDelete`/`pendingGenFiles` state'ini görüyor; gate id o state'in içinde
+ * taşınmıyor. Bu bir tasarım borcu, ama düzeltilmesi bu şeridin kapsamı değil —
+ * burada yapılan, borcu TEK yere hapsetmek.
+ *
+ * Neden `take` (oku VE sil): karar verildikten sonra global bayat değeriyle
+ * duruyordu. Sıradaki kart gate id'siz gelirse (ör. yazma yolunda hata) eski id
+ * okunur ve karar YANLIŞ gate'e bildirilirdi.
+ */
+export type McpGateKind = 'write' | 'delete';
+const GATE_KEYS: Record<McpGateKind, string> = {
+  write: '__mcpWriteGate',
+  delete: '__mcpDeleteGate',
+};
+
+export const setMcpGate = (kind: McpGateKind, gateId: string): void => {
+  (window as any)[GATE_KEYS[kind]] = gateId;
+};
+
+/** Okur ve siler. Gate yoksa `''` döner — `undefined` sızdırmaz, çünkü
+ *  `postMcpDecision` boş string'i "istek gönderme, başarısızlık bildir" diye
+ *  yorumluyor ve bu ayrımın tek yerde durması gerekiyor. */
+export const takeMcpGate = (kind: McpGateKind): string => {
+  const key = GATE_KEYS[kind];
+  const value = (window as any)[key];
+  delete (window as any)[key];
+  return typeof value === 'string' ? value : '';
+};
+
 export const useMCPApproval = ({
   API,
   enabled,
@@ -72,7 +104,10 @@ export const useMCPApproval = ({
 
         if (tool === 'write_file') {
           const { path, content, original } = params;
-          (window as any).__mcpWriteGate = gateId;
+          // Gate kimliği kart state'inden ÖNCE yazılır: kart render olup
+          // kullanıcı butona bastığında kimlik hazır olmalı. (Aynı sınıf hata
+          // `delete_file` yolunda vardı ve yalnız React batching kurtarıyordu.)
+          setMcpGate('write', gateId);
 
           if (!original) {
             // Yeni dosya → FileCreationApproval
@@ -98,9 +133,12 @@ export const useMCPApproval = ({
             });
           }
         } else if (tool === 'delete_file') {
+          // SIRA ÖNEMLİ: gate kimliği kartı gösteren state'ten ÖNCE yazılır.
+          // Ters sırada yalnız React batching kurtarıyordu — batching'e bağlı
+          // doğruluk doğruluk değildir (bir refactor ya da bir `await`
+          // uzaklıkta kırılır ve kullanıcı gate'siz bir karta basar).
+          setMcpGate('delete', gateId);
           setPendingDelete({ path: params.path, messageId: MCP_MSG_ID });
-          // Delete onayı için gateId'yi ayrıca sakla
-          (window as any).__mcpDeleteGate = gateId;
         } else if (tool === 'bash') {
           setPendingCommand({
             command: params.command,
@@ -140,16 +178,19 @@ export const useMCPApproval = ({
   }, [respond, setPendingGenFiles, setPendingFix]);
 
   const approveMCPDelete = useCallback(async () => {
-    const gateId = (window as any).__mcpDeleteGate;
+    const gateId = takeMcpGate('delete');
     if (gateId) await respond(gateId, true);
     setPendingDelete(null);
   }, [respond, setPendingDelete]);
 
   const rejectMCPDelete = useCallback(async () => {
-    const gateId = (window as any).__mcpDeleteGate;
+    const gateId = takeMcpGate('delete');
     if (gateId) await respond(gateId, false);
     setPendingDelete(null);
   }, [respond, setPendingDelete]);
 
-  return { respond, approveMCPFile, rejectMCPFile, approveMCPDelete, rejectMCPDelete };
+  // `poll` dışarı da veriliyor: polling'in kendisi zamanlayıcıya bağlı, ama
+  // "gate kimliği kart state'inden önce yazılıyor mu" sorusu zamanlayıcıdan
+  // bağımsız bir DOĞRULUK sorusu ve deterministik ölçülebilmeli.
+  return { respond, poll, approveMCPFile, rejectMCPFile, approveMCPDelete, rejectMCPDelete };
 };

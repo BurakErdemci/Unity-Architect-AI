@@ -98,6 +98,10 @@ const tr = {
   'approval.cancel': 'İptal',
   'approval.approveAll': 'Tümünü Onayla',
   'approval.done': 'İşlem Tamamlandı',
+  // Başarısızlık başlığı ayrı: "İşlem Tamamlandı" kullanıcıya "dosyalar diskte"
+  // dedirtiyor. Reddedilen bir yazımda o cümle yalan (ölçüldü 2026-07-29).
+  'approval.failed': 'Bazı dosyalar yazılamadı',
+  'approval.verifyTree': 'Hangi dosyaların yazıldığını dosya ağacından doğrulayın.',
   'approval.close': 'Kapat',
   // FileDeleteApproval
   'deleteApproval.title': 'Dosya Silme Onayı',
@@ -239,6 +243,8 @@ const en: Record<keyof typeof tr, string> = {
   'approval.cancel': 'Cancel',
   'approval.approveAll': 'Approve All',
   'approval.done': 'Operation Complete',
+  'approval.failed': 'Some files could not be written',
+  'approval.verifyTree': 'Check the file tree to see which files were written.',
   'approval.close': 'Close',
   // FileDeleteApproval
   'deleteApproval.title': 'File Delete Confirmation',

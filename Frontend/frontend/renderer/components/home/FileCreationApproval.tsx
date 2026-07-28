@@ -21,9 +21,21 @@ export interface PendingFile {
 
 interface FileCreationApprovalProps {
   files: PendingFile[];
-  onAcceptOne: (file: PendingFile) => Promise<void>;
+  /**
+   * `true` = dosya GERÇEKTEN yazıldı/onay iletildi. Yalnız `true` dönerse kart
+   * dosyayı "oluşturuldu" sayar.
+   *
+   * Neden `Promise<void>` değil (ölçüldü 2026-07-29): tek sinyal istisnaydı ve
+   * asıl yazma yolu HİÇ throw etmiyor — `ipc.invoke('write-file')`
+   * `{success:false, error}` dönüyor (main/background.ts:397-418). Yani
+   * `.catch()` hiç ateşlenmiyordu ve reddedilen dosya "İşlem Tamamlandı"
+   * kartında oluşturulmuş gibi listeleniyordu.
+   */
+  onAcceptOne: (file: PendingFile) => Promise<boolean>;
   onSkipOne: (file: PendingFile) => void;
-  onAcceptAll: (files: PendingFile[]) => Promise<void>;
+  /** `true` = dosyaların HEPSİ yazıldı. Kısmi başarı `false`'tur; hangi dosyanın
+   *  neden yazılamadığını çağıran kendi bildirir (dosya başına toast). */
+  onAcceptAll: (files: PendingFile[]) => Promise<boolean>;
   onDone: () => void;
   onOpenFile?: (path: string) => void;
   autoAccept?: boolean;
@@ -44,10 +56,16 @@ export const FileCreationApproval = ({
   const [currentIdx, setCurrentIdx] = useState(0);
   const [done, setDone] = useState<Set<number>>(new Set());
   const [skipped, setSkipped] = useState<Set<number>>(new Set());
+  // Yazılamayanlar ayrı tutulur: `done`'a katmak yalanın ta kendisiydi,
+  // `skipped`'a katmak da yanlış olurdu (kullanıcı atlamadı, sistem reddetti).
+  const [failed, setFailed] = useState<Set<number>>(new Set());
+  // "Tümünü Onayla" başarısızlığı ayrı bir bayrak: toplu yolda hangi dosyanın
+  // yazıldığı bilinmiyor, o yüzden dosya bazında işaretleme YAPILMIYOR.
+  const [bulkFailed, setBulkFailed] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [allDone, setAllDone] = useState(false);
 
-  const remaining = files.length - done.size - skipped.size;
+  const remaining = files.length - done.size - skipped.size - failed.size;
 
   // Dosya değiştiğinde ana editörü güncelle
   useEffect(() => {
@@ -63,21 +81,36 @@ export const FileCreationApproval = ({
     }
   }, [autoAccept]);
 
+  /**
+   * Bir dosya çözüldükten (yazıldı / atlandı / başarısız) sonra sıradakine geç,
+   * hepsi çözüldüyse özet kartına düş. `done`/`skipped`/`failed` bu noktada hâlâ
+   * bayat (setState henüz uygulanmadı), o yüzden çözülen dosya `+1` ile sayılır —
+   * mevcut davranış, korundu.
+   */
+  const advance = (idx: number) => {
+    const next = files.findIndex(
+      (_, i) => !done.has(i) && !skipped.has(i) && !failed.has(i) && i !== idx,
+    );
+    if (next !== -1) setCurrentIdx(next);
+    else if (done.size + skipped.size + failed.size + 1 === files.length) {
+      setAllDone(true);
+      setDiffFile(null);
+    }
+  };
+
   const handleAccept = async (idx: number) => {
     const file = files[idx];
     if (!file || processing || done.has(idx)) return;
     setProcessing(true);
-    await onAcceptOne(file).catch(err => console.error(err));
-    setDone(prev => new Set([...prev, idx]));
+    // Eskiden burada `.catch()` + KOŞULSUZ `setDone` vardı. Yazma yolu hiç throw
+    // etmediği için `.catch` ölü koddu ve reddedilen dosya "oluşturuldu"
+    // listesine giriyordu. `.catch` yine duruyor (beklenmedik istisna hâlâ
+    // olabilir) ama artık bir DEĞERE — `false`'a — çevriliyor.
+    const ok = await onAcceptOne(file).catch(err => { console.error(err); return false; });
     setProcessing(false);
-    
-    // Sıradaki bekleyen dosyayı bul
-    const next = files.findIndex((_, i) => !done.has(i) && !skipped.has(i) && i !== idx);
-    if (next !== -1) setCurrentIdx(next);
-    else if (done.size + skipped.size + 1 === files.length) {
-      setAllDone(true);
-      setDiffFile(null);
-    }
+    if (ok) setDone(prev => new Set([...prev, idx]));
+    else setFailed(prev => new Set([...prev, idx]));
+    advance(idx);
   };
 
   const handleSkip = (idx: number) => {
@@ -85,33 +118,45 @@ export const FileCreationApproval = ({
     if (!file || done.has(idx)) return;
     onSkipOne(file);
     setSkipped(prev => new Set([...prev, idx]));
-    
-    const next = files.findIndex((_, i) => !done.has(i) && !skipped.has(i) && i !== idx);
-    if (next !== -1) setCurrentIdx(next);
-    else if (done.size + skipped.size + 1 === files.length) {
-      setAllDone(true);
-      setDiffFile(null);
-    }
+    advance(idx);
   };
 
   const handleAcceptAll = async () => {
     if (processing) return;
     setProcessing(true);
-    await onAcceptAll(files).catch(err => console.error(err));
-    setDone(new Set(files.map((_, i) => i)));
+    const ok = await onAcceptAll(files).catch(err => { console.error(err); return false; });
     setProcessing(false);
+    // Kısmi başarı `false` sayılıyor. Ama başarısızlıkta dosyalar TEK TEK
+    // "yazılamadı" diye işaretlenmiyor: bu bileşen hangisinin yazıldığını
+    // bilmiyor ve yazılmış bir dosyaya "yazılamadı" demek, kapattığımız yalanın
+    // ayna görüntüsü olurdu. Bilinen tek şey "hepsi başarılı değil" — kart da
+    // yalnız onu söyler.
+    if (ok) setDone(new Set(files.map((_, i) => i)));
+    else setBulkFailed(true);
     setAllDone(true);
     setDiffFile(null);
   };
 
   if (allDone) {
     const createdFiles = files.filter((_, i) => done.has(i));
+    const failedFiles = files.filter((_, i) => failed.has(i));
+    // Tek bir başarısızlık bile "İşlem Tamamlandı" başlığını hak etmiyor:
+    // kullanıcının o başlıktan çıkardığı sonuç "dosyalar diskte" oluyor.
+    const hasFailure = bulkFailed || failedFiles.length > 0;
     return (
-      <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="rounded-xl border border-emerald-500/30 bg-[#0a0a0a] px-4 py-3 mt-3">
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        className={`rounded-xl border bg-[#0a0a0a] px-4 py-3 mt-3 ${hasFailure ? 'border-rose-500/30' : 'border-emerald-500/30'}`}
+      >
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
-            <CheckCircle2 size={16} className="text-emerald-400" />
-            <span className="text-[12px] font-bold text-white">{t('approval.done')}</span>
+            {hasFailure
+              ? <XCircle size={16} className="text-rose-400" />
+              : <CheckCircle2 size={16} className="text-emerald-400" />}
+            <span className="text-[12px] font-bold text-white">
+              {hasFailure ? t('approval.failed') : t('approval.done')}
+            </span>
           </div>
           <button onClick={onDone} className="text-[11px] text-slate-500 hover:text-white transition-colors">{t('approval.close')}</button>
         </div>
@@ -122,6 +167,15 @@ export const FileCreationApproval = ({
               <span className="truncate">{file.name}</span>
             </div>
           ))}
+          {failedFiles.map((file) => (
+            <div key={`failed-${file.suggestedPath}`} className="flex items-center gap-2 text-[11px] text-rose-300">
+              <XCircle size={12} className="text-rose-500" />
+              <span className="truncate">{file.name}</span>
+            </div>
+          ))}
+          {bulkFailed && (
+            <p className="text-[11px] text-rose-300">{t('approval.verifyTree')}</p>
+          )}
         </div>
       </motion.div>
     );
@@ -143,8 +197,12 @@ export const FileCreationApproval = ({
         {files.map((file, i) => {
           const isDone = done.has(i);
           const isSkipped = skipped.has(i);
+          const isFailed = failed.has(i);
           const isActive = i === currentIdx;
-          const isPending = !isDone && !isSkipped;
+          // Yazılamayan dosya "bekliyor" sayılmaz: sayaçla (remaining) ve
+          // ilerleme mantığıyla (advance) aynı tanımı kullanmazsa liste
+          // "0 bekliyor" derken hâlâ Uygula butonu gösterirdi.
+          const isPending = !isDone && !isSkipped && !isFailed;
 
           return (
             <div 
@@ -158,6 +216,7 @@ export const FileCreationApproval = ({
             >
               <div className="shrink-0">
                 {isDone ? <CheckCircle2 size={13} className="text-emerald-500" /> :
+                 isFailed ? <XCircle size={13} className="text-rose-500" /> :
                  isSkipped ? <SkipForward size={13} className="text-slate-600" /> :
                  <FileCode size={13} className={isActive ? 'text-blue-400' : 'text-slate-500'} />}
               </div>

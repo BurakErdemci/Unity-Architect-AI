@@ -189,6 +189,12 @@ export async function deliveryFromFetch(res: Response): Promise<GateDelivery> {
  * ile yutuyordu; yutmanın da ötesinde ardından "✅ Dosya oluşturuldu" gibi bir
  * BAŞARI toast'ı basıyorlardı. Yani gate düştüğünde kullanıcıya sessizlik değil
  * yanlış bilgi veriliyordu — sessizlikten daha kötü.
+ *
+ * Boş `gateId` de bir BAŞARISIZLIKTIR, "çağırma" değil. Çağrı yerleri bunu
+ * `gateId ? await postMcpDecision(...) : null` diye yazıyordu; `null` bu
+ * sözleşmede "teslim edildi" demek, yani hiçbir istek gitmeden başarı iddia
+ * ediliyordu (ölçüldü 2026-07-29). Kararı burada vermek, aynı üçlemenin dört
+ * çağrı yerinde tekrar edilmesini ve birinde unutulmasını da bitiriyor.
  */
 export async function postMcpDecision(
   apiBase: string,
@@ -196,6 +202,17 @@ export async function postMcpDecision(
   approved: boolean,
   sessionToken: string,
 ): Promise<GateFailure | null> {
+  // KESİN başarısızlık (`uncertain` yok): istek hiç kurulmadı, dolayısıyla
+  // backend'in bunu işlemiş olma ihtimali yok. Belirsize katlamak kullanıcıyı
+  // boşuna durum kontrolüne yollardı.
+  if (!gateId) {
+    return {
+      message:
+        `${ACTION_LABELS.mcp} iletilemedi: bu karta ait onay kimliği (gate id) yok, ` +
+        `istek hiç gönderilmedi. İşlem YAPILMADI — isteği yeniden gönderin.`,
+      type: 'error',
+    };
+  }
   try {
     const res = await fetch(`${apiBase}/mcp-approval-respond/${gateId}`, {
       method: 'POST',

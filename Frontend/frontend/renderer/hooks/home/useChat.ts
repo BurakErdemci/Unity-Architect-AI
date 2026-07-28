@@ -457,6 +457,12 @@ export const useChat = (
       if (failure) showToast(failure.message, failure.type);
       // Çözüldü → kuyrukta sıradaki onayı göster (yoksa kapat)
       setPendingCommand(pendingCommandQueueRef.current.shift() || null);
+      // Sonucu ÇAĞIRANA da ver: kart, "Komut onaylandı — çalışıyor..." yeşil
+      // toast'ını koşulsuz basıyordu; kullanıcı sarı "iletilemedi" ile yeşili
+      // aynı anda görüyordu (Toast.tsx:32 toast'ları diziye ekliyor).
+      // Mesajı burada basmaya devam ediyoruz — bu fonksiyonun kart olmadan da
+      // (kuyruk yolu) çağrıldığı yerler var.
+      return failure;
     },
     // AskUserQuestion (A/B/C) cevabı: { "<soru metni>": "<seçilen label>" }
     answerQuestion: async (gateId: string, answers: Record<string, string>) => {

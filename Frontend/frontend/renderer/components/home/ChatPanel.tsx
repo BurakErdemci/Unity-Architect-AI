@@ -22,7 +22,8 @@ import { CommandApproval } from './CommandApproval';
 import { QuestionApproval } from './QuestionApproval';
 import { DiffViewer, DiffData } from './DiffViewer';
 import AgentPlan, { Task as AgentTask } from '../ui/agent-plan';
-import { postMcpDecision, decisionToast } from '../../hooks/home/gateResponse';
+import { postMcpDecision, decisionToast, GateFailure } from '../../hooks/home/gateResponse';
+import { takeMcpGate } from '../../hooks/home/useMCPApproval';
 
 interface ChatPanelProps {
   messages: Message[];
@@ -56,7 +57,9 @@ interface ChatPanelProps {
   setPendingDelete: (val: any | null) => void;
   pendingCommand: { command: string; gateId: string; messageId: number } | null;
   setPendingCommand: (val: any | null) => void;
-  onApproveCommand: (gateId: string, approved: boolean) => Promise<void>;
+  /** Kararın backend'e ULAŞMADIĞINI döner (`null` = ulaştı). Kart, başarı
+   *  iddiasını buna bakarak basar; hata metnini çağrılan taraf kendi basıyor. */
+  onApproveCommand: (gateId: string, approved: boolean) => Promise<GateFailure | null>;
   pendingQuestion: { questions: any[]; gateId: string; messageId: number } | null;
   setPendingQuestion: (val: any | null) => void;
   onAnswerQuestion: (gateId: string, answers: Record<string, string>) => Promise<void>;
@@ -105,6 +108,19 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   activity,
 }) => {
   const { t } = useLang();
+
+  /**
+   * IPC yazma reddinin kullanıcıya gösterilecek metni.
+   *
+   * `ipc.invoke('write-file')` ASLA throw etmiyor; `{success:false, error}`
+   * dönüyor (main/background.ts:397-418) ve reddetme gerçek — örneğin
+   * `Assets/Scripts` dışındaki bir `.cs` `isAllowedWorkspaceWriteFile` tarafından
+   * reddediliyor. Ham `error` alanı AYNEN taşınıyor: "bir hata oldu" kullanıcıya
+   * ne yapacağını söylemiyor, "workspace içindeki kod/metin dosyalarına
+   * yazılabilir" söylüyor.
+   */
+  const writeErrorText = (name: string, res: any) =>
+    `${name} yazılamadı: ${res?.error || 'bilinmeyen hata'}`;
 
   // 12400 → "12.4k" (aktivite satırı + usage özeti için)
   const fmtTok = (n?: number | null) =>
@@ -274,20 +290,33 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                       files={pendingGenFiles.files}
                       autoAccept={false}
                       onAcceptOne={async (file) => {
-                        if (!ipc || !workspacePath) return;
-                        await ipc.invoke('write-file', file.suggestedPath, file.code, workspacePath);
+                        if (!ipc || !workspacePath) return false;
+                        const res = await ipc.invoke('write-file', file.suggestedPath, file.code, workspacePath);
+                        if (!res?.success) { showToast(writeErrorText(file.name, res), 'error'); return false; }
                         if (file.suggestedPath === openedFilePath) setCode(file.code);
                         refreshFileTree();
+                        return true;
                       }}
                       onSkipOne={() => { }}
                       onAcceptAll={async (files) => {
-                        if (!ipc || !workspacePath) return;
+                        if (!ipc || !workspacePath) return false;
+                        let allWritten = true;
                         for (const file of files) {
-                          await ipc.invoke('write-file', file.suggestedPath, file.code, workspacePath);
+                          const res = await ipc.invoke('write-file', file.suggestedPath, file.code, workspacePath);
+                          if (!res?.success) {
+                            // Kalanları yazmaya devam et: bir dosyanın reddedilmesi
+                            // (ör. `Assets/Scripts` dışındaki bir `.cs`) diğerlerini
+                            // engellemesin. Hata dosya BAŞINA bildirilir, çünkü
+                            // sebep dosyaya özgü.
+                            showToast(writeErrorText(file.name, res), 'error');
+                            allWritten = false;
+                            continue;
+                          }
                           if (file.suggestedPath === openedFilePath) setCode(file.code);
                         }
                         refreshFileTree();
                         setTimeout(() => analyzeProject(true), 1500);
+                        return allWritten;
                       }}
                       onDone={() => {
                         setPendingGenFiles(null);
@@ -316,12 +345,18 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                       command={pendingCommand.command}
                       onConfirm={async () => {
                         // onApproveCommand kuyruktaki sıradaki onayı kendi gösterir → burada setPendingCommand(null) ÇAĞIRMA
-                        await onApproveCommand(pendingCommand.gateId, true);
-                        showToast('Komut onaylandı — çalışıyor...', 'success');
+                        const failure = await onApproveCommand(pendingCommand.gateId, true);
+                        // Hata metnini `useChat.approveCommand`'ın KENDİSİ basıyor
+                        // (useChat.ts:457) — burada `decisionToast` kullanmak aynı
+                        // mesajı ikinci kez basardı. Toast'lar diziye EKLENİYOR
+                        // (Toast.tsx:32), yani kullanıcı sarı "iletilemedi" ile yeşil
+                        // "çalışıyor"u AYNI ANDA görüyordu; burada koşullanan tek şey
+                        // başarı iddiası.
+                        if (!failure) showToast('Komut onaylandı — çalışıyor...', 'success');
                       }}
                       onCancel={async () => {
-                        await onApproveCommand(pendingCommand.gateId, false);
-                        showToast('Komut iptal edildi', 'info');
+                        const failure = await onApproveCommand(pendingCommand.gateId, false);
+                        if (!failure) showToast('Komut iptal edildi', 'info');
                       }}
                     />
                   )}
@@ -361,14 +396,25 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                           showToast(t.message, t.type);
                           return;
                         }
-                        // Normal (API) onayı
+                        // Normal (API) onayı. Editör tamponu her hâlükârda güncellenir
+                        // (kullanıcı düzeltmeyi görsün), ama "dosya güncellendi"
+                        // iddiası yalnız disk yazımı DOĞRULANDIYSA basılır.
                         setCode(fixedCode);
-                        setPendingFix((prev: any) => prev ? { ...prev, applied: true } : null);
-                        if (ipc && openedFilePath && workspacePath) {
-                          await ipc.invoke('write-file', openedFilePath, fixedCode, workspacePath);
-                          refreshFileTree();
-                          setTimeout(() => analyzeProject(true), 1500);
+                        if (!ipc || !openedFilePath || !workspacePath) {
+                          // Hiçbir yazım denenmedi: diskte değişen bir şey yok.
+                          // Eskiden burada da "✅ Dosya güncellendi" basılıyordu.
+                          setPendingFix((prev: any) => prev ? { ...prev, applied: true } : null);
+                          showToast('Değişiklik editöre uygulandı — dosyaya yazılmadı', 'info');
+                          return;
                         }
+                        const res = await ipc.invoke('write-file', openedFilePath, fixedCode, workspacePath);
+                        if (!res?.success) {
+                          showToast(writeErrorText(openedFilePath.split('/').pop() || openedFilePath, res), 'error');
+                          return;
+                        }
+                        setPendingFix((prev: any) => prev ? { ...prev, applied: true } : null);
+                        refreshFileTree();
+                        setTimeout(() => analyzeProject(true), 1500);
                         showToast(`✅ Dosya güncellendi`, 'success');
                       }}
                       onReject={async () => {
@@ -441,24 +487,26 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
               autoAccept={false}
               setDiffFile={setDiffFile}
               onOpenFile={openFile}
+              // `gateId ? … : null` üçlemesi kaldırıldı: `null` bu sözleşmede
+              // "teslim edildi" demek, yani gate yokken hiçbir istek gitmeden
+              // başarı iddia ediliyordu. Kararı artık postMcpDecision veriyor.
+              // takeMcpGate okur VE siler — karardan sonra bayat kimlik kalmaz.
               onAcceptOne={async (file) => {
-                const gateId = (window as any).__mcpWriteGate;
-                const failure = gateId
-                  ? await postMcpDecision((window as any).__API__ || '', gateId, true, user?.sessionToken ?? '')
-                  : null;
+                const failure = await postMcpDecision(
+                  (window as any).__API__ || '', takeMcpGate('write'), true, user?.sessionToken ?? '');
                 refreshFileTree();
                 const t = decisionToast(failure, `✅ ${file.name} oluşturuldu`);
                 showToast(t.message, t.type);
+                return !failure;
               }}
               onSkipOne={() => {}}
               onAcceptAll={async () => {
-                const gateId = (window as any).__mcpWriteGate;
-                const failure = gateId
-                  ? await postMcpDecision((window as any).__API__ || '', gateId, true, user?.sessionToken ?? '')
-                  : null;
+                const failure = await postMcpDecision(
+                  (window as any).__API__ || '', takeMcpGate('write'), true, user?.sessionToken ?? '');
                 refreshFileTree();
                 const t = decisionToast(failure, '✅ Dosya oluşturuldu');
                 showToast(t.message, t.type);
+                return !failure;
               }}
               onDone={() => setPendingGenFiles(null)}
             />
@@ -469,10 +517,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             <FileDeleteApproval
               path={pendingDelete.path}
               onConfirm={async () => {
-                const gateId = (window as any).__mcpDeleteGate;
-                const failure = gateId
-                  ? await postMcpDecision((window as any).__API__ || '', gateId, true, user?.sessionToken ?? '')
-                  : null;
+                const failure = await postMcpDecision(
+                  (window as any).__API__ || '', takeMcpGate('delete'), true, user?.sessionToken ?? '');
                 setPendingDelete(null);
                 // MCP server approval'ı polling ile ~500ms gecikmeli görür → dosyayı siler.
                 // Refresh'i geciktirmezsek dosya henüz silinmemiş olur.
@@ -482,12 +528,11 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                 showToast(t.message, t.type);
               }}
               onCancel={async () => {
-                const gateId = (window as any).__mcpDeleteGate;
-                if (gateId) {
-                  const failure = await postMcpDecision(
-                    (window as any).__API__ || '', gateId, false, user?.sessionToken ?? '');
-                  if (failure) showToast(failure.message, failure.type);
-                }
+                // Reddin iletilmemesi de sessiz kalmamalı: kullanıcı reddettiğini
+                // sanırken gate düşmüş olabilir ve MCP tarafı kendi kararını verir.
+                const failure = await postMcpDecision(
+                  (window as any).__API__ || '', takeMcpGate('delete'), false, user?.sessionToken ?? '');
+                if (failure) showToast(failure.message, failure.type);
                 setPendingDelete(null);
               }}
             />
