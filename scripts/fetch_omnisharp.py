@@ -109,10 +109,35 @@ def _stamp_value(version: str, asset_key: str) -> str:
     return f"{version}+{digest[:12]}"
 
 
+def _contained(root: str, path: str) -> bool:
+    """`path`, bağlar ÇÖZÜLDÜKTEN sonra hâlâ `root`'un altında mı.
+
+    Neden `islink` yetmiyor: `islink` tek bir bileşene bakar. Kapı yaprakta
+    kurulduğunda (`dest/OmniSharp` bir bağ mı) **yolun kendisi** bağ olabiliyor —
+    `dest` dizini dışarıyı gösterirse içindeki dosyalar gerçek dosyadır, `islink`
+    False döner ve kapı hiç ateşlenmez. Ölçüldü 2026-07-28 denetiminde: üst dizin
+    bağıyla `_intact()` True döndü, `_resolve_binary()` dışarıdaki binary'yi
+    döndürdü, `_embedded_dotnet_root()` ise hiç kontrol içermiyordu.
+
+    `realpath` iki tarafta da uygulanıyor: kurulum ağacının tamamı meşru olarak
+    bir bağın altında olabilir (macOS'ta `/tmp` → `/private/tmp`, ya da taşınmış
+    bir home dizini). Reddedilen şey kökün ALTINDAN DIŞARI çıkan yol."""
+    r = os.path.realpath(root)
+    p = os.path.realpath(path)
+    return p == r or p.startswith(r + os.sep)
+
+
 def _intact(dest: str, stamp_value: str, markers: list[str]) -> bool:
     """Damga tek başına yetmez: damga doğru ama ağaç eksik/bozuk olabilir (yarıda
     kesilmiş çıkarma, elle silinmiş klasör). Bu sınıf hata bu repoda iki ayrı
     denetimde çıktı — damgaya ek olarak hedefin İÇİNE bakılıyor."""
+    # Hedefin KENDİSİ bağ olamaz. Bizim kurulumumuz `os.replace` ile gerçek dizin
+    # bırakır; burada bağ görmek beklenmedik bir durum ve "sağlam değil" doğru
+    # cevap. Bu satır olmadan aşağıdaki kapsama kontrolü de aldatılabilir: `dest`
+    # bağsa `realpath(dest)` saldırganın ağacına çözülür ve içindekiler o köke
+    # göre "kapsanmış" görünür.
+    if os.path.islink(dest):
+        return False
     stamp = os.path.join(dest, ".version")
     if not os.path.exists(stamp):
         return False
@@ -133,6 +158,10 @@ def _intact(dest: str, stamp_value: str, markers: list[str]) -> bool:
         # Bizim çıkarmamız gerçek dosya üretir, bağ üretmez — bağ görmek zaten
         # beklenmedik bir durumdur ve "sağlam değil" doğru cevaptır.
         if os.path.islink(p):
+            return False
+        # Bağ olmayan ama yine de dışarı çıkan bir yol kalmasın: işaretin kendisi
+        # gerçek dosya olsa bile ara bir bileşen bağ olabilir.
+        if not _contained(dest, p):
             return False
         if not os.path.exists(p):
             return False

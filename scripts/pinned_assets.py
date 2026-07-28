@@ -84,6 +84,22 @@ def verify_bytes(data: bytes, key: str) -> None:
     """
     entry = asset(key)
     algo, _, expected = entry["digest"].partition(":")
+    # Beklenen değerin BİÇİMİ de doğrulanıyor. Sebebi: bu fonksiyon yalnız
+    # "gelen == beklenen" karşılaştırması yapsaydı, beklenen tarafın bozulması
+    # (yer tutucu, boş dize, kırpılmış hex, yanlış algoritma adı) sessizce
+    # kabul edilebilir bir kapıya dönüşürdü. Denetimde ölçüldü (2026-07-28):
+    # kütükteki özeti yer tutucuya çeviren bir mutasyon 72 testin hepsini sağ
+    # geçti — kapının kendisi değil yalnız kütüğün metni sınanıyordu.
+    beklenen_uzunluk = {"sha256": 64, "sha512": 128}.get(algo)
+    if beklenen_uzunluk is None or len(expected) != beklenen_uzunluk or not all(
+        c in "0123456789abcdef" for c in expected
+    ):
+        raise IntegrityError(
+            f"{key}: kütükteki özet kullanılabilir değil ({entry['digest']!r}). "
+            "Beklenen biçim 'sha256:<64 hex>' ya da 'sha512:<128 hex>'. "
+            "Bozuk ya da doldurulmamış bir pin, doğrulamayı sessizce etkisiz "
+            "kılacağı için burada durduruluyor."
+        )
     expected_size = entry.get("size")
     if expected_size is not None and len(data) != expected_size:
         raise IntegrityError(

@@ -722,3 +722,52 @@ class TestUretimYolundaDogrulamaAtlanamaz:
             assert "asset_key=None" not in cagri, (
                 f"doğrulama açıkça kapatılmış:\n  {cagri}"
             )
+
+
+class TestUstDizinBagiKuruluSayilmaz:
+    """`_intact` kapısının YAPRAKTA değil YOL üzerinde olduğunu koruyan testler.
+
+    Hangi arızadan doğdu (dış denetim, 2026-07-28): 27 Tem'de kapatılan sembolik
+    bağ zincirinin kapısı `dest/OmniSharp` yaprağına konmuştu. Ama `dest` DİZİNİNİN
+    kendisi bağ olduğunda içindeki dosya gerçek dosyadır — `islink(yaprak)` False
+    döner, kapı ateşlenmez, `_intact` True der ve indirme KALICI olarak atlanır.
+    Canlı ölçüldü ve ürün tarafındaki `_resolve_binary` de aynı ağacı döndürüyordu.
+
+    Kapatma dersi: bir sınıfı kapatmak, o sınıfın başka biçimlerini adlandırıp
+    sınamayı gerektiriyor. Tek yolu kapatmak sınıfı kapatmıyor.
+    """
+
+    def test_a_symlinked_destination_directory_is_not_a_healthy_installation(
+        self, fetch_mod, tmp_path
+    ):
+        disarida = tmp_path / "DISARIDAKI_AGAC"
+        disarida.mkdir()
+        (disarida / "OmniSharp").write_text("#!/bin/sh\n")
+        (disarida / ".version").write_text("v1")
+        kurulum = tmp_path / "third_party" / "omnisharp"
+        kurulum.mkdir(parents=True)
+        dest = kurulum / "osx-arm64"
+        os.symlink(str(disarida), str(dest))
+        assert fetch_mod._intact(str(dest), "v1", ["OmniSharp"]) is False
+
+    def test_a_real_destination_directory_is_still_accepted(self, fetch_mod, tmp_path):
+        """Karşıt yön: kapı çok GENİŞ olursa her build 220-290 MB yeniden iner."""
+        dest = tmp_path / "osx-arm64"
+        dest.mkdir()
+        (dest / "OmniSharp").write_text("")
+        (dest / ".version").write_text("v1")
+        assert fetch_mod._intact(str(dest), "v1", ["OmniSharp"]) is True
+
+    def test_a_marker_reachable_only_through_an_escaping_path_is_refused(
+        self, fetch_mod, tmp_path
+    ):
+        """Ara bileşen bağ: işaretin kendisi gerçek dosya olsa bile yol dışarı
+        çıkıyorsa kurulum sağlam sayılmamalı."""
+        disarida = tmp_path / "DISARIDA"
+        (disarida / "ic").mkdir(parents=True)
+        (disarida / "ic" / "OmniSharp").write_text("")
+        dest = tmp_path / "osx-arm64"
+        dest.mkdir()
+        (dest / ".version").write_text("v1")
+        os.symlink(str(disarida / "ic"), str(dest / "alt"))
+        assert fetch_mod._intact(str(dest), "v1", [os.path.join("alt", "OmniSharp")]) is False

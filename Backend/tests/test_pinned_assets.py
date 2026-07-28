@@ -590,3 +590,82 @@ class TestDotnetSurumDosyasiDogruYerdenOkunuyor:
         # Boyut release.json'da YOK; kütüğün sözleşmesi zorunlu tuttuğu için
         # Content-Length'ten geliyor.
         assert sonuc["yeni"]["size"] == 229999999
+
+
+class TestOzetGercektenOAlgoritma:
+    """Bilinen-cevap vektörleri. Denetimde ölçüldü (2026-07-28): `_ALGOS`'un sha512
+    girdisini `hashlib.sha256`'ya çeviren bir mutasyon 72 testin HEPSİNİ sağ geçti,
+    ve özet karşılaştırmasını ilk 4 haneye indiren bir mutasyon da öyle.
+
+    Sebep: bütün testler beklenen değeri `digest_of`'un KENDİSİYLE üretiyordu, yani
+    yalnız "deterministik mi" sorusunu sınıyorlardı. Dışarıdan gelen sabit bir
+    vektör olmadan bir özet fonksiyonunun DOĞRU algoritma olduğu kanıtlanamaz.
+
+    Değerler `printf 'abc' | shasum -a 256|512` ile üretildi, ezberden yazılmadı.
+    """
+
+    ABC_SHA256 = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    ABC_SHA512 = (
+        "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a"
+        "2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f"
+    )
+
+    def test_sha256_matches_the_published_vector(self, pinned):
+        assert pinned.digest_of(b"abc", "sha256") == self.ABC_SHA256
+
+    def test_sha512_matches_the_published_vector(self, pinned):
+        """sha512 yalnız `dotnet-sdk/*` için kullanılıyor — yani 220-300 MB'lık üç
+        asset'in doğrulaması, gerçek hash'leme ile HİÇ koşturulmamıştı."""
+        assert pinned.digest_of(b"abc", "sha512") == self.ABC_SHA512
+
+    def test_an_unknown_algorithm_is_refused(self, pinned):
+        with pytest.raises(ValueError):
+            pinned.digest_of(b"abc", "md5")
+
+    def test_a_sha512_pinned_asset_is_verified_with_real_sha512(
+        self, pinned, entries, monkeypatch
+    ):
+        """Uçtan uca: sha512 pinli bir girdide doğru baytlar geçmeli, bir bayt
+        değişince geçmemeli. Mutasyon A'nın hedefi tam buydu."""
+        data = b"abc"
+        sahte = dict(entries["dotnet-sdk/win-x64"])
+        sahte["digest"] = "sha512:" + self.ABC_SHA512
+        sahte["size"] = len(data)
+        monkeypatch.setattr(pinned, "asset", lambda k: sahte)
+        pinned.verify_bytes(data, "dotnet-sdk/win-x64")
+        with pytest.raises(pinned.IntegrityError):
+            pinned.verify_bytes(b"abd", "dotnet-sdk/win-x64")
+
+
+class TestBozukPinKapiyiAcamaz:
+    """Beklenen tarafın bozulması. Mutasyon C ölçüldü: yer tutucu bir pin'i kabul
+    eden bir dal eklendiğinde 72 test yeşil kaldı — çünkü yer tutucu yalnız JSON
+    METNİNDE aranıyordu, doğrulayıcıya hiç sorulmuyordu."""
+
+    @pytest.mark.parametrize("bozuk", [
+        "sha256:TODO-DIGEST",
+        "sha256:",
+        "sha256:abc",                                    # kısa
+        "sha256:" + "z" * 64,                            # hex değil
+        "sha256:" + "A" * 64,                            # büyük harf
+        "md5:" + "a" * 32,                               # kabul edilmeyen algoritma
+        "abc123",                                        # algo ayracı yok
+    ])
+    def test_an_unusable_pin_raises_instead_of_being_compared(
+        self, pinned, entries, monkeypatch, bozuk
+    ):
+        sahte = dict(entries["omnisharp/osx-arm64"])
+        sahte["digest"] = bozuk
+        sahte.pop("size", None)
+        monkeypatch.setattr(pinned, "asset", lambda k: sahte)
+        with pytest.raises(pinned.IntegrityError):
+            pinned.verify_bytes(b"herhangi", "omnisharp/osx-arm64")
+
+    def test_a_well_formed_pin_still_works(self, pinned, entries, monkeypatch):
+        """Karşıt yön: biçim kapısı çok DAR olursa hiçbir asset kurulamaz."""
+        data = b"abc"
+        sahte = dict(entries["omnisharp/osx-arm64"])
+        sahte["digest"] = "sha256:" + TestOzetGercektenOAlgoritma.ABC_SHA256
+        sahte["size"] = len(data)
+        monkeypatch.setattr(pinned, "asset", lambda k: sahte)
+        pinned.verify_bytes(data, "omnisharp/osx-arm64")

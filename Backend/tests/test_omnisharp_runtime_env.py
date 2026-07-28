@@ -17,6 +17,8 @@ Bu projede kapıların yalnız "çok dar değil" yönü sınandığı için üç
 """
 import asyncio
 import os
+import pathlib
+import tempfile
 
 import pytest
 
@@ -329,3 +331,71 @@ class TestBinaryCozumlemeBagCalistirmaz:
             f.write("")
         assert om._resolve_binary() == gercek
 
+
+
+class TestBagKapisiYaprakDegilYolBoyunca:
+    """Sembolik bağ kapısının YOL üzerinde kurulduğunu koruyan testler.
+
+    Hangi arızadan doğdu (dış denetim, 2026-07-28): 27 Tem'de aynı sınıf bir
+    bulgu "kapatıldı" ama kapı YAPRAĞA kondu — `islink(dest/OmniSharp)`. `islink`
+    tek bir bileşene bakar, oysa **yolun kendisi** bağ olabiliyor: `dest` dizini
+    dışarıyı gösterirse içindeki dosya gerçek dosyadır, `islink` False döner ve
+    kapı hiç ateşlenmez.
+
+    Üç biçim de canlı ölçüldü: `_intact` üst dizin bağıyla True döndü,
+    `_resolve_binary` dışarıdaki binary'yi döndürdü, ve `_embedded_dotnet_root`
+    HİÇ kontrol içermiyordu — döndürdüğü dizin `DOTNET_ROOT` olup `PATH`'in
+    başına geçtiği için en ağırı oydu.
+
+    Ders, kapatma protokolünün kendisi: bir bulgu kapatılırken sınıfın başka
+    biçimleri adlandırılıp sınanmazsa, kapatma tek YOLU kapatır, SINIFI değil.
+    """
+
+    @staticmethod
+    def _kok_disi(ad: str) -> pathlib.Path:
+        """Tuzak ağaç KÖKÜN DIŞINDA olmalı. İlk yazımda `tmp_path` altına konmuştu
+        ve testler kırmızı verdi — haklı olarak: kökün İÇİNE gösteren bir bağ kaçış
+        değildir ve kapsama kontrolü ona izin verir. Kırmızı, kodun değil testin
+        hatasıydı; bu yorum o hatayı tekrar etmemek için burada."""
+        d = pathlib.Path(tempfile.mkdtemp()) / ad
+        d.mkdir(parents=True)
+        return d
+
+    def test_a_symlinked_platform_directory_is_not_executed(self, fake_root):
+        """`third_party/omnisharp/<plat>` bir bağ olduğunda ürün onu spawn etmemeli."""
+        plat = om._platform_key()
+        exe = "OmniSharp.exe" if plat.startswith("win") else "OmniSharp"
+        disarida = self._kok_disi("DISARIDA")
+        (disarida / exe).write_text("#!/bin/sh\n")
+        os.symlink(str(disarida), os.path.join(fake_root, plat))
+        assert om._resolve_binary() is None
+
+    def test_a_real_platform_directory_still_resolves(self, fake_root):
+        """Karşıt yön: kapı çok GENİŞ olursa C# zekası hiç ayağa kalkmaz."""
+        plat = om._platform_key()
+        exe = "OmniSharp.exe" if plat.startswith("win") else "OmniSharp"
+        gercek = os.path.join(fake_root, plat)
+        os.makedirs(gercek)
+        yol = os.path.join(gercek, exe)
+        with open(yol, "w") as f:
+            f.write("")
+        assert om._resolve_binary() == yol
+
+    def test_a_symlinked_dotnet_directory_is_not_used_as_dotnet_root(
+        self, fake_root
+    ):
+        """En ağır biçim: bu yol `DOTNET_ROOT` olur ve `PATH`'in başına eklenir,
+        yani sürecin yorumlayıcısını saldırgan belirlerdi."""
+        plat = om._platform_key()
+        exe = "dotnet.exe" if plat.startswith("win") else "dotnet"
+        disarida = self._kok_disi("SAHTE_SDK")
+        (disarida / "sdk" / "10.0.100").mkdir(parents=True)
+        (disarida / exe).write_text("#!/bin/sh\n")
+        os.symlink(str(disarida), os.path.join(fake_root, f"dotnet-{plat}"))
+        assert om._embedded_dotnet_root() is None
+
+    def test_a_real_dotnet_tree_is_still_accepted(self, fake_root):
+        """Karşıt yön: gerçek gömülü SDK reddedilirse hover yine 120 sn asılır."""
+        plat = om._platform_key()
+        dest = _make_dotnet_tree(fake_root, plat, with_sdk=True)
+        assert om._embedded_dotnet_root() == dest

@@ -107,6 +107,28 @@ def _unsupported_reason() -> str:
             f"C# analizi (hata denetimi, IntelliSense) devre dışı; diğer özellikler çalışır.")
 
 
+def _contained(root: str, path: str) -> bool:
+    """`path`, bağlar ÇÖZÜLDÜKTEN sonra hâlâ `root`'un altında mı.
+
+    `islink` tek bir bileşene bakar; kapı yaprakta kurulunca **yolun kendisi**
+    bağ olabiliyor. `third_party/omnisharp/<plat>` bir bağsa içindeki `OmniSharp`
+    gerçek dosyadır, `islink(cand)` False döner, kapı hiç ateşlenmez ve ürün
+    dışarıdaki binary'yi spawn eder. Ölçüldü 2026-07-28 denetiminde, üç ayrı
+    biçimde (bkz. `scripts/fetch_omnisharp.py::_contained` — indirme tarafındaki
+    ikizi; ürün `scripts/` içinden import edemediği için kod iki yerde duruyor,
+    ikisinin de aynı vakayı reddettiği testle bağlı).
+
+    `realpath` iki tarafta: kurulum meşru olarak bir bağın altında olabilir
+    (macOS `/tmp` → `/private/tmp`). Reddedilen, kökün altından DIŞARI çıkan yol.
+    """
+    try:
+        r = os.path.realpath(root)
+        p = os.path.realpath(path)
+    except OSError:
+        return False
+    return p == r or p.startswith(r + os.sep)
+
+
 def _resolve_binary() -> str | None:
     plat = _platform_key()
     if plat is None:
@@ -114,6 +136,9 @@ def _resolve_binary() -> str | None:
     exe = "OmniSharp.exe" if plat.startswith("win") else "OmniSharp"
     for root in _omnisharp_roots():
         cand = os.path.join(root, plat, exe)
+        if not _contained(root, cand):
+            logger.error("OmniSharp yolu kökün dışına çıkıyor, çalıştırılmadı: %s", cand)
+            continue
         # ⚠️ `islink` kapısı ÇALIŞTIRMADAN önce. `os.path.exists` bağ takip ediyor,
         # yani `third_party/omnisharp/<plat>/OmniSharp` yerine konmuş bir bağ,
         # gösterdiği herhangi bir binary'nin bu ürün tarafından spawn edilmesini
@@ -147,6 +172,14 @@ def _embedded_dotnet_root() -> str | None:
     for root in _omnisharp_roots():
         cand = os.path.join(root, f"dotnet-{plat}")
         sdk = os.path.join(cand, "sdk")
+        # ⚠️ Burada 2026-07-28'e kadar HİÇ bağ kontrolü yoktu — ne yaprakta ne
+        # yolda. Döndürülen dizin `DOTNET_ROOT` oluyor ve `PATH`'in BAŞINA
+        # ekleniyor (_spawn_env), yani sürecin yorumlayıcısını belirliyor.
+        # Denetimde kanıtlandı: `dotnet-<plat>` bir bağ olduğunda dışarıdaki ağaç
+        # DOTNET_ROOT olarak dönüyordu. Kardeş kapılar `_resolve_binary`'de.
+        if not _contained(root, cand) or not _contained(root, sdk):
+            logger.error("Gömülü .NET kökü kökün dışına çıkıyor, kullanılmadı: %s", cand)
+            continue
         if os.path.exists(os.path.join(cand, exe)) and os.path.isdir(sdk) and os.listdir(sdk):
             return cand
     return None
