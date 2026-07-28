@@ -30,7 +30,7 @@ import uuid
 from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, List, Optional, Set
 
-from agentic.command_gates import APPROVAL_GATES, APPROVAL_RESULTS
+from agentic.command_gates import APPROVAL_GATES, APPROVAL_RESULTS, APPROVAL_TIMEOUT_S
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +129,11 @@ async def fetch_codex_skills(cwd: Optional[str] = None, force: bool = False) -> 
             return list(_CODEX_SKILLS_CACHE)
 
         spawn = _resolve_codex_appserver_cmd()
-        env = {**os.environ, "NO_COLOR": "1"}
+        # İZİN LİSTESİ (bkz. cli_base.build_spawn_env). Bu spawn noktası sohbetten
+        # bağımsız çalıştığı için gözden kaçmaya en açık olanı; ölçümde o da
+        # altı canary'nin altısını birden çocuğa geçiriyordu.
+        from providers.cli_base import build_spawn_env
+        env = build_spawn_env(family="codex", overrides={"NO_COLOR": "1"})
         proc = None
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -276,7 +280,7 @@ class CodexSession:
         *,
         model: Optional[str] = None,
         cwd: Optional[str] = None,
-        approval_timeout: float = 300.0,
+        approval_timeout: float = APPROVAL_TIMEOUT_S,
         auto_approve: bool = False,
         effort: Optional[str] = None,
     ):
@@ -314,8 +318,12 @@ class CodexSession:
         if self.effort:
             # Global -c override subcommand'dan sonra da geçerli (codex exec ile aynı desen)
             spawn = spawn + ["-c", f"model_reasoning_effort={self.effort}"]
-        # Abonelik auth: API key env'lerini ENJEKTE ETME (codex kendi login'ini kullanır)
-        env = {**os.environ, "NO_COLOR": "1"}
+        # Abonelik auth: API key env'lerini ENJEKTE ETME (codex kendi login'ini kullanır).
+        # İZİN LİSTESİ: kullanıcının ortamında zaten duran OPENAI_* geçer (env ile
+        # giriş yapan kurulumlar kırılmasın), ama Anthropic/Gemini anahtarları ve
+        # backend sırları geçmez — ölçüm ve gerekçe cli_base.build_spawn_env'de.
+        from providers.cli_base import build_spawn_env
+        env = build_spawn_env(family="codex", overrides={"NO_COLOR": "1"})
         self._proc = await asyncio.create_subprocess_exec(
             *spawn,
             stdin=asyncio.subprocess.PIPE,

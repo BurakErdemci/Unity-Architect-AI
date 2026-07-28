@@ -1,0 +1,340 @@
+"""Claude SDK onay kapısı + workspace kapsama regresyon testleri.
+
+Üç ölçülmüş arıza (2026-07-28) burada teste bağlanıyor:
+
+1. `_path_in_workspace` `os.path.abspath` kullanıyordu → symlink çözülmüyordu.
+   `ws/link → /disari` kurulumunda workspace dışı bir hedef "içeride" sayılıyor,
+   yani "workspace dışına yazımı SORMADAN reddet" dalı %100 atlatılıyordu.
+2. Yol tabanlı okuma araçları (`Read`/`Glob`/`Grep`/`LS`/`NotebookRead`)
+   workspace kontrolünden ÖNCE auto-allow oluyordu → adım modunda
+   `Read("/etc/passwd")` kartsız izin alıyordu.
+3. `get_session` yalnız `conversation_id`'ye bakıyordu → workspace A ile açılan
+   session, B istendiğinde aynen dönüyordu (model ve effort de sessizce düşüyordu).
+
+Testlerin symlink kurulumu `tempfile.mkdtemp()` ile yapılıyor, `tmp_path` ile
+DEĞİL: macOS'ta `/tmp → /private/tmp` bağı yüzünden "yem" dizininin workspace ile
+aynı bağ altında olması testi yanlış yeşile düşürebiliyor. Bu yüzden yem dizini
+workspace'in DIŞINDA, AYRI bir `mkdtemp()` ile açılıyor.
+"""
+import asyncio
+import inspect
+import os
+import shutil
+import sys
+import tempfile
+
+import pytest
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "app")))
+
+from agentic.command_gates import APPROVAL_GATES, APPROVAL_RESULTS
+from providers import claude_sdk_session as css
+from providers.claude_sdk_session import (
+    ClaudeSDKSession,
+    _path_in_workspace,
+    get_session,
+)
+
+
+# ── Ortak kurulum ────────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def symlink_escape():
+    """workspace + workspace DIŞINDA ayrı bir yem dizini + ikisini bağlayan symlink.
+
+    Yem dizini ayrı bir `mkdtemp()` — workspace'in altında ya da aynı geçici
+    kökte olsaydı, `/tmp → /private/tmp` çözümü sonrası ikisi de aynı gerçek
+    kökün altına düşer ve test "kaçış engellendi" derken aslında hiçbir şey
+    ölçmemiş olurdu.
+    """
+    ws = tempfile.mkdtemp(prefix="ws_")
+    outside = tempfile.mkdtemp(prefix="outside_")
+    link = os.path.join(ws, "link")
+    os.symlink(outside, link)
+    try:
+        yield ws, outside, link
+    finally:
+        shutil.rmtree(ws, ignore_errors=True)
+        shutil.rmtree(outside, ignore_errors=True)
+
+
+def _mk_session(**kwargs):
+    """Bağlanmayan (connect edilmeyen) session — yalnız izin mantığı sınanıyor."""
+    s = ClaudeSDKSession(conversation_id=kwargs.pop("cid", 1), **kwargs)
+    s._out_q = asyncio.Queue()
+    return s
+
+
+async def _drive_gate(session, tool_name, input_data, *, approve=True, timeout=2.0):
+    """`_can_use_tool`'u task olarak koştur; kart çıkarsa yakala ve cevapla.
+
+    Dönen: (izin_sonucu, kart_event'i | None)
+    """
+    task = asyncio.create_task(session._can_use_tool(tool_name, input_data, None))
+    try:
+        ev = await asyncio.wait_for(session._out_q.get(), timeout=0.3)
+    except asyncio.TimeoutError:
+        ev = None  # kart çıkmadı
+    if ev is not None and ev.get("type") == "command_approval_needed":
+        gid = ev["gate_id"]
+        APPROVAL_RESULTS[gid] = approve
+        APPROVAL_GATES[gid].set()
+    res = await asyncio.wait_for(task, timeout=timeout)
+    return res, ev
+
+
+def _is_allow(res) -> bool:
+    from claude_agent_sdk import PermissionResultAllow
+    return isinstance(res, PermissionResultAllow)
+
+
+# ── DÜZELTME 1: canonical kapsama ────────────────────────────────────────────
+
+
+def test_symlink_escape_is_outside_workspace(symlink_escape):
+    """Asıl bulgu: bağın altındaki hedef gerçekte workspace dışında."""
+    ws, outside, link = symlink_escape
+    assert _path_in_workspace(os.path.join(link, "escape.cs"), ws) is False
+
+
+def test_symlinked_workspace_root_still_accepts_its_own_files(symlink_escape):
+    """realpath İKİ TARAFA uygulanmalı: kurulumun kendisi bir bağın altında olabilir
+    (macOS'ta /tmp → /private/tmp). Yalnız hedefe uygulanırsa meşru kurulum kırılır."""
+    ws, outside, _link = symlink_escape
+    ws_link = os.path.join(outside, "ws_alias")
+    os.symlink(ws, ws_link)
+    # Hem yol hem workspace bağ üzerinden verilmiş
+    assert _path_in_workspace(os.path.join(ws_link, "A.cs"), ws_link) is True
+    # Yol gerçek, workspace bağ üzerinden
+    assert _path_in_workspace(os.path.join(ws, "A.cs"), ws_link) is True
+    # Yol bağ üzerinden, workspace gerçek
+    assert _path_in_workspace(os.path.join(ws_link, "A.cs"), ws) is True
+
+
+def test_nonexistent_target_is_still_classified(symlink_escape):
+    """Yeni dosya yazımında hedef HENÜZ YOK — yokluk 'reddet' anlamına gelmemeli,
+    ama var olmayan bir bağ-altı yol da 'içeride' sayılmamalı."""
+    ws, outside, link = symlink_escape
+    assert _path_in_workspace(os.path.join(ws, "Yok", "Derin", "Yeni.cs"), ws) is True
+    assert _path_in_workspace(os.path.join(link, "Yok", "Yeni.cs"), ws) is False
+
+
+def test_sibling_prefix_still_rejected():
+    """Eski `commonpath` davranışının koruduğu şey kaybolmasın (Game vs Game_backup)."""
+    root = tempfile.mkdtemp(prefix="prefix_")
+    try:
+        ws = os.path.join(root, "Game")
+        sib = os.path.join(root, "Game_backup")
+        os.makedirs(ws)
+        os.makedirs(sib)
+        assert _path_in_workspace(os.path.join(sib, "X.cs"), ws) is False
+        assert _path_in_workspace(os.path.join(ws, "X.cs"), ws) is True
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_empty_workspace_means_no_restriction():
+    assert _path_in_workspace("/etc/passwd", "") is True
+
+
+# ── DÜZELTME 2: okuma araçları workspace kontrolünden önce auto-allow ────────
+
+
+@pytest.mark.parametrize("tool,inp", [
+    ("Read", {"file_path": "/etc/passwd"}),
+    ("LS", {"path": "/"}),
+    ("Glob", {"pattern": "/Users/**/*.key"}),
+    ("Grep", {"pattern": "PRIVATE KEY", "path": "/Users"}),
+    ("NotebookRead", {"notebook_path": "/etc/secret.ipynb"}),
+])
+async def test_step_mode_outside_read_shows_card(tool, inp, symlink_escape):
+    ws, _outside, _link = symlink_escape
+    s = _mk_session(cwd=ws, auto_approve=False, approval_timeout=2.0)
+    res, ev = await _drive_gate(s, tool, inp, approve=True)
+    assert ev is not None and ev["type"] == "command_approval_needed", \
+        f"{tool} workspace dışını hedeflerken kartsız izin aldı"
+    assert _is_allow(res)
+
+
+async def test_step_mode_outside_read_denied_when_user_rejects(symlink_escape):
+    """Kart yalnız görünmesin — kullanıcının HAYIR'ı da etki etsin."""
+    ws, _outside, _link = symlink_escape
+    s = _mk_session(cwd=ws, auto_approve=False, approval_timeout=2.0)
+    res, ev = await _drive_gate(s, "Read", {"file_path": "/etc/passwd"}, approve=False)
+    assert ev is not None
+    assert not _is_allow(res)
+
+
+@pytest.mark.parametrize("tool,inp_key", [
+    ("Read", "file_path"),
+    ("LS", "path"),
+    ("Grep", "path"),
+])
+async def test_step_mode_inside_read_stays_cardless(tool, inp_key, symlink_escape):
+    """Bilerek: workspace içi her okumada kart çıkarmak refleks-onaya alıştırır."""
+    ws, _outside, _link = symlink_escape
+    s = _mk_session(cwd=ws, auto_approve=False, approval_timeout=2.0)
+    inp = {inp_key: os.path.join(ws, "Assets")}
+    if tool == "Grep":
+        inp["pattern"] = "foo"
+    res, ev = await _drive_gate(s, tool, inp)
+    assert ev is None, f"{tool} workspace içi olmasına rağmen kart çıkardı"
+    assert _is_allow(res)
+
+
+@pytest.mark.parametrize("tool,inp", [
+    ("Glob", {"pattern": "**/*.cs"}),          # göreli → workspace içi sayılır
+    ("Grep", {"pattern": "MonoBehaviour"}),    # path yok → workspace kökü
+    ("LS", {}),                                 # argümansız
+    ("TodoWrite", {"todos": []}),               # yol tabanlı değil
+    ("ToolSearch", {"query": "x"}),             # yol tabanlı değil
+])
+async def test_pathless_reads_stay_cardless(tool, inp, symlink_escape):
+    ws, _outside, _link = symlink_escape
+    s = _mk_session(cwd=ws, auto_approve=False, approval_timeout=2.0)
+    res, ev = await _drive_gate(s, tool, inp)
+    assert ev is None, f"{tool} yolsuz çağrıda kart çıkardı"
+    assert _is_allow(res)
+
+
+@pytest.mark.parametrize("tool,inp", [
+    ("Read", {"file_path": "/etc/passwd"}),
+    ("LS", {"path": "/"}),
+    ("Glob", {"pattern": "/Users/**/*.key"}),
+])
+async def test_auto_mode_outside_read_is_free(tool, inp, symlink_escape):
+    """Kabul edilmiş taviz (kullanıcı kararı): oto modda workspace dışı serbest."""
+    ws, _outside, _link = symlink_escape
+    s = _mk_session(cwd=ws, auto_approve=True, approval_timeout=2.0)
+    res, ev = await _drive_gate(s, tool, inp)
+    assert ev is None
+    assert _is_allow(res)
+
+
+async def test_symlink_read_escape_shows_card(symlink_escape):
+    """Düzeltme 1 ile 2'nin kesişimi: kapsama kontrolü TEK fonksiyondan gelmeli."""
+    ws, _outside, link = symlink_escape
+    s = _mk_session(cwd=ws, auto_approve=False, approval_timeout=2.0)
+    res, ev = await _drive_gate(s, "Read", {"file_path": os.path.join(link, "gizli.txt")})
+    assert ev is not None, "symlink üzerinden workspace dışı okuma kartsız geçti"
+
+
+async def test_write_outside_still_hard_denied(symlink_escape):
+    """Yazım dalı davranış değiştirmemeli: sormadan reddediliyor."""
+    ws, _outside, link = symlink_escape
+    s = _mk_session(cwd=ws, auto_approve=False, approval_timeout=2.0)
+    res, ev = await _drive_gate(s, "Write", {"file_path": os.path.join(link, "x.cs"),
+                                             "content": "x"})
+    assert not _is_allow(res)
+    assert ev is not None and ev["type"] == "tool_result" and ev["success"] is False
+
+
+# ── DÜZELTME 3: session cache anahtarı ───────────────────────────────────────
+
+
+@pytest.fixture(autouse=True)
+def _clean_sessions():
+    css._SESSIONS.clear()
+    yield
+    css._SESSIONS.clear()
+
+
+async def test_workspace_change_rebuilds_session():
+    a = tempfile.mkdtemp(prefix="wsA_")
+    b = tempfile.mkdtemp(prefix="wsB_")
+    try:
+        s1 = get_session(7, cwd=a, model="claude-x", effort="high")
+        s2 = get_session(7, cwd=b, model="claude-x", effort="high")
+        assert s1 is not s2, "workspace değişti ama eski session döndü"
+        assert s2.cwd == b
+    finally:
+        shutil.rmtree(a, ignore_errors=True)
+        shutil.rmtree(b, ignore_errors=True)
+
+
+async def test_same_workspace_via_symlink_reuses_session(symlink_escape):
+    """Karşılaştırma canonical olmalı: aynı dizinin bağ alias'ı 'değişti' saymamalı."""
+    ws, outside, _link = symlink_escape
+    alias = os.path.join(outside, "ws_alias")
+    os.symlink(ws, alias)
+    s1 = get_session(8, cwd=ws, model="claude-x", effort="high")
+    s2 = get_session(8, cwd=alias, model="claude-x", effort="high")
+    assert s1 is s2, "aynı workspace'in bağ alias'ı gereksiz yere session'ı sıfırladı"
+
+
+async def test_model_change_rebuilds_session():
+    a = tempfile.mkdtemp(prefix="wsM_")
+    try:
+        s1 = get_session(9, cwd=a, model="claude-x", effort="high")
+        s2 = get_session(9, cwd=a, model="claude-BASKA", effort="high")
+        assert s1 is not s2
+        assert s2.model == "claude-BASKA"
+    finally:
+        shutil.rmtree(a, ignore_errors=True)
+
+
+async def test_effort_change_rebuilds_session():
+    a = tempfile.mkdtemp(prefix="wsE_")
+    try:
+        s1 = get_session(10, cwd=a, model="claude-x", effort="high")
+        s2 = get_session(10, cwd=a, model="claude-x", effort="low")
+        assert s1 is not s2
+        assert s2.effort == "low"
+    finally:
+        shutil.rmtree(a, ignore_errors=True)
+
+
+async def test_identical_request_reuses_session():
+    """Ters yön: kimlik aynıyken session KORUNMALI (yoksa her tur bağlam sıfırlanır)."""
+    a = tempfile.mkdtemp(prefix="wsS_")
+    try:
+        s1 = get_session(11, cwd=a, model="claude-x", effort="high")
+        s2 = get_session(11, cwd=a, model="claude-x", effort="high")
+        assert s1 is s2
+    finally:
+        shutil.rmtree(a, ignore_errors=True)
+
+
+# ── DÜZELTME 4: onay kapısı timeout'u tek kaynaktan ─────────────────────────
+
+
+def test_the_gate_timeout_leaves_a_human_enough_time():
+    """Sabitin DEĞERİNİ sabitler — eşitlik testi bunu yapamaz.
+
+    İlk yazımda burada yalnız `default == ar.APPROVAL_TIMEOUT_S` vardı ve
+    mutasyonla ölçüldü (2026-07-28): sabit 60.0'a düşürülünce test YEŞİL kaldı,
+    çünkü karşılaştırmanın iki tarafı da aynı sabitten geliyordu — beklentiyi
+    ölçtüğü şeyden üreten test hiçbir zaman kırmızı olamaz. Bulgunun kendisi
+    sayının küçüklüğüydü: 60 sn'de backend gate'i silip `approved=False`
+    yapıyordu, yani 90. saniyede onaylayan kullanıcının kararı sessizce
+    reddediliyordu. O yüzden burada bir TABAN duruyor, eşitlik değil."""
+    from agentic.command_gates import APPROVAL_TIMEOUT_S as gate_timeout
+    assert gate_timeout >= 300.0, (
+        "onay penceresi kısaldı; kullanıcı kararını yetiştiremeden gate düşer"
+    )
+
+
+def test_every_consumer_reads_the_one_shared_timeout():
+    """Dört tüketici de aynı nesneyi okumalı. Dördüncüsü (`codex_session`)
+    ilk turda gözden kaçmıştı: üç yer hizalanmış, biri ayrı literal kalmıştı —
+    'uyuşması gereken N yer' arızası N'i azaltmakla değil 1'e indirmekle kapanır."""
+    from agentic.command_gates import APPROVAL_TIMEOUT_S as shared
+    from agentic import agent_runner as ar
+    from providers import codex_session as cs
+
+    assert ar.APPROVAL_TIMEOUT_S is shared
+    for cls in (ClaudeSDKSession, cs.CodexSession):
+        default = inspect.signature(cls.__init__).parameters["approval_timeout"].default
+        assert default is shared, f"{cls.__name__} ayrı bir literal taşıyor"
+
+
+def test_agent_runner_has_no_hardcoded_gate_timeout():
+    """Arızanın kendisi 'uyuşması gereken üç yer'di — literal geri gelirse ısırsın.
+    Bu kaynak-metin kontrolü YALNIZCA ikincil: bu depoda bir probe kaynak metnine
+    bakıp düzeltme yapıldığı halde 'hâlâ canlı' demişti. Asıl koruma üstteki
+    taban testi; burası yalnız literalin geri sızmasını yakalar."""
+    from agentic import agent_runner as ar
+    src = inspect.getsource(ar)
+    assert "timeout=60.0" not in src
+    assert src.count("timeout=APPROVAL_TIMEOUT_S") == 3

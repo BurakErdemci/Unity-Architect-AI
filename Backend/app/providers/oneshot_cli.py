@@ -297,6 +297,13 @@ async def probe_named_models(cli: str, timeout: float = 30.0) -> Optional[bool]:
     tek seferlik öğrenir. True/False döner; belirsizse None (karar verme)."""
     import asyncio
     import subprocess as sp
+    # Ortam izin listesi buraya da uygulanır: bu da üçüncü taraf bir CLI ikilisi
+    # çalıştırıyor ve `env=` verilmediğinde ebeveynin TAMAMINI devralıyordu —
+    # yani sağlayıcı spawn'larında kapatılan sızıntının altıncı yolu. Yetenek
+    # probe'u olması fark etmiyor: sızan sır aynı sır (ölçüldü 2026-07-28,
+    # 6/6 canary çocuğa geçiyordu). Import gecikmeli, çünkü `cli_base` bu
+    # modülü kendisi de kullanıyor ve üst düzey import döngü riski taşıyor.
+    from .cli_base import build_spawn_env, env_family
     base = resolve_cli_cmd(cli)
     if not base:
         return None
@@ -310,6 +317,7 @@ async def probe_named_models(cli: str, timeout: float = 30.0) -> Optional[bool]:
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            env=build_spawn_env(env_family(cli)),
             creationflags=getattr(sp, "CREATE_NO_WINDOW", 0))
         out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         blob = (out.decode("utf-8", "ignore") + "\n" + err.decode("utf-8", "ignore"))

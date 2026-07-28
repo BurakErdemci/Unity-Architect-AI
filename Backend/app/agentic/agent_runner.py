@@ -17,6 +17,7 @@ import subprocess
 from typing import Any, AsyncGenerator, Callable, Dict, List, Optional
 
 from agentic.command_gates import APPROVAL_GATES as _APPROVAL_GATES, APPROVAL_RESULTS as _APPROVAL_RESULTS
+from agentic.command_gates import APPROVAL_TIMEOUT_S
 
 from agentic.command_safety import requires_approval as _is_dangerous_command
 
@@ -35,6 +36,8 @@ from prompts import SYSTEM_PROMPT
 logger = logging.getLogger(__name__)
 
 MAX_ITERATIONS = 15  # Güvenlik: Sonsuz döngü koruması
+
+# Onay bekleme süresi `command_gates`'ten gelir (tek kaynak, gerekçesi orada).
 
 
 class AgentEvent:
@@ -470,7 +473,7 @@ Kullanıcıyla {'Türkçe' if self.language == 'tr' else 'İngilizce'} konuş.""
                         
                     # Şimdi onayı bekle
                     try:
-                        await asyncio.wait_for(event.wait(), timeout=60.0)
+                        await asyncio.wait_for(event.wait(), timeout=APPROVAL_TIMEOUT_S)
                         approved = _APPROVAL_RESULTS.get(gate_id, False)
                     except asyncio.TimeoutError:
                         approved = False
@@ -708,7 +711,7 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                     _APPROVAL_GATES[gate_id] = event
                     yield AgentEvent("command_approval_needed", {"command": _approval_text, "gate_id": gate_id})
                     try:
-                        await asyncio.wait_for(event.wait(), timeout=60.0)
+                        await asyncio.wait_for(event.wait(), timeout=APPROVAL_TIMEOUT_S)
                         approved = _APPROVAL_RESULTS.get(gate_id, False)
                     except: approved = False
                     finally:
@@ -928,7 +931,7 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                     _APPROVAL_GATES[gate_id] = event
                     yield AgentEvent("command_approval_needed", {"command": _approval_text, "gate_id": gate_id})
                     try:
-                        await asyncio.wait_for(event.wait(), timeout=60.0)
+                        await asyncio.wait_for(event.wait(), timeout=APPROVAL_TIMEOUT_S)
                         approved = _APPROVAL_RESULTS.get(gate_id, False)
                     except: approved = False
                     finally:
@@ -1459,15 +1462,31 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
         _lvl = self.effort_level or self.thinking_level or "auto"
         desired_effort = _map_effort("subscription", self.model_name or "claude-",
                                      "low" if _lvl == "off" else _lvl).get("sdk_effort")
+        # Cache'li session'ın CONNECT-TIME kimliği (workspace + model + effort) istenenden
+        # farklıysa yeniden kurulmalı. Eskiden yalnız `effort` karşılaştırılıyordu;
+        # ölçüldü (2026-07-28): workspace A ile açılan session B istendiğinde aynen
+        # dönüyordu (etkin cwd = A) ve model sessizce düşüyordu. Codex yolundaki
+        # desenin aynısı (`_run_codex_session`), farkı: karşılaştırma CANONICAL —
+        # `abspath` symlink alias'ında yanlış "değişmedi"/"değişti" der.
+        from providers.claude_sdk_session import _canonical as _canon
+        _workspace = self.workspace_path or "."
         _existing = _SESSIONS.get(self.conversation_id)
-        if _existing is not None and _existing.effort != desired_effort:
-            logger.info(f"[ClaudeSession] effort değişti ({_existing.effort}→{desired_effort}); "
-                        f"session yeniden kuruluyor (canlı bağlam sıfırlanır, DB özeti korunur)")
+        _reasons = []
+        if _existing is not None:
+            if _existing.effort != desired_effort:
+                _reasons.append(f"effort {_existing.effort}→{desired_effort}")
+            if _existing.model != model:
+                _reasons.append(f"model {_existing.model}→{model}")
+            if _canon(_existing.cwd or ".") != _canon(_workspace):
+                _reasons.append(f"workspace {_existing.cwd}→{_workspace}")
+        if _reasons:
+            logger.info(f"[ClaudeSession] {', '.join(_reasons)}; session yeniden kuruluyor "
+                        f"(canlı bağlam sıfırlanır, DB özeti korunur)")
             await close_session(self.conversation_id)
 
         _session_kwargs = dict(
             model=model,
-            cwd=self.workspace_path or ".",
+            cwd=_workspace,
             permission_mode="default",
             setting_sources=["project", "user"],  # skill + slash komutları için ZORUNLU
             effort=desired_effort,                 # Claude-only; None ise CLI varsayılanı

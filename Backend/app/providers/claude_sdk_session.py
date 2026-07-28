@@ -33,12 +33,17 @@ import logging
 import os
 import time
 import uuid
+from pathlib import Path
 from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Set
 
 from agentic.command_gates import (
     APPROVAL_GATES, APPROVAL_RESULTS,
     QUESTION_GATES, QUESTION_RESULTS,
 )
+# Onay bekleme süresi tek kaynaktan. `agentic` paketi zaten yukarıdaki satırla
+# yükleniyor (yeni bağımlılık değil); ters yön (agent_runner → providers) ise
+# döngü kurardı çünkü `agentic/__init__` agent_runner'ı import ediyor.
+from agentic.command_gates import APPROVAL_TIMEOUT_S
 
 logger = logging.getLogger(__name__)
 
@@ -187,16 +192,113 @@ _NUDGE_MESSAGE = (
 )
 
 
+def _canonical(path: str, base: str = "") -> Path:
+    """Yolu symlink'leri çözerek mutlaklaştırır; henüz VAR OLMAYAN yollarda da çalışır.
+
+    `Path.resolve(strict=False)` var olan öneki kanonikleştirip kalanını olduğu gibi
+    ekler — yeni dosya yazımında (hedef henüz yok) doğru sonucu veren tek yol budur.
+    Şablon: `tools/file_tools._validate_path`.
+
+    Göreli yol `base`'e (workspace) göre çözülür, backend sürecinin cwd'sine göre
+    DEĞİL: Claude CLI'ın çalışma dizini workspace olduğu için modelin verdiği
+    "Assets/X.cs" gerçekten workspace'e görelidir. Eski `os.path.abspath` bunu
+    backend cwd'sine bağlıyordu — meşru göreli yollar "dışarıda" sayılabiliyordu.
+    """
+    p = Path(path).expanduser()
+    if not p.is_absolute() and base:
+        p = Path(base).expanduser() / p
+    return p.resolve(strict=False)
+
+
 def _path_in_workspace(path: str, workspace: str) -> bool:
-    """path, workspace kökünün altında mı? (path-traversal koruması)."""
+    """path, workspace kökünün altında mı? (path-traversal koruması).
+
+    `realpath` İKİ TARAFA da uygulanır. Yalnız hedefe uygulamak meşru kurulumları
+    kırardı: macOS'ta `/tmp → /private/tmp` bağı yüzünden workspace'in KENDİSİ bir
+    bağın altında olabiliyor. Yalnız `abspath` kullanmak ise koruma bırakmıyordu —
+    ölçüldü (2026-07-28): `ws/link → /disari` kurulumunda
+    `_path_in_workspace(ws/link/escape.cs, ws)` True dönüyordu, yani "workspace
+    dışına yazımı kullanıcıya SORMADAN reddet" dalı %100 atlatılıyordu.
+    """
     if not workspace:
         return True  # workspace tanımsızsa kısıtlama yok
     try:
-        ap = os.path.abspath(path)
-        ws = os.path.abspath(workspace)
-        return os.path.commonpath([ap, ws]) == ws
+        ws = _canonical(workspace)
+        target = _canonical(path, workspace)
+        if target == ws:
+            return True
+        return ws in target.parents
     except Exception:
         return False
+
+
+# Yol tabanlı salt-okuma araçları: hedefleri workspace dışına düşebilir, o yüzden
+# adım modunda onay kartına tabidirler (aşağıdaki `_read_target_outside_workspace`).
+# `TodoWrite`/`ToolSearch` bilerek YOK — onların bir dosya sistemi hedefi yok.
+# `WebFetch`/`WebSearch` de YOK: ağ yüzeyi ayrı bir sorun, bu turda kapsam dışı.
+_PATH_READ_TOOLS = {"Read", "Glob", "Grep", "LS", "NotebookRead"}
+
+# Glob deseninde joker başlamadan önceki sabit önek çıkarılırken bakılan karakterler.
+_GLOB_MAGIC = set("*?[")
+
+
+def _glob_literal_root(pattern: str) -> str:
+    """`/Users/**/*.key` → `/Users`. Desenin joker İÇERMEYEN sabit önekini verir.
+
+    Neden gerekli: `Glob` yol argümanı olmadan da mutlak desenle çağrılabiliyor
+    (ölçülen kaçış tam olarak buydu). Desenin tamamını yol sanmak yanlış olurdu;
+    tarama gerçekte bu sabit kökün altında yapılıyor.
+    """
+    parts = []
+    for seg in pattern.split(os.sep):
+        if any(ch in _GLOB_MAGIC for ch in seg):
+            break
+        parts.append(seg)
+    root = os.sep.join(parts)
+    return root or os.sep
+
+
+def _read_tool_target(tool_name: str, inp: dict) -> Optional[str]:
+    """Okuma aracının dosya sistemi hedefini çıkarır; çıkarılamıyorsa None.
+
+    None = "workspace içi say". Gerekçe: bu araçların varsayılan çalışma dizini
+    session'ın cwd'si, o da workspace — yani yolsuz `Grep(pattern=...)` ya da
+    göreli `Glob("**/*.cs")` gerçekten workspace'i tarar. Bilinmeyeni "dışarıda"
+    saymak her aramada onay kartı çıkarırdı ve kullanıcıyı refleks-onaya alıştırırdı.
+
+    NOT: `Grep`'in `pattern`'ı REGEX'tir, yol değil — bilerek yok sayılıyor.
+    `Glob`'un `pattern`'ı ise yol deseni, o yüzden yalnız orada değerlendiriliyor.
+    """
+    if tool_name == "Read":
+        return inp.get("file_path") or None
+    if tool_name == "NotebookRead":
+        return inp.get("notebook_path") or inp.get("file_path") or None
+    if tool_name == "LS":
+        return inp.get("path") or None
+    if tool_name in ("Glob", "Grep"):
+        p = inp.get("path")
+        if p:
+            return p
+        if tool_name == "Glob":
+            pat = (inp.get("pattern") or "").strip()
+            if pat.startswith(("/", "~")):
+                return _glob_literal_root(os.path.expanduser(pat))
+        return None
+    return None
+
+
+def _read_target_outside_workspace(tool_name: str, inp: dict, workspace: str) -> bool:
+    """Yol tabanlı okuma aracı workspace DIŞINI mı hedefliyor?
+
+    Kapsama kararı tek yerden (`_path_in_workspace`) geliyor — ikinci bir yol
+    mantığı yazmak, bu depoda tekrar eden "uyuşması gereken iki yer" arızası.
+    """
+    if tool_name not in _PATH_READ_TOOLS:
+        return False
+    target = _read_tool_target(tool_name, inp or {})
+    if not target:
+        return False
+    return not _path_in_workspace(target, workspace)
 
 
 def _describe_tool(tool_name: str, inp: dict) -> str:
@@ -208,8 +310,14 @@ def _describe_tool(tool_name: str, inp: dict) -> str:
             return inp.get("command", "")
         if tool_name == "Read":
             return inp.get("file_path", "")
+        if tool_name in ("LS", "NotebookRead"):
+            # Onay kartı workspace dışı okumada da çıkıyor → kullanıcının karar
+            # verebilmesi için HEDEF YOL görünmeli, ham JSON değil.
+            return inp.get("path", inp.get("notebook_path", inp.get("file_path", "")))
         if tool_name in ("Glob", "Grep"):
-            return inp.get("pattern", "")
+            pat = inp.get("pattern", "")
+            path = inp.get("path", "")
+            return f"{pat} @ {path}" if path else pat
         if tool_name == "WebFetch":
             return inp.get("url", "")
         if tool_name == "WebSearch":
@@ -265,7 +373,7 @@ class ClaudeSDKSession:
         setting_sources: Optional[List[str]] = None,
         mcp_servers: Optional[dict] = None,
         disallowed_tools: Optional[List[str]] = None,
-        approval_timeout: float = 300.0,
+        approval_timeout: float = APPROVAL_TIMEOUT_S,
         auto_approve: bool = False,
         effort: Optional[str] = None,
     ):
@@ -385,8 +493,23 @@ class ClaudeSDKSession:
         out_q = self._out_q
         gate_id = uuid.uuid4().hex
 
+        # Yol tabanlı okuma araçları workspace DIŞINI hedefliyorsa auto-allow'dan
+        # DÜŞÜRÜLÜR ve aşağıdaki normal onay kartı akışına girer.
+        # Ölçüldü (2026-07-28): auto-allow dalı workspace kontrolünden ÖNCE geldiği
+        # için adım modunda Read("/etc/passwd"), Glob("/Users/**/*.key"), LS("/")
+        # kartsız izin alıyordu.
+        # Neden hard-deny DEĞİL: workspace dışı okuma meşru olabilir (Unity kurulum
+        # dizini, paket önbelleği, log). Reddetmek çalışan kullanımı kırardı; karar
+        # kullanıcıya bırakılıyor.
+        # Neden yalnız adım modunda: oto modda workspace dışına çıkabilmek kullanıcının
+        # açıkça kabul ettiği bir taviz (28 Tem 2026 kararı) — orada kart çıkmaz.
+        _outside_read = (
+            not self.auto_approve
+            and _read_target_outside_workspace(tool_name, input_data, self.cwd or "")
+        )
+
         # Salt-okunur araçlar → onay sormadan otomatik izin (gürültü azaltma)
-        if tool_name in _AUTO_ALLOW_TOOLS:
+        if tool_name in _AUTO_ALLOW_TOOLS and not _outside_read:
             return PermissionResultAllow(updated_input=input_data)
         # unityMCP salt-okuma sorguları (sahneyi DEĞİŞTİRMEZ) → otomatik izin
         if tool_name == "mcp__unityMCP__manage_scene" and \
@@ -921,13 +1044,56 @@ class ClaudeSDKSession:
             self._turn_lock.release()
 
 
+def _identity_mismatch(sess: "ClaudeSDKSession", kwargs: dict) -> Optional[str]:
+    """Cache'li session istenen CONNECT-TIME kimliğiyle uyuşuyor mu? Uyuşmuyorsa sebep.
+
+    `cwd`, `model` ve `effort` SDK'ya bağlanma anında verilir ve oturum ortasında
+    değiştirilemez. Ölçüldü (2026-07-28): cache anahtarı yalnız `conversation_id`
+    olduğu için workspace A ile açılan session B istendiğinde aynen dönüyordu
+    (etkin cwd = A), model ve effort de sessizce düşüyordu. Yani kullanıcının
+    seçimi kabul ediliyormuş gibi görünüp uygulanmıyordu.
+
+    `auto_approve` bilerek DIŞARIDA: o canlı olarak her turda güncelleniyor
+    (`session.auto_approve = ...`), kimliğin parçası değil.
+
+    cwd karşılaştırması canonical: `abspath` ile karşılaştırmak aynı dizinin
+    symlink alias'ında yanlışlıkla "değişti" der ve session'ı boşuna sıfırlardı.
+    """
+    if "cwd" in kwargs:
+        want = _canonical(kwargs.get("cwd") or ".")
+        have = _canonical(sess.cwd or ".")
+        if want != have:
+            return f"workspace {have} → {want}"
+    if "model" in kwargs and kwargs.get("model") != sess.model:
+        return f"model {sess.model} → {kwargs.get('model')}"
+    if "effort" in kwargs and kwargs.get("effort") != sess.effort:
+        return f"effort {sess.effort} → {kwargs.get('effort')}"
+    return None
+
+
+def _discard(conversation_id: int, sess: "ClaudeSDKSession") -> None:
+    """Session'ı cache'ten düşür ve artıklarını arka planda kapat."""
+    _SESSIONS.pop(conversation_id, None)
+    try:
+        asyncio.create_task(sess.close())
+    except RuntimeError:
+        # Çalışan bir event loop yok (senkron bağlam/test). Kapatmayı sessizce
+        # atlamak subprocess sızdırırdı; en azından görünür kılıyoruz.
+        logger.warning(f"[ClaudeSDKSession:{conversation_id}] loop yok — kapatma atlandı")
+
+
 def get_session(conversation_id: int, **kwargs) -> ClaudeSDKSession:
     """conversation_id için canlı session'ı getir; yoksa (veya kopmuşsa) oluştur."""
     sess = _SESSIONS.get(conversation_id)
     if sess is not None and sess._broken:
-        _SESSIONS.pop(conversation_id, None)
-        asyncio.create_task(sess.close())  # artıkları arka planda temizle
+        _discard(conversation_id, sess)
         sess = None
+    if sess is not None:
+        reason = _identity_mismatch(sess, kwargs)
+        if reason:
+            logger.info(f"[ClaudeSDKSession:{conversation_id}] {reason}; session yeniden kuruluyor")
+            _discard(conversation_id, sess)
+            sess = None
     if sess is None:
         sess = ClaudeSDKSession(conversation_id, **kwargs)
         _SESSIONS[conversation_id] = sess

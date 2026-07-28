@@ -375,11 +375,25 @@ class UnityMCPManager:
             # açmıyor (fail-closed). Sadece çocuk sürecin ortamına konur; argv
             # `ps` ile herkese görünür olduğu için komut satırı bayrağı kullanılmaz.
             self.local_api_token = self._load_or_create_local_api_token()
-            mcp_env = {
-                **os.environ,
+            # Ortam bir İZİN LİSTESİNDEN kuruluyor, `{**os.environ}` DEĞİL:
+            # ölçüldü (2026-07-28) ki uvx torunu kullanıcının bütün vendor
+            # anahtarlarını ve veritabanı şifreleme anahtarını görüyordu — oysa
+            # burada çalışan kod bizim değil (upstream mcp-for-unity + uvx'in
+            # PyPI'dan indirdiği her şey). Gerekçe ve liste cli_base'de tek yerde.
+            #
+            # ⚠️ Yukarıdaki iki sır `overrides` ile geçiyor, yani izin listesi
+            # onları ELEYEMEZ. Bu bilinçli: UNITY_MCP_LOCAL_API_TOKEN düşerse
+            # sunucu /api uçlarını hiç açmaz (fail-closed) ve toggle sonsuza
+            # kadar sarıda kalır.
+            import sys as _sys
+            _app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            if _app_dir not in _sys.path:
+                _sys.path.insert(0, _app_dir)
+            from providers.cli_base import build_spawn_env
+            mcp_env = build_spawn_env(family="uvx", overrides={
                 "LOCAL_APP_TOKEN": os.environ.get("LOCAL_APP_TOKEN", ""),
                 "UNITY_MCP_LOCAL_API_TOKEN": self.local_api_token,
-            }
+            })
             self.process = subprocess.Popen(
                 cmd,
                 stdout=log_file,
