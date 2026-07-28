@@ -15,6 +15,7 @@ import glob
 import importlib.util
 import io
 import os
+import re
 import tarfile
 import time
 import zipfile
@@ -36,6 +37,34 @@ def fetch_mod():
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+@pytest.fixture
+def sabitle(fetch_mod, monkeypatch):
+    """Kütüğü test verisine göre yeniden sabitler ve `_sabitle(anahtar, baytlar)`
+    döndürür.
+
+    Neden doğrulamayı monkeypatch'lemek YERİNE kütüğü değiştiriyoruz: gerçek
+    asset'ler 48-290 MB ve testler ağa çıkmıyor, ama `verify_bytes`'ı kapatmak
+    testi "doğrulama koşuyor mu" sorusuna kör bırakırdı — tam da bu depoda
+    ölçülen sınıf. Sentetik arşivin GERÇEK özeti kütüğe yazılınca üretimdeki
+    kod yolu birebir koşuyor, yalnız baytlar küçük.
+
+    Gerçek kütüğün üstüne yazılıyor (kopyası alınarak): bir testin sabitlemediği
+    anahtarlar hâlâ gerçek değerleriyle görünür, yani yanlış anahtar kullanan bir
+    test sessizce geçmez."""
+    pinned = fetch_mod.pinned_assets
+    entries = dict(pinned.load_manifest()["assets"])
+    monkeypatch.setattr(pinned, "load_manifest", lambda: {"assets": entries})
+
+    def _sabitle(key: str, data: bytes) -> None:
+        entries[key] = {
+            "url": entries.get(key, {}).get("url", "https://ornek.invalid/x.zip"),
+            "digest": "sha256:" + pinned.digest_of(data, "sha256"),
+            "size": len(data),
+        }
+
+    return _sabitle
 
 
 def _write_stamp(dest: str, value: str) -> None:
@@ -289,23 +318,33 @@ class TestKurulumSonrasiAgacGuncelSayilir:
         assert not os.path.exists(dest + ".version")
 
     def test_a_sound_installation_is_not_downloaded_a_second_time(
-        self, fetch_mod, tmp_path, monkeypatch
+        self, fetch_mod, tmp_path, monkeypatch, sabitle
     ):
         """Uçtan uca kapı testi: `fetch_dotnet` iki kez koşuyor, indirme BİR kez
-        olmalı. Buradaki asıl konu maliyet — win-x64 SDK'sı 290 MB."""
+        olmalı. Buradaki asıl konu maliyet — win-x64 SDK'sı 290 MB.
+
+        Sentetik arşiv kütüğe sabitleniyor (bkz. `sabitle`): bütünlük kontrolü
+        eklendiğinde bu test, 239 baytlık taklidi 290 MB'lık gerçek özetle
+        karşılaştırıp haklı olarak patladı. Doğrulamayı kapatmak yerine taklit
+        kütüğe tanıtıldı — kontrol koşuyor VE atlama davranışı hâlâ sınanıyor.
+        `blob` bir kez hesaplanıp saklanıyor: `_sdk_zip` zip üyelerine o anki saati
+        yazıyor, iki çağrı saniye sınırını geçerse farklı bayt üretirdi."""
         monkeypatch.setattr(fetch_mod, "DEST", str(tmp_path))
+        blob = _sdk_zip("A")
+        sabitle("dotnet-sdk/win-x64", blob)
         calls: list[str] = []
 
         def fake_download(url):
             calls.append(url)
-            return _sdk_zip("A")
+            return blob
 
         monkeypatch.setattr(fetch_mod, "_download", fake_download)
         fetch_mod.fetch_dotnet("win-x64")       # .zip asset'i → ağ yok, bellekten
         fetch_mod.fetch_dotnet("win-x64")
         assert len(calls) == 1, f"ikinci koşu yeniden indirdi: {calls}"
         assert fetch_mod._intact(
-            str(tmp_path / "dotnet-win-x64"), fetch_mod.DOTNET_VERSION,
+            str(tmp_path / "dotnet-win-x64"),
+            fetch_mod._stamp_value(fetch_mod.DOTNET_VERSION, "dotnet-sdk/win-x64"),
             fetch_mod.dotnet_markers("win-x64"),
         ) is True
 
@@ -451,3 +490,235 @@ class TestSembolikBagKuruluSayilmaz:
             fetch_mod._install(b"", "x.tar.gz", str(dest), "v1", [])
         assert kurban.read_text() == "dokunulmamis"
 
+
+class TestAdreslerTekKaynaktan:
+    """İndirilen her şeyin adresi `pinned_assets.json`'da, özetiyle AYNI satırda.
+
+    Hangi arızadan doğdu: adres burada bir f-string'ken, özet başka bir dosyada
+    duracaktı. O an "birbiriyle uyuşması gereken iki yer" doğuyor ve bu depoda
+    2026-07-27/28'de bulunan arızaların hepsi tam olarak o şekildeydi. Bir sürümü
+    yükseltip özeti güncellemeyi unutmak, doğrulamayı ilk indirmede patlatır
+    (gürültülü, iyi); URL'yi güncelleyip özeti unutmak ise sessizce YANLIŞ asset'i
+    doğrulanmış gibi kurardı — bu testler o ikinci yolun var olmadığını sınıyor.
+    """
+
+    def test_every_omnisharp_url_comes_from_the_pinned_manifest(self, fetch_mod):
+        entries = fetch_mod.pinned_assets.load_manifest()["assets"]
+        assert fetch_mod.ASSETS, "ASSETS boş — türetme sessizce hiçbir şey üretmemiş"
+        for plat, url in fetch_mod.ASSETS.items():
+            assert url == entries[f"omnisharp/{plat}"]["url"]
+
+    def test_every_dotnet_url_comes_from_the_pinned_manifest(self, fetch_mod):
+        entries = fetch_mod.pinned_assets.load_manifest()["assets"]
+        assert fetch_mod.DOTNET_ASSETS
+        for plat, url in fetch_mod.DOTNET_ASSETS.items():
+            assert url == entries[f"dotnet-sdk/{plat}"]["url"]
+
+    def test_the_declared_versions_still_agree_with_the_pinned_urls(self, fetch_mod):
+        """`VERSION` artık URL kurmuyor, yalnız damgaya giriyor — yani kütükteki
+        adres yükseltilip bu sabit unutulursa kimse fark etmez ve damga yanlış
+        sürümü söyler. Ucuz kapı: sabit, adresin içinde geçmeli."""
+        for plat, url in fetch_mod.ASSETS.items():
+            assert fetch_mod.VERSION in url, f"{plat}: {url}"
+        for plat, url in fetch_mod.DOTNET_ASSETS.items():
+            assert fetch_mod.DOTNET_VERSION in url, f"{plat}: {url}"
+
+    def test_a_platform_missing_from_the_manifest_is_a_loud_failure(self, fetch_mod):
+        """Bilinmeyen anahtar sessizce boş dönmemeli: dönseydi o platform için
+        doğrulama atlanmış olurdu ve build yeşil kalırdı."""
+        with pytest.raises(KeyError):
+            fetch_mod.pinned_assets.asset("omnisharp/olmayan-platform")
+
+
+class TestBozukBaytlarKurulmaz:
+    """Bütünlük kapısı, İKİ YÖNDEN de.
+
+    Neden var: bu depo 13 yerden yürütülebilir içerik indiriyordu ve hiçbirinde
+    checksum yoktu; indirilenlerin hepsi installer'a girip son kullanıcıda
+    çalışıyor. Kapının çok GENİŞ olmaması kadar çok DAR olmaması da sınanıyor —
+    doğrulamayı yanlış kurup her arşivi reddetmek, ürünün hiç kurulamaması demek.
+    """
+
+    KEY = "dotnet-sdk/win-x64"
+
+    def test_bytes_that_do_not_match_the_pinned_digest_are_refused(
+        self, fetch_mod, tmp_path, sabitle
+    ):
+        """Kapının asıl işi. `_sdk_zip("A")` ile `_sdk_zip("B")` aynı UZUNLUKTA,
+        yani burada reddi sağlayan şey boyut değil özetin kendisi."""
+        dest = str(tmp_path / "dotnet-win-x64")
+        sabitle(self.KEY, _sdk_zip("A"))
+        with pytest.raises(fetch_mod.pinned_assets.IntegrityError):
+            fetch_mod._install(
+                _sdk_zip("B"), "x.zip", dest, "10.0.100+abc", ["dotnet.exe"], self.KEY
+            )
+
+    def test_a_refused_download_writes_nothing_at_all_to_the_target(
+        self, fetch_mod, tmp_path, sabitle
+    ):
+        """Doğrulama çıkarmadan ÖNCE olmalı, sonra değil: arşiv çıkarmanın kendisi
+        bir saldırı yüzeyi (bu dosyada zaten iki ayrı kaçış arızası düzeltildi) ve
+        bozuk baytlar o yüzeye hiç varmamalı. Staging'in de hiç doğmaması ölçülüyor,
+        çünkü "açtım sonra sildim" ile "hiç açmadım" aynı şey değil."""
+        dest = str(tmp_path / "dotnet-win-x64")
+        sabitle(self.KEY, _sdk_zip("A"))
+        with pytest.raises(fetch_mod.pinned_assets.IntegrityError):
+            fetch_mod._install(
+                _sdk_zip("B"), "x.zip", dest, "10.0.100+abc", ["dotnet.exe"], self.KEY
+            )
+        assert not os.path.exists(dest), "reddedilen arşiv hedefe yazmış"
+        assert glob.glob(dest + ".staging*") == [], "reddedilen arşiv açılmış"
+
+    def test_a_truncated_download_is_refused_on_size_before_the_digest(
+        self, fetch_mod, tmp_path, sabitle
+    ):
+        """Yarım inen dosyanın teşhisi boyutta: "301667702 bayt bekleniyordu, 239
+        geldi" mesajı iki hex dizisini karşılaştırmaktan hızlı okunuyor."""
+        dest = str(tmp_path / "dotnet-win-x64")
+        sabitle(self.KEY, _sdk_zip("uzunca-bir-govde"))
+        with pytest.raises(fetch_mod.pinned_assets.IntegrityError, match="boyut"):
+            fetch_mod._install(
+                _sdk_zip("A"), "x.zip", dest, "10.0.100+abc", ["dotnet.exe"], self.KEY
+            )
+        assert not os.path.exists(dest)
+
+    def test_bytes_that_match_the_pinned_digest_are_installed_normally(
+        self, fetch_mod, tmp_path, sabitle
+    ):
+        """Karşıt yön: kapı çok DAR olmamalı. Bu test kırılırsa gömülü SDK hiçbir
+        makinede kurulamaz, yani C# zekası tümden ölür."""
+        dest = str(tmp_path / "dotnet-win-x64")
+        blob = _sdk_zip("A")
+        sabitle(self.KEY, blob)
+        stamp = fetch_mod._stamp_value("10.0.100", self.KEY)
+        fetch_mod._install(blob, "x.zip", dest, stamp, ["dotnet.exe"], self.KEY)
+        assert _read(dest, "dotnet.exe") == "A"
+        assert fetch_mod._intact(dest, stamp, ["dotnet.exe", "sdk"]) is True
+
+    def test_the_dotnet_download_path_verifies_what_it_downloaded(
+        self, fetch_mod, tmp_path, monkeypatch, sabitle
+    ):
+        """`_install`'ın `asset_key` parametresi varsayılanı `None`, yani doğrulamayı
+        kapatmanın kolay yolu anahtarı çağrı yerinde geçirmemek olurdu — sessizce.
+        Bu test üretimdeki çağıranı uçtan uca koşturup anahtarın gerçekten
+        geçirildiğini ölçüyor; parametreyi düşüren bir düzenleme burada patlar."""
+        monkeypatch.setattr(fetch_mod, "DEST", str(tmp_path))
+        sabitle(self.KEY, _sdk_zip("beklenen"))
+        monkeypatch.setattr(fetch_mod, "_download", lambda url: _sdk_zip("degistirilmis"))
+        with pytest.raises(fetch_mod.pinned_assets.IntegrityError):
+            fetch_mod.fetch_dotnet("win-x64")
+        assert not os.path.exists(tmp_path / "dotnet-win-x64")
+
+    def test_the_omnisharp_download_path_verifies_what_it_downloaded(
+        self, fetch_mod, tmp_path, monkeypatch, sabitle
+    ):
+        """Aynı ölçüm ikinci çağıran için: iki yolu birden kapatmayan bir düzeltme,
+        kapatılmayan yol üzerinden hâlâ keyfi ikili kurdurur."""
+        monkeypatch.setattr(fetch_mod, "DEST", str(tmp_path))
+        sabitle("omnisharp/osx-arm64", _sdk_zip("beklenen"))
+        monkeypatch.setattr(fetch_mod, "_download", lambda url: _sdk_zip("degistirilmis"))
+        with pytest.raises(fetch_mod.pinned_assets.IntegrityError):
+            fetch_mod.fetch("osx-arm64")
+        assert not os.path.exists(tmp_path / "osx-arm64")
+
+
+class TestDamgaOzetiDeKapsar:
+    """Damga sürüm numarasına ek olarak sabitlenmiş özetin önekini taşır.
+
+    Hangi boşluktan doğdu: sürüm numarası kimliğin tamamı değil. Yayıncı aynı
+    etiketi yeniden yayınlarsa (GitHub release asset'leri değiştirilebiliyor)
+    "10.0.100" damgalı eski kurulum hâlâ güncel görünür, indirme atlanır ve
+    doğrulama HİÇ KOŞMAZ — yani en çok ihtiyaç duyulduğu anda kontrol devre dışı.
+    """
+
+    KEY = "dotnet-sdk/win-x64"
+
+    def test_the_stamp_still_starts_with_the_human_readable_version(
+        self, fetch_mod, sabitle
+    ):
+        """Damga hâlâ elle okunabilmeli: sorun ayıklarken `.version` dosyasına bakan
+        insan önce sürümü görüyor."""
+        sabitle(self.KEY, _sdk_zip("A"))
+        assert fetch_mod._stamp_value("10.0.100", self.KEY).startswith("10.0.100+")
+
+    def test_the_stamp_changes_when_the_pinned_digest_changes(self, fetch_mod, sabitle):
+        sabitle(self.KEY, _sdk_zip("A"))
+        onceki = fetch_mod._stamp_value("10.0.100", self.KEY)
+        sabitle(self.KEY, _sdk_zip("B"))
+        assert fetch_mod._stamp_value("10.0.100", self.KEY) != onceki
+
+    def test_an_asset_republished_under_the_same_version_is_downloaded_again(
+        self, fetch_mod, tmp_path, monkeypatch, sabitle
+    ):
+        """Uçtan uca: sürüm numarası DEĞİŞMEDEN kütükteki özet değişiyor. Eski
+        damgada bu kurulum "zaten 10.0.100 — atlandı" diye geçilirdi ve makinede
+        eski baytlar kalırdı."""
+        monkeypatch.setattr(fetch_mod, "DEST", str(tmp_path))
+        dest = str(tmp_path / "dotnet-win-x64")
+        indirilen = {"blob": _sdk_zip("A")}
+        calls: list[str] = []
+
+        def fake_download(url):
+            calls.append(url)
+            return indirilen["blob"]
+
+        monkeypatch.setattr(fetch_mod, "_download", fake_download)
+        sabitle(self.KEY, indirilen["blob"])
+        fetch_mod.fetch_dotnet("win-x64")
+        assert _read(dest, "dotnet.exe") == "A"
+
+        # Yayıncı aynı sürüm numarasıyla yeni baytlar yayınladı, kütük tazelendi.
+        indirilen["blob"] = _sdk_zip("B")
+        sabitle(self.KEY, indirilen["blob"])
+        fetch_mod.fetch_dotnet("win-x64")
+
+        assert len(calls) == 2, "özet değiştiği halde bayat kurulum güncel sayıldı"
+        assert _read(dest, "dotnet.exe") == "B"
+
+
+
+class TestUretimYolundaDogrulamaAtlanamaz:
+    """`_install`'ın `asset_key` parametresi varsayılan olarak `None`, yani doğrulama
+    teknik olarak ATLANABİLİR. Bu bilinçli: testler kütükte karşılığı olmayan sentetik
+    arşivler enjekte ediyor ve onların sabitlenmiş bir özeti yok.
+
+    Ama bir güvenlik kapısının "unutulabilir" olması, bu deponun tam olarak ödediği
+    bedel. Davranış testleri yalnız BUGÜNKÜ iki çağıranı bağlıyor; yarın eklenen
+    üçüncü bir çağıran anahtarı geçirmezse hiçbir test kırılmaz ve indirilen baytlar
+    sessizce doğrulanmadan kurulur.
+
+    Bu sınıf o boşluğu kaynak seviyesinde kapatıyor: üretim dosyasındaki HER
+    `_install` çağrısı bir anahtar geçirmek ZORUNDA. `asset_key=None` yazarak kapıyı
+    kapatma yolu da böylece kapanıyor — davranış testinin yakalayamadığı şey buydu.
+    """
+
+    @staticmethod
+    def _uretim_cagrilari() -> list[str]:
+        with open(_SPEC_PATH, encoding="utf-8") as f:
+            src = f.read()
+        # `def _install(` tanımını atla, yalnız çağrıları al.
+        return [
+            m.group(0)
+            for m in re.finditer(r"(?<!def )_install\((?:[^()]|\([^()]*\))*\)", src)
+        ]
+
+    def test_the_production_calls_were_actually_found(self):
+        """Kendini sınayan test: regex tutmazsa aşağıdaki test BOŞ küme üzerinde koşar
+        ve sessizce geçer — yani kapı, kırılmadan kaybolur. Bugün iki çağıran var
+        (`fetch` ve `fetch_dotnet`); sayı değişirse bu testin de gözden geçirilmesi
+        gerekiyor, o yüzden sayıya bağlandı."""
+        assert len(self._uretim_cagrilari()) == 2, (
+            "fetch_omnisharp.py'deki _install çağrıları ayrıştırılamadı ya da sayısı "
+            "değişti; bu testin deseni güncellenmeli — sessizce boş geçmesin"
+        )
+
+    def test_every_production_install_passes_a_pinned_asset_key(self):
+        """Asıl garanti: üretim yolunda doğrulamasız kurulum yok."""
+        for cagri in self._uretim_cagrilari():
+            assert re.search(r"\bkey\b|omnisharp/|dotnet-sdk/", cagri), (
+                "bir _install çağrısı sabitlenmiş asset anahtarı geçirmiyor, yani "
+                f"indirilen baytlar doğrulanmadan kurulur:\n  {cagri}"
+            )
+            assert "asset_key=None" not in cagri, (
+                f"doğrulama açıkça kapatılmış:\n  {cagri}"
+            )

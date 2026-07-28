@@ -12,12 +12,24 @@ import urllib.request
 import uuid
 import zipfile
 
+# `scripts/` bir paket değil ve bu dosya iki farklı şekilde yükleniyor: doğrudan
+# script olarak (o zaman sys.path[0] zaten burası) ve testlerde
+# `spec_from_file_location` ile (o zaman burası sys.path'te HİÇ yok). İkinci yolda
+# çıplak `import pinned_assets` ImportError veriyor, o yüzden dizin elle ekleniyor.
+# `append` (insert değil): stdlib'i gölgeleme riski almadan sona yazıyor.
+_SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
+if _SCRIPTS_DIR not in sys.path:
+    sys.path.append(_SCRIPTS_DIR)
+import pinned_assets  # noqa: E402  (sys.path yukarıda hazırlanıyor)
+
 # Windows konsolu (cp1252) Türkçe karakterlerde patlamasın — build sırasında
 # npm bunu bir cp1252 pipe'a yazabiliyor. stdout'u utf-8'e sabitle.
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 except Exception:
     pass
+
+PLATFORMS = ("win-x64", "osx-arm64", "linux-x64")
 
 VERSION = "v1.39.15"
 # TÜM platformlarda net6.0 varyantı + gömülü .NET SDK kullanılıyor: tek mekanizma.
@@ -26,11 +38,23 @@ VERSION = "v1.39.15"
 # hiçbir OmniSharp v1.39.15 asset'i MSBuild paketlemiyor (win-x64 net472 ve mono
 # zip'leri açılıp bakıldı: yalnız Microsoft.Build.Locator.dll var, .msbuild klasörü yok).
 # Yani her platformda sistemde ya da gömülü olarak bir .NET SDK şart.
-ASSETS = {
-    "win-x64": f"https://github.com/OmniSharp/omnisharp-roslyn/releases/download/{VERSION}/omnisharp-win-x64-net6.0.zip",
-    "osx-arm64": f"https://github.com/OmniSharp/omnisharp-roslyn/releases/download/{VERSION}/omnisharp-osx-arm64-net6.0.zip",
-    "linux-x64": f"https://github.com/OmniSharp/omnisharp-roslyn/releases/download/{VERSION}/omnisharp-linux-x64-net6.0.zip",
-}
+
+
+def omnisharp_key(platform: str) -> str:
+    return f"omnisharp/{platform}"
+
+
+def dotnet_key(platform: str) -> str:
+    return f"dotnet-sdk/{platform}"
+
+
+# ⚠️ URL'ler burada KURULMUYOR, `pinned_assets.json`'dan türetiliyor. Eskiden adres
+# burada bir f-string'di ve özet başka dosyadaydı; o an "birbiriyle uyuşması gereken
+# iki yer" doğuyor — bu depoda 2026-07-27/28'de bulunan arızaların HEPSİ tam olarak
+# o şekildeydi. Şimdi bir asset'in adresini değiştirmenin tek yolu, özetiyle aynı
+# satıra dokunmak. `asset()` bilinmeyen anahtarda patlıyor, yani bir platformu
+# kütüğe eklemeyi unutmak import anında görülüyor, build'in ortasında değil.
+ASSETS = {p: pinned_assets.asset(omnisharp_key(p))["url"] for p in PLATFORMS}
 
 # Gömülü .NET **SDK** (runtime DEĞİL). OmniSharp proje yüklemek için MSBuild'i
 # SDK'dan çözüyor; yalnız runtime gömüldüğünde `hostfxr_resolve_sdk2` başarısız
@@ -42,11 +66,7 @@ ASSETS = {
 #   gerçek SDK    → initialize yanıtı 3.0 sn'de geldi
 # .NET 10 = LTS (EOL 2028-11). OmniSharp net6.0 hedefli → DOTNET_ROLL_FORWARD=Major.
 DOTNET_VERSION = "10.0.100"
-DOTNET_ASSETS = {
-    "osx-arm64": f"https://builds.dotnet.microsoft.com/dotnet/Sdk/{DOTNET_VERSION}/dotnet-sdk-{DOTNET_VERSION}-osx-arm64.tar.gz",
-    "linux-x64": f"https://builds.dotnet.microsoft.com/dotnet/Sdk/{DOTNET_VERSION}/dotnet-sdk-{DOTNET_VERSION}-linux-x64.tar.gz",
-    "win-x64": f"https://builds.dotnet.microsoft.com/dotnet/Sdk/{DOTNET_VERSION}/dotnet-sdk-{DOTNET_VERSION}-win-x64.zip",
-}
+DOTNET_ASSETS = {p: pinned_assets.asset(dotnet_key(p))["url"] for p in PLATFORMS}
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEST = os.path.join(ROOT, "third_party", "omnisharp")
 
@@ -70,6 +90,23 @@ def dotnet_markers(platform: str) -> list[str]:
     `dotnet` host'unu ve `shared/` klasörünü getiriyor, yani host'un varlığı SDK
     olduğunu KANITLAMAZ — 27 Tem 2026'daki 120 sn asılma arızasının tam sebebi buydu."""
     return ["dotnet.exe" if platform.startswith("win") else "dotnet", "sdk"]
+
+
+def _stamp_value(version: str, asset_key: str) -> str:
+    """Damgaya sürüm numarasının YANINDA sabitlenmiş özetin bir öneki de giriyor.
+
+    Sebebi: sürüm numarası kimliğin tamamı değil. Yayıncı aynı etiketi yeniden
+    yayınlarsa (OmniSharp release asset'leri değiştirilebiliyor, .NET build'leri
+    yeniden basılabiliyor) eski kurulum "10.0.100" damgasıyla hâlâ güncel görünür,
+    `_intact()` True döner, indirme atlanır ve doğrulama HİÇ KOŞMAZ. Yani en çok
+    ihtiyaç duyulan durumda kontrol devre dışı kalırdı. Özet kütükte değişince
+    damga da değişiyor ve kurulum bayat sayılıyor.
+
+    Önek 12 hex (48 bit) — bu bir güvenlik sınırı değil, yalnız "değişti mi"
+    işareti; gerçek doğrulamayı `verify_bytes` tam özetle yapıyor. Kısa tutulmasının
+    sebebi damganın elle okunabilir kalması."""
+    digest = pinned_assets.asset(asset_key)["digest"].partition(":")[2]
+    return f"{version}+{digest[:12]}"
 
 
 def _intact(dest: str, stamp_value: str, markers: list[str]) -> bool:
@@ -180,9 +217,17 @@ def _prune_stale_leftovers(dest: str) -> None:
             shutil.rmtree(leftover, ignore_errors=True)
 
 
-def _install(data: bytes, url: str, dest: str, stamp_value: str, exec_names: list[str]) -> None:
-    """Staging'e çıkar, sonra hedefi TAKAS et. Doğrudan hedefe çıkarmak, yarıda
-    kesilen bir indirmede yarım ağaç + eski dosya karışımı bırakıyor; damga en
+def _install(
+    data: bytes,
+    url: str,
+    dest: str,
+    stamp_value: str,
+    exec_names: list[str],
+    asset_key: str | None = None,
+) -> None:
+    """Baytları DOĞRULA, staging'e çıkar, sonra hedefi TAKAS et. Doğrudan hedefe
+    çıkarmak, yarıda kesilen bir indirmede yarım ağaç + eski dosya karışımı
+    bırakıyor; damga en
     sona yazıldığı için de o karışım bir sonraki koşuda 'sağlam' görünüyordu.
 
     Staging yolu KOŞUYA ÖZEL (pid + rastgele belirteç). Sabit `dest + ".staging"`
@@ -202,7 +247,22 @@ def _install(data: bytes, url: str, dest: str, stamp_value: str, exec_names: lis
     Damga takastan ÖNCE staging'in içine yazılıyor: ağacın hâlâ en son yazılan
     dosyası o, ama hedefe geçişi tek bir atomik rename yapıyor. Böylece hedefte
     "damga var, ağaç yarım" durumu hiç oluşamıyor. `_intact()` staging'e hiç
-    bakmadığı için damganın orada erken var olması bir şey iddia etmiyor."""
+    bakmadığı için damganın orada erken var olması bir şey iddia etmiyor.
+
+    `asset_key` verilirse baytlar sabitlenmiş özetle karşılaştırılır ve uyuşmazlıkta
+    `IntegrityError` atılır. Bu kontrol İLK satırda, çıkarmadan da diskte herhangi
+    bir dizin yaratmadan önce: bozuk bir arşivi açıp sonra pişman olmak yerine hiç
+    açmıyoruz — arşiv çıkarmanın kendisi bir saldırı yüzeyi (bu dosyada zaten iki
+    ayrı kaçış arızası düzeltildi) ve doğrulama o yüzeye hiç varmadan bitmeli.
+    Uyuşmazlıkta build KIRILIYOR, sessizce atlanmıyor: bu asset'ler ürünün çalışması
+    için zorunlu, "doğrulayamadım ama devam ettim" hiçbir şey doğrulamamakla aynı.
+
+    `asset_key=None` yalnız kütükte karşılığı OLMAYAN baytlar için — pratikte
+    testlerin enjekte ettiği sentetik arşivler. Üretimdeki iki çağıranın da anahtar
+    geçirdiği testle bağlanmış durumda; yoksa bu varsayılan kontrolü sessizce
+    kapatmanın kolay yolu olurdu."""
+    if asset_key is not None:
+        pinned_assets.verify_bytes(data, asset_key)
     token = f"{os.getpid()}-{uuid.uuid4().hex[:8]}"
     staging = f"{dest}.staging-{token}"
     previous = f"{dest}.old-{token}"
@@ -255,11 +315,13 @@ def _install(data: bytes, url: str, dest: str, stamp_value: str, exec_names: lis
 def fetch(platform: str) -> None:
     dest = os.path.join(DEST, platform)
     marker = omnisharp_marker(platform)
-    if _intact(dest, VERSION, [marker]):
+    key = omnisharp_key(platform)
+    stamp = _stamp_value(VERSION, key)
+    if _intact(dest, stamp, [marker]):
         print(f"[fetch_omnisharp] {platform} zaten {VERSION} — atlandı.")
         return
     url = ASSETS[platform]
-    _install(_download(url), url, dest, VERSION, [marker])
+    _install(_download(url), url, dest, stamp, [marker], key)
     print(f"[fetch_omnisharp] tamam: {dest}")
 
 
@@ -271,12 +333,14 @@ def fetch_dotnet(platform: str) -> None:
         return
     dest = os.path.join(DEST, f"dotnet-{platform}")
     markers = dotnet_markers(platform)
-    if _intact(dest, DOTNET_VERSION, markers):
+    key = dotnet_key(platform)
+    stamp = _stamp_value(DOTNET_VERSION, key)
+    if _intact(dest, stamp, markers):
         print(f"[fetch_omnisharp] dotnet-{platform} zaten {DOTNET_VERSION} — atlandı.")
         return
     url = DOTNET_ASSETS[platform]
     print(f"[fetch_omnisharp] .NET SDK indiriliyor (~200-290 MB, sürebilir)")
-    _install(_download(url), url, dest, DOTNET_VERSION, [markers[0]])
+    _install(_download(url), url, dest, stamp, [markers[0]], key)
     print(f"[fetch_omnisharp] dotnet tamam: {dest}")
 
 

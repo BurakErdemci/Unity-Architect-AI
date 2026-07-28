@@ -1,0 +1,157 @@
+{
+  "$aciklama": [
+    "Build sırasında indirilen üçüncü parti ikililerin SABİTLENMİŞ adresi ve özeti.",
+    "Bu dosya tek kaynak: URL de özet de burada, çünkü ikisini ayırmak 'birbiriyle",
+    "uyuşması gereken iki yer' üretir ve bu depodaki arızaların hepsi o şekildeydi.",
+    "",
+    "Özet biçimi 'algo:hex'. sha512 yalnız yayıncının kendi yayınladığı değer o",
+    "olduğunda kullanılıyor (.NET) — kendi hesapladıklarımız sha256.",
+    "",
+    "GÜNCELLEME: elle düzenleme yerine `python3 scripts/pinned_assets.py refresh`",
+    "kullan, sonra diff'i İNCELE. Özeti kontrol kırıldığı için güncellemek, kontrolü",
+    "tamamen anlamsız kılar — uyuşmazlık her zaman önce araştırılır.",
+    "",
+    "'kaynak' alanı özetin NEREDEN geldiğini söyler ve güven kökünü görünür kılar:",
+    "  yayinci = yayıncı kendi yayınlıyor, indirilen baytlarla karşılaştırıldı",
+    "  github-api = GitHub'ın sunucu tarafında hesapladığı digest alanı",
+    "  yerel = yayıncı özet yayınlamıyor; ELLE hesaplandı, tarihi yazılı.",
+    "          Bu satırlarda güven kökü hesaplayan kişidir, vendor değil."
+  ],
+  "assets": {
+    "omnisharp/win-x64": {
+      "url": "https://github.com/OmniSharp/omnisharp-roslyn/releases/download/v1.39.15/omnisharp-win-x64-net6.0.zip",
+      "digest": "sha256:b03eb6b9ac6446fce803b87c0965e94cef5570cc86f47bfefe2f60933d8658e8",
+      "size": 52285676,
+      "kaynak": "github-api"
+    },
+    "omnisharp/osx-arm64": {
+      "url": "https://github.com/OmniSharp/omnisharp-roslyn/releases/download/v1.39.15/omnisharp-osx-arm64-net6.0.zip",
+      "digest": "sha256:678be5bb972d04bbf5e1426e5e7562261e176fa781784d0f13877d8c4391ec3e",
+      "size": 48785223,
+      "kaynak": "github-api"
+    },
+    "omnisharp/linux-x64": {
+      "url": "https://github.com/OmniSharp/omnisharp-roslyn/releases/download/v1.39.15/omnisharp-linux-x64-net6.0.zip",
+      "digest": "sha256:41838cd21abbf01d7ab41fd53d19297a6f3ec5a07bb75ec139b0ead4195d1239",
+      "size": 51005032,
+      "kaynak": "github-api"
+    },
+
+    "dotnet-sdk/osx-arm64": {
+      "url": "https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0.100/dotnet-sdk-10.0.100-osx-arm64.tar.gz",
+      "digest": "sha512:0ee9c774f9c63601844619b67d6ca829d70fa26b9949b808e801380c35edb12e4c9418baf8e2ef8ba1dc6dc7d307dbf5830fb0f4f97666032a391c5c097ee607",
+      "size": 229936839,
+      "kaynak": "yayinci"
+    },
+    "dotnet-sdk/linux-x64": {
+      "url": "https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0.100/dotnet-sdk-10.0.100-linux-x64.tar.gz",
+      "digest": "sha512:f78dbac30c9af2230d67ff5c224de3a5dbf63f8a78d1c206594dedb80e6909d2cc8a9d865d5105c72c2fd2aa266fc0c6c77dedac60408cbccf272b116bd11b07",
+      "size": 239125653,
+      "kaynak": "yayinci"
+    },
+    "dotnet-sdk/win-x64": {
+      "url": "https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0.100/dotnet-sdk-10.0.100-win-x64.zip",
+      "digest": "sha512:24b033418a3969effd49b4651ef7ebbffeb284773b99545d78dce61a82e57f38db7facdb013c609ba15573c072f0e093363ae470824a6847f3c6111078c1fb64",
+      "size": 301667702,
+      "kaynak": "yayinci"
+    },
+
+    "uv/darwin-arm64": {
+      "url": "https://github.com/astral-sh/uv/releases/download/0.11.33/uv-aarch64-apple-darwin.tar.gz",
+      "digest": "sha256:d75e3d2bfc203d17388edaabd3aa37958edbcbfc36219e3ee0d31bb080b4baa2",
+      "size": 17585565,
+      "kaynak": "yayinci"
+    },
+    "uv/darwin-x64": {
+      "url": "https://github.com/astral-sh/uv/releases/download/0.11.33/uv-x86_64-apple-darwin.tar.gz",
+      "digest": "sha256:f1b919f740bd6be1d014ff58c4271b0779a32198adfb19ad9c5d1c4d9b2b4301",
+      "size": 19456887,
+      "kaynak": "yayinci"
+    },
+    "uv/win-x64": {
+      "url": "https://github.com/astral-sh/uv/releases/download/0.11.33/uv-x86_64-pc-windows-msvc.zip",
+      "digest": "sha256:c253ce868ad48d29327b661452ce184c9e333e6d6f5bc8d6fcfbf4dd52b83442",
+      "size": 18981332,
+      "kaynak": "yayinci"
+    },
+
+    "yt-dlp/macos": {
+      "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.07.04/yt-dlp_macos",
+      "digest": "sha256:498bd0dae17855c599d371d68ec5bafc439a9d8640e838be25c765a9792f261b",
+      "size": 38256544,
+      "kaynak": "yayinci"
+    },
+    "yt-dlp/linux": {
+      "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.07.04/yt-dlp_linux",
+      "digest": "sha256:6bbb3d314cde4febe36e5fa1d55462e29c974f63444e707871834f6d8cc210ae",
+      "size": 39924536,
+      "kaynak": "yayinci"
+    },
+    "yt-dlp/win": {
+      "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.07.04/yt-dlp.exe",
+      "digest": "sha256:52fe3c26dcf71fbdc85b528589020bb0b8e383155cfa81b64dd447bbe35e24b8",
+      "size": 18226085,
+      "kaynak": "yayinci"
+    },
+
+    "ffmpeg/macos": {
+      "url": "https://evermeet.cx/ffmpeg/ffmpeg-8.1.2.zip",
+      "digest": "sha256:e91df72a1ee7c26606f90dd2dd4dcccc6a75140ff9ea6fdd50faae828b82ba69",
+      "size": 26037786,
+      "kaynak": "yerel:2026-07-28",
+      "$not": "evermeet.cx HİÇBİR checksum yayınlamıyor (yalnız GPG imzası) ve istek deolaha.ca'ya 302 atıyor — baytlar yayıncıyla görünür ilişkisi olmayan bir hosttan geliyor. Doğrulamanın en çok değdiği satır bu. Özet 2026-07-28'de elle hesaplandı ve indirmeyle teyit edildi."
+    },
+    "ffmpeg/linux": {
+      "url": "https://johnvansickle.com/ffmpeg/releases/ffmpeg-7.0.2-amd64-static.tar.xz",
+      "digest": "sha256:abda8d77ce8309141f83ab8edf0596834087c52467f6badf376a6a2a4c87cf67",
+      "size": 41888096,
+      "kaynak": "yerel:2026-07-28",
+      "$not": "Yalnız MD5 yayınlanıyor (çakışmaya karşı kırık) ve sürümlü ad için o bile yok. AYRICA: bu URL zamanla releases/ → old-releases/ TAŞINIYOR, yönlendirme yok; bugün çalışan pin ileride 404 olur. İndiren taraf iki yolu da denemeli."
+    },
+    "ffmpeg/win": {
+      "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-06-30-13-34/ffmpeg-n8.1.2-21-gce3c09c101-win64-lgpl-8.1.zip",
+      "digest": "sha256:3b9eceb438016b647e0755a51ce3a388cd4ed5679e2427cb83a01e1ae2cd0eba",
+      "size": 144332533,
+      "kaynak": "yayinci",
+      "$not": "⏳ BU PİN SÜRESİ DOLACAK. BtbN her build'den sonra util/prunetags.sh koşuyor: KEEP_LATEST=14 (son 14 build) + KEEP_MONTHLY=24 (son 24 ayın ay-sonu tag'i), gerisi 'gh release delete --cleanup-tag' ile SİLİNİYOR — release de git tag'i de. Yani kalıcı sabitlenebilir adres YOK. Bu bilerek bir AY-SONU tag'i (~24 ay ömür); günlük bir tag seçilseydi ~2 haftada 404 olurdu. Dosya adı da tag'e gömülü git-describe taşıyor (n8.1.2-21-gce3c09c101), yani yenilerken URL'in tamamı değişir — ad sabit kabul edilemez. Kalıcı tekrarlanabilirlik isteniyorsa tek çözüm zip'i kendimizin aynalaması; bu ayrı bir karar. Sürüm mac'teki ffmpeg 8.1.2 ile bilerek hizalı."
+    },
+
+    "roslyn/microsoft.codeanalysis.common": {
+      "url": "https://api.nuget.org/v3-flatcontainer/microsoft.codeanalysis.common/4.12.0/microsoft.codeanalysis.common.4.12.0.nupkg",
+      "digest": "sha256:9a6fce286df33cb01e4d5199b6e2f1486fa3a500ce7219f5a321ea041256d87a",
+      "size": 7120597,
+      "kaynak": "yayinci"
+    },
+    "roslyn/microsoft.codeanalysis.csharp": {
+      "url": "https://api.nuget.org/v3-flatcontainer/microsoft.codeanalysis.csharp/4.12.0/microsoft.codeanalysis.csharp.4.12.0.nupkg",
+      "digest": "sha256:9b58b5439a7212ae25028623344f5b6848d3a651fcf9b5f1e70480f9e3267a19",
+      "size": 16985075,
+      "kaynak": "yayinci"
+    },
+    "roslyn/system.collections.immutable": {
+      "url": "https://api.nuget.org/v3-flatcontainer/system.collections.immutable/8.0.0/system.collections.immutable.8.0.0.nupkg",
+      "digest": "sha256:17b3958ca370a6a6d487c95389d6ea256622e3bea7b2af67fba934f90551a37c",
+      "size": 787241,
+      "kaynak": "yayinci"
+    },
+    "roslyn/system.reflection.metadata": {
+      "url": "https://api.nuget.org/v3-flatcontainer/system.reflection.metadata/8.0.0/system.reflection.metadata.8.0.0.nupkg",
+      "digest": "sha256:750182df425ab880d63565ccad234e2677156b5ba6475b228dacd8c140dd4881",
+      "size": 1307788,
+      "kaynak": "yayinci"
+    }
+  },
+  "$roslyn_notu": [
+    "roslyn/* girdileri build sırasında DEĞİL, Unity Editor'ün içinde indiriliyor",
+    "(MCPForUnity/Editor/Setup/RoslynInstaller.cs). O kod UPM paketiyle dağıtılıyor",
+    "ve bu JSON'u göremiyor, o yüzden özetler C# tablosunda da yazılı.",
+    "",
+    "İki yerde durmaları 'uyuşması gereken iki yer' riski taşıyor — bu depodaki",
+    "arızaların ortak şekli tam olarak buydu. Riski disipline değil bir KAPIYA",
+    "bağladık: Backend/tests/test_pinned_assets.py C# tablosunu ayrıştırıp buradaki",
+    "değerlerle karşılaştırıyor, ayrışırlarsa test kırılıyor.",
+    "",
+    "Özetler yerel hesaplandı AMA NuGet'in kendi yetkili packageHash'iyle (base64",
+    "SHA-512, catalog entry'de) çapraz doğrulandı — dördü de tuttu, 2026-07-28."
+  ]
+}
