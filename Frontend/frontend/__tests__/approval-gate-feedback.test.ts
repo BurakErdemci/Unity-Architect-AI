@@ -257,22 +257,33 @@ describe('postMcpDecision + decisionToast — yanlış başarı iddiası üretme
     expect(failure).not.toBeNull()
   })
 
-  it('BAŞARILI yolda başarı mesajı AYNEN korunur', async () => {
+  it('TESLİMAT yolunda mesaj AYNEN korunur — ama tip "success" DEĞİL', async () => {
+    // ⚠️ Bu test 2026-07-29'da SIKILAŞTIRILDI. Eskiden
+    // `toEqual({..., type: 'success'})` bekliyordu; dış doğrulama turu
+    // (`mcp-write-premature-success`) o beklentinin kendisinin hatalı olduğunu
+    // gösterdi: `failure === null` yalnız backend'in onayı KAYDETTİĞİNİ
+    // kanıtlıyor, dosya işlemi bundan sonra köprüde oluyor ve düşebiliyor.
+    // Ölçülen yol: hedefin üst dizini normal bir dosyaysa `os.makedirs`
+    // FileExistsError atıyor, dosya diske hiç yazılmıyor.
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fetchResponse({ status: 'ok' })))
 
     const failure = await postMcpDecision(API, 'g1', true, 'tok')
     expect(failure).toBeNull()
 
-    const toast = decisionToast(failure, '✅ Dosya oluşturuldu')
-    expect(toast).toEqual({ message: '✅ Dosya oluşturuldu', type: 'success' })
+    const toast = decisionToast(failure, 'Onayınız gönderildi — dosya yazılıyor')
+    expect(toast).toEqual({ message: 'Onayınız gönderildi — dosya yazılıyor', type: 'info' })
   })
 
-  it('başarılı yolda "info" tipi de korunur (iptal mesajları için)', async () => {
+  it('teslimat mesajı hiçbir çağrı yerinden "success" yapılamaz', async () => {
+    // `successType` parametresi kaldırıldı: dursaydı tek bir çağrı yeri
+    // `'success'` geçerek kapıyı geri açardı. Bu test o parametrenin geri
+    // gelmesini de yakalar (TS derlemesi + davranış).
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fetchResponse({ status: 'ok' })))
     const failure = await postMcpDecision(API, 'g1', false, 'tok')
-    expect(decisionToast(failure, 'Komut iptal edildi', 'info')).toEqual({
+    expect(decisionToast(failure, 'Komut iptal edildi')).toEqual({
       message: 'Komut iptal edildi', type: 'info',
     })
+    expect((decisionToast as (...a: any[]) => unknown).length).toBe(2)
   })
 
   it('ağ hatasında belirsizlik postMcpDecision üzerinden de taşınır', async () => {

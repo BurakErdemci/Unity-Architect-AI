@@ -226,15 +226,35 @@ export async function postMcpDecision(
 }
 
 /**
- * "Başarı mesajını ancak gerçekten başarılıysa göster" kuralını tek yerde tutar.
+ * Kararın TESLİMATINI raporlar — işlemin SONUCUNU değil.
+ *
  * Çağrı yerlerinin `if (failure) … else …` yazmasını beklemek, sekiz yerden
- * birinin unutulmasına açık kapı bırakıyordu.
+ * birinin unutulmasına açık kapı bırakıyordu; karar burada duruyor.
+ *
+ * Neden dönen tip artık `'success'` OLAMIYOR (dış doğrulama, 2026-07-29 —
+ * `mcp-write-premature-success`): `failure === null` tek bir şeyi kanıtlıyor,
+ * backend'in onayı KAYDETTİĞİNİ. Asıl dosya işlemi bundan SONRA, MCP köprüsü
+ * kararı sorgulayınca `file_tools.write_file` içinde oluyor ve orada
+ * başarısız olabiliyor — probe bunu ana ağaca karşı üretti: hedefin üst dizini
+ * normal bir dosyaysa `os.makedirs` `FileExistsError` atıyor ve dosya diske
+ * hiç yazılmıyor. Kart o anda "✅ Player.cs oluşturuldu" diyordu.
+ *
+ * Yeşil ✅ bir toast, kanıtımız olmayan bir SONUCU iddia etmenin görsel
+ * biçimidir — `gateFailure`'ın `uncertain` dalında zaten kapattığımız aşırı
+ * iddianın aynısı, ters yönde. Elimizdeki bilgi "oldu" değil "gönderildi",
+ * mesaj da tam olarak onu söylemeli.
+ *
+ * ⚠️ `successType` parametresi KALDIRILDI, varsayılanı değiştirilmedi: parametre
+ * dursaydı bir çağrı yeri `'success'` geçerek kapıyı tek satırda geri açardı ve
+ * bu depodaki arızaların ortak şekli tam olarak "iki yer uyuşmuyor". Sonucu
+ * GERÇEKTEN doğrulayan yollar (IPC `write-file` yanıtı okunan dal) bu
+ * fonksiyondan geçmiyor; onlar `showToast(..., 'success')`'ı doğrudan çağırıyor
+ * ve yeşil kalmayı hak ediyor.
  */
 export function decisionToast(
   failure: GateFailure | null,
-  successMessage: string,
-  successType: 'success' | 'info' = 'success',
-): { message: string; type: 'success' | 'info' | 'warning' | 'error' } {
+  deliveredMessage: string,
+): { message: string; type: 'info' | 'warning' | 'error' } {
   if (failure) return { message: failure.message, type: failure.type };
-  return { message: successMessage, type: successType };
+  return { message: deliveredMessage, type: 'info' };
 }

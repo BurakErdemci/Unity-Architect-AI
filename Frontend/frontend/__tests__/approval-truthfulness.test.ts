@@ -390,7 +390,12 @@ describe('KÖK A · komut onay kartı — iletilmemiş onay "çalışıyor" deme
     expect(toastText(showToast)).not.toContain('iptal edildi')
   })
 
-  it('KARŞI YÖN: onay iletildiyse "çalışıyor..." hâlâ basılır', async () => {
+  it('KARŞI YÖN: onay iletildiyse teslimat toast\'ı hâlâ basılır (ama yeşil değil)', async () => {
+    // ⚠️ 2026-07-29'da SIKILAŞTIRILDI: eskiden `successToasts(...)===1` ve
+    // metinde "çalışıyor" bekleniyordu. İkisi de aşırı iddiaydı — onayın
+    // iletilmesi komutun ÇALIŞTIĞINI göstermez, köprü onu bundan sonra
+    // başlatır (bkz. decisionToast'ın gerekçesi). Testin asıl amacı korunuyor:
+    // teslimat başarılıyken kullanıcı sessizlikle bırakılmıyor.
     const d = deferred<any>()
     const { showToast } = renderPanel({
       pendingCommand: { command: 'ls', gateId: 'g1', messageId: 1 },
@@ -400,8 +405,9 @@ describe('KÖK A · komut onay kartı — iletilmemiş onay "çalışıyor" deme
     fireEvent.click(screen.getByText('Komutu Çalıştır'))
     await act(async () => { d.resolve(null) })
 
-    expect(successToasts(showToast)).toHaveLength(1)
-    expect(toastText(showToast)).toContain('çalışıyor')
+    expect(showToast).toHaveBeenCalledTimes(1)
+    expect(successToasts(showToast)).toHaveLength(0)
+    expect(toastText(showToast)).toContain('gönderildi')
   })
 
   /**
@@ -499,5 +505,129 @@ describe('KÖK A · MCP gate kimliği — kart görünmeden ÖNCE yazılır, kar
 
     await waitFor(() => expect(showToast).toHaveBeenCalled())
     expect((window as any).__mcpWriteGate).toBeFalsy()
+  })
+})
+
+// ── KÖK C · teslimat ≠ sonuç ────────────────────────────────────────────────
+/**
+ * Dış doğrulama turu, 2026-07-29 (`mcp-write-premature-success`).
+ *
+ * `postMcpDecision`'ın `null` dönmesi TEK bir şeyi kanıtlıyor: backend onayı
+ * KAYDETTİ. Asıl dosya işlemi bundan SONRA, MCP köprüsü kararı sorguladığında
+ * `file_tools.write_file` içinde oluyor ve orada başarısız olabiliyor. Probe
+ * bunu ana ağaca karşı üretti: hedefin üst dizini normal bir DOSYA olduğunda
+ * `os.makedirs` `FileExistsError` atıyor, dosya diske hiç yazılmıyor — ekranda
+ * ise "✅ Player.cs oluşturuldu" duruyordu.
+ *
+ * Bu KÖK A/B ile aynı sınıf ama farklı kök: A'da karar iletilmemişti, B'de
+ * IPC sonucu okunmamıştı; burada karar İLETİLDİ ve sonuç henüz YOK. Frontend o
+ * anda sonucu bilemez — o yüzden bilmediğini iddia etmemeli. Sözlüğü zaten
+ * gateResponse.ts'te var (`uncertain`): elimizdeki bilgi "başarı" değil,
+ * "teslim edildi".
+ */
+describe('KÖK C · onay iletildi diye "oldu" denmez', () => {
+  const okFetch = () =>
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      { ok: true, status: 200, json: async () => ({ status: 'ok' }) }))
+
+  it('decisionToast teslim edilmiş bir kararı YEŞİL başarı yapmaz', async () => {
+    okFetch()
+    const failure = await postMcpDecision(API, 'g1', true, 'tok')
+    expect(failure).toBeNull()   // teslimat gerçekten başarılı
+    expect(decisionToast(failure, 'Onayınız gönderildi').type).not.toBe('success')
+  })
+
+  it('MCP oluşturma kartı (tek dosya): "oluşturuldu" DEMEZ', async () => {
+    okFetch()
+    ;(window as any).__mcpWriteGate = 'w-1'
+    const { showToast } = renderPanel({ pendingGenFiles: { files: [FILE], messageId: -999 } })
+    fireEvent.click(screen.getByText('Uygula'))
+
+    await waitFor(() => expect(showToast).toHaveBeenCalled())
+    expect(toastText(showToast)).not.toContain('oluşturuldu')
+    expect(successToasts(showToast)).toHaveLength(0)
+  })
+
+  it('MCP oluşturma kartı (tümü): "oluşturuldu" DEMEZ', async () => {
+    okFetch()
+    ;(window as any).__mcpWriteGate = 'w-1'
+    const { showToast } = renderPanel({
+      pendingGenFiles: { files: [FILE, { ...FILE, name: 'Enemy.cs' }], messageId: -999 },
+    })
+    fireEvent.click(screen.getByText('Tümünü Onayla'))
+
+    await waitFor(() => expect(showToast).toHaveBeenCalled())
+    expect(toastText(showToast)).not.toContain('oluşturuldu')
+    expect(successToasts(showToast)).toHaveLength(0)
+  })
+
+  it('MCP silme kartı: onay iletilse bile "silindi" DEMEZ', async () => {
+    okFetch()
+    ;(window as any).__mcpDeleteGate = 'd-1'
+    const { showToast } = renderPanel({ pendingDelete: { path: 'Player.cs', messageId: -999 } })
+    fireEvent.click(screen.getByText('Evet, Dosyayı Sil'))
+
+    await waitFor(() => expect(showToast).toHaveBeenCalled())
+    expect(toastText(showToast)).not.toContain('Dosya silindi')
+  })
+
+  it('MCP komut kartı: onay iletilse bile YEŞİL başarı basılmaz', async () => {
+    okFetch()
+    const { showToast } = renderPanel({
+      pendingCommand: { command: 'ls', gateId: 'g1', messageId: -999 },
+    })
+    fireEvent.click(screen.getByText('Komutu Çalıştır'))
+
+    await waitFor(() => expect(showToast).toHaveBeenCalled())
+    expect(successToasts(showToast)).toHaveLength(0)
+  })
+
+  it('DiffViewer MCP yolu: onay iletilse bile YEŞİL başarı basılmaz', async () => {
+    okFetch()
+    const { showToast } = renderPanel({
+      openedFilePath: 'Player.cs',
+      pendingFix: {
+        messageId: 1,
+        gateId: 'fix-1',
+        applied: false,
+        data: { original_code: 'a', fixed_code: 'b', explanation: 'x', editor_hint: 'Player.cs' },
+      },
+    })
+    fireEvent.click(screen.getByText('Kabul Et'))
+
+    await waitFor(() => expect(showToast).toHaveBeenCalled())
+    expect(successToasts(showToast)).toHaveLength(0)
+  })
+
+  /**
+   * KARŞI YÖN — testin kendisini sürmek için. Bu üçü YEŞİL kalmalı, çünkü
+   * ikisinin sonucu gerçekten BİLİNİYOR:
+   *   · IPC ile doğrulanmış yazma (`{success:true}` okundu) → "güncellendi"
+   *   · reddin iletilmesi → komut fail-closed olarak çalışmayacak, "iptal edildi"
+   * Hepsini birden sustursaydık test "hiçbir şey söyleme" derdi; ölçtüğümüz
+   * kural "kanıtın kadar iddia et".
+   */
+  it('KARŞI YÖN: IPC ile DOĞRULANMIŞ yazma hâlâ yeşil kalır', async () => {
+    const { showToast, ipc } = renderPanel({
+      openedFilePath: 'Player.cs',
+      pendingFix: {
+        messageId: 1,
+        applied: false,
+        data: { original_code: 'a', fixed_code: 'b', explanation: 'x', editor_hint: 'Player.cs' },
+      },
+    })
+    ipc.invoke.mockResolvedValue({ success: true, path: '/ws/Player.cs' })
+    fireEvent.click(screen.getByText('Kabul Et'))
+    await waitFor(() => expect(successToasts(showToast)).toHaveLength(1))
+  })
+
+  it('KARŞI YÖN: iletilmiş RET hâlâ "iptal edildi" der', async () => {
+    okFetch()
+    const { showToast } = renderPanel({
+      pendingCommand: { command: 'ls', gateId: 'g1', messageId: -999 },
+    })
+    fireEvent.click(screen.getByText('İptal'))
+    await waitFor(() => expect(showToast).toHaveBeenCalled())
+    expect(toastText(showToast)).toContain('iptal edildi')
   })
 })

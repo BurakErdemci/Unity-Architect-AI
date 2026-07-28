@@ -28,7 +28,7 @@ Kaçırma yönü kasıtlı olarak "yanlış alarm" tarafına ayarlı:
 import ast
 import os
 import sys
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import pytest
 
@@ -87,6 +87,38 @@ def _env_is_inherited(value: ast.expr) -> Tuple[bool, str]:
             continue                                  # os.environ.get("X")
         return True, "env ifadesi os.environ'ın TAMAMINDAN türüyor — devralma"
     return False, ""
+
+
+# ONAYLI ORTAM ÜRETİCİLERİ — `env=<çağrı>` yalnız bu adlardan biri çağrıldığında
+# süzülü sayılır.
+#
+# Neden bir liste, neden "os.environ geçmiyorsa güvenli" değil (dış denetim
+# 2026-07-29, `spawn-gate-opaque-env`): eski kural LEXICAL'dı — env ifadesinde
+# `os.environ` metni geçmiyorsa süzülü sayıyordu. Gövdesi `os.environ.copy()`
+# dönen bir `full_env()` yardımcısı bu kuralda YEŞİL görünüyor. Canlı ölçüldü:
+# probe böyle bir yardımcıyla çocuğa `LOCAL_APP_TOKEN`'ı geçirdi ve kapı bunu
+# "süzülü" saydı. Kodda öyle bir yer YOKTU, yani canlı açık değil; kapının
+# verdiği GARANTİ sandığımızdan dardı.
+#
+# Bu adların gövdeleri ayrı ayrı test ediliyor:
+#   build_spawn_env → app/spawn_env.py, tests/test_provider_env_allowlist.py
+#   _spawn_env      → app/omnisharp/omnisharp_manager.py (OmniSharp izin listesi)
+# ⚠️ Buraya bir ad eklemek "bu fonksiyonun ortamı gerçekten süzdüğüne güveniyorum"
+# demektir. Sarmalayıcı/kısayol adları EKLENMEYECEK: tek satırlık bir sarmalayıcı
+# eklendiği anda kapı yine gövdesine bakılmayan bir ada güvenmeye başlar.
+_ENV_PRODUCERS = frozenset({"build_spawn_env", "_spawn_env"})
+
+
+def _called_name(value: ast.expr) -> Optional[str]:
+    """Bir çağrının çağrılan ADI (`f()` → "f", `m.f()` → "f"). Çağrı değilse None."""
+    if not isinstance(value, ast.Call):
+        return None
+    fn = value.func
+    if isinstance(fn, ast.Name):
+        return fn.id
+    if isinstance(fn, ast.Attribute):
+        return fn.attr
+    return None
 
 
 def _assignments_in(func: ast.AST, name: str) -> List[ast.expr]:
@@ -198,27 +230,52 @@ class _Scanner(ast.NodeVisitor):
         inherited, why = self._resolve_env(env_kw.value)
         self.sites.append(_Site(self.relpath, qual, node.lineno, call, not inherited, why))
 
-    def _resolve_env(self, value: ast.expr) -> Tuple[bool, str]:
-        """`env=` değerini bir adım geriye kadar çözer."""
+    def _resolve_env(self, value: ast.expr, depth: int = 0) -> Tuple[bool, str]:
+        """`env=` değerini çözer. Dönen `True` = SÜZÜLÜ SAYILAMAZ.
+
+        Sözleşme kasıtlı olarak BEYAZ LİSTE: "süzülü" diyebilmek için ifadenin
+        ya onaylı bir üretici çağrısı ya da öyle bir çağrıya bağlanan bir ad
+        olması gerekir. Eskisi kara listeydi (`os.environ` metnini içermiyorsa
+        güvenli) ve `full_env()` gibi opak bir yardımcı ondan geçiyordu —
+        `_ENV_PRODUCERS`'ın başındaki ölçüme bakın. Kara liste, kapının
+        bilmediği her yeni biçimi sessizce "güvenli" saymak demek.
+        """
         inherited, why = _env_is_inherited(value)
         if inherited:
             return True, why
-        if not isinstance(value, ast.Name):
+
+        if isinstance(value, ast.Call):
+            ad = _called_name(value)
+            if ad in _ENV_PRODUCERS:
+                return False, ""
+            return True, (f"env={ad or '<ifade>'}(...) — onaylı ortam üreticisi DEĞİL; "
+                          "gövdesi burada okunmuyor, `os.environ.copy()` de dönebilir")
+
+        if isinstance(value, ast.Name):
+            # `env=<ad>`: adın bu fonksiyondaki atamalarına bak. Zincir olabilir
+            # (`a = build_spawn_env(); e = a`), o yüzden özyineleme; `depth`
+            # sınırı `e = e` gibi bir döngüde sonsuza gitmeyi engelliyor ve
+            # aşıldığında GÜVENLİ yöne (süzülü sayma) düşüyor.
+            if depth >= 4:
+                return True, f"env={value.id} — ad zinciri çözülemedi (4 adım)"
+            func = self.func_stack[-1] if self.func_stack else None
+            atamalar = _assignments_in(func, value.id) if func is not None else []
+            if not atamalar:
+                # Ad bu fonksiyonda ATANMIYOR → parametre ya da global, yani ortamı
+                # ÇAĞIRAN belirliyor. Kapı burada kurulamaz; çağrı yerinin ayrıca
+                # sabitlenmesi gerekir (bkz. lsp_client muafiyeti + çağrı yeri testi).
+                return True, (f"env={value.id} bu fonksiyonda atanmıyor (parametre/global) — "
+                              "ortamı çağıran belirliyor, kapı burada kurulamaz")
+            for atama in atamalar:
+                belirsiz, neden = self._resolve_env(atama, depth + 1)
+                if belirsiz:
+                    return True, f"env={value.id}, ataması: {neden}"
             return False, ""
-        # `env=<ad>`: adın bu fonksiyondaki atamalarına bak.
-        func = self.func_stack[-1] if self.func_stack else None
-        atamalar = _assignments_in(func, value.id) if func is not None else []
-        if not atamalar:
-            # Ad bu fonksiyonda ATANMIYOR → parametre ya da global, yani ortamı
-            # ÇAĞIRAN belirliyor. Kapı burada kurulamaz; çağrı yerinin ayrıca
-            # sabitlenmesi gerekir (bkz. lsp_client muafiyeti + çağrı yeri testi).
-            return True, (f"env={value.id} bu fonksiyonda atanmıyor (parametre/global) — "
-                          "ortamı çağıran belirliyor, kapı burada kurulamaz")
-        for atama in atamalar:
-            devralma, neden = _env_is_inherited(atama)
-            if devralma:
-                return True, f"env={value.id}, ataması devralma: {neden}"
-        return False, ""
+
+        # Ne devralma, ne onaylı üretici, ne de çözülebilir bir ad: sözlük
+        # literali, koşullu ifade, abone… Hiçbiri şu an kodda yok; çıkarsa
+        # yanlış alarm verip incelenmesini istiyoruz (kaçırma yönü kasıtlı).
+        return True, "env= ifadesi statik olarak süzülü gösterilemiyor"
 
 
 def _scan_app() -> Tuple[List[_Site], List[_Site]]:
@@ -270,11 +327,11 @@ _EXEMPT: Dict[Tuple[str, str], Tuple[int, str]] = {
         1, "grim/gnome-screenshot/spectacle/scrot/import — hepsi DISPLAY, "
            "WAYLAND_DISPLAY, XAUTHORITY okur; bunlar izin listesinde YOK ve "
            "eklemek yakalamayı Linux'ta canlı sınayamadığımız bir dala sokardı"),
-    ("app/providers/video_extract.py", "_run"): (
-        1, "ffmpeg / yt-dlp — gömülü, sürümü sabitlenmiş medya ikilileri "
-           "(scripts/pinned_assets.json). Sabit argv ile çağrılıyorlar ve "
-           "vendor anahtarı tüketmiyorlar; kısmak yt-dlp'nin çerez/ağ "
-           "davranışını bu makineden sınanamayacak biçimde değiştirirdi"),
+    # ⚠️ `app/providers/video_extract.py :: _run` BURADAN KALDIRILDI (2026-07-29).
+    #    Gerekçesi "sabit argv, vendor anahtarı TÜKETMİYOR" idi ve dış denetim
+    #    bunun YANLIŞ TÜRDEN bir gerekçe olduğunu gösterdi: bir ikilinin anahtarı
+    #    tüketmemesi onu ALMASINI engellemiyor, ve yt-dlp ağa çıkan üçüncü taraf
+    #    bir araç. Nokta artık `env=build_spawn_env()` ile süzülü (_ANCHORS'ta).
 
     # ── Kullanıcının ONAYLADIĞI kabuk komutu: ortamın devralınması BURADA
     #    ürünün vaadinin parçası. Model `npm run`, `git push`, kullanıcının
@@ -394,10 +451,13 @@ class TestSpawnEnvKapisi:
             "    sp.Popen(['a'], env=None)\n"                 # None
             "    subprocess.run(['a'], env=os.environ.copy())\n"   # devralma
             "    subprocess.run(['a'], env={**os.environ})\n"      # devralma
-            "    subprocess.run(['a'], env=build())\n"        # SÜZÜLMÜŞ
+            # ⚠️ Ad `build_spawn_env` — uydurma bir `build()` DEĞİL. 2026-07-29'dan
+            # beri süzülü sayılmanın koşulu ONAYLI bir üretici çağırmak
+            # (`_ENV_PRODUCERS`); rastgele bir ad artık burada da yeşil olmaz.
+            "    subprocess.run(['a'], env=build_spawn_env())\n"   # SÜZÜLMÜŞ
             "    e = os.environ.copy()\n"
             "    subprocess.run(['a'], env=e)\n"              # ad üzerinden devralma
-            "    ok = build(overrides={'X': os.environ.get('X')})\n"
+            "    ok = build_spawn_env(overrides={'X': os.environ.get('X')})\n"
             "    subprocess.run(['a'], env=ok)\n"             # SÜZÜLMÜŞ (tek değer)
             "    asyncio.create_subprocess_exec('a')\n"       # env yok
             "    os.system('a')\n"                            # süzülemez
@@ -409,6 +469,37 @@ class TestSpawnEnvKapisi:
         assert len(sc.sites) == 8, [str(s) for s in sc.sites]
         assert sum(1 for s in sc.sites if s.gated) == 2, [str(s) for s in sc.sites]
         assert len(sc.ungateable) == 1
+
+    def test_the_scanner_refuses_an_env_built_by_an_unapproved_producer(self):
+        """`env=<çağrı>` yalnız ONAYLI bir üretici çağrılıyorsa süzülü sayılır.
+
+        Dış denetim bulgusu (2026-07-29, `spawn-gate-opaque-env`): tarayıcı
+        `os.environ` metnini LEXICAL olarak içermeyen her ifadeyi güvenli
+        sayıyordu. Yani gövdesi `os.environ.copy()` dönen bir `full_env()`
+        yardımcısı "süzülü" görünüyordu. Canlı olarak ölçüldü: probe böyle bir
+        yardımcı kurup çocuğa `LOCAL_APP_TOKEN`'ı geçirdi ve kapı YEŞİL kaldı.
+
+        Kodda şu an böyle bir yer YOK — bu yüzden canlı bir açık değil, kapının
+        verdiği GARANTİNİN sandığımızdan dar olması. Bu test o garantiyi
+        genişletir: onaylı üretici listesinde olmayan bir çağrı süzülü sayılmaz
+        ve o nokta ya düzeltilir ya gerekçesiyle muafiyet kütüğüne girer.
+        """
+        kaynak = (
+            "import os\n"
+            "import subprocess\n"
+            "def full_env():\n"
+            "    return os.environ.copy()\n"          # opak: gövde başka bir yerde
+            "def f():\n"
+            "    subprocess.run(['a'], env=full_env())\n"        # onaylı DEĞİL
+            "    subprocess.run(['a'], env=build_spawn_env())\n" # onaylı
+            "    e = full_env()\n"
+            "    subprocess.run(['a'], env=e)\n"                 # ad üzerinden, onaylı DEĞİL
+        )
+        sc = _Scanner("<test>")
+        tree = ast.parse(kaynak)
+        sc.collect_imports(tree)
+        sc.visit(tree)
+        assert [s.gated for s in sc.sites] == [False, True, False], [str(s) for s in sc.sites]
 
     def test_the_scanner_sees_a_function_local_import_alias(self):
         """`_register_mcp` içindeki `import subprocess as sp` fonksiyon-YEREL.
@@ -441,6 +532,8 @@ _ANCHORS: Dict[Tuple[str, str], int] = {
     ("app/providers/codex_provider.py", "CodexProvider._register_mcp"): 4,
     ("app/agentic/agent_runner.py", "AgentRunner._run_claude_session"): 1,
     ("app/routes/config_routes.py", "_run_cli_capture"): 1,
+    # 2026-07-29 doğrulama turu: ffmpeg/yt-dlp. Muafiyet kütüğünden çıkarıldı.
+    ("app/providers/video_extract.py", "_run"): 1,
 }
 
 

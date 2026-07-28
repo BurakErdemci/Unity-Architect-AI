@@ -351,8 +351,13 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                         // mesajı ikinci kez basardı. Toast'lar diziye EKLENİYOR
                         // (Toast.tsx:32), yani kullanıcı sarı "iletilemedi" ile yeşil
                         // "çalışıyor"u AYNI ANDA görüyordu; burada koşullanan tek şey
-                        // başarı iddiası.
-                        if (!failure) showToast('Komut onaylandı — çalışıyor...', 'success');
+                        // teslimat iddiası.
+                        // Metin ve tip aşağıdaki -999 kardeşiyle AYNI olmak zorunda:
+                        // ikisi de "onay iletildi"yi raporluyor, komutun çalıştığını
+                        // değil (bkz. decisionToast'ın gerekçesi). 2026-07-29'da bu
+                        // iki satırdan biri düzeltilip diğeri unutulursa aynı sınıf
+                        // yarım kapanmış olur.
+                        if (!failure) showToast('Onayınız gönderildi — komut başlatılıyor', 'info');
                       }}
                       onCancel={async () => {
                         const failure = await onApproveCommand(pendingCommand.gateId, false);
@@ -392,7 +397,9 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                           if (!failure && filePath) setCode(fixedCode);
                           setPendingFix(null);
                           refreshFileTree();
-                          const t = decisionToast(failure, '✅ Değişiklik onaylandı');
+                          // "Onaylandı" değil "gönderildi": dosyayı MCP köprüsü
+                          // BUNDAN SONRA yazıyor ve orada düşebiliyor.
+                          const t = decisionToast(failure, 'Onayınız gönderildi — değişiklik uygulanıyor');
                           showToast(t.message, t.type);
                           return;
                         }
@@ -495,8 +502,21 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                 const failure = await postMcpDecision(
                   (window as any).__API__ || '', takeMcpGate('write'), true, user?.sessionToken ?? '');
                 refreshFileTree();
-                const t = decisionToast(failure, `✅ ${file.name} oluşturuldu`);
+                // "oluşturuldu" DEĞİL "yazılıyor": `failure === null` yalnız
+                // backend'in onayı kaydettiğini kanıtlıyor. Dosyayı MCP köprüsü
+                // bundan sonra `file_tools.write_file` içinde yazıyor ve orada
+                // düşebiliyor (ölçüldü 2026-07-29: hedefin üst dizini normal bir
+                // dosyaysa `os.makedirs` → FileExistsError, dosya diske hiç
+                // yazılmıyor — ekranda ise "✅ oluşturuldu" duruyordu).
+                const t = decisionToast(failure, `Onayınız gönderildi — ${file.name} yazılıyor`);
                 showToast(t.message, t.type);
+                // ⚠️ BİLİNEN BOŞLUK: dönen `true` FileCreationApproval'ın kartında
+                // dosyayı "oluşturuldu" listesine taşıyor. O sözleşme (bkz.
+                // FileCreationApproval.tsx:34) yerel IPC yolunda GERÇEKTEN
+                // doğrulanmış başarı demek; burada yalnız teslimat demek. Üçüncü
+                // bir durum ("teslim edildi, sonuç bilinmiyor") olmadan
+                // düzeltilemez ve `false` dönmek daha kötü olurdu: hiç olmamış
+                // bir başarısızlığı iddia ederdi.
                 return !failure;
               }}
               onSkipOne={() => {}}
@@ -504,7 +524,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                 const failure = await postMcpDecision(
                   (window as any).__API__ || '', takeMcpGate('write'), true, user?.sessionToken ?? '');
                 refreshFileTree();
-                const t = decisionToast(failure, '✅ Dosya oluşturuldu');
+                // Kardeş satır: yukarıdaki tek-dosya yoluyla AYNI sınıf, aynı dil.
+                const t = decisionToast(failure, 'Onayınız gönderildi — dosyalar yazılıyor');
                 showToast(t.message, t.type);
                 return !failure;
               }}
@@ -523,8 +544,10 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                 // MCP server approval'ı polling ile ~500ms gecikmeli görür → dosyayı siler.
                 // Refresh'i geciktirmezsek dosya henüz silinmemiş olur.
                 setTimeout(() => refreshFileTree(), 900);
-                // "Dosya silindi" ancak onay iletildiyse doğru; iletilmediyse dosya YERİNDE.
-                const t = decisionToast(failure, '🗑️ Dosya silindi', 'info');
+                // "silindi" DEĞİL "siliniyor": onayın iletilmesi silmenin
+                // yapıldığını değil, köprünün onu ~500ms sonra DENEYECEĞİNİ
+                // gösteriyor (üstteki refreshFileTree gecikmesi tam bu yüzden var).
+                const t = decisionToast(failure, '🗑️ Onayınız gönderildi — dosya siliniyor');
                 showToast(t.message, t.type);
               }}
               onCancel={async () => {
@@ -546,15 +569,21 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                 const failure = await postMcpDecision(
                   (window as any).__API__ || '', pendingCommand.gateId, true, user?.sessionToken ?? '');
                 setPendingCommand(null);
-                // "çalışıyor..." iddiası onay iletilmediyse yanlış: komut çalışmıyor.
-                const t = decisionToast(failure, 'Komut onaylandı — çalışıyor...');
+                // "çalışıyor" iddiası onay iletilse BİLE erken: komutu köprü
+                // bundan sonra başlatıyor ve başlatma da düşebilir.
+                const t = decisionToast(failure, 'Onayınız gönderildi — komut başlatılıyor');
                 showToast(t.message, t.type);
               }}
               onCancel={async () => {
                 const failure = await postMcpDecision(
                   (window as any).__API__ || '', pendingCommand.gateId, false, user?.sessionToken ?? '');
                 setPendingCommand(null);
-                const t = decisionToast(failure, 'Komut iptal edildi', 'info');
+                // RET tarafı ASİMETRİK ve bilerek "oldu" diyor: köprü kararı
+                // fail-closed okuyor, yani iletilmiş bir ret komutun
+                // ÇALIŞMAYACAĞINI garanti ediyor — onaydan farklı olarak burada
+                // teslimat sonucun kendisi. (Onay tarafı bunu söyleyemez: orada
+                // teslimattan sonra hâlâ yapılacak bir iş kalıyor.)
+                const t = decisionToast(failure, 'Komut iptal edildi');
                 showToast(t.message, t.type);
               }}
             />

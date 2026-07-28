@@ -5,6 +5,7 @@ stdlib-only: kare dedup için PIL yerine ffmpeg'in ürettiği 16x16 gri ham bayt
 karşılaştırırız (bkz. _frame_signature)."""
 import os
 import re
+import sys
 import glob
 import uuid
 import base64
@@ -15,6 +16,16 @@ from urllib.parse import urlparse
 from typing import List, Optional
 
 from providers.video_bin import ffmpeg_path, ytdlp_path
+
+# `spawn_env` app KÖKÜNDE duruyor, `providers` paketinin içinde değil (bkz. o
+# dosyanın başındaki gerekçe). Üretimde `Backend/app` zaten sys.path'te (main.py
+# ve testler koyuyor), yani aşağıdaki ekleme orada işlemsizdir; modülün kendi
+# yolunu bilmesi, onu paket ağacının nasıl kurulduğundan bağımsız kılıyor —
+# `unity_ai_mcp/unity_mcp_manager.py:389` aynı deseni aynı sebeple kullanıyor.
+_APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _APP_DIR not in sys.path:
+    sys.path.insert(0, _APP_DIR)
+from spawn_env import build_spawn_env  # noqa: E402  (yukarıdaki yol kurulumundan sonra)
 
 logger = logging.getLogger(__name__)
 
@@ -155,8 +166,45 @@ def _attach_root(workspace: Optional[str]) -> str:
 
 
 def _run(cmd: list, timeout: int, check: bool = True):
+    """ffmpeg / yt-dlp'yi SÜZÜLMÜŞ bir ortamla başlatır.
+
+    Neden env= zorunlu (dış denetim, 2026-07-29): burası `env=` almadan
+    çalışıyordu, yani her ffmpeg karesi ve her yt-dlp indirmesi backend'in
+    ortamının TAMAMINI devralıyordu — `LOCAL_APP_TOKEN` (backend'in tek yetki
+    kanıtı), `API_KEY_ENCRYPTION_KEY` (DB'deki kullanıcı anahtarlarının
+    şifreleme anahtarı) ve export edilmiş vendor anahtarları dahil.
+    Kapı testindeki eski muafiyetin gerekçesi "sabit argv, vendor anahtarı
+    TÜKETMİYOR" idi; bu yanlış türden bir gerekçe — bir ikilinin anahtarı
+    tüketmemesi onu ALMASINI engellemiyor, ve yt-dlp ağa çıkan üçüncü taraf
+    bir araç (uzaktaki siteye bakan kodu biz yazmıyoruz).
+
+    Neden aile YOK (`build_spawn_env()` çıplak, `family=` verilmiyor): aile
+    katmanı bir sağlayıcının KENDİ kimlik değişkenlerini geçirmek için var
+    (ANTHROPIC_API_KEY, OPENAI_API_KEY…). ffmpeg/yt-dlp'nin böyle bir kimliği
+    yok; onlara bir aile vermek tam da kapattığımız sızıntıyı geri açardı.
+    Taban katman (`_BASE_ENV_ALLOWLIST`) bu iki ikilinin okuduğu işletimsel
+    adların hepsini zaten taşıyor ve her biri gerekli:
+      · PATH        — yt-dlp video+ses akışlarını BİRLEŞTİRMEK için ffmpeg'i
+                      PATH'ten arıyor; ayrıca frozen olmayan kurulumda
+                      ikililerin kendisi de PATH'ten çözülüyor (video_bin).
+      · HOME/XDG_*  — yt-dlp'nin config ve cache dizini (~/.config/yt-dlp,
+                      ~/.cache/yt-dlp); Windows'ta USERPROFILE/APPDATA.
+      · TMPDIR/TMP/TEMP — yt-dlp parça dosyalarını, PyInstaller ile paketlenmiş
+                      ikili de kendini oraya açıyor; düşerse indirme kırılır.
+      · HTTP(S)_PROXY / ALL_PROXY / NO_PROXY (+ küçük harfli biçimleri)
+                    — kurumsal ağda yt-dlp'nin ağa çıkabildiği TEK yol.
+      · SSL_CERT_FILE / SSL_CERT_DIR / REQUESTS_CA_BUNDLE / CURL_CA_BUNDLE
+                    — TLS'i kesen ağlarda düşerse her indirme sertifika
+                      hatasıyla ölür ve kullanıcının gördüğü mesaj sebebi gizler.
+      · LANG/LC_*   — çıktı ve dosya adı kodlaması (`Duration:` ayrıştırması
+                      ffmpeg'in stderr'inden okunuyor).
+    Bilerek KESİLENLER: LOCAL_APP_TOKEN, API_KEY_ENCRYPTION_KEY ve tüm
+    `*_API_KEY`/`*_TOKEN`/`*_SECRET` adları (bkz. spawn_env.py'deki kütük).
+    Kırılma yönü ölçüldü: tests/test_video_extract_integration.py hem sızıntıyı
+    hem de PATH/HOME'un GEÇTİĞİNİ aynı çağrıda ölçüyor.
+    """
     return subprocess.run(cmd, capture_output=True, timeout=timeout, check=check,
-                          creationflags=_NO_WINDOW)
+                          creationflags=_NO_WINDOW, env=build_spawn_env())
 
 
 def _probe_duration(video_path: str) -> float:
