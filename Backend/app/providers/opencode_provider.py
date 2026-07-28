@@ -3,6 +3,7 @@ import json
 import logging
 from .cli_base import BaseCLIProvider
 from .oneshot_cli import resolve_opencode_cmd, split_model_id
+from .workspace_config import ensure_gitignored
 
 logger = logging.getLogger(__name__)
 
@@ -140,5 +141,7 @@ class OpenCodeProvider(BaseCLIProvider):
             with open(cfg_path, "w", encoding="utf-8") as f:
                 json.dump(merged, f, indent=2)
             logger.info("[OpenCodeProvider] opencode.json yazıldı.")
+            # Dosyayı yazan nokta girdisini de yazar (bkz. workspace_config).
+            ensure_gitignored(workspace, ["opencode.json"])
         except Exception as e:
             logger.warning(f"[OpenCodeProvider] opencode.json yazılamadı: {e}")

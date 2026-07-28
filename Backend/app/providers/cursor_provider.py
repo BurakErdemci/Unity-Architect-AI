@@ -4,6 +4,7 @@ import json
 import logging
 from .cli_base import BaseCLIProvider
 from .oneshot_cli import resolve_cursor_cmd, split_model_id
+from .workspace_config import ensure_gitignored
 
 logger = logging.getLogger(__name__)
 
@@ -135,6 +136,10 @@ class CursorProvider(BaseCLIProvider):
             with open(cfg_path, "w", encoding="utf-8") as f:
                 json.dump(merged, f, indent=2)
             logger.info("[CursorProvider] .cursor/mcp.json yazıldı.")
+            # Dosyayı yazan nokta girdisini de yazar. Bu dosya unityMCP
+            # `X-API-Key`'ini düz metin taşıyor ve kullanıcının deposunda duruyor;
+            # 29 Tem ölçümünde gerçek bir projede İZLENİYORDU.
+            ensure_gitignored(workspace, [".cursor/mcp.json"])
 
             # İzin politikası: --force ile birlikte native Write/Shell'i deny-list'le
             # kapat (şema hem allow hem deny İSTİYOR; BOM'suz yazılmalı).
@@ -155,5 +160,6 @@ class CursorProvider(BaseCLIProvider):
             with open(cli_cfg_path, "w", encoding="utf-8") as f:
                 json.dump(cli_existing, f, indent=2)
             logger.info("[CursorProvider] .cursor/cli.json izin politikası yazıldı.")
+            ensure_gitignored(workspace, [".cursor/cli.json"])
         except Exception as e:
             logger.warning(f"[CursorProvider] MCP kaydı yapılamadı: {redact_secrets(str(e))}")

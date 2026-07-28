@@ -479,6 +479,11 @@ class BaseCLIProvider(AIProvider):
         config_path = os.path.join(workspace, ".mcp.json")
         with open(config_path, "w") as f:
             json.dump(config, f, indent=2)
+        # Dosyayı yazan nokta girdisini de yazar. Bu dosya `headers` içinde
+        # unityMCP `X-API-Key`'ini düz metin taşıyor ve kullanıcının deposunda
+        # duruyor (bkz. workspace_config).
+        from .workspace_config import ensure_gitignored
+        ensure_gitignored(workspace, [".mcp.json"])
 
         # Subclass'a MCP kayıt yaptır (claude, codex, agy için farklı davranış)
         self._register_mcp(launcher, workspace, backend_url)

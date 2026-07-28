@@ -40,6 +40,25 @@ MAX_ITERATIONS = 15  # Güvenlik: Sonsuz döngü koruması
 # Onay bekleme süresi `command_gates`'ten gelir (tek kaynak, gerekçesi orada).
 
 
+def _write_project_mcp_json(workspace_path: Optional[str], mcp_servers_cfg: dict) -> None:
+    """Claude SDK yolunun proje-kapsamlı `.mcp.json`'ını yazar ve gitignore'lar.
+
+    Modül düzeyinde, çünkü asıl çağrı yeri yüzlerce satırlık bir async metodun
+    içinde ve oradan sınanamıyordu. Bu depoda tekrarlayan arıza şekli
+    "birbiriyle uyuşması gereken iki yer uyuşmuyor"; dosyayı yazan kod ile
+    gitignore girdisini yazan kodun aynı fonksiyonda olması o ayrışmayı
+    baştan imkânsız kılıyor.
+    """
+    if not workspace_path or not os.path.isdir(workspace_path):
+        return
+    with open(os.path.join(workspace_path, ".mcp.json"), "w", encoding="utf-8") as f:
+        json.dump({"mcpServers": mcp_servers_cfg}, f, indent=2)
+    # Bu dosya `headers` içinde unityMCP `X-API-Key`'ini düz metin taşıyor ve
+    # kullanıcının deposunda duruyor (bkz. providers/workspace_config).
+    from providers.workspace_config import ensure_gitignored
+    ensure_gitignored(workspace_path, [".mcp.json"])
+
+
 class AgentEvent:
     """SSE'ye gönderilecek bir event."""
     def __init__(self, event_type: str, data: dict):
@@ -1414,7 +1433,6 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
         - Onay native: can_use_tool → command_gates → frontend onay kartı.
         - AskUserQuestion (A/B/C) → question_needed event → frontend seçim kartı.
         """
-        import json as _json
         import subprocess as _sp
         from providers.cli_base import BaseCLIProvider
         from providers.claude_sdk_session import (
@@ -1441,9 +1459,7 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                     "headers": unity_mcp_manager.api_headers(),
                 }
             # Temiz .mcp.json yaz (unityai YOK) — eski/bayat kayıtların üstüne yaz
-            if self.workspace_path and os.path.isdir(self.workspace_path):
-                with open(os.path.join(self.workspace_path, ".mcp.json"), "w", encoding="utf-8") as f:
-                    _json.dump({"mcpServers": mcp_servers_cfg}, f, indent=2)
+            _write_project_mcp_json(self.workspace_path, mcp_servers_cfg)
             # Önceki sürümlerin user-scope'a yazdığı unityai kaydını temizle
             # (_resolve_exec @staticmethod — provider örneği yaratmaya gerek yok)
             _sp.run(BaseCLIProvider._resolve_exec(["claude", "mcp", "remove", "unityai", "--scope", "user"]),
