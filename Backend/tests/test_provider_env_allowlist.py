@@ -422,3 +422,162 @@ class TestBosDegerlerKasitliGeciyor:
         monkeypatch.delenv("HTTPS_PROXY", raising=False)
         env = build_spawn_env(family="claude")
         assert "HTTPS_PROXY" not in env
+
+
+# ── 6. MCP KAYIT yolu: her turda koşan, 2026-07-29'a kadar açık kalan nokta ──
+
+class TestMcpKayitSpawnOrtami:
+    """`_register_mcp` `subprocess.run` ile ÇIPLAK çağırıyordu (env= yok).
+
+    Bu yol sohbetin sıcak yolunda: `cli_base:_write_mcp_config` → `_register_mcp`,
+    yani HER TURDA. Canlı ölçüldü (2026-07-29, gerçek alt süreç ortamını diske
+    döktü): çocuk altı canary'nin ALTISINI de görüyordu. 2026-07-28'de aynı
+    sınıfın sohbet spawn'ı kapatılmış, bu nokta atlanmıştı.
+    """
+
+    def _kayit_envleri(self, monkeypatch, provider, tmp_path):
+        """`_register_mcp`'in yaptığı HER sp.run çağrısının env'ini toplar.
+
+        Tek tek değil HEPSİ toplanıyor: dört çağrıdan üçünü kapatıp birini
+        açık bırakmak bu depoda ölçülmüş arıza şekli.
+        """
+        import subprocess as sp
+        kutu = []
+
+        def fake_run(cmd, **kwargs):
+            kutu.append(kwargs.get("env"))
+            class _R:
+                returncode = 0
+                stdout = b""
+                stderr = b""
+            return _R()
+
+        monkeypatch.setattr(sp, "run", fake_run)
+        monkeypatch.setattr(BaseCLIProvider, "_cli_installed", staticmethod(lambda name: True))
+        monkeypatch.setattr(BaseCLIProvider, "_resolve_exec", staticmethod(lambda cmd: list(cmd)))
+        # unityMCP dalı da koşsun: kayıt çağrılarının YARISI o dalın içinde.
+        monkeypatch.setattr(um.unity_mcp_manager, "mcp_url", lambda *a, **k: "http://127.0.0.1:8080/mcp")
+        monkeypatch.setattr(um.unity_mcp_manager, "api_headers", lambda: {"X-API-Key": "sir"})
+
+        provider._register_mcp("/tmp/launcher", str(tmp_path), "http://localhost:8000")
+        assert kutu, "hiç kayıt çağrısı yapılmadı — test kendi kendini ölçüyor"
+        return kutu
+
+    def test_every_claude_mcp_registration_call_is_gated(self, canaries, monkeypatch, tmp_path):
+        from providers.claude_provider import ClaudeCodeProvider
+        envler = self._kayit_envleri(
+            monkeypatch, ClaudeCodeProvider("claude-opus-4-6"), tmp_path)
+        assert len(envler) == 4, f"beklenen 4 kayıt çağrısı, bulunan {len(envler)}"
+        for env in envler:
+            assert env is not None, "bir kayıt çağrısı hâlâ env= almıyor"
+            assert_no_canaries(env, allowed=("ANTHROPIC_API_KEY",))
+
+    def test_the_claude_registration_still_gets_what_the_cli_needs(
+        self, canaries, monkeypatch, tmp_path
+    ):
+        """KARŞIT YÖN: `claude mcp add` HOME'suz ~/.claude'u bulamaz, PATH'siz
+        hiç başlamaz. Bu testin kırılması "MCP kaydı sessizce hiç yapılmıyor"
+        demektir ve kullanıcı yalnız 'Unity araçları görünmüyor' olarak görür."""
+        from providers.claude_provider import ClaudeCodeProvider
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", "/Users/test/.claude")
+        envler = self._kayit_envleri(
+            monkeypatch, ClaudeCodeProvider("claude-opus-4-6"), tmp_path)
+        for env in envler:
+            assert env.get("PATH")
+            assert env.get("HOME")
+            assert env.get("CLAUDE_CONFIG_DIR") == "/Users/test/.claude"
+
+    def test_every_codex_mcp_registration_call_is_gated(self, canaries, monkeypatch, tmp_path):
+        from providers.codex_provider import CodexProvider
+        envler = self._kayit_envleri(
+            monkeypatch, CodexProvider("gpt-5.6-codex"), tmp_path)
+        # 5, 4 değil: kaynakta DÖRT `sp.run` var ama ilki bir döngünün içinde
+        # ("unityai" ve "antigravity" eski kayıtları) → çalışma zamanında beşe
+        # çıkıyor. Statik kapı testi (test_spawn_env_gate) 4 sayar; ikisinin
+        # farklı sayması normal ve ikisi de gerekli — biri kaynağı, diğeri
+        # gerçekten koşan çağrıları ölçüyor.
+        assert len(envler) == 5, f"beklenen 5 kayıt çağrısı, bulunan {len(envler)}"
+        for env in envler:
+            assert env is not None
+            assert_no_canaries(env, allowed=("OPENAI_API_KEY",))
+
+    def test_the_codex_registration_keeps_codex_home(self, canaries, monkeypatch, tmp_path):
+        """CODEX_HOME düşerse config.toml'un yeri değişir ve yazılan MCP kaydı
+        codex'in okuduğu yere gitmez — arıza "araçlar görünmüyor" biçiminde
+        SESSİZ olur (codex_session._configured_codex_mcp_names aynı değişkeni
+        okuyor, iki yer uyuşmak zorunda)."""
+        from providers.codex_provider import CodexProvider
+        monkeypatch.setenv("CODEX_HOME", "/Users/test/.codex")
+        envler = self._kayit_envleri(
+            monkeypatch, CodexProvider("gpt-5.6-codex"), tmp_path)
+        for env in envler:
+            assert env.get("CODEX_HOME") == "/Users/test/.codex"
+            assert env.get("PATH")
+
+
+# ── 7. CLI model/durum listesi: `cursor models`, `opencode models`, `cursor status` ──
+
+class TestCliModelListesiSpawnOrtami:
+    """`config_routes._run_cli_capture` `env=` HİÇ vermiyordu."""
+
+    def _capture(self, monkeypatch, family):
+        from routes import config_routes as cr
+        box = {}
+
+        async def fake(*args, **kwargs):
+            box["env"] = kwargs.get("env")
+            raise _SpawnCaptured()
+
+        monkeypatch.setattr(cr.asyncio, "create_subprocess_exec", fake)
+        try:
+            asyncio.run(cr._run_cli_capture(["x", "models"], family))
+        except _SpawnCaptured:
+            pass
+        assert box.get("env") is not None, "spawn hiç yapılmadı — test kendini ölçüyor"
+        return box["env"]
+
+    def test_the_cursor_model_listing_child_is_gated(self, canaries, monkeypatch):
+        assert_no_canaries(self._capture(monkeypatch, "cursor"))
+
+    def test_the_opencode_model_listing_child_gets_no_vendor_key(self, canaries, monkeypatch):
+        """EN SİVRİ NOKTA. `_PROVIDER_ENV_ALLOWLIST["opencode"]` yorumu vendor
+        anahtarlarının OpenCode'a BİLEREK verilmediğini yazıyor; `opencode
+        models` çağrı yeri tam da onları geçiriyordu. Yani kontrolün BEYAN
+        EDİLMİŞ amacı tek bir çağrı yerinde bozuluyordu."""
+        env = self._capture(monkeypatch, env_family("opencode"))
+        assert_no_canaries(env)
+        assert "ANTHROPIC_API_KEY" not in env
+        assert "OPENAI_API_KEY" not in env
+
+    def test_the_listing_still_gets_what_the_cli_needs_to_run(self, canaries, monkeypatch):
+        env = self._capture(monkeypatch, "cursor")
+        for name in ("PATH", "HOME"):
+            if name in os.environ:
+                assert env.get(name) == os.environ[name], f"{name} düştü"
+
+
+class TestCiplakCliAdlariDogruAileyeDusuyor:
+    """`_run_cli_capture` elinde MODEL adı değil ÇIPLAK CLI adı var ("opencode").
+
+    "opencode:" öneki çıplak adı kaçırıyor ve bilinmeyen ad "claude"a düştüğü
+    için OpenCode'un süreci ANTHROPIC_API_KEY alıyordu — 2026-07-28'de
+    "cursor"da ölçülen tuzağın BİREBİR tekrarı, farklı sağlayıcıda. Bu yüzden
+    her önek artık çıplak ada da uyuyor ve iki biçim de sınanıyor.
+    """
+
+    @pytest.mark.parametrize("name,family", [
+        ("opencode", "opencode"), ("opencode:anthropic/claude", "opencode"),
+        ("codex", "codex"), ("gpt-5.6-codex", "codex"),
+        ("kimi", "kimi"), ("kimi-k3", "kimi"),
+        ("agy", "agy"), ("agy-claude-sonnet-4-6", "agy"), ("gemini-3.6-flash", "agy"),
+        ("cursor", "cursor"), ("copilot", "copilot"),
+    ])
+    def test_the_bare_cli_name_lands_in_its_own_family(self, name, family):
+        assert env_family(name) == family
+
+    def test_a_bare_name_never_silently_hands_over_another_vendors_key(self, canaries):
+        """Yukarıdaki eşlemenin ASIL sonucu: yanlış aile = başka bir vendor'ın
+        anahtarını teslim etmek. Eşleme testi tek başına bunu göstermiyor."""
+        for cli in ("opencode", "cursor", "copilot", "codex", "kimi", "agy"):
+            env = build_spawn_env(env_family(cli))
+            assert "ANTHROPIC_API_KEY" not in env, f"{cli} Anthropic anahtarını alıyor"

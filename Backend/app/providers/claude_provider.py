@@ -66,6 +66,7 @@ class ClaudeCodeProvider(BaseCLIProvider):
         """
         import subprocess as sp
         from unity_ai_mcp.unity_mcp_manager import unity_mcp_manager
+        from .cli_base import build_spawn_env, env_family
 
         # claude CLI Windows'ta .cmd shim → çıplak isimle CreateProcess patlar (WinError 2).
         # Tüm sp.run çağrılarını platforma uygun tam yola çöz.
@@ -73,10 +74,22 @@ class ClaudeCodeProvider(BaseCLIProvider):
             logger.warning("[CLIProvider] claude CLI bulunamadı, MCP kaydı atlandı.")
             return
 
+        # İZİN LİSTESİ. Bu yol HER TURDA koşuyor (cli_base:_write_mcp_config →
+        # _register_mcp) ve 2026-07-29'da canlı ölçüldü: `env=` verilmediği için
+        # çocuk süreç altı canary'nin ALTISINI de görüyordu — LOCAL_APP_TOKEN
+        # (backend'in tek yetki kanıtı), API_KEY_ENCRYPTION_KEY (DB şifreleme
+        # anahtarı) ve dört vendor anahtarı. Sohbet spawn'ı 2026-07-28'de
+        # kapatılmıştı ama aynı sınıfın bu noktası açık kalmıştı.
+        #
+        # Aile modelin kendi adından çözülüyor. `claude mcp add/remove`ın PATH,
+        # HOME (→ ~/.claude) ve CLAUDE_CONFIG_DIR dışında bir ihtiyacı yok;
+        # üçü de izin listesinde (taban + "claude" katmanı).
+        _env = build_spawn_env(env_family(self.binary_name))
+
         # unityai (stdio)
         try:
             sp.run(self._resolve_exec(["claude", "mcp", "remove", "unityai", "--scope", "user"]),
-                   capture_output=True, timeout=5)
+                   capture_output=True, timeout=5, env=_env)
             sp.run(
                 self._resolve_exec([
                     "claude", "mcp", "add", "unityai",
@@ -86,7 +99,7 @@ class ClaudeCodeProvider(BaseCLIProvider):
                     "-e", f"WORKSPACE={workspace}",
                     "--", launcher, "--workspace", workspace,
                 ]),
-                capture_output=True, timeout=5, check=True,
+                capture_output=True, timeout=5, check=True, env=_env,
             )
             logger.info("[CLIProvider] Claude unityai MCP kaydedildi (user scope).")
         except Exception as e:
@@ -95,7 +108,7 @@ class ClaudeCodeProvider(BaseCLIProvider):
         # unityMCP (http) — sadece Unity MCP server çalışıyorsa
         try:
             sp.run(self._resolve_exec(["claude", "mcp", "remove", "unityMCP", "--scope", "user"]),
-                   capture_output=True, timeout=5)
+                   capture_output=True, timeout=5, env=_env)
             unity_mcp_url = unity_mcp_manager.mcp_url()
             if unity_mcp_url:
                 sp.run(
@@ -112,7 +125,7 @@ class ClaudeCodeProvider(BaseCLIProvider):
                               for k, v in unity_mcp_manager.api_headers().items()], []),
                         unity_mcp_url,
                     ]),
-                    capture_output=True, timeout=5, check=True,
+                    capture_output=True, timeout=5, check=True, env=_env,
                 )
                 logger.info("[CLIProvider] Claude unityMCP kaydedildi (user scope).")
         except Exception as e:

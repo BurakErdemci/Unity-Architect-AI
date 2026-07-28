@@ -169,13 +169,22 @@ _FAMILY_PREFIXES = (
     # adı kaçırıyordu ve bilinmeyen ad "claude"a düştüğü için Cursor'un süreci
     # ANTHROPIC_API_KEY'i almaya devam ediyordu — sızıntı kapatılmış görünürken
     # tek çağrı yerinde açık kalıyordu (ölçüldü 2026-07-28, testle sabitlendi).
+    # ⚠️ 2026-07-29'da AYNI tuzağa ikinci kez düşüldü, bu sefer "opencode:"da:
+    # `config_routes._run_cli_capture` `opencode models` çalıştırırken elinde
+    # ÇIPLAK "opencode" var. "opencode:" öneki onu kaçırıyor, bilinmeyen ad
+    # "claude"a düşüyor ve OpenCode'un çocuğu ANTHROPIC_API_KEY'i alıyordu —
+    # yani aşağıdaki `_PROVIDER_ENV_ALLOWLIST["opencode"]` yorumunun "vendor
+    # anahtarları bilerek verilmiyor" beyanı tam da o çağrı yerinde bozuluyordu.
+    # Bu yüzden bütün önekler artık ÇIPLAK ada da uyuyor; tireli/iki noktalı
+    # biçimler zaten çıplak adın uzantısı olduğu için tek entry ikisini de tutar.
     ("cursor", "cursor"),
     ("copilot", "copilot"),
-    ("opencode:", "opencode"),
+    ("opencode", "opencode"),
     ("gpt-", "codex"),
-    ("kimi-", "kimi"),
+    ("codex", "codex"),
+    ("kimi", "kimi"),
     ("gemini", "agy"),
-    ("agy-", "agy"),
+    ("agy", "agy"),
 )
 
 

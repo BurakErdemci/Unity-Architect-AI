@@ -66,6 +66,39 @@ _MAC_LOGIN_CMDS = {
 _MAC_CLI_PATH = 'export PATH="$HOME/.local/bin:$HOME/.opencode/bin:$HOME/.claude/bin:$HOME/.volta/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"'
 
 
+async def _run_cli_capture(cmd: list, family: str | None, timeout: float = 20.0) -> str:
+    """CLI komutunu çalıştırıp stdout'u döner (Windows'ta pencere açmadan).
+
+    `family` ZORUNLU ve varsayılansız: bu fonksiyon üçüncü taraf CLI ikilileri
+    çalıştırıyor (`cursor models`, `opencode models`, `cursor status`) ve
+    2026-07-29'da canlı ölçüldü — `env=` verilmediği için çocuk süreç altı
+    canary'nin ALTISINI da görüyordu (LOCAL_APP_TOKEN, API_KEY_ENCRYPTION_KEY,
+    ve dört vendor anahtarı). Varsayılan bir aile koymak, yeni bir çağrı yerinin
+    yanlış aileye sessizce düşmesi demek olurdu; burada sessiz yanlış aile
+    "OpenCode'a Anthropic anahtarını vermek" anlamına geliyor.
+
+    Modül düzeyinde duruyor (eskiden `create_config_router` içinde bir
+    closure'dı) çünkü closure'ı test edebilmenin tek yolu HTTP ucundan geçmekti.
+    """
+    import subprocess as sp
+    from providers.cli_base import build_spawn_env
+
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        creationflags=getattr(sp, "CREATE_NO_WINDOW", 0),
+        env=build_spawn_env(family),
+    )
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        proc.kill()
+        return ""
+    return out.decode("utf-8", errors="ignore")
+
+
 def _resolve_general_cli(name: str) -> str | None:
     """PATH ve macOS kullanıcı kurulum dizinlerinden genel CLI binary'sini bul."""
     import shutil
@@ -394,23 +427,6 @@ def create_config_router(db):
     _cli_models_cache: dict = {}   # cli → (timestamp, models)
     _CLI_MODELS_TTL = 300          # 5 dk — CLI listeleri nadiren değişir
 
-    async def _run_cli_capture(cmd: list, timeout: float = 20.0) -> str:
-        """CLI komutunu çalıştırıp stdout'u döner (Windows'ta pencere açmadan)."""
-        import subprocess as sp
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            creationflags=getattr(sp, "CREATE_NO_WINDOW", 0),
-        )
-        try:
-            out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        except asyncio.TimeoutError:
-            proc.kill()
-            return ""
-        return out.decode("utf-8", errors="ignore")
-
     def _parse_cursor_models(raw: str) -> list:
         """`agent models` çıktısı: 'id - Display Name' satırları.
         '-fast' hız varyantları listeyi 2x şişiriyor → elenir (id'yi bilen
@@ -503,7 +519,11 @@ def create_config_router(db):
             models = copy.deepcopy(_CODEX_MODELS)
         else:
             try:
-                raw = await _run_cli_capture([*base, "models"])
+                # Aile ÇIPLAK CLI adından çözülüyor ("cursor" / "opencode").
+                # env_family artık çıplak adı da tanıyor; tanımasaydı OpenCode
+                # "claude" ailesine düşer ve vendor anahtarlarını görürdü.
+                from providers.cli_base import env_family
+                raw = await _run_cli_capture([*base, "models"], env_family(cli))
                 models = _parse_cursor_models(raw) if cli == "cursor" else _parse_opencode_models(raw)
             except Exception as exc:
                 logger.warning(f"cli-models({cli}) alınamadı: {exc}")
@@ -541,7 +561,8 @@ def create_config_router(db):
             base = resolve_cli_cmd("cursor")
             if not base:
                 return None
-            out = await _run_cli_capture([*base, "status"], timeout=10)
+            from providers.cli_base import env_family
+            out = await _run_cli_capture([*base, "status"], env_family("cursor"), timeout=10)
             low = out.lower()
             # DİKKAT: "not logged in" metni "logged in" alt-dizesini içerir →
             # negatifi ÖNCE kontrol et, yoksa çıkış yapmış kullanıcı "giriş yapmış" görünür.

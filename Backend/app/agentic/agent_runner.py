@@ -1434,7 +1434,7 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
         - AskUserQuestion (A/B/C) → question_needed event → frontend seçim kartı.
         """
         import subprocess as _sp
-        from providers.cli_base import BaseCLIProvider
+        from providers.cli_base import BaseCLIProvider, build_spawn_env, env_family
         from providers.claude_sdk_session import (
             get_session, close_session, _SESSIONS, SessionBusyError,
         )
@@ -1462,8 +1462,13 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
             _write_project_mcp_json(self.workspace_path, mcp_servers_cfg)
             # Önceki sürümlerin user-scope'a yazdığı unityai kaydını temizle
             # (_resolve_exec @staticmethod — provider örneği yaratmaya gerek yok)
+            # env= ZORUNLU: bu da bir üçüncü taraf CLI spawn'ı ve Claude SDK yolu
+            # her turda buradan geçiyor. Verilmezse `claude` süreci
+            # LOCAL_APP_TOKEN'ı ve kullanıcının export ettiği tüm vendor
+            # anahtarlarını görür (aynı sınıf 2026-07-29'da canary ile ölçüldü).
             _sp.run(BaseCLIProvider._resolve_exec(["claude", "mcp", "remove", "unityai", "--scope", "user"]),
-                    capture_output=True, timeout=5)
+                    capture_output=True, timeout=5,
+                    env=build_spawn_env(env_family("claude")))
         except Exception as e:
             logger.warning(f"[ClaudeSession] MCP temizleme/yazma hatası: {e}")
 

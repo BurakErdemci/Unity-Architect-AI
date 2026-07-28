@@ -71,21 +71,31 @@ class CodexProvider(BaseCLIProvider):
         Her çağrıda URL güncellenir (backend dinamik port kullanır).
         """
         import subprocess as sp
+        from .cli_base import build_spawn_env, env_family
         # codex CLI Windows'ta .cmd shim → çıplak isimle CreateProcess patlar (WinError 2).
         if not self._cli_installed("codex"):
             logger.warning("[CLIProvider] codex CLI bulunamadı, MCP kaydı atlandı.")
             return
+
+        # İZİN LİSTESİ — gerekçe claude_provider._register_mcp ile aynı ve aynı
+        # gün aynı canary'lerle ölçüldü: bu yol her turda koşuyordu ve `env=`
+        # verilmediği için codex süreci ANTHROPIC_API_KEY dahil altı canary'yi
+        # de görüyordu. "codex" ailesi CODEX_HOME'u geçiriyor; düşerse
+        # config.toml'un yeri değişir ve MCP kayıtları görünmez olur
+        # (codex_session._configured_codex_mcp_names o değişkeni okuyor).
+        _env = build_spawn_env(env_family(self.binary_name))
         try:
             from unity_ai_mcp.unity_mcp_manager import unity_mcp_manager
 
             # Önce var olan kayıtları sil (URL güncel olmayabilir, eski isim kalmış olabilir)
             for old_name in ("unityai", "antigravity"):
-                sp.run(self._resolve_exec(["codex", "mcp", "remove", old_name]), capture_output=True, timeout=5)
+                sp.run(self._resolve_exec(["codex", "mcp", "remove", old_name]),
+                       capture_output=True, timeout=5, env=_env)
             # unityMCP global config'te stale kalırsa Codex kapalı 8080'e bağlanmaya
             # çalışıp tüm run'ı "Transport channel closed" ile düşürebiliyor.
             sp.run(
                 self._resolve_exec(["codex", "mcp", "remove", "unityMCP"]),
-                capture_output=True, timeout=5,
+                capture_output=True, timeout=5, env=_env,
             )
 
             # Token argv'ye KONMUYOR: --env çocuğun ortamını kurar ama ebeveynin
@@ -103,7 +113,7 @@ class CodexProvider(BaseCLIProvider):
                     *env_args,
                     "--", launcher, "--workspace", workspace,
                 ]),
-                capture_output=True, timeout=5, check=True,
+                capture_output=True, timeout=5, check=True, env=_env,
             )
             unity_mcp_url = unity_mcp_manager.mcp_url(host="127.0.0.1")
             if unity_mcp_url:
@@ -131,7 +141,7 @@ class CodexProvider(BaseCLIProvider):
                         "--env", f"UNITY_MCP_URL={unity_mcp_url}",
                         "--", *bridge_argv,
                     ]),
-                    capture_output=True, timeout=10, check=True,
+                    capture_output=True, timeout=10, check=True, env=_env,
                 )
         except Exception as e:
             logger.warning(f"[CLIProvider] Codex MCP kaydı yapılamadı: {redact_secrets(str(e))}")
