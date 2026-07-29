@@ -452,9 +452,9 @@ def test_agent_runner_has_no_hardcoded_gate_timeout():
 
 
 @pytest.mark.parametrize("tool,inp", [
-    ("mcp__unityMCP__manage_scene", {"action": "get_hierarchy"}),
-    ("mcp__unityMCP__manage_scene", {"action": "get_loaded_scenes"}),
     ("mcp__unityMCP__read_console", {"action": "get"}),
+    ("mcp__unityMCP__manage_build", {"action": "status"}),
+    ("mcp__unityMCP__manage_physics", {"action": "raycast"}),
     ("mcp__unityMCP__unity_reflect", {"action": "search"}),
     ("mcp__unityMCP__find_in_file", {"path": "Assets/A.cs", "pattern": "x"}),
     ("mcp__unityMCP__get_sha", {"path": "Assets/A.cs"}),
@@ -471,6 +471,10 @@ async def test_unity_mcp_reads_pass_without_a_card(tool, inp, symlink_escape):
 @pytest.mark.parametrize("tool,inp", [
     # Eski elle yazılmış listenin ÖLÜ girdisi: `manage_scene`'in get_info'su yok.
     ("mcp__unityMCP__manage_scene", {"action": "get_info"}),
+    # 29 Tem denetimi: bu action semantik olarak okuma ama `manage_scene.py:90`
+    # koşulsuz preflight refresh yapıyor → asset import + derleme + domain reload.
+    ("mcp__unityMCP__manage_scene", {"action": "get_hierarchy"}),
+    ("mcp__unityMCP__find_gameobjects", {"name": "Player"}),
     # Eski liste `read_console`'un tamamını muaf tutuyordu; clear konsolu siler.
     ("mcp__unityMCP__read_console", {"action": "clear"}),
     ("mcp__unityMCP__manage_scene", {"action": "save"}),
@@ -493,15 +497,15 @@ async def test_unity_mcp_batch_is_gated_on_its_contents(symlink_escape):
     ws, _outside, _link = symlink_escape
 
     reads = {"commands": [
-        {"tool": "manage_scene", "params": {"action": "get_hierarchy"}},
         {"tool": "unity_reflect", "params": {"action": "search"}},
+        {"tool": "read_console", "params": {"action": "get"}},
     ]}
     s = _mk_session(cwd=ws, auto_approve=False, approval_timeout=2.0)
     _res, ev = await _drive_gate(s, "mcp__unityMCP__batch_execute", reads)
     assert ev is None, "yalnız okuma içeren batch kart çıkardı"
 
     mixed = {"commands": [
-        {"tool": "manage_scene", "params": {"action": "get_hierarchy"}},
+        {"tool": "unity_reflect", "params": {"action": "search"}},
         {"tool": "manage_gameobject", "params": {"action": "delete", "target": "Player"}},
     ]}
     s2 = _mk_session(cwd=ws, auto_approve=False, approval_timeout=2.0)

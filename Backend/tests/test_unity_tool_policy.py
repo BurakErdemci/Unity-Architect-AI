@@ -8,11 +8,15 @@ hiçbiri çalışma anında görünmüyordu.
   · ÖLÜ  — `manage_scene` için `get_info` muafiyeti yazılıydı; `manage_scene`'in
            öyle bir action'ı yok, yani o satır hiçbir zaman eşleşmedi. Bir
            kural yalnızca yazılı olduğu için koruma sanılıyordu.
-  · DAR  — `unity_reflect`, `find_in_file`, `get_sha` gibi 9 zararsız araç ve
+  · DAR  — `unity_reflect`, `find_in_file`, `get_sha` gibi 8 zararsız araç ve
            ~40 okuma action'ı listede yoktu. Bunlar C# yazmadan önce her turda
            çağrılan keşif araçları; her birinde kart çıkması kullanıcıyı
            refleks-onaya alıştırır, ki kapının kendi amacını yer.
   · GENİŞ — `read_console` koşulsuz muaftı, oysa `action="clear"` konsolu siler.
+
+29 Tem denetimi bu dosyanın kendi iddialarından birini de çürüttü: `manage_scene`
+ve `find_gameobjects` "zararsız keşif" sayılıyordu, oysa ikisi de koşulsuz
+`preflight(refresh_if_dirty=True)` çağırıyor. Artık ikisi de kartlı.
 
 Kütüğün kendi kaynağa sadakati ayrı bir testin işi
 (`unity-mcp/Server/tests/test_tool_actions_ledger.py`). Burada sınanan, ürünün
@@ -83,9 +87,30 @@ def test_dead_exemption_is_gone():
     assert not policy.is_unity_mcp_read_only(f"{UNITY}manage_scene", {"action": "get_info"})
 
 
-def test_genuine_scene_reads_are_exempt():
+def test_scene_reads_are_no_longer_exempt_because_of_the_preflight_refresh():
+    """
+    `manage_scene`'in get_* action'lari semantik olarak okuma, ama muaf DEĞİL.
+
+    Sebep olculdu (29 Tem 2026, dis denetim): `manage_scene.py:90` her cagride
+    kosulsuz `preflight(refresh_if_dirty=True)` yapiyor, o da proje disaridan
+    kirliyse `refresh_unity(scope=all, compile=request)` calistirip asset import
+    + derleme + domain reload tetikliyor. Yani "okuma" cagrisi, kutugun baska
+    yerde `write` diye siniflandirdigi bir isi yaptiriyor.
+
+    Kullanicinin karari (29 Tem): okuma dogru calismaya devam etsin ama adim
+    modunda kart ciksin. Bedeli kabul edildi: `get_hierarchy` en sik cagrilan
+    kesif araci ve artik her turda kart cikariyor.
+    """
     for action in ("get_hierarchy", "get_active", "get_build_settings", "get_loaded_scenes"):
-        assert policy.is_unity_mcp_read_only(f"{UNITY}manage_scene", {"action": action}), action
+        assert not policy.is_unity_mcp_read_only(f"{UNITY}manage_scene", {"action": action}), action
+
+
+def test_tools_that_do_not_refresh_keep_their_reads():
+    """Kapinin gereginden genis olmadiginin kaniti: preflight cagirmayan araclarda okuma hala muaf."""
+    assert policy.is_unity_mcp_read_only(f"{UNITY}manage_build", {"action": "status"})
+    assert policy.is_unity_mcp_read_only(f"{UNITY}manage_material", {"action": "get_material_info"})
+    assert policy.is_unity_mcp_read_only(f"{UNITY}manage_packages", {"action": "list_packages"})
+    assert policy.is_unity_mcp_read_only(f"{UNITY}manage_physics", {"action": "raycast"})
 
 
 def test_scene_mutations_are_not_exempt():
@@ -107,7 +132,6 @@ def test_read_console_exemption_is_no_longer_unconditional():
     ("unity_docs", {"action": "lookup"}),
     # Geri kalanının action parametresi yok; araç düzeyinde salt-okuma.
     ("find_in_file", {}),
-    ("find_gameobjects", {}),
     ("get_sha", {}),
     ("validate_script", {}),
     ("manage_script_capabilities", {}),
@@ -140,12 +164,14 @@ def test_mutations_are_never_exempt(tool, params):
 
 
 def test_batch_execute_is_only_exempt_when_every_inner_call_reads():
+    # `manage_scene` artik okuma tarafinda kullanilamiyor: preflight refresh'i
+    # butun action'larini write yapti.
     reads = {"commands": [
-        {"tool": "manage_scene", "params": {"action": "get_hierarchy"}},
         {"tool": "unity_reflect", "params": {"action": "search"}},
+        {"tool": "read_console", "params": {"action": "get"}},
     ]}
     mixed = {"commands": [
-        {"tool": "manage_scene", "params": {"action": "get_hierarchy"}},
+        {"tool": "unity_reflect", "params": {"action": "search"}},
         {"tool": "manage_gameobject", "params": {"action": "delete"}},
     ]}
     assert policy.is_unity_mcp_read_only(f"{UNITY}batch_execute", reads)
