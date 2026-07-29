@@ -458,7 +458,6 @@ describe('KÖK A · MCP gate kimliği — kart görünmeden ÖNCE yazılır, kar
       useMCPApproval({
         API,
         enabled: false,
-        loading: false,
         setPendingGenFiles: vi.fn(),
         setPendingDelete: vi.fn(),
         setPendingCommand: vi.fn(),

@@ -89,10 +89,15 @@ export default function Home() {
     fs.suggestFilePath
   );
 
+  // Onay kartı teslimi SAĞLAYICIDAN BAĞIMSIZ. Eskiden `effectiveProvider ===
+  // 'subscription' && chat.loading` koşuluna bağlıydı; ikisi de yanlıştı, çünkü
+  // kartı üreten köprü sağlayıcıyı hiç bilmiyor ve CLI sağlayıcıları sohbet
+  // "idle" görünürken de araç çağırabiliyor. Kalan tek koşul token'ın kurulmuş
+  // olması — o da izin değil, erişilebilirlik: yoklama `X-Session-Token`
+  // istiyor ve `useAuth` onu IPC'den aldıktan sonra axios'a yazıyor.
   useMCPApproval({
     API,
-    enabled: ai.effectiveProvider === 'subscription',
-    loading: chat.loading,
+    enabled: !auth.isLoading,
     setPendingGenFiles: fs.setPendingGenFiles,
     setPendingDelete: fs.setPendingDelete,
     setPendingCommand: chat.setPendingCommand,

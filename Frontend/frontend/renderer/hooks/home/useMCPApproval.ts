@@ -6,6 +6,10 @@
  * Polling: /mcp-pending endpoint'ini 1 saniyede bir kontrol eder.
  * Her yeni istek geldiğinde ilgili state setter'ı çağırır.
  * Kullanıcı onaylarsa/reddederse /mcp-approval-respond/{gate_id} çağrılır.
+ *
+ * ⚠️ Bu yol SSE DEĞİL, polling — backend tarafında da öyle. Bunu yazmaya değer
+ * çünkü tersini iddia eden yorumlar vardı ve bir tasarım tartışmasında "zaten
+ * SSE var" diye okundu. SSE'nin neden seçilmediği polling aralığının yanında.
  */
 import { useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
@@ -14,8 +18,22 @@ import { gateFailure } from './gateResponse';
 
 interface MCPApprovalHookParams {
   API: string;
-  enabled: boolean;  // Sadece subscription provider'da aktif
-  loading?: boolean; // Sadece AI işlem yaparken poll et — idle'da CPU harcama
+  /**
+   * "Backend hazır ve oturum token'ı axios'a kuruldu" demek — SAĞLAYICI DEĞİL.
+   *
+   * Eskiden `effectiveProvider === 'subscription'` bağlanıyordu ve yanına
+   * `loading: chat.loading` koşulu vardı. İkisi de 2026-07-29'da kaldırıldı:
+   * onay kartı üreten köprü (`approval_bridge.py`) sağlayıcıyı hiç bilmiyor ve
+   * 9 sağlayıcının 9'u da aynı uca gidiyor, yani kartı sağlayıcıya bağlamak
+   * kartı 8 yolda yok ediyordu. `loading` de yanlıştı: CLI sağlayıcıları sohbet
+   * "idle" görünürken araç çağırabiliyor.
+   *
+   * Token kurulmadan yoklamak anlamsız: `/mcp-pending` `X-Session-Token`
+   * istiyor (`auth_utils._check_token`) ve token `useAuth` içinde IPC'den
+   * geldikten sonra `axios.defaults`'a yazılıyor. Öncesinde her saniye sessizce
+   * yutulan bir 401 üretilirdi.
+   */
+  enabled: boolean;
   setPendingGenFiles: (val: { files: PendingFile[]; messageId: number } | null) => void;
   setPendingDelete: (val: { path: string; messageId: number } | null) => void;
   setPendingCommand: (val: { command: string; gateId: string; messageId: number } | null) => void;
@@ -25,8 +43,18 @@ interface MCPApprovalHookParams {
   showToast?: (msg: string, type: any) => void;
 }
 
-// MCP onay isteği için sanal mesaj ID'si (gerçek chat mesajına bağlı değil)
-const MCP_MSG_ID = -999;
+/**
+ * MCP onay isteği için sanal mesaj ID'si (gerçek chat mesajına bağlı değil).
+ *
+ * DIŞARI AÇIK olmasının sebebi ölçülmüş bir arıza sınıfı: ChatPanel bu değeri
+ * `-999` diye ELLE tekrar ediyordu ve `pendingFix` dalı hiç yazılmamıştı. Bu
+ * depodaki arızaların ortak biçimi "birbiriyle uyuşması gereken iki yer
+ * uyuşmuyor"; sabiti tek yerden okutmak o sınıfın bu örneğini kapatıyor.
+ */
+export const MCP_MSG_ID = -999;
+
+/** Yoklama aralığı (ms). Gerekçesi ve ölçümü aşağıdaki useEffect'te. */
+const POLL_INTERVAL_MS = 1000;
 
 /**
  * MCP onay kimliklerinin (gate id) tek saklama/okuma yeri.
@@ -63,7 +91,6 @@ export const takeMcpGate = (kind: McpGateKind): string => {
 export const useMCPApproval = ({
   API,
   enabled,
-  loading = false,
   setPendingGenFiles,
   setPendingDelete,
   setPendingCommand,
@@ -152,17 +179,33 @@ export const useMCPApproval = ({
     }
   }, [API, setPendingGenFiles, setPendingDelete, setPendingCommand, setPendingFix]);
 
-  // Polling başlat/durdur — sadece subscription provider'da VE loading sırasında aktif
+  /**
+   * Yoklamayı başlat/durdur. Koşulsuz açmanın maliyeti ÖLÇÜLDÜ (2026-07-29): rota
+   * katmanında `/mcp-pending` çağrı başına **0,174 ms** (2000 çağrı / 0,347 sn,
+   * TestClient üzerinden — yani gerçek TCP ve renderer maliyeti HARİÇ, bu bir
+   * alt sınır). 1 sn aralıkta bu tek çekirdeğin ~%0,017'si. Eski koddaki
+   * "idle'da CPU harcama" gerekçesi bu ölçümün karşısında duramıyor; karşılığı
+   * ise kartın 8 sağlayıcıda hiç gelmemesiydi.
+   *
+   * SSE (kod yorumlarının iddia ettiği ama var olmayan çözüm) BİLEREK
+   * seçilmedi: `EventSource` özel başlık gönderemiyor, dolayısıyla
+   * `X-Session-Token` sorguya taşınırdı — sırrı URL'den başlığa taşıyan karar
+   * (unity-mcp yerel auth) tam tersi yöndeydi. Geri almak için sebep yok.
+   */
   useEffect(() => {
-    if (!API || !enabled || !loading) {
+    if (!API || !enabled) {
       if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null; }
       return;
     }
-    pollingRef.current = setInterval(poll, 1000);
+    // İlk yoklama beklemeden: hook mount olmadan önce açılmış bir gate varsa
+    // (köprü ürün penceresinden bağımsız çalışıyor) kart bir tam saniye geç
+    // gelirdi. `seenGates` tekrar işlemeyi zaten engelliyor.
+    void poll();
+    pollingRef.current = setInterval(poll, POLL_INTERVAL_MS);
     return () => {
       if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null; }
     };
-  }, [API, enabled, loading, poll]);
+  }, [API, enabled, poll]);
 
   // Onay/red fonksiyonları — mevcut UI'lardan çağrılır
   const approveMCPFile = useCallback(async (gateId: string) => {

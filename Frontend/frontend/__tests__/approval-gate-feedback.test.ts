@@ -170,7 +170,6 @@ describe('useMCPApproval.respond — kayıp gate sessizce yutulmaz', () => {
       useMCPApproval({
         API,
         enabled: false,
-        loading: false,
         setPendingGenFiles: vi.fn(),
         setPendingDelete: vi.fn(),
         setPendingCommand: vi.fn(),
