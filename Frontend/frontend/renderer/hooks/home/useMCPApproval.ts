@@ -21,7 +21,6 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 import axios from 'axios';
 import { PendingFile } from '../../components/home/FileCreationApproval';
-import { gateFailure } from './gateResponse';
 
 /**
  * Ekranda karar bekleyen MCP isteği. Kartı çizen taraf gate kimliğini ve
@@ -163,23 +162,6 @@ export const useMCPApproval = ({
     setActiveGate(null);
   }, []);
 
-  // Yanıt gövdesi eskiden okunmuyordu: gate TTL ile süpürüldüyse backend
-  // {"status":"gate_not_found"} dönüyor, kart yine kapanıyor ve kullanıcı
-  // onayladığını sanıyordu. Bridge o gate'i fail-closed reddediyor — yani
-  // dosya yazılmıyor/komut çalışmıyor ama ekranda hiçbir iz yok.
-  const respond = useCallback(async (gateId: string, approved: boolean) => {
-    let failure = null as ReturnType<typeof gateFailure>;
-    try {
-      const res = await axios.post(`${API}/mcp-approval-respond/${gateId}`, { approved });
-      // axios non-2xx'te zaten throw eder; buraya düşen yanıt 2xx'tir.
-      failure = gateFailure('mcp', { httpOk: true, httpStatus: res.status, body: res.data });
-    } catch (err) {
-      console.warn('[MCP] respond error', err);
-      failure = gateFailure('mcp', { httpOk: false, error: err });
-    }
-    if (failure) showToast?.(failure.message, failure.type);
-  }, [API, showToast]);
-
   const poll = useCallback(async () => {
     if (!API) return;
 
@@ -314,41 +296,32 @@ export const useMCPApproval = ({
    */
   const resolveActiveGate = useCallback(() => { dismissActive(); }, [dismissActive]);
 
-  // Onay/red fonksiyonları — mevcut UI'lardan çağrılır
-  const approveMCPFile = useCallback(async (gateId: string) => {
-    await respond(gateId, true);
-    dismissActive();
-  }, [respond, dismissActive]);
-
-  const rejectMCPFile = useCallback(async (gateId: string) => {
-    await respond(gateId, false);
-    dismissActive();
-  }, [respond, dismissActive]);
-
-  const approveMCPDelete = useCallback(async (gateId: string) => {
-    if (gateId) await respond(gateId, true);
-    dismissActive();
-  }, [respond, dismissActive]);
-
-  const rejectMCPDelete = useCallback(async (gateId: string) => {
-    if (gateId) await respond(gateId, false);
-    dismissActive();
-  }, [respond, dismissActive]);
+  /*
+   * ⚠️ BURADA ESKİDEN DÖRT RESPONDER + `respond` VARDI, SİLİNDİLER (2026-07-29).
+   *
+   * `approveMCPFile`, `rejectMCPFile`, `approveMCPDelete`, `rejectMCPDelete` —
+   * dördünün de ÜRÜNDE tek bir çağıranı yoktu (dış denetim
+   * `test-only-routing-api-divergence`, depo çapında çağrı izlemesiyle
+   * doğrulandı). Kartlar kararı `McpApprovalCards` içinden `postMcpDecision`
+   * ile gönderiyor: farklı transport (fetch/axios), farklı sözleşme, farklı
+   * kilit ömrü.
+   *
+   * Silinmelerinin sebebi düzen değil ÖLÇÜM: `approval-gate-feedback.test.ts`
+   * bu ölü yolu MCP kart teslimi sanıp sınıyordu, dolayısıyla 230 testin hepsi
+   * yeşilken gerçek kart yolundaki `stale-decision-latch` (kullanıcının gördüğü
+   * ret yutuluyor, komut çalışıyor) hiç görünmüyordu. İki sözleşmeyi paralel
+   * tutmak bu depodaki arızaların ortak biçimi; ikincisini silmek tek çözüm.
+   */
 
   // `poll` dışarı da veriliyor: polling'in kendisi zamanlayıcıya bağlı, ama
   // "gate kimliği kartla birlikte taşınıyor mu" sorusu zamanlayıcıdan bağımsız
   // bir DOĞRULUK sorusu ve deterministik ölçülebilmeli.
   return {
-    respond,
     poll,
     activeGate,
     /** Gate'in workspace'i üründe açık olandan farklı mı (bilinmiyorsa false). */
     gateWorkspaceMismatch: workspaceMismatch(activeGate?.workspacePath, workspacePath),
     openWorkspacePath: workspacePath,
     resolveActiveGate,
-    approveMCPFile,
-    rejectMCPFile,
-    approveMCPDelete,
-    rejectMCPDelete,
   };
 };

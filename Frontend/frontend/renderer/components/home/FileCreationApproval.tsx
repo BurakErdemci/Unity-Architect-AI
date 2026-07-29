@@ -36,7 +36,21 @@ interface FileCreationApprovalProps {
   /** `true` = dosyaların HEPSİ yazıldı. Kısmi başarı `false`'tur; hangi dosyanın
    *  neden yazılamadığını çağıran kendi bildirir (dosya başına toast). */
   onAcceptAll: (files: PendingFile[]) => Promise<boolean>;
+  /** Kararlar bittikten SONRA kartı kapatır ("Kapat"). Bir karar DEĞİLDİR. */
   onDone: () => void;
+  /**
+   * Kullanıcı karar vermeden kartı kapattı ("İptal") — bu bir KARARDIR.
+   *
+   * Neden `onDone`'dan ayrı (ölçüldü 2026-07-29, iki-varyant turu): tek prop iki
+   * zıt anlamı taşıyordu. Çağıran taraf `onDone`'u "akış kendiliğinden kapandı"
+   * diye okuyup bastırılan kararı SESSİZ geçiyordu; aynı sessizlik "İptal"e
+   * basan kullanıcıya da uygulanınca, onay uçuştayken basılan İptal hiçbir iz
+   * bırakmadan yutuluyordu — `stale-decision-latch` sınıfının sessiz biçimi.
+   *
+   * Opsiyonel ve varsayılanı `onDone`: mevcut çağıranlar (ChatPanel'in sohbet
+   * akışı) davranışlarını aynen koruyor, ayrımı yalnız ihtiyacı olan taraf yapar.
+   */
+  onCancel?: () => void;
   onOpenFile?: (path: string) => void;
   autoAccept?: boolean;
   setDiffFile: (file: PendingFile | null) => void;
@@ -48,6 +62,7 @@ export const FileCreationApproval = ({
   onSkipOne,
   onAcceptAll,
   onDone,
+  onCancel,
   onOpenFile,
   autoAccept,
   setDiffFile
@@ -229,8 +244,13 @@ export const FileCreationApproval = ({
 
               {isPending && isActive && (
                 <div className="flex items-center gap-1 shrink-0">
-                  <button 
-                    onClick={(e) => { e.stopPropagation(); handleSkip(i); }} 
+                  {/* Yalnız ikon taşıyan bir butonun erişilebilir adı yoktu:
+                      ekran okuyucuda adsız, testte de seçilemez durumdaydı —
+                      bu yüzden "atla" yolu hiç ölçülememişti (2026-07-29). */}
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleSkip(i); }}
+                    aria-label={t('approval.skip')}
+                    title={t('approval.skip')}
                     className="p-1 hover:bg-rose-500/20 text-rose-400 rounded transition-all"
                   >
                     <SkipForward size={12} />
@@ -254,7 +274,8 @@ export const FileCreationApproval = ({
 
       {/* FOOTER */}
       <div className="flex items-center justify-between px-3 py-2 border-t border-slate-800/60 bg-black/20">
-        <button onClick={onDone} className="text-[10px] font-bold text-rose-500 hover:text-rose-400 flex items-center gap-1">
+        {/* "İptal" bir KARARDIR — `onDone` ("Kapat") ile aynı şey değil. */}
+        <button onClick={onCancel ?? onDone} className="text-[10px] font-bold text-rose-500 hover:text-rose-400 flex items-center gap-1">
           <XCircle size={12} /> {t('approval.cancel')}
         </button>
         <button 

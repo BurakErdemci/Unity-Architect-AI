@@ -10,12 +10,24 @@
  * kaçırıldığında kullanıcının bunu görmesi gerekir.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { renderHook, act } from '@testing-library/react'
+import React from 'react'
+import { renderHook, render, screen, cleanup, fireEvent, act } from '@testing-library/react'
 
 import { useChat } from '../renderer/hooks/home/useChat'
-import { useMCPApproval } from '../renderer/hooks/home/useMCPApproval'
+import { McpApprovalCards } from '../renderer/components/home/McpApprovalCards'
+import { MCP_MSG_ID, McpActiveGate } from '../renderer/hooks/home/useMCPApproval'
 import { postMcpDecision, decisionToast, gateFailure } from '../renderer/hooks/home/gateResponse'
 import axios from 'axios'
+
+// DiffViewer Monaco'yu içeri alıyor; jsdom gerçek editör açamaz ve ölçtüğümüz
+// şey editörün görüntüsü değil kararın gidip gitmediği.
+vi.mock('@monaco-editor/react', () => ({
+  __esModule: true,
+  default: () => null,
+  DiffEditor: () => null,
+  Editor: () => null,
+  loader: { config: () => {}, init: () => Promise.resolve({}) },
+}))
 
 vi.mock('axios', () => {
   const post = vi.fn()
@@ -59,6 +71,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  cleanup()
   vi.unstubAllGlobals()
 })
 
@@ -163,9 +176,384 @@ describe('answerQuestion — kayıp gate sessizce yutulmaz', () => {
   })
 })
 
-describe('useMCPApproval.respond — kayıp gate sessizce yutulmaz', () => {
-  const setupMCP = () => {
+/**
+ * MCP onay kartının GERÇEK karar yolu.
+ *
+ * ⚠️ Bu blok 2026-07-29'da YENİDEN BAĞLANDI ve sebebi ölçülmüş bir arızadır.
+ * Eskiden hook'un `approveMCPFile`/`rejectMCPFile`/`approveMCPDelete`
+ * fonksiyonlarını sınıyordu; o dördünün de ÜRÜNDE tek bir çağıranı yoktu (dış
+ * denetim `test-only-routing-api-divergence`). Ürün kararı `McpApprovalCards`
+ * içinden `postMcpDecision` ile gönderiyor — başka transport, başka sözleşme.
+ *
+ * Bedeli ölçüldü: 230 testin hepsi yeşilken gerçek kart yolunda
+ * `stale-decision-latch` yaşıyordu — kullanıcının bastığı İPTAL yutuluyor,
+ * ekrana "Komut iptal edildi" yazılıyor ve KOMUT ÇALIŞIYORDU. Test yanlış
+ * yüzeyi ölçtüğü için hiçbir şey kırmızı olmuyordu. Ölü API silindi; bu blok
+ * artık ürünün kendi bileşenini çiziyor.
+ */
+describe('MCP kart kararı — kayıp gate sessizce yutulmaz', () => {
+  const GATE: McpActiveGate = { gateId: 'm1', tool: 'bash', workspacePath: '/ws' }
+
+  /** Ürünün kendi kart bileşenini, komut kartı açık halde çizer. */
+  const mountCommandCard = (over: Record<string, any> = {}) => {
     const showToast = vi.fn()
+    const props: any = {
+      gate: GATE,
+      workspaceMismatch: false,
+      openWorkspacePath: '/ws',
+      onResolved: vi.fn(),
+      apiBase: API,
+      sessionToken: 'tok',
+      showToast,
+      refreshFileTree: vi.fn(),
+      pendingGenFiles: null,
+      setPendingGenFiles: vi.fn(),
+      pendingDelete: null,
+      setPendingDelete: vi.fn(),
+      // Setter'lar mock: kart uçuş penceresi boyunca MOUNT KALIYOR. Üründe de
+      // öyle — `setPendingCommand(null)` await'ten SONRA çağrılıyor.
+      pendingCommand: { command: 'ls', gateId: GATE.gateId, messageId: MCP_MSG_ID },
+      setPendingCommand: vi.fn(),
+      pendingFix: null,
+      setPendingFix: vi.fn(),
+      ...over,
+    }
+    const view = render(React.createElement(McpApprovalCards, props))
+    return { showToast, props, view }
+  }
+
+  /**
+   * Butona `fireEvent` ile basılıyor, `.click()` ile DEĞİL.
+   *
+   * Sebep ve sınır açıkça yazılı: uçuş sırasında kart ayrıca `fieldset[disabled]`
+   * ile kilitleniyor ve jsdom `.click()` çağrısını devre dışı elemanda hiç
+   * ateşlemez — yani `.click()` kullansaydık test, mantıksal kilit tamamen
+   * silinse bile yeşil kalırdı (görsel kilit onu maskeler). `fireEvent` olayı
+   * doğrudan gönderiyor, dolayısıyla ölçülen şey ASIL GÜVENCE: `decide`
+   * içindeki karar kilidi.
+   */
+  const bas = (etiket: string) => fireEvent.click(screen.getByText(etiket))
+
+  it('gate_not_found gelince kullanıcı uyarılır', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fetchResponse({ status: 'gate_not_found' })))
+    const { showToast } = mountCommandCard()
+
+    await act(async () => { bas('Komutu Çalıştır') })
+
+    expect(showToast).toHaveBeenCalledTimes(1)
+    expect(['warning', 'error']).toContain(showToast.mock.calls[0][1])
+  })
+
+  it('reddet yolunda da uyarı çıkar', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fetchResponse({ status: 'gate_not_found' })))
+    const { showToast } = mountCommandCard()
+
+    await act(async () => { bas('İptal') })
+
+    expect(showToast).toHaveBeenCalledTimes(1)
+    expect(['warning', 'error']).toContain(showToast.mock.calls[0][1])
+  })
+
+  it('ağ hatası uyarı üretir', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('ECONNREFUSED')))
+    const { showToast } = mountCommandCard()
+
+    await act(async () => { bas('Komutu Çalıştır') })
+
+    expect(showToast).toHaveBeenCalledTimes(1)
+  })
+
+  it('BAŞARILI yolda YANLIŞ bir uyarı çıkmaz — teslimat mesajı gösterilir', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fetchResponse({ status: 'ok' })))
+    const { showToast } = mountCommandCard()
+
+    await act(async () => { bas('İptal') })
+
+    expect(showToast).toHaveBeenCalledTimes(1)
+    expect(showToast.mock.calls[0][0]).toBe('Komut iptal edildi')
+    expect(showToast.mock.calls[0][1]).toBe('info')
+  })
+
+  it('karar GERÇEKTEN gate\'e gider ve gövdesi yönü taşır', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(fetchResponse({ status: 'ok' }))
+    vi.stubGlobal('fetch', fetchMock)
+    mountCommandCard()
+
+    await act(async () => { bas('Komutu Çalıştır') })
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(String(fetchMock.mock.calls[0][0])).toContain(`/mcp-approval-respond/${GATE.gateId}`)
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1].body))).toEqual({ approved: true })
+  })
+})
+
+/**
+ * `stale-decision-latch` — dış denetimin tek KRİTİK bulgusu (2026-07-29).
+ *
+ * Ne olmuştu: `decide` bayrağı POST'tan ÖNCE koyuyor ve bastırılan çağrıya
+ * `null` dönüyordu. `null` bu depodaki gate sözleşmesinde "TESLİM EDİLDİ"
+ * demek. Sonuç: onay POST'u uçuştayken İptal'e basmak → ret hiç gönderilmiyor →
+ * ekrana "Komut iptal edildi" yazılıyor → onay iniyor ve KOMUT ÇALIŞIYOR.
+ * Kullanıcının gördüğü son karar ret, gerçekleşen onay.
+ *
+ * Bu blok İKİ diziyi de ölçüyor, çünkü bulgunun iki ayağı vardı: karşıt seçim
+ * ve aynı gate'in yeniden sunulması.
+ */
+describe('stale-decision-latch — gönderilmemiş karar teslim edilmiş sayılmaz', () => {
+  const GATE: McpActiveGate = { gateId: 'latch-1', tool: 'bash', workspacePath: '/ws' }
+
+  const cardProps = (over: Record<string, any> = {}) => ({
+    gate: GATE,
+    workspaceMismatch: false,
+    openWorkspacePath: '/ws',
+    onResolved: vi.fn(),
+    apiBase: API,
+    sessionToken: 'tok',
+    showToast: vi.fn(),
+    refreshFileTree: vi.fn(),
+    pendingGenFiles: null,
+    setPendingGenFiles: vi.fn(),
+    pendingDelete: null,
+    setPendingDelete: vi.fn(),
+    pendingCommand: { command: 'rm -rf /', gateId: GATE.gateId, messageId: MCP_MSG_ID },
+    setPendingCommand: vi.fn(),
+    pendingFix: null,
+    setPendingFix: vi.fn(),
+    ...over,
+  })
+
+  const bas = (etiket: string) => fireEvent.click(screen.getByText(etiket))
+
+  it('onay UÇUŞTAYKEN basılan İptal "iptal edildi" diye raporlanmaz', async () => {
+    // Onay POST'u askıda bırakılıyor: gerçek uçuş penceresi bu.
+    let cozumle: (v: any) => void = () => {}
+    const askida = new Promise((res) => { cozumle = res })
+    const fetchMock = vi.fn().mockReturnValue(askida)
+    vi.stubGlobal('fetch', fetchMock)
+
+    const props: any = cardProps()
+    render(React.createElement(McpApprovalCards, props))
+
+    await act(async () => { bas('Komutu Çalıştır') })   // POST uçuşta, askıda
+    await act(async () => { bas('İptal') })             // kullanıcının GÖRÜNÜR reddi
+
+    // (1) İkinci bir POST GİTMEDİ — onay zaten yolda, geri alınamaz.
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1].body))).toEqual({ approved: true })
+
+    // (2) ASIL İDDİA: ekranda "iptal edildi" YAZMIYOR. Bulgunun kendisi buydu —
+    // komut çalışırken kullanıcıya iptal edildiği söyleniyordu.
+    const mesajlar = props.showToast.mock.calls.map((c: any[]) => String(c[0]))
+    expect(mesajlar).not.toContain('Komut iptal edildi')
+    expect(mesajlar.length).toBe(1)
+    expect(props.showToast.mock.calls[0][1]).toBe('warning')
+
+    // Askıdaki onayı çözüp sızıntı bırakmıyoruz.
+    await act(async () => {
+      cozumle(fetchResponse({ status: 'ok' }))
+      await askida
+    })
+  })
+
+  it('TERS YÖN: karar sonuçlandıktan sonra ikinci basış da yalan söylemez', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(fetchResponse({ status: 'ok' })))
+    const props: any = cardProps()
+    render(React.createElement(McpApprovalCards, props))
+
+    await act(async () => { bas('Komutu Çalıştır') })
+    props.showToast.mockClear()
+    await act(async () => { bas('İptal') })
+
+    // Onay çoktan indi; ikinci karar ne gönderiliyor ne de "iptal" diye
+    // raporlanıyor. Kilidin kendisi KALIYOR — kaldırmak çift karar demekti.
+    expect((globalThis.fetch as any)).toHaveBeenCalledTimes(1)
+    const mesajlar = props.showToast.mock.calls.map((c: any[]) => String(c[0]))
+    expect(mesajlar).not.toContain('Komut iptal edildi')
+    expect(props.showToast).toHaveBeenCalledTimes(1)
+  })
+
+  it('teslimatı BAŞARISIZ olan istek yeniden sunulunca yeniden karar VERİLEBİLİR', async () => {
+    // Bulgunun ikinci ayağı: bayrak gate id'sine ömür boyu bağlıydı ve bileşen
+    // ChatPanel içinde mount kalıyor. Teslimat düştüğünde backend kaydı hâlâ
+    // bekliyor olabilir; ikinci sunumda da bastırılırsa kullanıcı o isteğe BİR
+    // DAHA karar veremez — sessiz bir kilitlenme.
+    const fetchMock = vi.fn().mockRejectedValueOnce(new Error('offline'))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const props: any = cardProps()
+    const { rerender } = render(React.createElement(McpApprovalCards, props))
+    await act(async () => { bas('İptal') })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    // Kart ekrandan kalkıyor (gate null) — sunum bitti.
+    await act(async () => {
+      rerender(React.createElement(McpApprovalCards, { ...props, gate: null }))
+    })
+
+    // Aynı gate backend'de hâlâ bekliyor ve yeniden sunuluyor.
+    fetchMock.mockResolvedValue(fetchResponse({ status: 'ok' }))
+    await act(async () => {
+      rerender(React.createElement(McpApprovalCards, props))
+    })
+    await act(async () => { bas('İptal') })
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(JSON.parse(String(fetchMock.mock.calls[1][1].body))).toEqual({ approved: false })
+  })
+})
+
+/**
+ * İKİ-VARYANT KURALI — sınıfın kalan ÜÇ kart yolu.
+ *
+ * Yukarıdaki blok yalnız KOMUT kartını sürüyor; denetimin kendi probe'u da
+ * öyleydi ve bunu açıkça yazmıştı (*"delete, file-creation, and diff controls
+ * were source-traced but not all dynamically driven"*). Kod düzeltmesi dördüne
+ * de uygulandı ama ÖLÇÜM tek yoldaydı — bu depoda iki kez ölçülmüş kural tam
+ * olarak burayı vuruyor: **kapatmayı yazan kişi kapatmanın sınırını göremiyor.**
+ *
+ * Sınıf tek cümleyle: *gönderilmemiş bir karar, gönderilmiş gibi raporlanamaz.*
+ * Her kart tipinde aynı dizi sürülüyor — onay POST'u uçuşta bırakılıyor, sonra
+ * karşıt kontrole basılıyor.
+ *
+ * ⚠️ Kartlar arasında BİR FARK var ve bilerek korunuyor: komut kartının eski
+ * hatası YALAN söylemekti ("Komut iptal edildi"), silme/diff kartlarınınki ise
+ * SESSİZ kalmaktı (`if (failure)` bastırılan çağrıda hiç ateşlenmiyordu).
+ * İkisi de aynı sınıf; ortak ölçüt "ikinci POST yok VE kullanıcı uyarılıyor".
+ */
+describe('iki-varyant · sınıf diğer üç kart yolunda da kapalı', () => {
+  const GATE: McpActiveGate = { gateId: 'v-1', tool: 'write_file', workspacePath: '/ws' }
+
+  /** Uçuşta askıda bırakılan POST + kartı çizen ortak kurulum. */
+  const surumeBasla = (kartState: Record<string, any>) => {
+    let cozumle: (v: any) => void = () => {}
+    const askida = new Promise((res) => { cozumle = res })
+    const fetchMock = vi.fn().mockReturnValue(askida)
+    vi.stubGlobal('fetch', fetchMock)
+
+    const props: any = {
+      gate: GATE,
+      workspaceMismatch: false,
+      openWorkspacePath: '/ws',
+      onResolved: vi.fn(),
+      apiBase: API,
+      sessionToken: 'tok',
+      showToast: vi.fn(),
+      refreshFileTree: vi.fn(),
+      setCode: vi.fn(),
+      setDiffFile: vi.fn(),
+      onOpenFile: vi.fn(),
+      pendingGenFiles: null,
+      setPendingGenFiles: vi.fn(),
+      pendingDelete: null,
+      setPendingDelete: vi.fn(),
+      pendingCommand: null,
+      setPendingCommand: vi.fn(),
+      pendingFix: null,
+      setPendingFix: vi.fn(),
+      ...kartState,
+    }
+    render(React.createElement(McpApprovalCards, props))
+    return { props, fetchMock, cozumle, askida }
+  }
+
+  const bas = (etiket: string) => fireEvent.click(screen.getByText(etiket))
+
+  /**
+   * `onay` uçuşa sokulur, hemen ardından `karsit` kontrole basılır.
+   * Ölçüt her kartta aynı: tek POST, ve kullanıcı sessiz bırakılmaz.
+   */
+  const karsitSecimSinavi = async (
+    kartState: Record<string, any>, onay: string, karsit: string,
+    /** Onay HÂLÂ uçuştayken koşulacak ek iddialar. */
+    ucusPenceresinde?: (props: any) => void,
+  ) => {
+    const { props, fetchMock, cozumle, askida } = surumeBasla(kartState)
+
+    await act(async () => { bas(onay) })
+    props.showToast.mockClear()
+    await act(async () => { bas(karsit) })
+    ucusPenceresinde?.(props)
+
+    // (1) Karşıt karar GÖNDERİLMEDİ — onay zaten yolda, geri alınamaz.
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1].body))).toEqual({ approved: true })
+
+    // (2) Kullanıcı sessiz bırakılmadı ve gönderilmemiş karar "oldu" diye
+    //     raporlanmadı. Eski davranış bu iki bacaktan birini kırıyordu.
+    expect(props.showToast).toHaveBeenCalledTimes(1)
+    expect(props.showToast.mock.calls[0][1]).toBe('warning')
+
+    await act(async () => { cozumle(fetchResponse({ status: 'ok' })); await askida })
+    return props
+  }
+
+  it('SİLME kartı: onay uçuştayken Vazgeç sessizce yutulmaz', async () => {
+    await karsitSecimSinavi(
+      { pendingDelete: { path: 'A.cs', messageId: MCP_MSG_ID } },
+      'Evet, Dosyayı Sil', 'Vazgeç',
+    )
+  })
+
+  it('DİFF kartı: onay uçuştayken Reddet sessizce yutulmaz', async () => {
+    await karsitSecimSinavi(
+      {
+        pendingFix: {
+          messageId: MCP_MSG_ID, applied: false,
+          data: { original_code: 'x', fixed_code: 'y', explanation: 'e', editor_hint: 'A.cs' },
+        },
+      },
+      'Kabul Et', 'Reddet',
+      // Diff kartına özel bacak: onay HENÜZ teslim edilmemişken editör tamponu
+      // tazelenmemeli — yoksa diskte olmayan bir içerik ekranda gösterilir.
+      // ⚠️ İddia UÇUŞ PENCERESİNDE koşuyor. Askı çözüldükten sonra bakmak
+      // yanlış olurdu: onay o noktada gerçekten teslim ediliyor ve tamponu
+      // tazelemek DOĞRU davranış. (İlk yazımda oraya bakılmıştı ve test,
+      // ürünü değil kendi zamanlamasını ölçüyordu.)
+      (props) => { expect(props.setCode).not.toHaveBeenCalled() },
+    )
+  })
+
+  const OLUSTURMA = {
+    pendingGenFiles: {
+      messageId: MCP_MSG_ID,
+      files: [{ name: 'A.cs', code: 'x', suggestedPath: 'A.cs', originalCode: '' }],
+    },
+  }
+
+  it('OLUŞTURMA kartı: onay uçuştayken İptal sessizce yutulmaz', async () => {
+    await karsitSecimSinavi(OLUSTURMA, 'Tümünü Onayla', 'İptal')
+  })
+
+  it('OLUŞTURMA kartı: onay uçuştayken ATLA da sessizce yutulmaz', async () => {
+    // "Atla" ayrı bir prop'tan (`onSkipOne`) geçiyor ve o yol ayrı ayrı
+    // yazılmıştı — sınıfın dördüncü yüzü. Buton yalnız ikon taşıdığı için
+    // erişilebilir adı yoktu; ad eklenmeden bu yol ÖLÇÜLEMİYORDU.
+    const { props, fetchMock, cozumle, askida } = surumeBasla(OLUSTURMA)
+
+    await act(async () => { bas('Tümünü Onayla') })
+    props.showToast.mockClear()
+    await act(async () => { fireEvent.click(screen.getByLabelText('Atla')) })
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(props.showToast).toHaveBeenCalledTimes(1)
+    expect(props.showToast.mock.calls[0][1]).toBe('warning')
+
+    await act(async () => { cozumle(fetchResponse({ status: 'ok' })); await askida })
+  })
+})
+
+/**
+ * Ölü API'nin geri gelmemesi için tripwire.
+ *
+ * Silinen dört fonksiyon (`approveMCPFile`, `rejectMCPFile`, `approveMCPDelete`,
+ * `rejectMCPDelete`) ve `respond` ürünün karar yolunun İKİNCİ bir kopyasıydı;
+ * testler o kopyayı sınadığı için gerçek yoldaki kritik bulgu görünmüyordu.
+ * Biri geri eklenirse aynı ayrışma yeniden açılır — ve bu depodaki arızaların
+ * ortak biçimi tam olarak "uyuşması gereken iki yer uyuşmuyor".
+ */
+describe('hook ikinci bir karar yolu ihraç ETMEZ', () => {
+  it('useMCPApproval yalnız teslim/çözme yüzeyini döner', async () => {
+    const { useMCPApproval } = await import('../renderer/hooks/home/useMCPApproval')
     const { result } = renderHook(() =>
       useMCPApproval({
         API,
@@ -175,57 +563,12 @@ describe('useMCPApproval.respond — kayıp gate sessizce yutulmaz', () => {
         setPendingDelete: vi.fn(),
         setPendingCommand: vi.fn(),
         setPendingFix: vi.fn(),
-        showToast,
       }),
     )
-    return { result, showToast }
-  }
 
-  it('gate_not_found gelince kullanıcı uyarılır', async () => {
-    mockedAxios.post.mockResolvedValue({ data: { status: 'gate_not_found' } })
-    const { result, showToast } = setupMCP()
-
-    await act(async () => { await result.current.approveMCPFile('m1') })
-
-    expect(showToast).toHaveBeenCalledTimes(1)
-  })
-
-  it('reddet yolunda da uyarı çıkar', async () => {
-    mockedAxios.post.mockResolvedValue({ data: { status: 'gate_not_found' } })
-    const { result, showToast } = setupMCP()
-
-    await act(async () => { await result.current.rejectMCPFile('m1') })
-
-    expect(showToast).toHaveBeenCalledTimes(1)
-  })
-
-  it('ağ hatası uyarı üretir', async () => {
-    mockedAxios.post.mockRejectedValue(new Error('ECONNREFUSED'))
-    const { result, showToast } = setupMCP()
-
-    await act(async () => { await result.current.approveMCPFile('m1') })
-
-    expect(showToast).toHaveBeenCalledTimes(1)
-  })
-
-  it('BAŞARILI yolda gereksiz uyarı ÇIKMAZ', async () => {
-    mockedAxios.post.mockResolvedValue({ data: { status: 'ok' } })
-    const { result, showToast } = setupMCP()
-
-    await act(async () => { await result.current.approveMCPFile('m1') })
-
-    expect(showToast).not.toHaveBeenCalled()
-  })
-
-  it('silme onayında gate yoksa istek hiç gitmez, uyarı da çıkmaz', async () => {
-    const { result, showToast } = setupMCP()
-
-    // Gate kimliği artık `window` global'inde değil kartın kendi kaydında
-    // taşınıyor; "gate yok" durumu boş string ile ifade ediliyor.
-    await act(async () => { await result.current.approveMCPDelete('') })
-
-    expect(mockedAxios.post).not.toHaveBeenCalled()
-    expect(showToast).not.toHaveBeenCalled()
+    expect(Object.keys(result.current).sort()).toEqual(
+      ['activeGate', 'gateWorkspaceMismatch', 'openWorkspacePath', 'poll', 'resolveActiveGate'].sort(),
+    )
   })
 })
 

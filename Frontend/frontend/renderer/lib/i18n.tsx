@@ -103,6 +103,7 @@ const tr = {
   'approval.failed': 'Bazı dosyalar yazılamadı',
   'approval.verifyTree': 'Hangi dosyaların yazıldığını dosya ağacından doğrulayın.',
   'approval.close': 'Kapat',
+  'approval.skip': 'Atla',
   // FileDeleteApproval
   'deleteApproval.title': 'Dosya Silme Onayı',
   'deleteApproval.confirm': 'dosyasını silmek istediğine emin misin?',
@@ -246,6 +247,7 @@ const en: Record<keyof typeof tr, string> = {
   'approval.failed': 'Some files could not be written',
   'approval.verifyTree': 'Check the file tree to see which files were written.',
   'approval.close': 'Close',
+  'approval.skip': 'Skip',
   // FileDeleteApproval
   'deleteApproval.title': 'File Delete Confirmation',
   'deleteApproval.confirm': 'Are you sure you want to delete',

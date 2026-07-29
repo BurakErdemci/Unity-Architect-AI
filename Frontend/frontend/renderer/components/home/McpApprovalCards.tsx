@@ -17,14 +17,50 @@
  * birleştirme kopyala-yapıştır sapmasını engellemek içindi ve akışların
  * ayrılmasıyla gereksizleşti.
  */
-import React, { useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, FolderOpen } from 'lucide-react';
 import { DiffViewer } from './DiffViewer';
 import { FileCreationApproval, PendingFile } from './FileCreationApproval';
 import { FileDeleteApproval } from './FileDeleteApproval';
 import { CommandApproval } from './CommandApproval';
-import { postMcpDecision, decisionToast } from '../../hooks/home/gateResponse';
+import { GateFailure, postMcpDecision, decisionToast } from '../../hooks/home/gateResponse';
 import { MCP_MSG_ID, McpActiveGate } from '../../hooks/home/useMCPApproval';
+
+/**
+ * Bir karar denemesinin sonucu — ÜÇ durum, iki değil.
+ *
+ * Neden ayrı tip (dış denetim `stale-decision-latch`, 2026-07-29): eskiden
+ * `decide` bastırılmış çağrıya `null` dönüyordu ve `null` bu depodaki gate
+ * sözleşmesinde "TESLİM EDİLDİ" demek (bkz gateResponse.ts). Yani gönderilmemiş
+ * bir karar, gönderilmiş gibi raporlanıyordu. Ölçülen dizi: onay POST'u
+ * uçuştayken İptal'e basmak → ret bastırılıyor → ekrana "Komut iptal edildi"
+ * yazılıyor → onay iniyor ve KOMUT ÇALIŞIYOR. Kullanıcının gördüğü son karar
+ * ret, gerçekleşen ise onay.
+ *
+ * `sent: false` bir hata değil, "bu çağrıda hiçbir şey gönderilmedi" bilgisidir;
+ * çağrı yerleri buna göre farklı davranıyor (kapatma yolunda sessiz, kullanıcının
+ * bastığı butonda sesli).
+ */
+type DecisionResult =
+  | { sent: true; failure: GateFailure | null }
+  | { sent: false; reason: 'in-flight' | 'already-decided' };
+
+/**
+ * Bastırılan karar için kullanıcıya ne denir.
+ *
+ * İkisi de `warning`: kullanıcı bir buton bastı ve o basış bir şey YAPMADI —
+ * bunu `info` diye göstermek, düzelttiğimiz sessiz yalanın kibar hâli olurdu.
+ * İki durum ayrı cümle çünkü kullanıcının yapabileceği şey farklı: uçuştaki
+ * karar birazdan sonuçlanır ve toast'ı gelir; sonuçlanmış karar geri alınamaz.
+ */
+const SUPPRESSED_MESSAGES: Record<'in-flight' | 'already-decided', string> = {
+  'in-flight':
+    'Önceki kararınız gönderiliyor — bu isteğe ikinci bir karar verilemez. ' +
+    'Sonucu birazdan göreceksiniz.',
+  'already-decided':
+    'Bu istek için karar zaten gönderildi; geri alınamaz. ' +
+    'Aksini istiyorsanız işlemi yeniden başlatın.',
+};
 
 interface McpApprovalCardsProps {
   /** Ekranda karar bekleyen istek. `null` ise hiçbir şey çizilmez. */
@@ -118,7 +154,7 @@ export const McpApprovalCards: React.FC<McpApprovalCardsProps> = ({
   setCode,
 }) => {
   /**
-   * Bu gate için karar ZATEN gönderildi mi.
+   * Bu SUNUM için karar sonuçlandı mı (gate id ile).
    *
    * Gerekçesi iki yönlü. (1) Kart kapatma yolları (`onDone`, `onSkipOne`) artık
    * karar gönderiyor — eskiden yalnız state'i temizliyorlardı ve köprü 180 sn
@@ -126,18 +162,75 @@ export const McpApprovalCards: React.FC<McpApprovalCardsProps> = ({
    * `approval-state-cleared-without-decision`). (2) Ama `onDone` onaydan SONRA
    * da tetikleniyor; işaret olmasa onaylanmış bir gate'e ikinci kez "reddet"
    * gider ve kullanıcı sebepsiz bir "gate bulunamadı" uyarısı görürdü.
+   *
+   * ⚠️ Bayrak POST SONUÇLANDIKTAN sonra konuyor, öncesinde değil. Önce konması
+   * `stale-decision-latch` bulgusunun yarısıydı: uçuştaki onayın süresi boyunca
+   * bayrak "karar verildi" diyordu ama ortada henüz bir karar yoktu, ve o
+   * penceredeki her buton basışı sessizce yutuluyordu. Uçuş penceresi ayrı bir
+   * kilitle (`inFlightRef`) kapatılıyor — iki farklı durum, iki farklı işaret.
    */
   const decidedRef = useRef<string | null>(null);
+  /** POST'u şu an uçuşta olan gate. Senkron yazılır: iki tıklama arasında await yok. */
+  const inFlightRef = useRef<string | null>(null);
+  /** Uçuş sırasında kartı kilitlemek için — ref değil state, çünkü çizimi etkiliyor. */
+  const [busy, setBusy] = useState(false);
+
+  /**
+   * Kart ekrandan kalkınca bayrak düşer.
+   *
+   * Neden gerekli (`stale-decision-latch`'in ikinci yarısı): bileşen ChatPanel
+   * içinde MOUNT KALIYOR, yalnız `gate` null oluyor. Bayrak gate id'sine
+   * ömür boyu bağlı kalsaydı, teslimatı başarısız olmuş bir istek backend'de
+   * hâlâ bekliyorken yeniden sunulduğunda ikinci karar da bastırılırdı — yani
+   * kullanıcı o isteğe BİR DAHA karar veremezdi.
+   *
+   * Yeniden sunum fail-open değil: backend karar alınca kaydı `_mcp_pending`'den
+   * DÜŞÜRÜYOR, dolayısıyla orada yeniden görünen bir gate'in kaydedilmiş kararı
+   * yok demektir. Kararın gerçekten geç kaldığı durumda ikinci POST
+   * `gate_not_found` alır ve kullanıcı bunu uyarı olarak görür.
+   */
+  useEffect(() => {
+    if (!gate) decidedRef.current = null;
+  }, [gate]);
 
   if (!gate) return null;
 
   const gateId = gate.gateId;
 
-  /** Kararı gönderir; aynı gate için ikinci kez göndermez. */
-  const decide = async (approved: boolean) => {
-    if (decidedRef.current === gateId) return null;
-    decidedRef.current = gateId;
-    return postMcpDecision(apiBase, gateId, approved, sessionToken);
+  /** Kararı gönderir; uçuşta ya da sonuçlanmış bir karar varsa GÖNDERMEZ ve bunu söyler. */
+  const decide = async (approved: boolean): Promise<DecisionResult> => {
+    if (inFlightRef.current === gateId) return { sent: false, reason: 'in-flight' };
+    if (decidedRef.current === gateId) return { sent: false, reason: 'already-decided' };
+    inFlightRef.current = gateId;
+    setBusy(true);
+    try {
+      const failure = await postMcpDecision(apiBase, gateId, approved, sessionToken);
+      decidedRef.current = gateId;
+      return { sent: true, failure };
+    } finally {
+      inFlightRef.current = null;
+      setBusy(false);
+    }
+  };
+
+  /**
+   * Kararın sonucunu kullanıcıya bildirir.
+   *
+   * Bastırılan çağrı ile teslim edilen çağrı AYNI cümleyi göremez — bulgunun
+   * tam olarak ölçtüğü şey buydu. `decisionToast` yalnız gerçekten gönderilmiş
+   * bir kararın teslimatını yorumlar; gönderilmemişi yorumlamaya çalışmak, ona
+   * olmayan bir anlam yüklemek olurdu.
+   */
+  // `=== false`, `!result.sent` DEĞİL: bu depoda `strict: false` (tsconfig:11)
+  // ve truthiness daraltması ayrık birleşimi ayırmıyor; literal karşılaştırma
+  // ayırıyor. Aynı sebep aşağıdaki iki çağrı yerinde de geçerli.
+  const reportDecision = (result: DecisionResult, deliveredMessage: string) => {
+    if (result.sent === false) {
+      showToast(SUPPRESSED_MESSAGES[result.reason], 'warning');
+      return;
+    }
+    const t = decisionToast(result.failure, deliveredMessage);
+    showToast(t.message, t.type);
   };
 
   /**
@@ -148,12 +241,53 @@ export const McpApprovalCards: React.FC<McpApprovalCardsProps> = ({
    * biri kaldırıldığında öteki testi yeşil tutuyordu, yani ikisi de tek tek
    * "gereksiz" görünüyordu ve hangisinin gerçek koruma olduğu ölçülemiyordu.
    * Tek kontrol, tek mutasyon, net cevap.
+   *
+   * Bastırılma burada BEKLENEN durum (kararlar bittikten sonra "Kapat"a
+   * basılıyor), o yüzden sessiz: kullanıcı bir KARAR vermedi, kartı topladı.
+   *
+   * ⚠️ Bu sessizlik YALNIZ bu anlama uygulanır. Kullanıcının görünür "vazgeç"
+   * kararı için `rejectByUser` var — ikisini tek fonksiyona toplamak, iki-varyant
+   * turunda ölçülen sessiz arızanın ta kendisiydi (2026-07-29): "İptal"e basan
+   * kullanıcının reddi, onay uçuştayken hiçbir iz bırakmadan yutuluyordu.
    */
   const closeWithoutDecision = async () => {
-    const failure = await decide(false);   // zaten karar verildiyse no-op
-    if (failure) showToast(failure.message, failure.type);
+    const result = await decide(false);   // zaten karar verildiyse no-op
+    if (result.sent && result.failure) showToast(result.failure.message, result.failure.type);
     onResolved();
   };
+
+  /**
+   * Kullanıcının GÖRÜNÜR reddi (İptal / Vazgeç / Reddet / Atla).
+   *
+   * Teslim edilen ret sessizdir — kart kaybolur, söylenecek bir şey yok. Ama
+   * GÖNDERİLEMEYEN ret asla sessiz kalamaz: kullanıcı reddettiğini sanır, işlem
+   * olur. Dört kart yolunun dördü de buradan geçiyor; ayrı ayrı yazıldığında
+   * biri unutuluyordu (ölçüldü: `onSkipOne` ve oluşturma kartının "İptal"i).
+   */
+  const rejectByUser = async () => {
+    const result = await decide(false);
+    if (result.sent === false) showToast(SUPPRESSED_MESSAGES[result.reason], 'warning');
+    else if (result.failure) showToast(result.failure.message, result.failure.type);
+    onResolved();
+  };
+
+  /**
+   * Karar uçuştayken kartı kilitler.
+   *
+   * `fieldset[disabled]` seçilmesinin sebebi: içindeki BÜTÜN butonları
+   * tarayıcının kendi kurallarıyla devre dışı bırakıyor (klavye dahil), yani
+   * dört kart bileşenine ayrı ayrı `disabled` prop'u eklemeye ve o dördünün
+   * birbiriyle uyuşmasını ummaya gerek kalmıyor — bu depodaki arızaların ortak
+   * biçimi tam olarak "uyuşması gereken iki yer uyuşmuyor".
+   *
+   * ⚠️ Bu görsel kilit GARANTİ DEĞİL, ikinci savunma hattı: asıl güvence
+   * `decide` içindeki mantıksal kilit. Kilidin kendisi tek başına ölçülemez
+   * (jsdom `fieldset` devralmasını tam uygulamıyor), o yüzden testler mantık
+   * katmanını ölçüyor.
+   */
+  const lock = (node: React.ReactNode) => (
+    <fieldset disabled={busy} aria-busy={busy} className="contents">{node}</fieldset>
+  );
 
   const banner = (
     <WorkspaceBanner gate={gate} mismatch={workspaceMismatch} openWorkspacePath={openWorkspacePath} />
@@ -164,6 +298,7 @@ export const McpApprovalCards: React.FC<McpApprovalCardsProps> = ({
       {pendingGenFiles?.messageId === MCP_MSG_ID && (
         <div className="px-4 pb-2">
           {banner}
+          {lock(
           <FileCreationApproval
             files={pendingGenFiles.files}
             autoAccept={false}
@@ -173,16 +308,15 @@ export const McpApprovalCards: React.FC<McpApprovalCardsProps> = ({
             // "teslim edildi" demek, yani gate yokken hiçbir istek gitmeden
             // başarı iddia ediliyordu. Kararı artık postMcpDecision veriyor.
             onAcceptOne={async (file) => {
-              const failure = await decide(true);
+              const result = await decide(true);
               refreshFileTree();
-              // "oluşturuldu" DEĞİL "yazılıyor": `failure === null` yalnız
-              // backend'in onayı kaydettiğini kanıtlıyor. Dosyayı MCP köprüsü
-              // bundan sonra `file_tools.write_file` içinde yazıyor ve orada
-              // düşebiliyor (ölçüldü 2026-07-29: hedefin üst dizini normal bir
-              // dosyaysa `os.makedirs` → FileExistsError, dosya diske hiç
-              // yazılmıyor — ekranda ise "✅ oluşturuldu" duruyordu).
-              const t = decisionToast(failure, `Onayınız gönderildi — ${file.name} yazılıyor`);
-              showToast(t.message, t.type);
+              // "oluşturuldu" DEĞİL "yazılıyor": teslimat yalnız backend'in
+              // onayı kaydettiğini kanıtlıyor. Dosyayı MCP köprüsü bundan sonra
+              // `file_tools.write_file` içinde yazıyor ve orada düşebiliyor
+              // (ölçüldü 2026-07-29: hedefin üst dizini normal bir dosyaysa
+              // `os.makedirs` → FileExistsError, dosya diske hiç yazılmıyor —
+              // ekranda ise "✅ oluşturuldu" duruyordu).
+              reportDecision(result, `Onayınız gönderildi — ${file.name} yazılıyor`);
               // ⚠️ BİLİNEN BOŞLUK: dönen `true` FileCreationApproval'ın kartında
               // dosyayı "oluşturuldu" listesine taşıyor. O sözleşme (bkz.
               // FileCreationApproval.tsx:34) yerel IPC yolunda GERÇEKTEN
@@ -190,31 +324,36 @@ export const McpApprovalCards: React.FC<McpApprovalCardsProps> = ({
               // bir durum ("teslim edildi, sonuç bilinmiyor") olmadan
               // düzeltilemez ve `false` dönmek daha kötü olurdu: hiç olmamış
               // bir başarısızlığı iddia ederdi.
-              return !failure;
+              // Bastırılan çağrı da `false` döner: hiçbir şey gönderilmediği
+              // için dosyayı "oluşturuldu" listesine taşımak yalan olurdu.
+              return result.sent && !result.failure;
             }}
             // Atlamak da bir KARAR: eskiden hiçbir şey göndermiyordu ve istek
-            // köprüde 180 sn asılı kalıyordu.
-            onSkipOne={() => { void closeWithoutDecision(); }}
+            // köprüde 180 sn asılı kalıyordu. Bastırılırsa da sessiz kalmaz.
+            onSkipOne={() => { void rejectByUser(); }}
             onAcceptAll={async () => {
-              const failure = await decide(true);
+              const result = await decide(true);
               refreshFileTree();
               // Kardeş satır: yukarıdaki tek-dosya yoluyla AYNI sınıf, aynı dil.
-              const t = decisionToast(failure, 'Onayınız gönderildi — dosyalar yazılıyor');
-              showToast(t.message, t.type);
-              return !failure;
+              reportDecision(result, 'Onayınız gönderildi — dosyalar yazılıyor');
+              return result.sent && !result.failure;
             }}
+            // "Kapat" (kararlar bitti) ile "İptal" (kullanıcının kararı) AYRI:
+            // ikisi tek prop'tayken İptal'in reddi sessizce yutuluyordu.
             onDone={() => { setPendingGenFiles(null); void closeWithoutDecision(); }}
-          />
+            onCancel={() => { setPendingGenFiles(null); void rejectByUser(); }}
+          />)}
         </div>
       )}
 
       {pendingDelete?.messageId === MCP_MSG_ID && (
         <div className="px-4 pb-2">
           {banner}
+          {lock(
           <FileDeleteApproval
             path={pendingDelete.path}
             onConfirm={async () => {
-              const failure = await decide(true);
+              const result = await decide(true);
               setPendingDelete(null);
               onResolved();
               // MCP server approval'ı polling ile ~500ms gecikmeli görür → dosyayı siler.
@@ -223,37 +362,29 @@ export const McpApprovalCards: React.FC<McpApprovalCardsProps> = ({
               // "silindi" DEĞİL "siliniyor": onayın iletilmesi silmenin
               // yapıldığını değil, köprünün onu ~500ms sonra DENEYECEĞİNİ
               // gösteriyor (üstteki refreshFileTree gecikmesi tam bu yüzden var).
-              const t = decisionToast(failure, '🗑️ Onayınız gönderildi — dosya siliniyor');
-              showToast(t.message, t.type);
+              reportDecision(result, '🗑️ Onayınız gönderildi — dosya siliniyor');
             }}
-            onCancel={async () => {
-              // Reddin iletilmemesi de sessiz kalmamalı: kullanıcı reddettiğini
-              // sanırken gate düşmüş olabilir ve MCP tarafı kendi kararını verir.
-              const failure = await decide(false);
-              if (failure) showToast(failure.message, failure.type);
-              setPendingDelete(null);
-              onResolved();
-            }}
-          />
+            onCancel={() => { setPendingDelete(null); void rejectByUser(); }}
+          />)}
         </div>
       )}
 
       {pendingCommand?.messageId === MCP_MSG_ID && (
         <div className="px-4 pb-2">
           {banner}
+          {lock(
           <CommandApproval
             command={pendingCommand.command}
             onConfirm={async () => {
-              const failure = await decide(true);
+              const result = await decide(true);
               setPendingCommand(null);
               onResolved();
               // "çalışıyor" iddiası onay iletilse BİLE erken: komutu köprü
               // bundan sonra başlatıyor ve başlatma da düşebilir.
-              const t = decisionToast(failure, 'Onayınız gönderildi — komut başlatılıyor');
-              showToast(t.message, t.type);
+              reportDecision(result, 'Onayınız gönderildi — komut başlatılıyor');
             }}
             onCancel={async () => {
-              const failure = await decide(false);
+              const result = await decide(false);
               setPendingCommand(null);
               onResolved();
               // RET tarafı ASİMETRİK ve bilerek "oldu" diyor: köprü kararı
@@ -261,41 +392,43 @@ export const McpApprovalCards: React.FC<McpApprovalCardsProps> = ({
               // ÇALIŞMAYACAĞINI garanti ediyor — onaydan farklı olarak burada
               // teslimat sonucun kendisi. (Onay tarafı bunu söyleyemez: orada
               // teslimattan sonra hâlâ yapılacak bir iş kalıyor.)
-              const t = decisionToast(failure, 'Komut iptal edildi');
-              showToast(t.message, t.type);
+              //
+              // ⚠️ Bu asimetri YALNIZ ret GERÇEKTEN GÖNDERİLDİYSE geçerli.
+              // `stale-decision-latch` tam olarak burada üredi: onay uçuştayken
+              // basılan İptal bastırılıyor, `reportDecision` olmadan ekrana
+              // "Komut iptal edildi" yazılıyor ve komut çalışıyordu — yani
+              // fail-closed garantisi hiç var olmayan bir POST'a dayandırılıyordu.
+              reportDecision(result, 'Komut iptal edildi');
             }}
-          />
+          />)}
         </div>
       )}
 
       {pendingFix?.messageId === MCP_MSG_ID && (
         <div className="px-4 pb-2">
           {banner}
+          {lock(
           <DiffViewer
             diffData={pendingFix.data}
             filename={pendingFix.data?.editor_hint?.split('/').pop()}
             applied={pendingFix.applied}
             onAccept={async (fixedCode) => {
-              const failure = await decide(true);
+              const result = await decide(true);
               // Dosyayı MCP köprüsü yazıyor; burada yalnız editör tamponu
               // tazeleniyor ve yalnız karar İLETİLDİYSE — iletilmediyse diskte
               // eski içerik kalacak, editörde yenisini göstermek yalan olurdu.
-              if (!failure) setCode?.(fixedCode);
+              // Bastırılan çağrıda da tazelenmiyor: gönderilmemiş bir onayın
+              // sonucunu editörde göstermek aynı yalanın başka biçimi.
+              if (result.sent && !result.failure) setCode?.(fixedCode);
               setPendingFix(null);
               onResolved();
               refreshFileTree();
               // "Onaylandı" değil "gönderildi": dosyayı MCP köprüsü
               // BUNDAN SONRA yazıyor ve orada düşebiliyor.
-              const t = decisionToast(failure, 'Onayınız gönderildi — değişiklik uygulanıyor');
-              showToast(t.message, t.type);
+              reportDecision(result, 'Onayınız gönderildi — değişiklik uygulanıyor');
             }}
-            onReject={async () => {
-              const failure = await decide(false);
-              if (failure) showToast(failure.message, failure.type);
-              setPendingFix(null);
-              onResolved();
-            }}
-          />
+            onReject={() => { setPendingFix(null); void rejectByUser(); }}
+          />)}
         </div>
       )}
     </>
