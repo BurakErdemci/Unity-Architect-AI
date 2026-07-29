@@ -46,6 +46,124 @@ from utils.module_discovery import discover_modules
 UNVERIFIABLE_ACTION_SETS: set[str] = set()
 
 
+# Every call the gate exempts from an approval card, pinned exactly.
+#
+# The rest of this file derives its expectations from the source: which tools
+# exist, which actions they accept, which of them refresh the project. None of
+# that can answer the one question that actually matters here -- whether a given
+# action WRITES something in Unity. That answer lives in C# behaviour the Python
+# side cannot inspect, and MCP annotations only describe whole tools, not
+# actions. So for the read/write partition the ledger genuinely is the authority,
+# and an audit red team demonstrated the cost on 2026-07-29: moving
+# `manage_camera screenshot` from write_actions to read_actions exempted a call
+# that writes a PNG to disk, and all 288 tests stayed green.
+#
+# This pin does NOT prove any row is correct -- nothing here can. It makes
+# widening the exemption set LOUD: any addition, whether hand-written or slipped
+# in while "cleaning up" the ledger, fails this test and forces a second,
+# deliberate edit. Narrowing is loud too, which is the point -- 2026-07-29's
+# preflight finding moved 30+ actions off this list, and that is exactly the
+# kind of change that should never pass silently.
+#
+# Format: "tool:action", "tool:*" for a whole-tool read, and "tool:action?param"
+# for a param_dependent rule (a read only while `param` is absent or falsy).
+#
+# To change it: state in the commit message which Unity behaviour justifies the
+# new row, the way the ledger's own `evidence` field does.
+PINNED_READ_SURFACE: frozenset[str] = frozenset({
+    "debug_request_context:*",
+    "execute_code:get_history",
+    "find_in_file:*",
+    "get_sha:*",
+    "get_test_job:*",
+    "manage_animation:animator_get_info",
+    "manage_animation:animator_get_parameter",
+    "manage_animation:clip_get_info",
+    "manage_animation:controller_get_info",
+    "manage_build:status",
+    "manage_build:platform?target",
+    "manage_build:settings?value",
+    "manage_build:scenes?scenes",
+    "manage_build:profiles?activate",
+    "manage_camera:get_brain_status",
+    "manage_camera:list_cameras",
+    "manage_camera:ping",
+    "manage_fbx:get_info",
+    "manage_graphics:bake_get_settings",
+    "manage_graphics:bake_status",
+    "manage_graphics:feature_list",
+    "manage_graphics:ping",
+    "manage_graphics:pipeline_get_info",
+    "manage_graphics:pipeline_get_settings",
+    "manage_graphics:skybox_get",
+    "manage_graphics:stats_get",
+    "manage_graphics:stats_get_memory",
+    "manage_graphics:stats_list_counters",
+    "manage_graphics:volume_get_info",
+    "manage_graphics:volume_list_effects",
+    "manage_material:get_material_info",
+    "manage_material:ping",
+    "manage_packages:get_package_info",
+    "manage_packages:list_packages",
+    "manage_packages:list_registries",
+    "manage_packages:ping",
+    "manage_packages:search_packages",
+    "manage_packages:status",
+    "manage_physics:get_collision_matrix",
+    "manage_physics:get_rigidbody",
+    "manage_physics:get_settings",
+    "manage_physics:linecast",
+    "manage_physics:overlap",
+    "manage_physics:ping",
+    "manage_physics:raycast",
+    "manage_physics:raycast_all",
+    "manage_physics:shapecast",
+    "manage_physics:validate",
+    "manage_probuilder:get_mesh_info",
+    "manage_probuilder:ping",
+    "manage_probuilder:select_faces",
+    "manage_probuilder:validate_mesh",
+    "manage_profiler:frame_debugger_get_events",
+    "manage_profiler:get_counters",
+    "manage_profiler:get_frame_timing",
+    "manage_profiler:get_object_memory",
+    "manage_profiler:memory_compare_snapshots",
+    "manage_profiler:memory_list_snapshots",
+    "manage_profiler:ping",
+    "manage_profiler:profiler_status",
+    "manage_script:read",
+    "manage_script_capabilities:*",
+    "manage_shader:read",
+    "manage_sprite:get_info",
+    "manage_tools:activate",
+    "manage_tools:deactivate",
+    "manage_tools:list_groups",
+    "manage_tools:reset",
+    "manage_tools:sync",
+    "manage_ui:get_visual_tree",
+    "manage_ui:list",
+    "manage_ui:ping",
+    "manage_ui:read",
+    "manage_vfx:line_get_info",
+    "manage_vfx:particle_get_info",
+    "manage_vfx:ping",
+    "manage_vfx:trail_get_info",
+    "manage_vfx:vfx_get_info",
+    "manage_vfx:vfx_list_assets",
+    "manage_vfx:vfx_list_templates",
+    "read_console:get",
+    "set_active_instance:*",
+    "unity_docs:get_doc",
+    "unity_docs:get_manual",
+    "unity_docs:get_package_doc",
+    "unity_docs:lookup",
+    "unity_reflect:get_member",
+    "unity_reflect:get_type",
+    "unity_reflect:search",
+    "validate_script:*",
+})
+
+
 @pytest.fixture(scope="module", autouse=True)
 def _load_all_tools():
     """Import every tool module so the decorators populate the registry."""
@@ -104,6 +222,14 @@ def _source_action_param(tool_info: dict) -> str | None:
     except (TypeError, ValueError):
         return None
     return "action" if "action" in params else None
+
+
+def _source_parameter_names(tool_info: dict) -> set[str] | None:
+    """Every parameter name the tool function actually declares, or None if unreadable."""
+    try:
+        return set(inspect.signature(tool_info["func"]).parameters)
+    except (TypeError, ValueError):
+        return None
 
 
 def _closed_action_set(tool_name: str, tool_info: dict) -> set[str] | None:
@@ -176,6 +302,94 @@ def test_action_param_matches_the_source_signature(tool_name):
         )
 
 
+@pytest.mark.parametrize("tool_name", sorted(ledger_tool_names()))
+def test_param_dependent_rules_name_a_real_parameter(tool_name):
+    """
+    A `param_dependent` rule reads a SIBLING parameter to decide read vs write.
+    That name must exist in the source, because a name that does not exist is
+    always absent, and absent is the read side of every rule we have.
+
+    So a single typo turns a gated action into an exempt one, silently and in
+    the fail-OPEN direction - the opposite of everything else in the reader,
+    which treats "cannot prove read" as write. `_is_read_by_param` already
+    fails closed on an unknown `read_when`; the parameter name had no such
+    guard. Reproduced by an audit red team on 2026-07-29: renaming
+    manage_build.platform's `target` to `target_typo` made
+    `platform target=android` classify as read - a call that runs
+    SwitchActiveBuildTarget and reimports the project - with all suites green.
+
+    The lowercase assertion closes the neighbouring door: the server normalises
+    camelCase parameters before validation, but the gate classifies the RAW
+    payload, so a rule keyed to a camelCase name would miss the snake_case call
+    (and vice versa) and land on the read side by absence. Every parameter this
+    project declares is already lowercase; keeping it that way keeps the two
+    spellings from ever diverging.
+    """
+    entry = tool_entry(tool_name) or {}
+    rules = entry.get("param_dependent", [])
+    if not rules:
+        pytest.skip("no param_dependent rules")
+
+    tool_info = _registered().get(tool_name)
+    if tool_info is None:
+        pytest.skip("covered by test_no_dead_ledger_entries")
+
+    declared = _source_parameter_names(tool_info)
+    assert declared is not None, (
+        f"{tool_name}: the signature is unreadable, so a param_dependent rule cannot "
+        "be checked against it. Unclassifiable is not the same as correct."
+    )
+
+    for rule in rules:
+        param = rule["param"]
+        assert param in declared, (
+            f"{tool_name}.{rule['action']}: the rule pivots on parameter {param!r}, which "
+            f"the function does not declare. A missing parameter always reads as absent, "
+            f"so this rule would classify every such call as read. Declared: "
+            f"{sorted(declared)}"
+        )
+        assert param == param.lower(), (
+            f"{tool_name}.{rule['action']}: parameter {param!r} is not lowercase. The gate "
+            "classifies the payload before the server normalises camelCase, so a mixed-case "
+            "rule name can miss the parameter entirely and fall through to read."
+        )
+
+
+def _exempted_read_surface() -> set[str]:
+    """Every call the ledger currently exempts, in PINNED_READ_SURFACE's notation."""
+    surface: set[str] = set()
+    for tool_name in sorted(ledger_tool_names()):
+        entry = tool_entry(tool_name) or {}
+        if entry.get("tool_level") == READ:
+            surface.add(f"{tool_name}:*")
+        for action in entry.get("read_actions", []):
+            surface.add(f"{tool_name}:{action}")
+        for rule in entry.get("param_dependent", []):
+            surface.add(f"{tool_name}:{rule['action']}?{rule['param']}")
+    return surface
+
+
+def test_the_exempted_read_surface_is_pinned():
+    """The set of cardless calls may not change without someone saying so."""
+    actual = _exempted_read_surface()
+    added = sorted(actual - PINNED_READ_SURFACE)
+    removed = sorted(PINNED_READ_SURFACE - actual)
+
+    assert not added, (
+        f"These calls became exempt from the approval gate without the pin being "
+        f"updated: {added}. Source cannot tell whether an action writes in Unity, so "
+        "this list is the only thing standing between a mistaken ledger row and a "
+        "cardless mutation. If the widening is intended, add the rows here and say in "
+        "the commit message which Unity behaviour justifies each one."
+    )
+    assert not removed, (
+        f"These calls are no longer exempt: {removed}. Narrowing is usually correct - "
+        "it means something was found to leave a trace - but it changes what the user "
+        "sees on every turn, so it is not something to discover later from a diff. "
+        "Update the pin in the same commit as the reclassification."
+    )
+
+
 def test_every_registered_tool_is_classified():
     missing = sorted(set(_registered()) - ledger_tool_names())
     assert not missing, (
@@ -210,12 +424,22 @@ def _function_asks_for_refresh(tool_info: dict) -> bool:
         func = func.__wrapped__
     try:
         src = textwrap.dedent(inspect.getsource(func))
-    except (OSError, TypeError):
-        return False
-    try:
         tree = ast.parse(src)
-    except SyntaxError:
-        return False
+    except (OSError, TypeError, SyntaxError) as exc:
+        # Fail CLOSED. The first version returned False here, and the caller
+        # reads False as "this tool does not refresh" and returns without
+        # checking the row at all - a tripwire that answers "all clear" exactly
+        # when it has gone blind. Reproduced by an audit red team on
+        # 2026-07-29: with inspect.getsource forced to raise for
+        # find_gameobjects, a hand-widened `tool_level: read` row passed this
+        # check unchallenged. An instrument that cannot see its subject must
+        # say so, not vote yes.
+        raise AssertionError(
+            f"{tool_info.get('name', func)}: cannot read this tool's source to decide "
+            f"whether it calls preflight(refresh_if_dirty=True) "
+            f"({type(exc).__name__}: {exc}). Unclassifiable is not the same as 'no "
+            "refresh' - fix the inspection before trusting this row."
+        ) from exc
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
@@ -274,6 +498,33 @@ def test_preflight_refreshing_tools_have_no_read_actions(tool_name):
         "must carry \"preflight_refresh\": true - otherwise the next reader sees an "
         "over-strict classification with no reason and relaxes it."
     )
+
+
+def test_the_refresh_detector_fails_closed_when_it_cannot_read_source(monkeypatch):
+    """
+    Blinding the detector must break the tripwire, not satisfy it.
+
+    Promoted from an audit probe (2026-07-29). The detector used to answer False
+    on OSError/TypeError/SyntaxError, and its caller reads False as "this tool
+    does not refresh" and returns without checking the row - so a hand-widened
+    `find_gameobjects: tool_level: read` passed while the tool does in fact
+    refresh. The probe that found it can no longer measure this (it asserted on
+    a return value that no longer happens), which is why the assertion lives
+    here instead.
+    """
+    tool_info = _registered().get("find_gameobjects")
+    assert tool_info is not None, "find_gameobjects is the fixture this test needs"
+    assert _function_asks_for_refresh(tool_info), (
+        "find_gameobjects no longer calls preflight(refresh_if_dirty=True); pick another "
+        "refreshing tool as the fixture rather than deleting this test."
+    )
+
+    def _blind(_func):
+        raise OSError("simulated source-loader failure")
+
+    monkeypatch.setattr(inspect, "getsource", _blind)
+    with pytest.raises(AssertionError, match="cannot read this tool's source"):
+        _function_asks_for_refresh(tool_info)
 
 
 def _annotations(tool_info: dict) -> dict:
