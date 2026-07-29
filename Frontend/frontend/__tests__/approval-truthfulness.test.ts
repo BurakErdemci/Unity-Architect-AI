@@ -38,7 +38,7 @@ vi.mock('@monaco-editor/react', () => ({
 import { ChatPanel } from '../renderer/components/home/ChatPanel'
 import { FileCreationApproval, PendingFile } from '../renderer/components/home/FileCreationApproval'
 import { postMcpDecision, decisionToast } from '../renderer/hooks/home/gateResponse'
-import { useMCPApproval, takeMcpGate } from '../renderer/hooks/home/useMCPApproval'
+import { useMCPApproval, MCP_MSG_ID, McpActiveGate } from '../renderer/hooks/home/useMCPApproval'
 import { useChat } from '../renderer/hooks/home/useChat'
 import { renderHook, act } from '@testing-library/react'
 import axios from 'axios'
@@ -67,6 +67,12 @@ const MSG = {
 }
 
 const FILE: PendingFile = { name: 'Player.cs', code: 'class Player {}', suggestedPath: 'Player.cs' }
+
+/** Kartla birlikte tasinan gate kaydi. `window` global'i 2026-07-29'da kaldirildi:
+ *  iki bekleyen yazma ayni slotu paylasiyordu ve "Yeni dosya" kartina basmak
+ *  OTEKI istegin gate'ini onayliyordu (denetim: `approval-gate-misbinding`). */
+const WRITE_GATE: McpActiveGate = { gateId: 'w-1', tool: 'write_file', workspacePath: '/ws' }
+const DELETE_GATE: McpActiveGate = { gateId: 'd-1', tool: 'delete_file', workspacePath: '/ws' }
 
 type PanelOverrides = Partial<Record<string, any>>
 
@@ -115,6 +121,12 @@ const renderPanel = (overrides: PanelOverrides = {}) => {
     onAnswerQuestion: vi.fn(),
     deleteFile: vi.fn(),
     setIsTerminalOpen: vi.fn(),
+    apiBase: API,
+    // Gate kimligi artik `window` global'inde degil kartin kendi kaydinda.
+    mcpGate: null as McpActiveGate | null,
+    mcpWorkspaceMismatch: false,
+    mcpOpenWorkspacePath: '/ws',
+    onMcpResolved: vi.fn(),
     ...overrides,
   }
   render(React.createElement(ChatPanel, props))
@@ -150,8 +162,6 @@ beforeEach(() => {
   vi.spyOn(console, 'error').mockImplementation(() => {})
   vi.spyOn(console, 'warn').mockImplementation(() => {})
   ;(window as any).__API__ = API
-  delete (window as any).__mcpWriteGate
-  delete (window as any).__mcpDeleteGate
 })
 
 afterEach(() => {
@@ -328,28 +338,36 @@ describe('KÖK A · boş gateId — istek gitmeden başarı iddia edilmez', () =
     expect(failure?.uncertain).toBeFalsy()
   })
 
-  it('MCP oluşturma kartı: gate yokken yeşil toast basılmaz', async () => {
+  /**
+   * ⚠️ Bu iki testin İDDİASI 2026-07-29'da GÜÇLENDİ. Eskiden ölçülen şey "gate
+   * yokken yeşil toast basılmaz" idi; yani kartın gate'siz ÇİZİLEBİLDİĞİ kabul
+   * ediliyor, yalnız yalan söylememesi isteniyordu. Gate kimliği kartın kendi
+   * kaydına taşınınca o hâl artık ÜRETİLEMİYOR: gate yoksa kart hiç yok. Zayıf
+   * iddiayı korumak, kaldırılmış bir sınıfı koruyor gibi görünüp aslında
+   * hiçbir şey ölçmemek olurdu.
+   */
+  it('MCP oluşturma kartı: gate yokken kart HİÇ ÇİZİLMEZ', async () => {
     const fetchSpy = vi.fn()
     vi.stubGlobal('fetch', fetchSpy)
-    delete (window as any).__mcpWriteGate
 
-    const { showToast } = renderPanel({ pendingGenFiles: { files: [FILE], messageId: -999 } })
-    fireEvent.click(screen.getByText('Uygula'))
+    const { showToast } = renderPanel({
+      pendingGenFiles: { files: [FILE], messageId: MCP_MSG_ID }, mcpGate: null })
 
-    await waitFor(() => expect(showToast).toHaveBeenCalled())
+    expect(screen.queryByText('Uygula')).toBeNull()
+    expect(fetchSpy).not.toHaveBeenCalled()
     expect(successToasts(showToast)).toHaveLength(0)
   })
 
-  it('MCP silme kartı: gate yokken "Dosya silindi" denmez', async () => {
+  it('MCP silme kartı: gate yokken kart HİÇ ÇİZİLMEZ', async () => {
     const fetchSpy = vi.fn()
     vi.stubGlobal('fetch', fetchSpy)
-    delete (window as any).__mcpDeleteGate
 
-    const { showToast } = renderPanel({ pendingDelete: { path: 'Player.cs', messageId: -999 } })
-    fireEvent.click(screen.getByText('Evet, Dosyayı Sil'))
+    const { showToast } = renderPanel({
+      pendingDelete: { path: 'Player.cs', messageId: MCP_MSG_ID }, mcpGate: null })
 
-    await waitFor(() => expect(showToast).toHaveBeenCalled())
-    expect(showToast.mock.calls.map(c => String(c[0])).join('|')).not.toContain('Dosya silindi')
+    expect(screen.queryByText('Evet, Dosyayı Sil')).toBeNull()
+    expect(fetchSpy).not.toHaveBeenCalled()
+    expect(showToast).not.toHaveBeenCalled()
   })
 })
 
@@ -450,14 +468,15 @@ describe('KÖK A · komut onay kartı — iletilmemiş onay "çalışıyor" deme
   })
 })
 
-// ── KÖK A · gate kimliğinin yazılma SIRASI ve temizliği ─────────────────────
-describe('KÖK A · MCP gate kimliği — kart görünmeden ÖNCE yazılır, karardan SONRA silinir', () => {
+// ── KÖK A · gate kimliği kartla birlikte taşınır ────────────────────────────
+describe('KÖK A · MCP gate kimliği — kartın kendi kaydında, global slot yok', () => {
   const setupPoll = (pending: Record<string, any>, setters: Record<string, any>) => {
     mockedAxios.get.mockResolvedValue({ data: { pending } })
     return renderHook(() =>
       useMCPApproval({
         API,
         enabled: false,
+        workspacePath: '/ws',
         setPendingGenFiles: vi.fn(),
         setPendingDelete: vi.fn(),
         setPendingCommand: vi.fn(),
@@ -468,42 +487,75 @@ describe('KÖK A · MCP gate kimliği — kart görünmeden ÖNCE yazılır, kar
     )
   }
 
-  it('delete_file: setPendingDelete çağrıldığı ANDA gate kimliği yazılmış olmalı', async () => {
-    // Şu an sıra ters (useMCPApproval.ts:101-103) ve yalnız React batching
-    // kurtarıyor — batching'e bağlı doğruluk, doğruluk değildir.
-    let gateAtRender: unknown = 'HİÇ-ÇAĞRILMADI'
-    const setPendingDelete = vi.fn(() => { gateAtRender = (window as any).__mcpDeleteGate })
+  it('kart kurulduğu ANDA gate kimliği hazırdır', async () => {
+    // Eskiden kimlik `window.__mcpDeleteGate` global'ine yazılıyordu ve sıranın
+    // doğruluğu yalnız React batching'e bağlıydı — batching'e bağlı doğruluk,
+    // doğruluk değildir (bir `await` uzaklıkta kırılır). Artık kimlik kartla
+    // AYNI kayıtta, yani sıra diye bir soru kalmadı.
+    const setPendingDelete = vi.fn()
 
     const { result } = setupPoll(
-      { 'del-1': { tool: 'delete_file', params: { path: 'Player.cs' } } },
+      { 'del-1': { tool: 'delete_file', params: { path: 'Player.cs' }, workspace_path: '/ws' } },
       { setPendingDelete },
     )
     await act(async () => { await (result.current as any).poll?.() })
 
     expect(setPendingDelete).toHaveBeenCalled()
-    expect(gateAtRender).toBe('del-1')
+    expect(result.current.activeGate).toEqual(
+      { gateId: 'del-1', tool: 'delete_file', workspacePath: '/ws' })
   })
 
-  it('takeMcpGate okur VE siler — bayat kimlik ikinci karara taşınmaz', () => {
-    ;(window as any).__mcpDeleteGate = 'del-1'
-    expect(takeMcpGate('delete')).toBe('del-1')
-    expect(takeMcpGate('delete')).toBe('')
-  })
-
-  it('gate hiç yoksa takeMcpGate boş string döner (undefined sızdırmaz)', () => {
-    delete (window as any).__mcpWriteGate
-    expect(takeMcpGate('write')).toBe('')
-  })
-
-  it('MCP kararından sonra global temizlenir', async () => {
+  it('MCP kararından sonra sıra serbest bırakılır', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ status: 'ok' }) }))
-    ;(window as any).__mcpWriteGate = 'w-1'
+    const onMcpResolved = vi.fn()
 
-    const { showToast } = renderPanel({ pendingGenFiles: { files: [FILE], messageId: -999 } })
+    const { showToast } = renderPanel({
+      pendingGenFiles: { files: [FILE], messageId: MCP_MSG_ID },
+      mcpGate: WRITE_GATE,
+      onMcpResolved,
+    })
     fireEvent.click(screen.getByText('Uygula'))
 
     await waitFor(() => expect(showToast).toHaveBeenCalled())
-    expect((window as any).__mcpWriteGate).toBeFalsy()
+    // Kart "Kapat"a basılana kadar ekranda kalıyor; sıra o anda serbest
+    // bırakılıyor. Ölçülen şey serbest bırakmanın BİR yerde olduğu.
+    fireEvent.click(screen.getByText('Kapat'))
+    await waitFor(() => expect(onMcpResolved).toHaveBeenCalled())
+  })
+
+  it('aynı gate için İKİNCİ karar gönderilmez', async () => {
+    // `onDone` onaydan SONRA da tetikleniyor. İşaret olmasa onaylanmış bir
+    // gate'e ikinci kez "reddet" giderdi ve kullanıcı sebepsiz bir "gate
+    // bulunamadı" uyarısı görürdü.
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ status: 'ok' }) })
+    vi.stubGlobal('fetch', fetchSpy)
+
+    const { showToast } = renderPanel({
+      pendingGenFiles: { files: [FILE], messageId: MCP_MSG_ID }, mcpGate: WRITE_GATE })
+    fireEvent.click(screen.getByText('Uygula'))
+    await waitFor(() => expect(showToast).toHaveBeenCalled())
+    fireEvent.click(screen.getByText('Kapat'))
+
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1))
+    expect(JSON.parse(String(fetchSpy.mock.calls[0][1].body))).toEqual({ approved: true })
+  })
+
+  it('karar VERİLMEDEN kart kapatılırsa RET gönderilir', async () => {
+    // Denetim bulgusu `approval-state-cleared-without-decision`: kapatma
+    // yalnız state'i temizliyordu, köprü 180 sn bekleyip reddediyordu ve
+    // kullanıcı reddettiğini SANIYORDU. Sonuç aynı yöne düşüyordu ama üç
+    // dakika gecikmeyle ve hiçbir geri bildirim olmadan.
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ status: 'ok' }) })
+    vi.stubGlobal('fetch', fetchSpy)
+
+    renderPanel({ pendingGenFiles: { files: [FILE], messageId: MCP_MSG_ID }, mcpGate: WRITE_GATE })
+    // Karar verilmemis kartta kapatma dugmesinin metni "Iptal"; "Kapat" ancak
+    // karardan SONRAKI ozet ekraninda cikiyor (FileCreationApproval.tsx:161).
+    fireEvent.click(screen.getByText('İptal'))
+
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1))
+    expect(String(fetchSpy.mock.calls[0][0])).toContain(`/mcp-approval-respond/${WRITE_GATE.gateId}`)
+    expect(JSON.parse(String(fetchSpy.mock.calls[0][1].body))).toEqual({ approved: false })
   })
 })
 
@@ -538,8 +590,8 @@ describe('KÖK C · onay iletildi diye "oldu" denmez', () => {
 
   it('MCP oluşturma kartı (tek dosya): "oluşturuldu" DEMEZ', async () => {
     okFetch()
-    ;(window as any).__mcpWriteGate = 'w-1'
-    const { showToast } = renderPanel({ pendingGenFiles: { files: [FILE], messageId: -999 } })
+    const { showToast } = renderPanel({
+      pendingGenFiles: { files: [FILE], messageId: MCP_MSG_ID }, mcpGate: WRITE_GATE })
     fireEvent.click(screen.getByText('Uygula'))
 
     await waitFor(() => expect(showToast).toHaveBeenCalled())
@@ -549,9 +601,9 @@ describe('KÖK C · onay iletildi diye "oldu" denmez', () => {
 
   it('MCP oluşturma kartı (tümü): "oluşturuldu" DEMEZ', async () => {
     okFetch()
-    ;(window as any).__mcpWriteGate = 'w-1'
     const { showToast } = renderPanel({
-      pendingGenFiles: { files: [FILE, { ...FILE, name: 'Enemy.cs' }], messageId: -999 },
+      pendingGenFiles: { files: [FILE, { ...FILE, name: 'Enemy.cs' }], messageId: MCP_MSG_ID },
+      mcpGate: WRITE_GATE,
     })
     fireEvent.click(screen.getByText('Tümünü Onayla'))
 
@@ -562,8 +614,8 @@ describe('KÖK C · onay iletildi diye "oldu" denmez', () => {
 
   it('MCP silme kartı: onay iletilse bile "silindi" DEMEZ', async () => {
     okFetch()
-    ;(window as any).__mcpDeleteGate = 'd-1'
-    const { showToast } = renderPanel({ pendingDelete: { path: 'Player.cs', messageId: -999 } })
+    const { showToast } = renderPanel({
+      pendingDelete: { path: 'Player.cs', messageId: MCP_MSG_ID }, mcpGate: DELETE_GATE })
     fireEvent.click(screen.getByText('Evet, Dosyayı Sil'))
 
     await waitFor(() => expect(showToast).toHaveBeenCalled())
@@ -573,7 +625,8 @@ describe('KÖK C · onay iletildi diye "oldu" denmez', () => {
   it('MCP komut kartı: onay iletilse bile YEŞİL başarı basılmaz', async () => {
     okFetch()
     const { showToast } = renderPanel({
-      pendingCommand: { command: 'ls', gateId: 'g1', messageId: -999 },
+      pendingCommand: { command: 'ls', gateId: 'g1', messageId: MCP_MSG_ID },
+      mcpGate: { gateId: 'g1', tool: 'bash', workspacePath: '/ws' },
     })
     fireEvent.click(screen.getByText('Komutu Çalıştır'))
 
@@ -586,11 +639,12 @@ describe('KÖK C · onay iletildi diye "oldu" denmez', () => {
     const { showToast } = renderPanel({
       openedFilePath: 'Player.cs',
       pendingFix: {
-        messageId: 1,
+        messageId: MCP_MSG_ID,
         gateId: 'fix-1',
         applied: false,
         data: { original_code: 'a', fixed_code: 'b', explanation: 'x', editor_hint: 'Player.cs' },
       },
+      mcpGate: { gateId: 'fix-1', tool: 'write_file', workspacePath: '/ws' },
     })
     fireEvent.click(screen.getByText('Kabul Et'))
 
@@ -623,7 +677,8 @@ describe('KÖK C · onay iletildi diye "oldu" denmez', () => {
   it('KARŞI YÖN: iletilmiş RET hâlâ "iptal edildi" der', async () => {
     okFetch()
     const { showToast } = renderPanel({
-      pendingCommand: { command: 'ls', gateId: 'g1', messageId: -999 },
+      pendingCommand: { command: 'ls', gateId: 'g1', messageId: MCP_MSG_ID },
+      mcpGate: { gateId: 'g1', tool: 'bash', workspacePath: '/ws' },
     })
     fireEvent.click(screen.getByText('İptal'))
     await waitFor(() => expect(showToast).toHaveBeenCalled())

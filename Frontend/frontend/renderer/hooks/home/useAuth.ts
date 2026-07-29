@@ -25,17 +25,49 @@ const noopSetAuthMode = (_mode: 'login' | 'register') => {}
 export function useAuth(_API: string, backendReady: boolean) {
   const [sessionToken, setSessionToken] = useState<string>('local')
   const [ready, setReady] = useState(false)
+  /**
+   * Oturum token'ı ALINAMADI mı (IPC var ama başarısız/boş döndü).
+   *
+   * Ayrı bir alan çünkü `'local'` iki farklı durumu temsil ediyordu ve ikisi
+   * karıştırılıyordu: (a) tarayıcıda/dev modda IPC hiç yok — `'local'` MEŞRU
+   * ve backend `UNITYAI_ALLOW_NO_TOKEN=1` ile bunu kabul ediyor; (b) Electron
+   * içindeyiz, IPC var ama çağrı düştü — o zaman `'local'` YANLIŞ bir token ve
+   * her istek 401 alacak. Eski kod ikisini de sessizce yutup `ready`'yi true
+   * yapıyordu; MCP yoklaması bu kapıya bağlı olduğu için onay kartı yolu
+   * hiçbir iz bırakmadan ölüyordu (dış denetim: `invalid-auth-readiness`).
+   */
+  const [tokenError, setTokenError] = useState<string | null>(null)
   const authAlertShownRef = useRef(false)
 
   useEffect(() => {
     if (!backendReady) return
     const init = async () => {
+      const ipc = (window as any).ipc
       let token = 'local'
-      try {
-        token = await (window as any).ipc.invoke('app-token-get')
-      } catch { /* dev mode — no IPC available */ }
+      let hata: string | null = null
+      if (!ipc?.invoke) {
+        // Dev modu / tarayıcı: IPC yok. `'local'` burada gerçek değer.
+        hata = null
+      } else {
+        try {
+          const alinan = await ipc.invoke('app-token-get')
+          // Boş string ya da undefined da BAŞARISIZLIK. Eskiden doğrudan
+          // atanıyordu: `axios.defaults.headers.common['X-Session-Token']`
+          // undefined olunca başlık hiç gönderilmiyor ve backend 503 dönüyordu.
+          if (typeof alinan === 'string' && alinan.length > 0) token = alinan
+          else hata = `Oturum token'ı beklenmeyen biçimde döndü (${typeof alinan})`
+        } catch (e) {
+          hata = `Oturum token'ı alınamadı: ${e instanceof Error ? e.message : String(e)}`
+        }
+      }
+      if (hata) console.error('[auth]', hata)
+      setTokenError(hata)
       setSessionToken(token)
       axios.defaults.headers.common['X-Session-Token'] = token
+      // `ready` hata durumunda da true: uygulamayı tamamen kilitlemek, token'a
+      // ihtiyacı olmayan yolları da öldürürdü. Hatanın GÖRÜNÜR olmasını
+      // sağlayan şey bu bayrak ve yoklama tarafındaki ardışık-hata uyarısı
+      // (`useMCPApproval`), sessizlik değil.
       setReady(true)
     }
     init()
@@ -48,6 +80,8 @@ export function useAuth(_API: string, backendReady: boolean) {
     user,
     isAuthenticated: true,
     isLoading: !ready,
+    /** IPC token alımı başarısızsa sebebi; başarılıysa (ya da dev modsa) null. */
+    tokenError,
     authMode: 'login' as const,
     setAuthMode: noopSetAuthMode,
     authForm: STABLE_AUTH_FORM,

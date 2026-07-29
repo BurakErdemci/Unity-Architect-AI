@@ -27,6 +27,7 @@ import { useFileSystem } from '../hooks/home/useFileSystem';
 import { useChat } from '../hooks/home/useChat';
 import { useAIConfig } from '../hooks/home/useAIConfig';
 import { useMCPApproval } from '../hooks/home/useMCPApproval';
+import { McpApprovalCards } from '../components/home/McpApprovalCards';
 
 const ipc = typeof window !== 'undefined' ? (window as any).ipc : null;
 const globalStyles = `
@@ -95,9 +96,17 @@ export default function Home() {
   // "idle" görünürken de araç çağırabiliyor. Kalan tek koşul token'ın kurulmuş
   // olması — o da izin değil, erişilebilirlik: yoklama `X-Session-Token`
   // istiyor ve `useAuth` onu IPC'den aldıktan sonra axios'a yazıyor.
-  useMCPApproval({
+  const mcp = useMCPApproval({
     API,
-    enabled: !auth.isLoading,
+    // `!tokenError` de şart: token alınamadıysa elimizdeki `'local'` YANLIŞ ve
+    // her yoklama 401 alacak. Bilinen bozuk bir kimlikle saniyede bir istek
+    // atmak teşhisi zorlaştırmaktan başka bir şey yapmıyor; kullanıcı zaten
+    // ayrı bir hata toast'ı görüyor (dış denetim: `invalid-auth-readiness`).
+    enabled: !auth.isLoading && !auth.tokenError,
+    // Kartı GİZLEMEK için değil, hangi projeden geldiğini yazmak için.
+    // Karar 2026-07-29: eşleşmeyen istek gizlenirse unityMCP'yi doğrudan başka
+    // bir istemciye bağlamış kullanıcı 180 sn'lik sessiz bir redde kilitlenir.
+    workspacePath: fs.workspacePath,
     setPendingGenFiles: fs.setPendingGenFiles,
     setPendingDelete: fs.setPendingDelete,
     setPendingCommand: chat.setPendingCommand,
@@ -107,6 +116,13 @@ export default function Home() {
 
   // API URL'yi window'a set et — ChatPanel ve diğer bileşenler erişebilsin
   useEffect(() => { if (API) (window as any).__API__ = API; }, [API]);
+
+  // Oturum token'ı alınamadıysa kullanıcıya SÖYLE. Konsola yazmak yetmiyor:
+  // bu durumda backend'e giden her istek 401/503 alıyor ve ürün "çalışıyor ama
+  // hiçbir şey olmuyor" haline geliyor — onay kartı yolu dahil.
+  useEffect(() => {
+    if (auth.tokenError) showToast(`${auth.tokenError} — backend istekleri reddedilecek.`, 'error' as any);
+  }, [auth.tokenError]);
 
   // --- Initialization ---
   useEffect(() => {
@@ -263,9 +279,23 @@ export default function Home() {
 
   const [diffFile, setDiffFile] = useState<any>(null);
 
+  // `mcp.activeGate` bağımlılığa EKLENDİ: onay kartı mesaj listesinin dışında
+  // duruyor, yani kart geldiğinde `messages`/`loading` değişmiyordu ve hiçbir
+  // şey ona kaydırmıyordu. Uzun bir sohbette kart ekranın altında kalıyor,
+  // kullanıcı hiçbir şey görmeden istek 180 sn'de reddediliyordu (dış denetim:
+  // `approval-card-hidden-by-view-state`, üç bacağından biri).
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [chat.messages, chat.loading]);
+  }, [chat.messages, chat.loading, mcp.activeGate]);
+
+  // Sohbet paneli KAPALIYKEN kart 0 piksel genişlikte çiziliyor: state'te var,
+  // ekranda yok. Aynı bulgunun ikinci bacağı. Onay isteği kullanıcının panelde
+  // olup olmamasına bağlı olamaz — köprü paneli bilmiyor ve karar verilmezse
+  // istek reddediliyor. Paneli açmak geri alınabilir bir müdahale; kaçırılan
+  // onay değil.
+  useEffect(() => {
+    if (mcp.activeGate) setIsChatOpen(true);
+  }, [mcp.activeGate]);
 
   // --- Save Shortcut (Ctrl+S / Cmd+S) ---
   useEffect(() => {
@@ -345,6 +375,38 @@ export default function Home() {
           onOpenWorkspaceDialog={fs.openFolder} onSelectLastWorkspace={() => fs.selectWorkspace(fs.lastWorkspacePath!)}
           onLogout={handleLogout}
         />
+        {/* Workspace seçilmemişken de onay kartı gelebilir: unityMCP köprüsü
+            ürünün penceresinden bağımsız çalışıyor (kullanıcı unityMCP'yi
+            doğrudan başka bir istemciye bağlamış olabilir). Bu dal olmadan kart
+            state'e giriyor ama ekrana HİÇ çıkmıyordu ve köprü 180 sn sonra
+            reddediyordu — ürün "güvenli" görünüp kullanılamaz hale geliyordu
+            (dış denetim: `approval-card-hidden-by-view-state`).
+            Editör yok, o yüzden setDiffFile/onOpenFile/setCode verilmiyor. */}
+        {mcp.activeGate && (
+          <div className="fixed inset-x-0 bottom-0 z-[250] max-h-[70vh] overflow-y-auto
+                          border-t border-slate-700 bg-slate-900/95 py-3 backdrop-blur">
+            <div className="mx-auto max-w-3xl">
+              <McpApprovalCards
+                gate={mcp.activeGate}
+                workspaceMismatch={mcp.gateWorkspaceMismatch}
+                openWorkspacePath={mcp.openWorkspacePath}
+                onResolved={mcp.resolveActiveGate}
+                apiBase={API}
+                sessionToken={auth.user?.sessionToken ?? ''}
+                showToast={showToast as any}
+                refreshFileTree={fs.refreshFileTree}
+                pendingGenFiles={fs.pendingGenFiles}
+                setPendingGenFiles={fs.setPendingGenFiles}
+                pendingDelete={fs.pendingDelete}
+                setPendingDelete={fs.setPendingDelete}
+                pendingCommand={chat.pendingCommand}
+                setPendingCommand={chat.setPendingCommand}
+                pendingFix={chat.pendingFix}
+                setPendingFix={chat.setPendingFix}
+              />
+            </div>
+          </div>
+        )}
       </LangContext.Provider>
     );
   }
@@ -576,6 +638,9 @@ export default function Home() {
               currentPlan={chat.currentPlan} messagesEndRef={chatEndRef} ipc={ipc} showToast={showToast as any} diffFile={diffFile} setDiffFile={setDiffFile}
               pendingDelete={fs.pendingDelete} setPendingDelete={fs.setPendingDelete} pendingCommand={chat.pendingCommand} setPendingCommand={chat.setPendingCommand} onApproveCommand={chat.approveCommand} pendingQuestion={chat.pendingQuestion} setPendingQuestion={chat.setPendingQuestion} onAnswerQuestion={chat.answerQuestion} deleteFile={fs.deleteFile} setIsTerminalOpen={setIsTerminalOpen}
               activity={chat.activity}
+              apiBase={API}
+              mcpGate={mcp.activeGate} mcpWorkspaceMismatch={mcp.gateWorkspaceMismatch}
+              mcpOpenWorkspacePath={mcp.openWorkspacePath} onMcpResolved={mcp.resolveActiveGate}
             />
           </div>
 

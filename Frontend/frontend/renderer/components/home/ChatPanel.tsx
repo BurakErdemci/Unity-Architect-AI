@@ -23,7 +23,8 @@ import { QuestionApproval } from './QuestionApproval';
 import { DiffViewer, DiffData } from './DiffViewer';
 import AgentPlan, { Task as AgentTask } from '../ui/agent-plan';
 import { postMcpDecision, decisionToast, GateFailure } from '../../hooks/home/gateResponse';
-import { takeMcpGate, MCP_MSG_ID } from '../../hooks/home/useMCPApproval';
+import { McpActiveGate } from '../../hooks/home/useMCPApproval';
+import { McpApprovalCards } from './McpApprovalCards';
 
 interface ChatPanelProps {
   messages: Message[];
@@ -65,6 +66,15 @@ interface ChatPanelProps {
   onAnswerQuestion: (gateId: string, answers: Record<string, string>) => Promise<void>;
   deleteFile: (path: string) => Promise<void>;
   setIsTerminalOpen: (val: boolean) => void;
+  /** Backend kök adresi. Kart kararları buraya POST'lanır. Eskiden
+   *  `window.__API__` global'inden okunuyordu — test edilemez ve sessizce boş
+   *  kalabilir bir bağımlılıktı. */
+  apiBase: string;
+  /** Karar bekleyen MCP isteği; `null` ise MCP kartı yok. `useMCPApproval`'dan. */
+  mcpGate: McpActiveGate | null;
+  mcpWorkspaceMismatch: boolean;
+  mcpOpenWorkspacePath: string | null;
+  onMcpResolved: () => void;
   // Canlı aktivite (status event'leri): "🤖 Subagent çalışıyor · 45.2k token" gibi.
   activity?: ChatActivity | null;
 }
@@ -106,6 +116,11 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   onAnswerQuestion,
   deleteFile,
   activity,
+  apiBase,
+  mcpGate,
+  mcpWorkspaceMismatch,
+  mcpOpenWorkspacePath,
+  onMcpResolved,
 }) => {
   const { t } = useLang();
 
@@ -175,14 +190,15 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
    * (`approval_bridge.py`) ürünün sohbet durumundan bağımsız çalışıyor, yani
    * "henüz konuşma açılmamış" ya da "mesaj listesi boş" olduğu anda gelen bir
    * istek ekrana hiç çıkmıyor, 180 sn sonra reddediliyordu. Kartın kendisi
-   * zaten mesaj listesinin DIŞINDA (MCP_MSG_ID dalında) çiziliyor; onu boş
+   * zaten mesaj listesinin DIŞINDA (`McpApprovalCards`) çiziliyor; onu boş
    * listeye takılan bir kapının arkasında bırakmak gizli bir bağımlılıktı.
+   *
+   * Koşul artık dört ayrı `messageId` karşılaştırması değil tek bir kayda
+   * bakıyor: kartı kuran hook zaten "şu an karar bekleyen istek bu" diyor.
+   * Dördünü burada tekrar saymak, hook ile ayrışabilecek ikinci bir doğruluk
+   * kaynağıydı — bu depodaki arızaların ortak biçimi tam olarak o.
    */
-  const hasMcpCard =
-    pendingGenFiles?.messageId === MCP_MSG_ID ||
-    pendingDelete?.messageId === MCP_MSG_ID ||
-    pendingCommand?.messageId === MCP_MSG_ID ||
-    pendingFix?.messageId === MCP_MSG_ID;
+  const hasMcpCard = mcpGate !== null;
 
   if (!activeConvId && !hasMcpCard) {
     return (
@@ -208,14 +224,19 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   }
 
   /**
-   * `pendingFix` kartı TEK yerde kuruluyor, İKİ yerde çiziliyor: mesaja bağlı
-   * (API akışı, `messageId === msg.id`) ve MCP akışı (`MCP_MSG_ID`). İkisi
-   * birden asla doğru olamaz — `messageId` tek bir değer.
+   * Mesaja bağlı (API akışı) düzeltme kartı — `messageId === msg.id`.
    *
-   * Kopyalamak yerine hoist edilmesinin sebebi ölçülmüş: MCP dalı hiç
-   * yazılmamıştı ve kardeşleri (`pendingGenFiles`/`pendingDelete`/
-   * `pendingCommand`) elle kopyalandığı için eksiklik göze çarpmıyordu. Tek
-   * eleman, iki koşul → dalların sessizce ayrışması artık mümkün değil.
+   * MCP akışının kartı BURADA DEĞİL, `McpApprovalCards` içinde. 2026-07-29'da
+   * ikisi tek elemanda birleştirilmişti; gerekçesi "MCP dalı hiç yazılmamıştı,
+   * kopyalar sessizce ayrışıyor" idi. Akışlar ayrı bileşenlere alınınca o
+   * gerekçe düştü ve birleşik eleman iki farklı davranışı (köprüye POST vs.
+   * IPC ile diske yazma) tek `if` ile taşıyan bir yük haline geldi.
+   *
+   * `pendingFix.gateId` bu daldan kaldırıldı çünkü o alanı YALNIZ
+   * `useMCPApproval` yazıyor ve o kayıt `messageId: MCP_MSG_ID` taşıyor —
+   * gerçek bir `msg.id` ile asla eşleşmez, yani buradaki gate dalı ulaşılamaz
+   * koddu. (API akışının kendi tipinde `gateId` alanı hiç yok:
+   * `useChat.ts:29`.)
    */
   const pendingFixCard = pendingFix ? (
     <DiffViewer
@@ -223,26 +244,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
       filename={pendingFix.data?.editor_hint?.split('/').pop() || (openedFilePath ? openedFilePath.split('/').pop() : undefined)}
       applied={pendingFix.applied}
       onAccept={async (fixedCode) => {
-        // MCP onayı: gate varsa backend'e bildir, sonra IPC ile yaz
-        if (pendingFix.gateId) {
-          const filePath = pendingFix.data?.editor_hint || openedFilePath;
-          // Onay gerçekten iletildi mi? Gate düşmüşse backend
-          // "gate_not_found" döner ve MCP tarafı isteği fail-closed
-          // reddeder — eskiden burada koşulsuz "✅ onaylandı" basılıyordu,
-          // yani kullanıcıya yanlış bilgi veriliyordu.
-          const failure = await postMcpDecision(
-            (window as any).__API__ || '', pendingFix.gateId, true, user?.sessionToken ?? '');
-          // MCP server zaten dosyayı yazar, sadece editörü güncelle
-          if (!failure && filePath) setCode(fixedCode);
-          setPendingFix(null);
-          refreshFileTree();
-          // "Onaylandı" değil "gönderildi": dosyayı MCP köprüsü
-          // BUNDAN SONRA yazıyor ve orada düşebiliyor.
-          const t = decisionToast(failure, 'Onayınız gönderildi — değişiklik uygulanıyor');
-          showToast(t.message, t.type);
-          return;
-        }
-        // Normal (API) onayı. Editör tamponu her hâlükârda güncellenir
+        // Editör tamponu her hâlükârda güncellenir
         // (kullanıcı düzeltmeyi görsün), ama "dosya güncellendi"
         // iddiası yalnız disk yazımı DOĞRULANDIYSA basılır.
         setCode(fixedCode);
@@ -263,16 +265,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
         setTimeout(() => analyzeProject(true), 1500);
         showToast(`✅ Dosya güncellendi`, 'success');
       }}
-      onReject={async () => {
-        if (pendingFix.gateId) {
-          // Reddin iletilmemesi de sessiz kalmamalı: kullanıcı
-          // reddettiğini sanırken gate zaman aşımıyla düşmüş olabilir.
-          const failure = await postMcpDecision(
-            (window as any).__API__ || '', pendingFix.gateId, false, user?.sessionToken ?? '');
-          if (failure) showToast(failure.message, failure.type);
-        }
-        setPendingFix(null);
-      }}
+      onReject={() => setPendingFix(null)}
     />
   ) : null;
 
@@ -515,121 +508,32 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             <AgentPlan tasks={currentPlan} />
           </div>
         )}
-        {/* MCP Onay Kartları — mesaj ID'sinden bağımsız, her zaman göster.
-            Sabit `useMCPApproval`'dan geliyor: kartı kuran ve çizen iki taraf
-            aynı değeri elle tekrar ederse biri unutulabiliyor — nitekim
-            `pendingFix` dalı 2026-07-29'a kadar hiç yazılmamıştı. */}
-        {pendingGenFiles?.messageId === MCP_MSG_ID && (
-          <div className="px-4 pb-2">
-            <FileCreationApproval
-              files={pendingGenFiles.files}
-              autoAccept={false}
-              setDiffFile={setDiffFile}
-              onOpenFile={openFile}
-              // `gateId ? … : null` üçlemesi kaldırıldı: `null` bu sözleşmede
-              // "teslim edildi" demek, yani gate yokken hiçbir istek gitmeden
-              // başarı iddia ediliyordu. Kararı artık postMcpDecision veriyor.
-              // takeMcpGate okur VE siler — karardan sonra bayat kimlik kalmaz.
-              onAcceptOne={async (file) => {
-                const failure = await postMcpDecision(
-                  (window as any).__API__ || '', takeMcpGate('write'), true, user?.sessionToken ?? '');
-                refreshFileTree();
-                // "oluşturuldu" DEĞİL "yazılıyor": `failure === null` yalnız
-                // backend'in onayı kaydettiğini kanıtlıyor. Dosyayı MCP köprüsü
-                // bundan sonra `file_tools.write_file` içinde yazıyor ve orada
-                // düşebiliyor (ölçüldü 2026-07-29: hedefin üst dizini normal bir
-                // dosyaysa `os.makedirs` → FileExistsError, dosya diske hiç
-                // yazılmıyor — ekranda ise "✅ oluşturuldu" duruyordu).
-                const t = decisionToast(failure, `Onayınız gönderildi — ${file.name} yazılıyor`);
-                showToast(t.message, t.type);
-                // ⚠️ BİLİNEN BOŞLUK: dönen `true` FileCreationApproval'ın kartında
-                // dosyayı "oluşturuldu" listesine taşıyor. O sözleşme (bkz.
-                // FileCreationApproval.tsx:34) yerel IPC yolunda GERÇEKTEN
-                // doğrulanmış başarı demek; burada yalnız teslimat demek. Üçüncü
-                // bir durum ("teslim edildi, sonuç bilinmiyor") olmadan
-                // düzeltilemez ve `false` dönmek daha kötü olurdu: hiç olmamış
-                // bir başarısızlığı iddia ederdi.
-                return !failure;
-              }}
-              onSkipOne={() => {}}
-              onAcceptAll={async () => {
-                const failure = await postMcpDecision(
-                  (window as any).__API__ || '', takeMcpGate('write'), true, user?.sessionToken ?? '');
-                refreshFileTree();
-                // Kardeş satır: yukarıdaki tek-dosya yoluyla AYNI sınıf, aynı dil.
-                const t = decisionToast(failure, 'Onayınız gönderildi — dosyalar yazılıyor');
-                showToast(t.message, t.type);
-                return !failure;
-              }}
-              onDone={() => setPendingGenFiles(null)}
-            />
-          </div>
-        )}
-        {pendingDelete?.messageId === MCP_MSG_ID && (
-          <div className="px-4 pb-2">
-            <FileDeleteApproval
-              path={pendingDelete.path}
-              onConfirm={async () => {
-                const failure = await postMcpDecision(
-                  (window as any).__API__ || '', takeMcpGate('delete'), true, user?.sessionToken ?? '');
-                setPendingDelete(null);
-                // MCP server approval'ı polling ile ~500ms gecikmeli görür → dosyayı siler.
-                // Refresh'i geciktirmezsek dosya henüz silinmemiş olur.
-                setTimeout(() => refreshFileTree(), 900);
-                // "silindi" DEĞİL "siliniyor": onayın iletilmesi silmenin
-                // yapıldığını değil, köprünün onu ~500ms sonra DENEYECEĞİNİ
-                // gösteriyor (üstteki refreshFileTree gecikmesi tam bu yüzden var).
-                const t = decisionToast(failure, '🗑️ Onayınız gönderildi — dosya siliniyor');
-                showToast(t.message, t.type);
-              }}
-              onCancel={async () => {
-                // Reddin iletilmemesi de sessiz kalmamalı: kullanıcı reddettiğini
-                // sanırken gate düşmüş olabilir ve MCP tarafı kendi kararını verir.
-                const failure = await postMcpDecision(
-                  (window as any).__API__ || '', takeMcpGate('delete'), false, user?.sessionToken ?? '');
-                if (failure) showToast(failure.message, failure.type);
-                setPendingDelete(null);
-              }}
-            />
-          </div>
-        )}
-        {pendingCommand?.messageId === MCP_MSG_ID && (
-          <div className="px-4 pb-2">
-            <CommandApproval
-              command={pendingCommand.command}
-              onConfirm={async () => {
-                const failure = await postMcpDecision(
-                  (window as any).__API__ || '', pendingCommand.gateId, true, user?.sessionToken ?? '');
-                setPendingCommand(null);
-                // "çalışıyor" iddiası onay iletilse BİLE erken: komutu köprü
-                // bundan sonra başlatıyor ve başlatma da düşebilir.
-                const t = decisionToast(failure, 'Onayınız gönderildi — komut başlatılıyor');
-                showToast(t.message, t.type);
-              }}
-              onCancel={async () => {
-                const failure = await postMcpDecision(
-                  (window as any).__API__ || '', pendingCommand.gateId, false, user?.sessionToken ?? '');
-                setPendingCommand(null);
-                // RET tarafı ASİMETRİK ve bilerek "oldu" diyor: köprü kararı
-                // fail-closed okuyor, yani iletilmiş bir ret komutun
-                // ÇALIŞMAYACAĞINI garanti ediyor — onaydan farklı olarak burada
-                // teslimat sonucun kendisi. (Onay tarafı bunu söyleyemez: orada
-                // teslimattan sonra hâlâ yapılacak bir iş kalıyor.)
-                const t = decisionToast(failure, 'Komut iptal edildi');
-                showToast(t.message, t.type);
-              }}
-            />
-          </div>
-        )}
-
-        {/* VAR OLAN dosyanın değiştirilmesi. Bu dal 2026-07-29'a kadar YOKTU:
-            hook kartı kuruyor (`useMCPApproval.ts`, `original` doluysa
-            `setPendingFix`) ama çizen kimse olmadığı için istek 180 sn sonra
-            reddediliyordu. Ölü kod değildi — köprü dosya varsa `original`ı her
-            zaman dolduruyor (`file_tools.py:50-54`). */}
-        {pendingFix?.messageId === MCP_MSG_ID && (
-          <div className="px-4 pb-2">{pendingFixCard}</div>
-        )}
+        {/* MCP onay kartları — mesaj listesinin DIŞINDA, tek bileşende.
+            Kartların markup'ı `McpApprovalCards`'ta duruyor çünkü aynı kartlar
+            workspace seçilmemişken de (ChatPanel hiç mount olmadan) çizilmek
+            zorunda: köprü ürünün görünüm durumundan bağımsız çalışıyor ve o
+            durumda istek 180 sn sonra sessizce reddediliyordu. */}
+        <McpApprovalCards
+          gate={mcpGate}
+          workspaceMismatch={mcpWorkspaceMismatch}
+          openWorkspacePath={mcpOpenWorkspacePath}
+          onResolved={onMcpResolved}
+          apiBase={apiBase}
+          sessionToken={user?.sessionToken ?? ''}
+          showToast={showToast}
+          refreshFileTree={refreshFileTree}
+          pendingGenFiles={pendingGenFiles}
+          setPendingGenFiles={setPendingGenFiles}
+          pendingDelete={pendingDelete}
+          setPendingDelete={setPendingDelete}
+          pendingCommand={pendingCommand}
+          setPendingCommand={setPendingCommand}
+          pendingFix={pendingFix}
+          setPendingFix={setPendingFix}
+          setDiffFile={setDiffFile}
+          onOpenFile={openFile}
+          setCode={setCode}
+        />
 
         <div ref={messagesEndRef} className="h-4" />
       </div>

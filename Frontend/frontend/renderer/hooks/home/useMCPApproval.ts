@@ -4,17 +4,39 @@
  * FileDeleteApproval, CommandApproval) yönlendirir.
  *
  * Polling: /mcp-pending endpoint'ini 1 saniyede bir kontrol eder.
- * Her yeni istek geldiğinde ilgili state setter'ı çağırır.
  * Kullanıcı onaylarsa/reddederse /mcp-approval-respond/{gate_id} çağrılır.
  *
  * ⚠️ Bu yol SSE DEĞİL, polling — backend tarafında da öyle. Bunu yazmaya değer
  * çünkü tersini iddia eden yorumlar vardı ve bir tasarım tartışmasında "zaten
  * SSE var" diye okundu. SSE'nin neden seçilmediği polling aralığının yanında.
+ *
+ * ⚠️ AYNI ANDA TEK KART. Bekleyen istek kuyruğu backend'in `_mcp_pending`
+ * sözlüğü; bu hook oradan bir seferde bir tane alır ve karar verilene kadar
+ * yenisini almaz. Gerekçesi ölçülmüş bir arıza (2026-07-29 denetimi): eskiden
+ * her yoklamada bekleyenlerin HEPSİ işleniyordu, hepsi aynı tek kart slotuna
+ * yazıyordu ve sonuncusu öncekilerin üstüne biniyordu. Üstü çizilen istek
+ * "görüldü" işaretlendiği için bir daha hiç gösterilmiyor, köprüde 180 sn
+ * bekleyip reddediliyordu.
  */
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 import axios from 'axios';
 import { PendingFile } from '../../components/home/FileCreationApproval';
 import { gateFailure } from './gateResponse';
+
+/**
+ * Ekranda karar bekleyen MCP isteği. Kartı çizen taraf gate kimliğini ve
+ * isteğin GELDİĞİ workspace'i buradan okur.
+ */
+export interface McpActiveGate {
+  gateId: string;
+  tool: string;
+  /**
+   * İsteği açan tarafın çalışma dizini (`_mcp_pending[...].workspace_path`).
+   * Boş olabilir: köprü bu alanı göndermek zorunda değil ve eski sürümler
+   * göndermiyordu. Boşluk "eşleşiyor" diye okunmamalı — bkz `workspaceMismatch`.
+   */
+  workspacePath: string;
+}
 
 interface MCPApprovalHookParams {
   API: string;
@@ -34,6 +56,17 @@ interface MCPApprovalHookParams {
    * yutulan bir 401 üretilirdi.
    */
   enabled: boolean;
+  /**
+   * ÜRÜNDE açık olan workspace. Gate'in kendi workspace'iyle karşılaştırılıp
+   * kullanıcıya gösterilir; kartı GİZLEMEK için kullanılmaz (karar 2026-07-29,
+   * kullanıcı: eşleşmeyen kart gösterilsin ama hangi projeye ait olduğu yazsın).
+   *
+   * Gizlememenin gerekçesi: unityMCP'yi doğrudan başka bir istemciye (Cursor
+   * vb.) bağlamış kullanıcı üründe o projeyi açmamış olabilir; kartı gizlemek
+   * onu 180 sn'lik sessiz bir redde kilitlerdi. Bedeli açıkça kabul edildi:
+   * koruma, kullanıcının banner'ı OKUMASINA bağlı.
+   */
+  workspacePath: string | null;
   setPendingGenFiles: (val: { files: PendingFile[]; messageId: number } | null) => void;
   setPendingDelete: (val: { path: string; messageId: number } | null) => void;
   setPendingCommand: (val: { command: string; gateId: string; messageId: number } | null) => void;
@@ -57,48 +90,78 @@ export const MCP_MSG_ID = -999;
 const POLL_INTERVAL_MS = 1000;
 
 /**
- * MCP onay kimliklerinin (gate id) tek saklama/okuma yeri.
+ * Kaç ardışık başarısız yoklamadan sonra kullanıcı uyarılır.
  *
- * Neden `window` üstünde: kart bileşenleri (ChatPanel) hook'un dönüşünü değil
- * `pendingDelete`/`pendingGenFiles` state'ini görüyor; gate id o state'in içinde
- * taşınmıyor. Bu bir tasarım borcu, ama düzeltilmesi bu şeridin kapsamı değil —
- * burada yapılan, borcu TEK yere hapsetmek.
- *
- * Neden `take` (oku VE sil): karar verildikten sonra global bayat değeriyle
- * duruyordu. Sıradaki kart gate id'siz gelirse (ör. yazma yolunda hata) eski id
- * okunur ve karar YANLIŞ gate'e bildirilirdi.
+ * 1 değil, çünkü backend yeniden başlarken bir-iki yoklama düşer ve her
+ * düşüşte toast basmak gürültüdür. Sonsuz da değil: yoklama artık koşulsuz
+ * çalıştığı için kalıcı bir 401/403 (yanlış token) hiçbir iz bırakmadan
+ * ürünün onay yolunu tamamen ölü hale getiriyordu — dış denetim bulgusu
+ * `silent-approval-delivery-failure` (2026-07-29). 5 × 1 sn = 5 sn, yani
+ * geçici kesinti sessiz kalıyor, kalıcı arıza görünür oluyor.
  */
-export type McpGateKind = 'write' | 'delete';
-const GATE_KEYS: Record<McpGateKind, string> = {
-  write: '__mcpWriteGate',
-  delete: '__mcpDeleteGate',
-};
+const POLL_FAILURE_ALERT_AFTER = 5;
 
-export const setMcpGate = (kind: McpGateKind, gateId: string): void => {
-  (window as any)[GATE_KEYS[kind]] = gateId;
-};
-
-/** Okur ve siler. Gate yoksa `''` döner — `undefined` sızdırmaz, çünkü
- *  `postMcpDecision` boş string'i "istek gönderme, başarısızlık bildir" diye
- *  yorumluyor ve bu ayrımın tek yerde durması gerekiyor. */
-export const takeMcpGate = (kind: McpGateKind): string => {
-  const key = GATE_KEYS[kind];
-  const value = (window as any)[key];
-  delete (window as any)[key];
-  return typeof value === 'string' ? value : '';
+/**
+ * Gate'in workspace'i ile üründe açık workspace uyuşmuyor mu?
+ *
+ * Ayrı fonksiyon ve dışarı açık: kararı hem hook (uyarı üretmek için) hem de
+ * kartı çizen bileşen (banner rengi için) veriyor; iki yerde ayrı ayrı yazılan
+ * bir koşul bu depoda tekrar tekrar ayrıştı.
+ *
+ * Bilinmeyen durum `false` döner — "uyuşmuyor" DEĞİL. Ne gate'in workspace'i
+ * boşken ne de üründe workspace açık değilken bir çelişki KANITLANMIŞ olmuyor;
+ * bilinmeyeni "uyuşmazlık" saymak, gerçek uyuşmazlığı fark edilmez kılacak
+ * kadar çok yanlış uyarı üretirdi. Bilinmezliği kullanıcıya ayrıca banner
+ * söylüyor (workspace yazılı, "açık olan" satırı yoksa bilinmiyor demek).
+ */
+export const workspaceMismatch = (
+  gateWorkspace: string | null | undefined,
+  openWorkspace: string | null | undefined,
+): boolean => {
+  if (!gateWorkspace || !openWorkspace) return false;
+  return gateWorkspace.replace(/\/+$/, '') !== openWorkspace.replace(/\/+$/, '');
 };
 
 export const useMCPApproval = ({
   API,
   enabled,
+  workspacePath,
   setPendingGenFiles,
   setPendingDelete,
   setPendingCommand,
   setPendingFix,
   showToast,
 }: MCPApprovalHookParams) => {
-  const seenGates = useRef<Set<string>>(new Set());
+  const [activeGate, setActiveGate] = useState<McpActiveGate | null>(null);
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
+  /**
+   * `activeGate`'in ref ikizi. State değil ref okunuyor çünkü `poll` bir
+   * `useCallback` ve state'i bağımlılığına alsaydı her kart açılışında yeni
+   * kimlik alıp effect'i yeniden kurardı (interval sıfırlanır, mount anındaki
+   * `poll()` tekrar koşardı). Ref, kararın SENKRON okunmasını da garanti
+   * ediyor: iki yoklama üst üste bindiğinde ikincisi birincinin açtığı kartı
+   * görmek zorunda.
+   */
+  const activeGateRef = useRef<McpActiveGate | null>(null);
+  /** Açık kartın state'ini geri alan fonksiyon. Bkz `dismissActive`. */
+  const clearActiveCardRef = useRef<(() => void) | null>(null);
+  const failStreakRef = useRef(0);
+  const alertedRef = useRef(false);
+
+  /**
+   * Açık kartı kaldırır ve sırayı serbest bırakır.
+   *
+   * Neden kartın state'ini TEK bir kayıtlı fonksiyonla temizliyoruz da dördünü
+   * birden `null`'lamıyoruz: `pendingFix`/`pendingGenFiles` mesaja bağlı (MCP
+   * dışı) akışta da kullanılıyor; hepsini körlemesine temizlemek kullanıcının
+   * sohbette gördüğü ilgisiz bir kartı kapatırdı.
+   */
+  const dismissActive = useCallback(() => {
+    clearActiveCardRef.current?.();
+    clearActiveCardRef.current = null;
+    activeGateRef.current = null;
+    setActiveGate(null);
+  }, []);
 
   // Yanıt gövdesi eskiden okunmuyordu: gate TTL ile süpürüldüyse backend
   // {"status":"gate_not_found"} dönüyor, kart yine kapanıyor ve kullanıcı
@@ -119,65 +182,102 @@ export const useMCPApproval = ({
 
   const poll = useCallback(async () => {
     if (!API) return;
+
+    let pending: Record<string, any>;
     try {
       const res = await axios.get(`${API}/mcp-pending`);
-      const pending: Record<string, any> = res.data?.pending ?? {};
+      pending = res.data?.pending ?? {};
+      failStreakRef.current = 0;
+      alertedRef.current = false;
+    } catch (err) {
+      // Sessiz yutmak yok: yoklama artık koşulsuz koştuğu için kalıcı bir hata
+      // (yanlış token → her saniye 401) hiçbir iz bırakmadan onay yolunu ölü
+      // hale getiriyordu. Kullanıcı kartı beklerken köprü 180 sn sonra
+      // reddediyor ve ekranda tek bir işaret bile olmuyordu.
+      failStreakRef.current += 1;
+      // Geliştirici sinyali HER hatada, kullanıcı sinyali eşikten sonra. Ayrım
+      // kasıtlı: konsol ucuz ve teşhis için ilk hatadan itibaren gerekli, toast
+      // ise her saniye tekrarlanırsa bilgi olmaktan çıkıp gürültü olur.
+      console.warn(`[MCP] /mcp-pending erişilemiyor (${failStreakRef.current}. hata)`, err);
+      if (failStreakRef.current >= POLL_FAILURE_ALERT_AFTER && !alertedRef.current) {
+        alertedRef.current = true;  // her saniye tekrar basmasın
+        showToast?.(
+          'MCP onay isteklerine ulaşılamıyor. Bir onay kartı beklediyseniz ' +
+          'gelmeyecek ve istek zaman aşımıyla reddedilecek.',
+          'error',
+        );
+      }
+      return;
+    }
 
-      for (const [gateId, req] of Object.entries(pending)) {
-        if (seenGates.current.has(gateId)) continue;
-        seenGates.current.add(gateId);
+    // Açık bir kart varsa yenisini ALMA — kuyruk backend'de bekler.
+    if (activeGateRef.current) {
+      // Tek istisna: açık kartın gate'i backend'de artık yoksa (TTL süpürdü ya
+      // da karar başka bir yoldan verildi) kart ZOMBİ demektir. Temizlenmezse
+      // `activeGateRef` sonsuza dek dolu kalır ve BÜTÜN sonraki kartlar bloke
+      // olurdu — kaldırdığımız kilidin daha kötüsü.
+      if (!(activeGateRef.current.gateId in pending)) dismissActive();
+      return;
+    }
 
-        const { tool, params } = req as { tool: string; params: any };
+    for (const [gateId, req] of Object.entries(pending)) {
+      const { tool, params, workspace_path: gateWorkspace } = req as {
+        tool: string; params: any; workspace_path?: string;
+      };
 
-        if (tool === 'write_file') {
-          const { path, content, original } = params;
-          // Gate kimliği kart state'inden ÖNCE yazılır: kart render olup
-          // kullanıcı butona bastığında kimlik hazır olmalı. (Aynı sınıf hata
-          // `delete_file` yolunda vardı ve yalnız React batching kurtarıyordu.)
-          setMcpGate('write', gateId);
+      // Kartı çizen tarafın gate kimliğini ve workspace'i okuyacağı TEK kayıt.
+      // Eskiden kimlik `window.__mcpWriteGate` global'inde duruyordu ve iki
+      // bekleyen yazma aynı slotu paylaşıyordu: "Yeni dosya" kartına basmak
+      // ÖTEKİ isteğin gate'ini onaylıyordu (dış denetim: `approval-gate-
+      // misbinding`, HIGH). Kimliği kartın kendi kaydında taşımak o sınıfı
+      // bir örnek yamayarak değil kökten kapatıyor.
+      const gate: McpActiveGate = { gateId, tool, workspacePath: gateWorkspace || '' };
+      activeGateRef.current = gate;
+      setActiveGate(gate);
 
-          if (!original) {
-            // Yeni dosya → FileCreationApproval
-            const file: PendingFile = {
-              name: path.split('/').pop() || path,
-              code: content,
-              suggestedPath: path,
-              originalCode: '',
-            };
-            setPendingGenFiles({ files: [file], messageId: MCP_MSG_ID });
-          } else {
-            // Değişiklik → DiffViewer
-            setPendingFix({
-              messageId: MCP_MSG_ID,
-              applied: false,
-              data: {
-                original_code: original,
-                fixed_code: content,
-                explanation: `MCP: ${path} güncelleniyor`,
-                editor_hint: path,
-              },
-              gateId,
-            });
-          }
-        } else if (tool === 'delete_file') {
-          // SIRA ÖNEMLİ: gate kimliği kartı gösteren state'ten ÖNCE yazılır.
-          // Ters sırada yalnız React batching kurtarıyordu — batching'e bağlı
-          // doğruluk doğruluk değildir (bir refactor ya da bir `await`
-          // uzaklıkta kırılır ve kullanıcı gate'siz bir karta basar).
-          setMcpGate('delete', gateId);
-          setPendingDelete({ path: params.path, messageId: MCP_MSG_ID });
-        } else if (tool === 'bash') {
-          setPendingCommand({
-            command: params.command,
-            gateId,
+      if (tool === 'write_file') {
+        const { path, content, original } = params;
+        if (!original) {
+          // Yeni dosya → FileCreationApproval
+          const file: PendingFile = {
+            name: path.split('/').pop() || path,
+            code: content,
+            suggestedPath: path,
+            originalCode: '',
+          };
+          clearActiveCardRef.current = () => setPendingGenFiles(null);
+          setPendingGenFiles({ files: [file], messageId: MCP_MSG_ID });
+        } else {
+          // Değişiklik → DiffViewer
+          clearActiveCardRef.current = () => setPendingFix(null);
+          setPendingFix({
             messageId: MCP_MSG_ID,
+            applied: false,
+            data: {
+              original_code: original,
+              fixed_code: content,
+              explanation: `MCP: ${path} güncelleniyor`,
+              editor_hint: path,
+            },
+            gateId,
           });
         }
+      } else if (tool === 'delete_file') {
+        clearActiveCardRef.current = () => setPendingDelete(null);
+        setPendingDelete({ path: params.path, messageId: MCP_MSG_ID });
+      } else if (tool === 'bash') {
+        clearActiveCardRef.current = () => setPendingCommand(null);
+        setPendingCommand({ command: params.command, gateId, messageId: MCP_MSG_ID });
+      } else {
+        // Tanınmayan araç: kart çizemiyoruz. Sırayı işgal etmesin — bırak,
+        // köprü kendi zaman aşımında fail-closed reddetsin.
+        activeGateRef.current = null;
+        setActiveGate(null);
+        continue;
       }
-    } catch {
-      // Backend erişilemez, sessizce devam
+      break;  // aynı anda tek kart
     }
-  }, [API, setPendingGenFiles, setPendingDelete, setPendingCommand, setPendingFix]);
+  }, [API, dismissActive, showToast, setPendingGenFiles, setPendingDelete, setPendingCommand, setPendingFix]);
 
   /**
    * Yoklamayı başlat/durdur. Koşulsuz açmanın maliyeti ÖLÇÜLDÜ (2026-07-29): rota
@@ -199,7 +299,7 @@ export const useMCPApproval = ({
     }
     // İlk yoklama beklemeden: hook mount olmadan önce açılmış bir gate varsa
     // (köprü ürün penceresinden bağımsız çalışıyor) kart bir tam saniye geç
-    // gelirdi. `seenGates` tekrar işlemeyi zaten engelliyor.
+    // gelirdi. Açık kart kontrolü tekrar işlemeyi zaten engelliyor.
     void poll();
     pollingRef.current = setInterval(poll, POLL_INTERVAL_MS);
     return () => {
@@ -207,33 +307,48 @@ export const useMCPApproval = ({
     };
   }, [API, enabled, poll]);
 
+  /**
+   * Karar verildikten (ya da kart kapatıldıktan) sonra çağrılır: kartı kaldırır
+   * ve sıradaki isteğin gösterilmesine izin verir. Kararı GÖNDERMEZ — gönderme
+   * kartın kendi handler'ında, çünkü her kartın toast metni farklı.
+   */
+  const resolveActiveGate = useCallback(() => { dismissActive(); }, [dismissActive]);
+
   // Onay/red fonksiyonları — mevcut UI'lardan çağrılır
   const approveMCPFile = useCallback(async (gateId: string) => {
     await respond(gateId, true);
-    setPendingGenFiles(null);
-    setPendingFix(null);
-  }, [respond, setPendingGenFiles, setPendingFix]);
+    dismissActive();
+  }, [respond, dismissActive]);
 
   const rejectMCPFile = useCallback(async (gateId: string) => {
     await respond(gateId, false);
-    setPendingGenFiles(null);
-    setPendingFix(null);
-  }, [respond, setPendingGenFiles, setPendingFix]);
+    dismissActive();
+  }, [respond, dismissActive]);
 
-  const approveMCPDelete = useCallback(async () => {
-    const gateId = takeMcpGate('delete');
+  const approveMCPDelete = useCallback(async (gateId: string) => {
     if (gateId) await respond(gateId, true);
-    setPendingDelete(null);
-  }, [respond, setPendingDelete]);
+    dismissActive();
+  }, [respond, dismissActive]);
 
-  const rejectMCPDelete = useCallback(async () => {
-    const gateId = takeMcpGate('delete');
+  const rejectMCPDelete = useCallback(async (gateId: string) => {
     if (gateId) await respond(gateId, false);
-    setPendingDelete(null);
-  }, [respond, setPendingDelete]);
+    dismissActive();
+  }, [respond, dismissActive]);
 
   // `poll` dışarı da veriliyor: polling'in kendisi zamanlayıcıya bağlı, ama
-  // "gate kimliği kart state'inden önce yazılıyor mu" sorusu zamanlayıcıdan
-  // bağımsız bir DOĞRULUK sorusu ve deterministik ölçülebilmeli.
-  return { respond, poll, approveMCPFile, rejectMCPFile, approveMCPDelete, rejectMCPDelete };
+  // "gate kimliği kartla birlikte taşınıyor mu" sorusu zamanlayıcıdan bağımsız
+  // bir DOĞRULUK sorusu ve deterministik ölçülebilmeli.
+  return {
+    respond,
+    poll,
+    activeGate,
+    /** Gate'in workspace'i üründe açık olandan farklı mı (bilinmiyorsa false). */
+    gateWorkspaceMismatch: workspaceMismatch(activeGate?.workspacePath, workspacePath),
+    openWorkspacePath: workspacePath,
+    resolveActiveGate,
+    approveMCPFile,
+    rejectMCPFile,
+    approveMCPDelete,
+    rejectMCPDelete,
+  };
 };

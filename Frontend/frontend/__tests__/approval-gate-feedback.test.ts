@@ -170,6 +170,7 @@ describe('useMCPApproval.respond — kayıp gate sessizce yutulmaz', () => {
       useMCPApproval({
         API,
         enabled: false,
+        workspacePath: '/ws',
         setPendingGenFiles: vi.fn(),
         setPendingDelete: vi.fn(),
         setPendingCommand: vi.fn(),
@@ -218,9 +219,10 @@ describe('useMCPApproval.respond — kayıp gate sessizce yutulmaz', () => {
 
   it('silme onayında gate yoksa istek hiç gitmez, uyarı da çıkmaz', async () => {
     const { result, showToast } = setupMCP()
-    ;(window as any).__mcpDeleteGate = undefined
 
-    await act(async () => { await result.current.approveMCPDelete() })
+    // Gate kimliği artık `window` global'inde değil kartın kendi kaydında
+    // taşınıyor; "gate yok" durumu boş string ile ifade ediliyor.
+    await act(async () => { await result.current.approveMCPDelete('') })
 
     expect(mockedAxios.post).not.toHaveBeenCalled()
     expect(showToast).not.toHaveBeenCalled()
