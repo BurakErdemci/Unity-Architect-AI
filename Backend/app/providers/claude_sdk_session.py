@@ -46,6 +46,9 @@ from agentic.command_gates import (
 # yükleniyor (yeni bağımlılık değil); ters yön (agent_runner → providers) ise
 # döngü kurardı çünkü `agentic/__init__` agent_runner'ı import ediyor.
 from agentic.command_gates import APPROVAL_TIMEOUT_S
+# unityMCP salt-okuma sınıflandırması. `spawn_env` ile aynı desen: app kökündeki
+# modül çıplak adla import ediliyor (`backend.spec` `pathex=['app']` taşıyor).
+from unity_tool_policy import is_unity_mcp_read_only
 
 logger = logging.getLogger(__name__)
 
@@ -563,11 +566,20 @@ class ClaudeSDKSession:
         # Salt-okunur araçlar → onay sormadan otomatik izin (gürültü azaltma)
         if tool_name in _AUTO_ALLOW_TOOLS and not _outside_read:
             return PermissionResultAllow(updated_input=input_data)
-        # unityMCP salt-okuma sorguları (sahneyi DEĞİŞTİRMEZ) → otomatik izin
-        if tool_name == "mcp__unityMCP__manage_scene" and \
-                input_data.get("action") in {"get_hierarchy", "get_active", "get_info"}:
-            return PermissionResultAllow(updated_input=input_data)
-        if tool_name == "mcp__unityMCP__read_console":
+        # unityMCP salt-okuma sorguları (Unity'de hiçbir kalıcı iz bırakmaz) → otomatik izin.
+        #
+        # Liste burada DEĞİL, kütükte: `unity-mcp/Server/src/services/registry/
+        # tool_actions.json`. Elle yazılmış hali üç yönden birden bozuktu ve
+        # üçü de sessizdi (ölçüldü 2026-07-29):
+        #   - ÖLÜ: `manage_scene` action'ı `get_info` diye bir şey yok, o muafiyet
+        #     hiçbir zaman eşleşmedi.
+        #   - DAR: gerçekten zararsız 9 araç (`unity_reflect`, `find_in_file`,
+        #     `get_sha`, …) ve ~40 okuma action'ı listede yoktu; keşif araçları her
+        #     turda kart çıkarıyordu, ki bu refleks-onaya alıştırır.
+        #   - GENİŞ: `read_console` koşulsuz muaftı, oysa `action="clear"` konsolu siler.
+        # Kütük kaynağa karşı bir ayrışma testiyle bağlı; buraya kopyalamak
+        # kütüğün kapatmak için var olduğu sapma sınıfını geri getirirdi.
+        if is_unity_mcp_read_only(tool_name, input_data):
             return PermissionResultAllow(updated_input=input_data)
 
         # AskUserQuestion → A/B/C seçim kartı

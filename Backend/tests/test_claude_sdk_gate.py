@@ -440,3 +440,81 @@ def test_agent_runner_has_no_hardcoded_gate_timeout():
     src = inspect.getsource(ar)
     assert "timeout=60.0" not in src
     assert src.count("timeout=APPROVAL_TIMEOUT_S") == 3
+
+
+# ── unityMCP muafiyetleri kütüğe bağlı mı ────────────────────────────────────
+#
+# Neden BURADA, `test_unity_tool_policy.py`'ye ek olarak: o dosya politikanın
+# kendisini sınıyor, bu blok kapının onu GERÇEKTEN ÇAĞIRDIĞINI. İkisi ayrı
+# arızalar — muafiyet listesi doğru olup kapıya hiç bağlanmamış olabilir, ki bu
+# depoda kapatılan bug'ın sınıfı tam olarak buydu: yazılı ama hiç eşleşmeyen
+# bir kural. Kapı çağrısı silinirse aşağıdakiler kırmızı olur.
+
+
+@pytest.mark.parametrize("tool,inp", [
+    ("mcp__unityMCP__manage_scene", {"action": "get_hierarchy"}),
+    ("mcp__unityMCP__manage_scene", {"action": "get_loaded_scenes"}),
+    ("mcp__unityMCP__read_console", {"action": "get"}),
+    ("mcp__unityMCP__unity_reflect", {"action": "search"}),
+    ("mcp__unityMCP__find_in_file", {"path": "Assets/A.cs", "pattern": "x"}),
+    ("mcp__unityMCP__get_sha", {"path": "Assets/A.cs"}),
+])
+async def test_unity_mcp_reads_pass_without_a_card(tool, inp, symlink_escape):
+    """Keşif çağrıları kart çıkarmamalı; her turda kart refleks-onaya alıştırır."""
+    ws, _outside, _link = symlink_escape
+    s = _mk_session(cwd=ws, auto_approve=False, approval_timeout=2.0)
+    res, ev = await _drive_gate(s, tool, inp)
+    assert ev is None, f"{tool} {inp} salt-okuma olduğu hâlde kart çıkardı"
+    assert _is_allow(res)
+
+
+@pytest.mark.parametrize("tool,inp", [
+    # Eski elle yazılmış listenin ÖLÜ girdisi: `manage_scene`'in get_info'su yok.
+    ("mcp__unityMCP__manage_scene", {"action": "get_info"}),
+    # Eski liste `read_console`'un tamamını muaf tutuyordu; clear konsolu siler.
+    ("mcp__unityMCP__read_console", {"action": "clear"}),
+    ("mcp__unityMCP__manage_scene", {"action": "save"}),
+    ("mcp__unityMCP__execute_code", {"action": "execute", "code": "// x"}),
+    # safety_checks modelin kendi geçtiği bir bayrak — kapı girdisi değil.
+    ("mcp__unityMCP__execute_code", {"action": "execute", "code": "// x", "safety_checks": False}),
+    ("mcp__unityMCP__manage_gameobject", {"action": "delete", "target": "Player"}),
+])
+async def test_unity_mcp_mutations_show_a_card(tool, inp, symlink_escape):
+    ws, _outside, _link = symlink_escape
+    s = _mk_session(cwd=ws, auto_approve=False, approval_timeout=2.0)
+    res, ev = await _drive_gate(s, tool, inp, approve=True)
+    assert ev is not None and ev["type"] == "command_approval_needed", \
+        f"{tool} {inp} kartsız izin aldı"
+    assert _is_allow(res)
+
+
+async def test_unity_mcp_batch_is_gated_on_its_contents(symlink_escape):
+    """`batch_execute` keyfi alt-çağrı taşıyor; dış ada bakan bir kapı hepsini kaçırır."""
+    ws, _outside, _link = symlink_escape
+
+    reads = {"commands": [
+        {"tool": "manage_scene", "params": {"action": "get_hierarchy"}},
+        {"tool": "unity_reflect", "params": {"action": "search"}},
+    ]}
+    s = _mk_session(cwd=ws, auto_approve=False, approval_timeout=2.0)
+    _res, ev = await _drive_gate(s, "mcp__unityMCP__batch_execute", reads)
+    assert ev is None, "yalnız okuma içeren batch kart çıkardı"
+
+    mixed = {"commands": [
+        {"tool": "manage_scene", "params": {"action": "get_hierarchy"}},
+        {"tool": "manage_gameobject", "params": {"action": "delete", "target": "Player"}},
+    ]}
+    s2 = _mk_session(cwd=ws, auto_approve=False, approval_timeout=2.0)
+    _res2, ev2 = await _drive_gate(s2, "mcp__unityMCP__batch_execute", mixed, approve=True)
+    assert ev2 is not None, "içinde mutasyon olan batch kartsız geçti"
+
+
+async def test_unity_mcp_mutation_denied_when_user_rejects(symlink_escape):
+    """Kart görünmesi yetmez — HAYIR'ın da etkisi olmalı."""
+    ws, _outside, _link = symlink_escape
+    s = _mk_session(cwd=ws, auto_approve=False, approval_timeout=2.0)
+    res, ev = await _drive_gate(
+        s, "mcp__unityMCP__execute_code", {"action": "execute", "code": "// x"}, approve=False
+    )
+    assert ev is not None
+    assert not _is_allow(res)

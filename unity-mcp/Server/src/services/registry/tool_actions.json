@@ -1,0 +1,494 @@
+{
+  "schema_version": 1,
+  "_purpose": "Read/write classification for every registered MCP tool, per action. The approval gate asks one question -- 'does this call mutate anything?' -- and this ledger is the only place that answers it. Address, classification and evidence live on the same row on purpose: when they were kept apart, the two copies drifted and nobody noticed.",
+  "_policy": {
+    "default": "write",
+    "_why": "Fail-closed. A tool or action missing from this ledger is treated as a mutation, so an upstream addition surfaces an approval card instead of silently bypassing the gate. The divergence test turns that surprise into a red build rather than a production hole.",
+    "unknown_tool": "write",
+    "unknown_action": "write"
+  },
+  "_classification_rule": "'read' means the call leaves no persistent trace: no asset, no file on disk, no scene/component state, no Editor state a later call could observe. Anything else is 'write', including calls that only touch ephemeral Editor state -- the gate can relax those later, but it cannot un-write a file.",
+  "tools": {
+    "batch_execute": {
+      "action_param": null,
+      "tool_level": "write",
+      "read_actions": [],
+      "write_actions": [],
+      "param_dependent": [],
+      "recursive_field": "commands",
+      "recursive_tool_key": "tool",
+      "recursive_params_key": "params",
+      "evidence": "unity-mcp/Server/src/services/tools/batch_execute.py:62",
+      "note": "Carries arbitrary sub-tool calls in 'commands'. A gate that only reads the outer tool name would let every mutation through in one packet. classify() must recurse: the batch is 'read' only when every inner call is 'read'."
+    },
+    "debug_request_context": {
+      "action_param": null,
+      "tool_level": "read",
+      "read_actions": [],
+      "write_actions": [],
+      "param_dependent": [],
+      "evidence": "unity-mcp/Server/src/services/tools/debug_request_context.py:15",
+      "note": "Never reaches Unity; returns FastMCP request context and hub state. readOnlyHint=True."
+    },
+    "execute_code": {
+      "action_param": "action",
+      "tool_level": null,
+      "read_actions": ["get_history"],
+      "write_actions": ["execute", "replay", "clear_history"],
+      "param_dependent": [],
+      "evidence": "unity-mcp/Server/src/services/tools/execute_code.py:22",
+      "note": "execute/replay compile and run arbitrary C# inside the Editor -- unbounded write. clear_history destroys a persisted record. The safety_checks parameter is NOT a gate: the model can set it false, and replay inherits the historical value without re-sending it."
+    },
+    "execute_custom_tool": {
+      "action_param": null,
+      "tool_level": "write",
+      "read_actions": [],
+      "write_actions": [],
+      "param_dependent": [],
+      "evidence": "unity-mcp/Server/src/services/tools/execute_custom_tool.py:14",
+      "note": "Runs a user-defined, project-scoped tool. Behaviour is not knowable statically, so it can never be classified read."
+    },
+    "execute_menu_item": {
+      "action_param": null,
+      "tool_level": "write",
+      "read_actions": [],
+      "write_actions": [],
+      "param_dependent": [],
+      "evidence": "unity-mcp/Server/src/services/tools/execute_menu_item.py:16",
+      "note": "Calls EditorApplication.ExecuteMenuItem with any path. Only 'File/Quit' is blacklisted; Save, Build and Delete are all reachable."
+    },
+    "find_gameobjects": {
+      "action_param": null,
+      "tool_level": "read",
+      "read_actions": [],
+      "write_actions": [],
+      "param_dependent": [],
+      "evidence": "unity-mcp/Server/src/services/tools/find_gameobjects.py:18",
+      "note": "search_method/match_mode are search modifiers, not actions. Caveat: find_gameobjects.py:95 calls preflight(refresh_if_dirty=True), which can trigger an AssetDatabase refresh -- an infrastructure side effect of the call path, not of the tool's semantics."
+    },
+    "find_in_file": {
+      "action_param": null,
+      "tool_level": "read",
+      "read_actions": [],
+      "write_actions": [],
+      "param_dependent": [],
+      "evidence": "unity-mcp/Server/src/services/tools/find_in_file.py:68",
+      "note": "Sends a fixed {'action': 'read'} to manage_script and matches the regex in Python. readOnlyHint=True."
+    },
+    "manage_animation": {
+      "action_param": "action",
+      "tool_level": null,
+      "read_actions": ["animator_get_info", "animator_get_parameter", "controller_get_info", "clip_get_info"],
+      "write_actions": [
+        "animator_play", "animator_crossfade", "animator_set_parameter", "animator_set_speed", "animator_set_enabled",
+        "controller_create", "controller_add_state", "controller_add_transition", "controller_update_transition",
+        "controller_remove_transition", "controller_add_parameter", "controller_assign", "controller_add_layer",
+        "controller_remove_layer", "controller_set_layer_weight", "controller_create_blend_tree_1d",
+        "controller_create_blend_tree_2d", "controller_add_blend_tree_child",
+        "clip_create", "clip_add_curve", "clip_set_curve", "clip_set_vector_curve", "clip_create_preset",
+        "clip_assign", "clip_add_event", "clip_remove_event"
+      ],
+      "param_dependent": [],
+      "evidence": "unity-mcp/Server/src/services/tools/manage_animation.py:35",
+      "note": "action is free-text in Python but validated against ANIMATOR_ACTIONS/CONTROLLER_ACTIONS/CLIP_ACTIONS (manage_animation.py:11-32), cross-checked against the C# switch at ManageAnimation.cs:202-249. animator_play/set_* change runtime Animator state -- no asset written, still a write."
+    },
+    "manage_asset": {
+      "action_param": "action",
+      "tool_level": null,
+      "read_actions": ["search", "get_info", "get_components"],
+      "write_actions": ["import", "create", "modify", "delete", "duplicate", "move", "rename", "create_folder"],
+      "param_dependent": [],
+      "evidence": "unity-mcp/Server/src/services/tools/manage_asset.py:19",
+      "note": "'import' is a write because it (re)imports into the AssetDatabase."
+    },
+    "manage_build": {
+      "action_param": "action",
+      "tool_level": null,
+      "read_actions": ["status"],
+      "write_actions": ["build", "batch", "cancel"],
+      "param_dependent": [
+        {"action": "platform", "param": "target", "read_when": "omitted",
+         "note": "Without target it reports the active platform; with target it calls SwitchActiveBuildTarget and reimports assets."},
+        {"action": "settings", "param": "value", "read_when": "omitted",
+         "note": "Without value it reads a PlayerSettings property; with value it writes one."},
+        {"action": "scenes", "param": "scenes", "read_when": "omitted",
+         "note": "Without scenes it reads EditorBuildSettings.scenes; with scenes it replaces the whole build scene list."},
+        {"action": "profiles", "param": "activate", "read_when": "falsy",
+         "note": "Listing profiles or reading one is a read; activate=true calls SetActiveBuildProfile."}
+      ],
+      "evidence": "unity-mcp/Server/src/services/tools/manage_build.py:37",
+      "note": "The worst case for an action-only gate: four actions flip between read and write on a SIBLING parameter, not on the action name. Any gate that stops at action granularity misclassifies all four."
+    },
+    "manage_camera": {
+      "action_param": "action",
+      "tool_level": null,
+      "read_actions": ["ping", "get_brain_status", "list_cameras"],
+      "write_actions": [
+        "ensure_brain", "create_camera", "set_target", "set_priority", "set_lens", "set_body", "set_aim",
+        "set_noise", "add_extension", "remove_extension", "set_blend", "force_camera", "release_override",
+        "screenshot", "screenshot_multiview"
+      ],
+      "param_dependent": [],
+      "evidence": "unity-mcp/Server/src/services/tools/manage_camera.py:34",
+      "note": "screenshot/screenshot_multiview always write a PNG to disk (ManageScene.cs:1249, default Assets/Screenshots), even with include_image=true. 'Taking a screenshot is harmless' is the wrong intuition here."
+    },
+    "manage_components": {
+      "action_param": "action",
+      "tool_level": null,
+      "read_actions": [],
+      "write_actions": ["add", "remove", "set_property"],
+      "param_dependent": [],
+      "evidence": "unity-mcp/Server/src/services/tools/manage_components.py:16",
+      "note": "No read path exists; the description points readers at resources instead."
+    },
+    "manage_editor": {
+      "action_param": "action",
+      "tool_level": null,
+      "read_actions": ["telemetry_status", "telemetry_ping"],
+      "write_actions": [
+        "play", "pause", "stop", "set_active_tool", "add_tag", "remove_tag", "add_layer", "remove_layer",
+        "deploy_package", "restore_package", "sync_csproj", "undo", "redo"
+      ],
+      "param_dependent": [],
+      "evidence": "unity-mcp/Server/src/services/tools/manage_editor.py:12",
+      "note": "telemetry_* short-circuit in Python and never reach Unity. sync_csproj writes .sln/.csproj to disk; deploy_package/restore_package copy a package folder and trigger a recompile."
+    },
+    "manage_fbx": {
+      "action_param": "action",
+      "tool_level": null,
+      "read_actions": ["get_info"],
+      "write_actions": ["configure_rig", "setup_clips", "full_setup"],
+      "param_dependent": [],
+      "evidence": "unity-mcp/Server/src/services/tools/manage_fbx.py:25",
+      "note": "The three writes change ModelImporter settings and reimport; full_setup also creates a .controller asset and can add a GameObject to the scene."
+    },
+    "manage_gameobject": {
+      "action_param": "action",
+      "tool_level": null,
+      "read_actions": [],
+      "write_actions": ["create", "modify", "delete", "duplicate", "move_relative", "look_at"],
+      "param_dependent": [],
+      "evidence": "unity-mcp/Server/src/services/tools/manage_gameobject.py:41",
+      "note": "look_at writes rotation and move_relative writes position -- both are mutations despite the passive-sounding names."
+    },
+    "manage_graphics": {
+      "action_param": "action",
+      "tool_level": null,
+      "read_actions": [
+        "ping", "volume_get_info", "volume_list_effects", "bake_status", "bake_get_settings", "stats_get",
+        "stats_list_counters", "stats_get_memory", "pipeline_get_info", "pipeline_get_settings", "feature_list",
+        "skybox_get"
+      ],
+      "write_actions": [
+        "volume_create", "volume_add_effect", "volume_set_effect", "volume_remove_effect", "volume_set_properties",
+        "volume_create_profile", "bake_start", "bake_cancel", "bake_clear", "bake_reflection_probe",
+        "bake_set_settings", "bake_create_light_probe_group", "bake_create_reflection_probe",
+        "bake_set_probe_positions", "stats_set_scene_debug", "pipeline_set_quality", "pipeline_set_settings",
+        "feature_add", "feature_remove", "feature_configure", "feature_toggle", "feature_reorder",
+        "skybox_set_material", "skybox_set_properties", "skybox_set_ambient", "skybox_set_fog",
+        "skybox_set_reflection", "skybox_set_sun"
+      ],
+      "param_dependent": [],
+      "evidence": "unity-mcp/Server/src/services/tools/manage_graphics.py:83",
+      "note": "bake_cancel leaves partial lightmap data and bake_clear deletes baked lightmaps -- both writes despite reading like control verbs."
+    },
+    "manage_material": {
+      "action_param": "action",
+      "tool_level": null,
+      "read_actions": ["ping", "get_material_info"],
+      "write_actions": ["create", "set_material_shader_property", "set_material_color", "assign_material_to_renderer", "set_renderer_color"],
+      "param_dependent": [],
+      "evidence": "unity-mcp/Server/src/services/tools/manage_material.py:26",
+      "note": "Literal is authoritative and the tool description states the same split independently."
+    },
+    "manage_packages": {
+      "action_param": "action",
+      "tool_level": null,
+      "read_actions": ["list_packages", "search_packages", "get_package_info", "ping", "status", "list_registries"],
+      "write_actions": ["add_package", "remove_package", "embed_package", "resolve_packages", "add_registry", "remove_registry"],
+      "param_dependent": [],
+      "evidence": "unity-mcp/Server/src/services/tools/manage_packages.py:58",
+      "note": "'status' only polls an async job."
+    },
+    "manage_physics": {
+      "action_param": "action",
+      "tool_level": null,
+      "read_actions": [
+        "ping", "get_settings", "get_collision_matrix", "raycast", "raycast_all", "linecast", "shapecast",
+        "overlap", "get_rigidbody", "validate"
+      ],
+      "write_actions": [
+        "set_settings", "set_collision_matrix", "create_physics_material", "configure_physics_material",
+        "assign_physics_material", "add_joint", "configure_joint", "remove_joint", "simulate_step",
+        "apply_force", "configure_rigidbody"
+      ],
+      "param_dependent": [],
+      "evidence": "unity-mcp/Server/src/services/tools/manage_physics.py:56",
+      "note": "'validate' was first classified write out of caution, then measured directly: PhysicsValidationOps.cs (308 lines) contains no SetDirty, ApplyModifiedProperties, SerializedObject or assignment-based mutation -- it is a pure report. simulate_step IS a write: Physics.Simulate moves scene transforms."
+    },
+    "manage_prefabs": {
+      "action_param": "action",
+      "tool_level": null,
+      "read_actions": ["get_info", "get_hierarchy"],
+      "write_actions": ["create_from_gameobject", "modify_contents", "open_prefab_stage", "save_prefab_stage", "close_prefab_stage"],
+      "param_dependent": [],
+      "evidence": "unity-mcp/Server/src/services/tools/manage_prefabs.py:50",
+      "note": "close_prefab_stage takes save_before_close but is a write either way -- false discards in-stage edits. open/close change which object the rest of the toolchain operates on, so they are not neutral."
+    },
+    "manage_probuilder": {
+      "action_param": "action",
+      "tool_level": null,
+      "read_actions": ["ping", "get_mesh_info", "select_faces", "validate_mesh"],
+      "write_actions": [
+        "create_shape", "create_poly_shape", "extrude_faces", "extrude_edges", "bevel_edges", "subdivide",
+        "delete_faces", "bridge_edges", "connect_elements", "detach_faces", "flip_normals", "merge_faces",
+        "combine_meshes", "merge_objects", "duplicate_and_flip", "create_polygon", "merge_vertices",
+        "weld_vertices", "split_vertices", "move_vertices", "insert_vertex", "append_vertices_to_edge",
+        "set_face_material", "set_face_color", "set_face_uvs", "convert_to_probuilder", "set_smoothing",
+        "auto_smooth", "center_pivot", "freeze_transform", "set_pivot", "repair_mesh"
+      ],
+      "param_dependent": [],
+      "evidence": "unity-mcp/Server/src/services/tools/manage_probuilder.py:115",
+      "note": "Two Python groupings are misleading and were overridden by reading the C#: convert_to_probuilder sits in QUERY_ACTIONS but mutates the mesh (write), and select_faces only computes face indices (read). validate_mesh was measured at ProBuilderMeshUtils.cs:98 -- it counts degenerate triangles and unused vertices via reflection and writes nothing, so it is a read despite sitting next to repair_mesh."
+    },
+    "manage_profiler": {
+      "action_param": "action",
+      "tool_level": null,
+      "read_actions": [
+        "ping", "profiler_status", "get_frame_timing", "get_counters", "get_object_memory",
+        "memory_list_snapshots", "memory_compare_snapshots", "frame_debugger_get_events"
+      ],
+      "write_actions": ["profiler_start", "profiler_stop", "profiler_set_areas", "memory_take_snapshot", "frame_debugger_enable", "frame_debugger_disable"],
+      "param_dependent": [],
+      "evidence": "unity-mcp/Server/src/services/tools/manage_profiler.py:65",
+      "note": "memory_take_snapshot writes a .snap file to disk. The profiler/frame-debugger toggles touch Editor state only, but they are observable across calls, so the conservative rule applies."
+    },
+    "manage_scene": {
+      "action_param": "action",
+      "tool_level": null,
+      "read_actions": ["get_hierarchy", "get_active", "get_build_settings", "get_loaded_scenes", "scene_view_frame"],
+      "write_actions": ["create", "load", "save", "close_scene", "set_active_scene", "move_to_scene"],
+      "param_dependent": [
+        {"action": "validate", "param": "auto_repair", "read_when": "falsy",
+         "note": "ManageScene.cs:298 dispatches ValidateScene(cmd.autoRepair == true). Omitted/false is a pure report; true repairs the scene."}
+      ],
+      "evidence": "unity-mcp/Server/src/services/tools/manage_scene.py:32",
+      "note": "'load' is a write because it can replace or discard current scene contents. scene_view_frame only moves the SceneView camera. NOTE for the existing Backend exemption list: manage_scene has no 'get_info' action -- that entry has never matched anything."
+    },
+    "manage_scriptable_object": {
+      "action_param": "action",
+      "tool_level": null,
+      "read_actions": [],
+      "write_actions": ["create", "modify"],
+      "param_dependent": [],
+      "evidence": "unity-mcp/Server/src/services/tools/manage_scriptable_object.py:35",
+      "note": "The C# handler may accept more actions than the Python Literal exposes, but only the Python surface is reachable through this tool."
+    },
+    "manage_shader": {
+      "action_param": "action",
+      "tool_level": null,
+      "read_actions": ["read"],
+      "write_actions": ["create", "update", "delete"],
+      "param_dependent": [],
+      "evidence": "unity-mcp/Server/src/services/tools/manage_shader.py:24",
+      "note": ""
+    },
+    "manage_sprite": {
+      "action_param": "action",
+      "tool_level": null,
+      "read_actions": ["get_info"],
+      "write_actions": ["slice_sheet", "setup_clips", "setup_controller", "full_setup", "add_keyframe_anim"],
+      "param_dependent": [],
+      "evidence": "unity-mcp/Server/src/services/tools/manage_sprite.py:46",
+      "note": "full_setup is a composite (vision -> slice -> clips -> controller) and writes at every stage."
+    },
+    "manage_texture": {
+      "action_param": "action",
+      "tool_level": null,
+      "read_actions": [],
+      "write_actions": ["create", "modify", "delete", "create_sprite", "apply_pattern", "apply_gradient", "apply_noise", "set_import_settings"],
+      "param_dependent": [],
+      "evidence": "unity-mcp/Server/src/services/tools/manage_texture.py:391",
+      "note": "No read action exists on this tool."
+    },
+    "manage_tools": {
+      "action_param": "action",
+      "tool_level": null,
+      "read_actions": ["list_groups", "activate", "deactivate", "sync", "reset"],
+      "write_actions": [],
+      "param_dependent": [],
+      "evidence": "unity-mcp/Server/src/services/tools/manage_tools.py:43",
+      "note": "Server-only meta-tool: no Unity command is sent. activate/deactivate/reset change per-session FastMCP tool visibility, discarded when the session ends; sync only READS the get_tool_states resource. Classified read despite readOnlyHint=False. Enabling a group is not a gate bypass -- the tools it exposes are still classified individually on their own calls."
+    },
+    "manage_ui": {
+      "action_param": "action",
+      "tool_level": null,
+      "read_actions": ["ping", "read", "get_visual_tree", "list"],
+      "write_actions": [
+        "create", "update", "delete", "attach_ui_document", "detach_ui_document", "create_panel_settings",
+        "update_panel_settings", "render_ui", "link_stylesheet", "modify_visual_element"
+      ],
+      "param_dependent": [],
+      "evidence": "unity-mcp/Server/src/services/tools/manage_ui.py:56",
+      "note": "render_ui is a write on two counts: File.WriteAllBytes of a PNG (ManageUI.cs:914, :1154) and assigning a RenderTexture to the PanelSettings asset (:1170). link_stylesheet edits the UXML file."
+    },
+    "manage_vfx": {
+      "action_param": "action",
+      "tool_level": null,
+      "read_actions": ["ping", "particle_get_info", "vfx_list_templates", "vfx_list_assets", "vfx_get_info", "line_get_info", "trail_get_info"],
+      "write_actions": [
+        "particle_create", "particle_set_main", "particle_set_emission", "particle_set_shape",
+        "particle_set_color_over_lifetime", "particle_set_size_over_lifetime", "particle_set_velocity_over_lifetime",
+        "particle_set_noise", "particle_set_renderer", "particle_enable_module", "particle_play", "particle_stop",
+        "particle_pause", "particle_restart", "particle_clear", "particle_add_burst", "particle_clear_bursts",
+        "vfx_create_asset", "vfx_assign_asset", "vfx_set_float", "vfx_set_int", "vfx_set_bool", "vfx_set_vector2",
+        "vfx_set_vector3", "vfx_set_vector4", "vfx_set_color", "vfx_set_gradient", "vfx_set_texture",
+        "vfx_set_mesh", "vfx_set_curve", "vfx_send_event", "vfx_play", "vfx_stop", "vfx_pause", "vfx_reinit",
+        "vfx_set_playback_speed", "vfx_set_seed", "line_set_positions", "line_add_position", "line_set_position",
+        "line_set_width", "line_set_color", "line_set_material", "line_set_properties", "line_clear",
+        "line_create_line", "line_create_circle", "line_create_arc", "line_create_bezier", "trail_set_time",
+        "trail_set_width", "trail_set_color", "trail_set_material", "trail_set_properties", "trail_clear",
+        "trail_emit"
+      ],
+      "param_dependent": [],
+      "evidence": "unity-mcp/Server/src/services/tools/manage_vfx.py:59",
+      "note": "Playback controls mutate live component state rather than a serialized asset; the C# layout corroborates the split with explicit *Read.cs vs *Write.cs/*Control.cs pairs."
+    },
+    "apply_text_edits": {
+      "action_param": null,
+      "tool_level": "write",
+      "read_actions": [],
+      "write_actions": [],
+      "param_dependent": [],
+      "evidence": "unity-mcp/Server/src/services/tools/manage_script.py:148",
+      "note": "Writes .cs content under Assets/ and can trigger a recompile via wait_for_compile."
+    },
+    "create_script": {
+      "action_param": null,
+      "tool_level": "write",
+      "read_actions": [],
+      "write_actions": [],
+      "param_dependent": [],
+      "evidence": "unity-mcp/Server/src/services/tools/manage_script.py:467",
+      "note": "Hardcodes action='create' internally."
+    },
+    "delete_script": {
+      "action_param": null,
+      "tool_level": "write",
+      "read_actions": [],
+      "write_actions": [],
+      "param_dependent": [],
+      "evidence": "unity-mcp/Server/src/services/tools/manage_script.py:533",
+      "note": "Hardcodes action='delete' internally."
+    },
+    "validate_script": {
+      "action_param": null,
+      "tool_level": "read",
+      "read_actions": [],
+      "write_actions": [],
+      "param_dependent": [],
+      "evidence": "unity-mcp/Server/src/services/tools/manage_script.py:568",
+      "note": "readOnlyHint=True. 'level' is a validation depth, not an action."
+    },
+    "manage_script": {
+      "action_param": "action",
+      "tool_level": null,
+      "read_actions": ["read"],
+      "write_actions": ["create", "delete"],
+      "param_dependent": [],
+      "evidence": "unity-mcp/Server/src/services/tools/manage_script.py:616",
+      "note": "Tool-level annotation is destructiveHint=True with no readOnlyHint, so the read action is under-declared at tool level -- per-action gating is required to avoid carding every script read."
+    },
+    "manage_script_capabilities": {
+      "action_param": null,
+      "tool_level": "read",
+      "read_actions": [],
+      "write_actions": [],
+      "param_dependent": [],
+      "evidence": "unity-mcp/Server/src/services/tools/manage_script.py:706",
+      "note": "unity_target=None -- returns a static capability dict from the Python server, never reaches Unity."
+    },
+    "get_sha": {
+      "action_param": null,
+      "tool_level": "read",
+      "read_actions": [],
+      "write_actions": [],
+      "param_dependent": [],
+      "evidence": "unity-mcp/Server/src/services/tools/manage_script.py:746",
+      "note": "readOnlyHint=True. Returns sha256 and length only, not contents."
+    },
+    "read_console": {
+      "action_param": "action",
+      "tool_level": null,
+      "read_actions": ["get"],
+      "write_actions": ["clear"],
+      "param_dependent": [],
+      "default_action": "get",
+      "evidence": "unity-mcp/Server/src/services/tools/read_console.py:23",
+      "note": "'clear' invokes LogEntries.Clear (ReadConsole.cs:205). It destroys ephemeral UI state, not project data, but it is still destructive and must not ride on a blanket tool-level exemption. Defaults to 'get' when action is omitted (read_console.py:52) -- classify() must apply that default rather than treating a missing action as unknown."
+    },
+    "refresh_unity": {
+      "action_param": null,
+      "tool_level": "write",
+      "read_actions": [],
+      "write_actions": [],
+      "param_dependent": [],
+      "evidence": "unity-mcp/Server/src/services/tools/refresh_unity.py:168",
+      "note": "mode/scope/compile are modifiers, not actions. Imports assets and regenerates artifacts even with compile='none'."
+    },
+    "run_tests": {
+      "action_param": null,
+      "tool_level": "write",
+      "read_actions": [],
+      "write_actions": [],
+      "param_dependent": [],
+      "evidence": "unity-mcp/Server/src/services/tools/run_tests.py:146",
+      "note": "'mode' is EditMode/PlayMode, not an action. Executes arbitrary project code inside the Editor; PlayMode forces a domain reload."
+    },
+    "get_test_job": {
+      "action_param": null,
+      "tool_level": "read",
+      "read_actions": [],
+      "write_actions": [],
+      "param_dependent": [],
+      "evidence": "unity-mcp/Server/src/services/tools/run_tests.py:223",
+      "note": "readOnlyHint=True. Polls an already-started job; starts nothing."
+    },
+    "script_apply_edits": {
+      "action_param": null,
+      "tool_level": "write",
+      "read_actions": [],
+      "write_actions": [],
+      "param_dependent": [],
+      "evidence": "unity-mcp/Server/src/services/tools/script_apply_edits.py:671",
+      "note": "The per-edit 'op' field selects the structured edit; every op is a mutation."
+    },
+    "set_active_instance": {
+      "action_param": null,
+      "tool_level": "read",
+      "read_actions": [],
+      "write_actions": [],
+      "param_dependent": [],
+      "evidence": "unity-mcp/Server/src/services/tools/set_active_instance.py:14",
+      "note": "unity_target=None -- the Unity project is never touched; it only discovers instances and stores the selection in server-side session state. Blast-radius caveat, deliberately not treated as a write: changing routing redirects every SUBSEQUENT write to a different Editor. Those writes are still classified and gated on their own calls, so the gate is not bypassed -- but the approval card for them will name a different Editor than the user may expect."
+    },
+    "unity_docs": {
+      "action_param": "action",
+      "tool_level": null,
+      "read_actions": ["get_doc", "get_manual", "get_package_doc", "lookup"],
+      "write_actions": [],
+      "param_dependent": [],
+      "evidence": "unity-mcp/Server/src/services/tools/unity_docs.py:697",
+      "note": "readOnlyHint=True, destructiveHint=False. action is free-text but whitelisted against ALL_ACTIONS (unity_docs.py:13, enforced at :736). All four fetch remote docs over HTTP from docs.unity3d.com -- read with respect to Unity, but note they do reach the network."
+    },
+    "unity_reflect": {
+      "action_param": "action",
+      "tool_level": null,
+      "read_actions": ["get_type", "get_member", "search"],
+      "write_actions": [],
+      "param_dependent": [],
+      "evidence": "unity-mcp/Server/src/services/tools/unity_reflect.py:27",
+      "note": "readOnlyHint=True, destructiveHint=False. Free-text action validated against ALL_ACTIONS (unity_reflect.py:11); confirmed against the C# switch at UnityReflect.cs:118. Pure reflection over loaded assemblies."
+    }
+  }
+}
