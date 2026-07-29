@@ -29,6 +29,8 @@ from services.registry.tool_actions import (
     ledger_tool_names,
     load_ledger,
     tool_entry,
+    _action_list,
+    _is_read_by_param,
     _self_check,
 )
 from utils.module_discovery import discover_modules
@@ -638,6 +640,47 @@ def test_param_dependent_action_flips_on_a_sibling_parameter():
     assert classify("manage_build", {"action": "settings", "property": "companyName", "value": "x"}) == WRITE
     assert classify("manage_build", {"action": "scenes"}) == READ
     assert classify("manage_build", {"action": "scenes", "scenes": ["A.unity"]}) == WRITE
+
+
+def test_a_param_dependent_pivot_is_seen_under_every_spelling():
+    """
+    camelCase must not walk past a param_dependent rule.
+
+    Promoted from an external audit probe (2026-07-29). The server normalises
+    camelCase to snake_case before FastMCP validates, but the approval gate
+    classifies the RAW payload - so `autoRepair` was invisible here while the
+    C# side read it happily, and an invisible pivot is the READ side of every
+    rule we have. The audit's concrete case (`manage_scene validate
+    autoRepair=true` -> ValidateScene(true)) is gone because manage_scene is
+    now write throughout, which is exactly why this test uses a synthetic rule:
+    the mechanism outlived its instance and would return with the next
+    multi-word pivot parameter.
+    """
+    rule = {"action": "status", "param": "auto_repair", "read_when": "omitted"}
+    assert _is_read_by_param(rule, {}) is True, "absent must still read"
+    for spelling in ("auto_repair", "autoRepair", "AutoRepair"):
+        assert _is_read_by_param(rule, {spelling: True}) is False, (
+            f"{spelling} carries the pivot value, so the call is a write"
+        )
+
+    falsy_rule = {"action": "status", "param": "auto_repair", "read_when": "falsy"}
+    assert _is_read_by_param(falsy_rule, {"autoRepair": False}) is True
+    assert _is_read_by_param(falsy_rule, {"autoRepair": True}) is False
+
+
+def test_a_malformed_action_list_cannot_become_a_wildcard():
+    """
+    `action in read_actions` is a substring test when read_actions is a string.
+
+    Promoted from an external audit probe (2026-07-29): with
+    `"read_actions": "list_packages"`, the actions `list`, `list_p` and even `s`
+    all classified as read. The ledger is hand-edited data that grants
+    exemptions from a security gate, so a wrong shape has to fail closed.
+    """
+    entry = {"read_actions": "list_packages", "write_actions": ["add"]}
+    assert _action_list(entry, "read_actions") == ()
+    assert _action_list(entry, "write_actions") == ("add",)
+    assert _action_list({"read_actions": ["ok", 7, None]}, "read_actions") == ("ok",)
 
 
 def test_batch_execute_is_a_write_when_any_inner_call_writes():

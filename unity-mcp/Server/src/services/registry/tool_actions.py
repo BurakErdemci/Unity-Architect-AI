@@ -53,14 +53,77 @@ def tool_entry(tool_name: str) -> dict[str, Any] | None:
     return load_ledger()["tools"].get(tool_name)
 
 
+def _action_list(entry: Mapping[str, Any], key: str) -> tuple[str, ...]:
+    """
+    An action list from the ledger, or empty when the row is the wrong shape.
+
+    ``action in entry["read_actions"]`` reads naturally and is a trap: if that
+    field is a plain string instead of a list, ``in`` silently becomes a
+    SUBSTRING test, so ``"list_packages"`` exempts the actions ``"list"``,
+    ``"list_p"`` and even ``"s"``. Measured 2026-07-29 during an external audit
+    of the ledger's trust assumptions. The ledger is hand-edited data granting
+    exemptions from a security gate, so a wrong shape has to land on the write
+    side rather than becoming a wildcard.
+    """
+    value = entry.get(key)
+    if not isinstance(value, (list, tuple)):
+        return ()
+    return tuple(item for item in value if isinstance(item, str))
+
+
+def _normalize_key(key: str) -> str:
+    """``autoRepair`` -> ``auto_repair``, mirroring the server's own normaliser."""
+    out: list[str] = []
+    for index, char in enumerate(key):
+        if char.isupper():
+            if index:
+                out.append("_")
+            out.append(char.lower())
+        else:
+            out.append(char)
+    return "".join(out)
+
+
+def _param_value(params: Mapping[str, Any], param: str) -> Any:
+    """
+    The value of ``param`` under ANY spelling the server would accept.
+
+    The gate classifies the payload as the model sent it, but
+    ``ParamNormalizerMiddleware`` converts camelCase to snake_case before
+    FastMCP ever validates it - so the server and this classifier were looking
+    at two different key sets. An exact-key lookup therefore misses
+    ``autoRepair`` while the C# side happily reads it, and a missing key is the
+    READ side of every rule we have: a pure spelling change turned a gated call
+    into an exempt one. Found by an external audit 2026-07-29 on
+    ``manage_scene validate autoRepair=true``, which reached ValidateScene(true).
+    That particular row is gone (manage_scene is now write throughout), but the
+    mechanism was not, and it would have come back with the next multi-word
+    pivot parameter.
+
+    Any spelling that carries a value wins, because "cannot prove absent" must
+    land on the write side.
+    """
+    if params.get(param) is not None:
+        return params[param]
+    target = _normalize_key(param)
+    for key, value in params.items():
+        if isinstance(key, str) and value is not None and _normalize_key(key) == target:
+            return value
+    return None
+
+
 def _is_read_by_param(rule: Mapping[str, Any], params: Mapping[str, Any]) -> bool:
     """Evaluate one ``param_dependent`` rule against a call's parameters."""
-    param = rule["param"]
+    param = rule.get("param")
+    if not isinstance(param, str) or not param:
+        # A rule with no usable pivot cannot prove anything.
+        return False
     when = rule.get("read_when", "omitted")
+    value = _param_value(params, param)
     if when == "omitted":
-        return params.get(param) is None
+        return value is None
     if when == "falsy":
-        return not params.get(param)
+        return not value
     # An unknown rule kind must not silently read as a permission. Treat it as
     # "cannot prove read" so the call is gated.
     return False
@@ -125,9 +188,9 @@ def classify(tool_name: str, params: Mapping[str, Any] | None = None, *, _depth:
         if rule.get("action") == action:
             return READ if _is_read_by_param(rule, params) else WRITE
 
-    if action in entry.get("read_actions", []):
+    if action in _action_list(entry, "read_actions"):
         return READ
-    if action in entry.get("write_actions", []):
+    if action in _action_list(entry, "write_actions"):
         return WRITE
     return WRITE
 
@@ -148,8 +211,24 @@ def _self_check() -> list[str]:
     problems: list[str] = []
     ledger = load_ledger(refresh=True)
     for name, entry in ledger["tools"].items():
-        reads = set(entry.get("read_actions", []))
-        writes = set(entry.get("write_actions", []))
+        # Shape first. classify() already fails closed on a wrong shape, but a
+        # silently degraded row is a ledger nobody notices is broken - and the
+        # string-instead-of-list case turns membership into a substring match.
+        for key in ("read_actions", "write_actions"):
+            value = entry.get(key, [])
+            if not isinstance(value, (list, tuple)):
+                problems.append(
+                    f"{name}: {key} is {type(value).__name__}, expected a list -- "
+                    "membership would degrade to a substring test"
+                )
+            elif any(not isinstance(item, str) for item in value):
+                problems.append(f"{name}: {key} contains a non-string entry")
+        for rule in entry.get("param_dependent", []):
+            if not isinstance(rule.get("param"), str) or not rule.get("param"):
+                problems.append(f"{name}: a param_dependent rule has no usable 'param'")
+
+        reads = set(_action_list(entry, "read_actions"))
+        writes = set(_action_list(entry, "write_actions"))
         overlap = reads & writes
         if overlap:
             problems.append(f"{name}: action in both read and write: {sorted(overlap)}")

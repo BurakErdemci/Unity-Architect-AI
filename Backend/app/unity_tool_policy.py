@@ -52,12 +52,31 @@ def _project_root() -> str:
 
 
 def _candidate_paths() -> list[str]:
-    """Kütüğün olabileceği yerler, öncelik sırasıyla."""
-    return [
-        os.path.join(_project_root(), _LEDGER_RELPATH),
-        # Frozen build'de `_ensure_writable_resources()` Server'ı buraya kopyalıyor.
-        os.path.join(os.path.expanduser("~"), ".unity_architect_ai", _LEDGER_RELPATH),
-    ]
+    """Kütüğün aranacağı TEK yer — paketin kendi içi.
+
+    Burada eskiden ikinci bir aday vardı: `~/.unity_architect_ai/...`, çünkü
+    frozen build'de `_ensure_writable_resources()` Server'ı oraya kopyalıyor.
+    Dış denetim (29 Tem 2026) bunun bir kod çalıştırma yüzeyi olduğunu gösterdi
+    ve ölçüldü: o dizin kullanıcı tarafından YAZILABİLİR, dosya yoksa bile üst
+    dizin yazılabilir, ve `_load()` bulduğu Python'u `exec_module` ile
+    **kapının kendi sürecinde** çalıştırıp dönüşüne koşulsuz güveniyor. Yani
+    oraya tek bir dosya bırakan, bütün unityMCP onay kartlarını kalıcı olarak
+    susturabiliyordu — dosya sonradan silinse bile, modül zaten belleğe
+    alınmış oluyor.
+
+    Aday KALDIRILDI çünkü hiçbir şey satın almıyordu: `electron-builder.yml`
+    `unity-mcp/Server`'ı `extraResources` ile paketin içine kopyalıyor, yani
+    birinci aday kurulu her üründe var; ikincisi onun aynı içerikli kopyası.
+    Bulunamazsa davranış zaten fail-closed (her çağrı karta düşer) — sessizce
+    yazılabilir bir yerden kod yüklemektense gürültülü olmak doğru taraf.
+
+    ⚠️ KALAN ve ÖLÇÜLEMEYEN: Windows'ta kurulum per-user
+    (`electron-builder.yml` → `nsis.perMachine: false`), yani birinci adayın
+    KENDİSİ de kullanıcı yazılabilir. Bu yol bütünlük doğrulaması istiyor
+    (özet karşılaştırma ya da okuyucuyu binary'ye gömmek) ve o bir paketleme
+    kararı — burada çözülmedi, deftere yazıldı.
+    """
+    return [os.path.join(_project_root(), _LEDGER_RELPATH)]
 
 
 def _load() -> Optional[ModuleType]:

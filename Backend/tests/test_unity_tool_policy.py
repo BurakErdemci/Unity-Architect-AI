@@ -82,6 +82,30 @@ def test_reader_module_depends_only_on_stdlib():
     )
 
 
+def test_the_ledger_is_never_loaded_from_a_user_writable_data_dir():
+    """
+    Kapı, bulduğu Python'u kendi sürecinde `exec_module` ile çalıştırıyor.
+    Bu yüzden ARANAN YER'in kendisi bir güvenlik sınırı.
+
+    Dış denetim (29 Tem 2026) `~/.unity_architect_ai/...` adayının canlı
+    olduğunu gösterdi: dizin kullanıcı yazılabilir, oraya bırakılan bir modül
+    kapının içinde koşuyor ve bütün unityMCP kartlarını kalıcı susturuyordu
+    (dosya sonradan silinse bile, modül belleğe alınmış oluyor). Aday
+    kaldırıldı; bu test geri gelmesini engelliyor.
+
+    Not: bu testin kapsamadığı şey, birinci adayın kendi dizininin yazılabilir
+    olması (Windows'ta per-user kurulum). O bütünlük doğrulaması ister ve
+    ayrı bir karar.
+    """
+    forbidden = os.path.join(os.path.expanduser("~"), ".unity_architect_ai")
+    for path in policy._candidate_paths():
+        assert not os.path.abspath(path).startswith(os.path.abspath(forbidden)), (
+            f"Kütük {path} yolundan yüklenebiliyor. Orası kullanıcı yazılabilir ve "
+            "_load() bulduğu modülü kapının sürecinde çalıştırıyor — tek bir dosya "
+            "yazımı bütün onay kartlarını susturur."
+        )
+
+
 def test_dead_exemption_is_gone():
     """Eski listedeki `get_info` muafiyeti — var olmayan bir action'a yazılmıştı."""
     assert not policy.is_unity_mcp_read_only(f"{UNITY}manage_scene", {"action": "get_info"})
