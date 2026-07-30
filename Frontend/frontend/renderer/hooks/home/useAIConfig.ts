@@ -2,7 +2,16 @@ import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import axios from 'axios';
 import { AIConfig, AvailableModels, UserData } from '../../components/home/types';
 
-export type UnityMCPStatus = 'off' | 'starting' | 'running' | 'connected';
+/**
+ * Backend'in `GET /mcp/unity/status` sözleşmesi (`unity_mcp_manager.get_status`).
+ *
+ * `blocked` = 8080'i dinleyen biri var ama BİZ DEĞİL — kimlik testi (kimliksiz
+ * `POST /mcp` → 401 + kendi izlerimiz) yabancı olduğunu söyledi. `off`tan ayrı
+ * bir durum olması şart: `off` bir "aç" davetidir, `blocked` ise kullanıcıdan
+ * BAŞKA bir eylem ister (çakışan sunucuyu kapatmak) ve toggle'a basmak
+ * sunucumuzu başlatmıyor.
+ */
+export type UnityMCPStatus = 'off' | 'blocked' | 'starting' | 'running' | 'connected';
 
 export const useAIConfig = (API: string, user: UserData | null, showToast: (msg: string, type: any) => void, workspacePath?: string) => {
   const [aiConfig, setAiConfig] = useState<AIConfig>({
@@ -18,6 +27,11 @@ export const useAIConfig = (API: string, user: UserData | null, showToast: (msg:
   const [unityMcpStatus, setUnityMcpStatus] = useState<UnityMCPStatus>('off');
   const [unityMcpToggling, setUnityMcpToggling] = useState(false);
   const [unityMcpError, setUnityMcpError] = useState<string | null>(null);
+  // `blocked` sebebi. `unityMcpError` GEÇİCİ (bir toggle denemesinin sonucu, 6 sn
+  // sonra siliniyor); bu KALICI, çünkü durumun kendisiyle yaşıyor: port
+  // başkasındayken sebep ekranda durmalı, yoksa kullanıcı 6 saniye sonra elinde
+  // yalnız gri bir düğmeyle kalıyor.
+  const [unityMcpReason, setUnityMcpReason] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startingUntilRef = useRef<number>(0); // Toggle ON'dan itibaren 30s boyunca 'off' yanıtını yoksay
   const errorClearRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -31,16 +45,30 @@ export const useAIConfig = (API: string, user: UserData | null, showToast: (msg:
     try {
       const res = await axios.get(`${API}/mcp/unity/status`);
       const status = res.data.status as UnityMCPStatus;
+      const reason = typeof res.data?.reason === 'string' ? res.data.reason : null;
 
-      // Toggle ON sonrası 30s içinde 'off' gelirse yoksay — sunucu henüz başlıyor olabilir
+      // Toggle ON sonrası 30s içinde 'off' gelirse yoksay — sunucu henüz başlıyor olabilir.
+      // `blocked` bu yutmanın DIŞINDA bırakıldı: o bir gecikme değil, kullanıcının
+      // müdahalesini bekleyen bir çakışma; 30 sn susmak yalnız teşhisi geciktirir.
       if (status === 'off' && Date.now() < startingUntilRef.current) return;
 
       setUnityMcpStatus(status);
+      // Sebep backend'de yalnız `blocked` dalında dolu. Başka durumda taşımak
+      // bayat bir uyarıyı ekranda bırakırdı — kullanıcı çakışan sunucuyu
+      // kapattıktan sonra bile "port başkasında" yazmaya devam ederdi.
+      setUnityMcpReason(status === 'blocked' ? reason : null);
       if (status === 'connected') {
         stopPolling();
         pollRef.current = setInterval(fetchUnityMcpStatus, 15000);
-      } else if (status === 'off') {
-        // Kapalı ama yine de 8s'de bir kontrol et — Unity kendi başlatmış olabilir
+      } else if (status === 'off' || status === 'blocked') {
+        // Kapalı ama yine de 8s'de bir kontrol et — Unity kendi başlatmış olabilir.
+        // `blocked` aynı ritimde: kullanıcı çakışan sunucuyu kapatınca durum
+        // kendi kendine toparlanmalı, bir düğmeye basmaya gerek kalmadan.
+        // ⚠️ Bu satırın `blocked` kısmı TEST EDİLMEDİ (ölçüldü 2026-07-30:
+        // mutasyon kaçtı). Tek davranışsal farkı `connected` → `blocked`
+        // geçişinde yoklamanın 15 sn yerine 8 sn olması, yani ~7 sn daha hızlı
+        // toparlanma; sürmesi fake timer + interval sayacı ister ve kullanıcı
+        // farkı görmez. Bilinçli boşluk, bulunmamış boşluk değil.
         stopPolling();
         pollRef.current = setInterval(fetchUnityMcpStatus, 8000);
       }
@@ -55,7 +83,12 @@ export const useAIConfig = (API: string, user: UserData | null, showToast: (msg:
   const toggleUnityMcp = useCallback(async () => {
     if (!API || unityMcpToggling) return;
     setUnityMcpToggling(true);
-    const turningOn = unityMcpStatus === 'off';
+    // `blocked` de bir AÇMA denemesidir: kullanıcı çakışan sunucuyu kapattıysa
+    // tek yolu bu düğme. Eskiden koşul `=== 'off'` olduğu için blocked'da
+    // KAPATMA isteği gidiyordu; backend yabancı süreci öldürmediği için
+    // sessizce 200 {"status":"stopped"} dönüyordu — yani kullanıcı butona
+    // basıyor, hiçbir şey olmuyor ve bir hata bile görünmüyordu.
+    const turningOn = unityMcpStatus === 'off' || unityMcpStatus === 'blocked';
     try {
       await axios.post(`${API}/mcp/unity/toggle`, { enabled: turningOn, workspace_path: workspacePath || null });
       if (turningOn) {
@@ -70,15 +103,28 @@ export const useAIConfig = (API: string, user: UserData | null, showToast: (msg:
         pollRef.current = setInterval(fetchUnityMcpStatus, 8000);
       }
     } catch (err: any) {
-      const msg = err?.response?.status === 409
-        ? (err.response.data?.detail || "Unity Editor açık değil. Lütfen önce Unity'yi açın.")
-        : 'Unity MCP toggle başarısız.';
+      // `detail` artık HER durum kodunda okunuyor. 500'ün gövdesi portu tutan
+      // sürecin ADINI taşıyor (`unity_mcp_manager._blocked_reason`) ve eskiden
+      // sabit bir "toggle başarısız" metniyle eziliyordu: sebep üretiliyor ama
+      // kullanıcıya hiç ulaşmıyordu.
+      const detail = err?.response?.data?.detail;
+      // Tip kontrolü kozmetik değil, çökme kapısı: FastAPI doğrulama hatası
+      // `detail`'i bir DİZİ döndürüyor ve dizi doğrudan render edilirse React
+      // "Objects are not valid as a React child" ile düşüyor.
+      const msg = typeof detail === 'string' && detail.trim()
+        ? detail
+        : err?.response?.status === 409
+          ? "Unity Editor açık değil. Lütfen önce Unity'yi açın."
+          : 'Unity MCP toggle başarısız.';
       showToast(msg, 'error');
       setUnityMcpError(msg);
       // 6 saniye sonra uyarıyı temizle
       if (errorClearRef.current) clearTimeout(errorClearRef.current);
       errorClearRef.current = setTimeout(() => setUnityMcpError(null), 6000);
-      setUnityMcpStatus('off');
+      // Durumu TAHMİN etmiyoruz, ÖLÇÜYORUZ. Eskiden koşulsuz 'off' yazılıyordu;
+      // port başkasındayken bu yanlış bilgi: kullanıcı gri "kapalı" görüyor,
+      // aynı düğmeye basıyor ve sebebi hiç öğrenmiyor.
+      await fetchUnityMcpStatus();
     } finally {
       setUnityMcpToggling(false);
     }
@@ -205,6 +251,11 @@ export const useAIConfig = (API: string, user: UserData | null, showToast: (msg:
     unityMcpStatus,
     unityMcpToggling,
     unityMcpError,
+    unityMcpReason,
     toggleUnityMcp,
+    // Durumu dışarıdan tazelemek için. İki tüketicisi var ve ikisi de aynı
+    // soruyu soruyor: "şu an gerçekten ne durumda" — hata sonrası ölçüm, ve
+    // testlerin "kullanıcı çakışan sunucuyu kapattı" senaryosu.
+    refreshUnityMcpStatus: fetchUnityMcpStatus,
   };
 };

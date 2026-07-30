@@ -76,10 +76,21 @@ export const SettingsModal = ({
   const { t } = useLang();
   const UNITY_STATUS_CONFIG: Record<UnityMCPStatus, { label: string; dot: string; bg: string; border: string }> = {
     off:       { label: t('unity.off'),       dot: "bg-slate-600",                bg: "bg-slate-900/50",   border: "border-slate-700/50" },
+    // `blocked` satırının yokluğu ÇALIŞMA ANINDA çökme üretiyordu: aşağıda
+    // `UNITY_STATUS_CONFIG[unityMcpStatus].border` okunuyor ve backend bu değeri
+    // `b4065f1`'den beri döndürüyor, yani yabancı bir sunucu 8080'i tutarken
+    // Ayarlar'ı açmak `undefined.border` demekti.
+    blocked:   { label: t('unity.blocked'),   dot: "bg-red-500",                  bg: "bg-red-500/5",      border: "border-red-500/30" },
     starting:  { label: t('unity.starting'),  dot: "bg-yellow-400 animate-pulse", bg: "bg-yellow-500/5",   border: "border-yellow-500/20" },
     running:   { label: t('unity.running'),   dot: "bg-yellow-400 animate-pulse", bg: "bg-yellow-500/5",   border: "border-yellow-500/20" },
     connected: { label: t('unity.connected'), dot: "bg-emerald-400",              bg: "bg-emerald-500/5",  border: "border-emerald-500/20" },
   };
+  // Anahtarın AÇIK görünmesi için sunucunun BİZİM olması gerekiyor. Eski koşul
+  // `!== 'off'` idi ve `blocked`'ı açık sayıyordu — oysa o durumda 8080'de duran
+  // sunucu bizim değil, yani kapalıdan daha kötü bir hal. Durumları tek tek
+  // saymak bilinçli: yeni bir durum eklendiğinde varsayılan "açık" olmasın.
+  const unityMcpAcik =
+    unityMcpStatus === 'starting' || unityMcpStatus === 'running' || unityMcpStatus === 'connected';
   const MODEL_HINTS: Record<string, { label: string; value: string }[]> = {
     anthropic: [
       { label: `Sonnet 5 (${t('hint.recommended')})`, value: "claude-sonnet-5" },
@@ -299,11 +310,11 @@ export const SettingsModal = ({
                 onClick={onToggleUnityMcp}
                 disabled={unityMcpToggling || unityMcpStatus === 'starting'}
                 className={`relative w-10 h-5 rounded-full transition-colors duration-200 focus:outline-none disabled:opacity-50 ${
-                  unityMcpStatus !== 'off' ? 'bg-purple-600' : 'bg-slate-700'
+                  unityMcpAcik ? 'bg-purple-600' : 'bg-slate-700'
                 }`}
               >
                 <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform duration-200 flex items-center justify-center ${
-                  unityMcpStatus !== 'off' ? 'translate-x-5' : 'translate-x-0'
+                  unityMcpAcik ? 'translate-x-5' : 'translate-x-0'
                 }`}>
                   {unityMcpToggling && <Loader2 size={10} className="text-purple-600 animate-spin" />}
                 </span>

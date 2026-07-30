@@ -19,7 +19,9 @@ import { ExportModal } from '../components/home/ExportModal';
 import { ModelSelector } from '../components/home/ModelSelector';
 import { WorkspaceScreen } from '../components/home/WorkspaceScreen';
 import { ControlPanel, ThinkingLevel, EffortCaps } from '../components/home/ControlPanel';
+import { UnityMcpToggle } from '../components/home/UnityMcpToggle';
 import { AnimatedChatInput } from '../components/ui/animated-ai-chat';
+import { ToastContainer } from '../components/ui/Toast';
 
 import { useAppInitialization } from '../hooks/home/useAppInitialization';
 import { useAuth } from '../hooks/home/useAuth';
@@ -74,7 +76,12 @@ const getRelativePath = (absolutePath: string, workspacePath: string | null): st
 };
 
 export default function Home() {
-  const { API, backendReady, backendError, showToast } = useAppInitialization();
+  // `toasts` ve `dismissToast` bilerek alınıyor: hook ikisini de döndürüyordu,
+  // burada yalnız `showToast` alınıp diğerleri atılıyordu ve `ToastContainer`
+  // hiçbir yerde mount edilmemişti. Sonuç: `showToast` bir state'e yazıyor,
+  // çizen kimse yok — onay kapısı işinin bütün kullanıcı bildirimi görünmezdi
+  // ve bunu 10/10 mutasyon bile göremedi (hepsi hook state'ine bakıyordu).
+  const { API, backendReady, backendError, showToast, toasts, dismissToast } = useAppInitialization();
   const auth = useAuth(API, backendReady);
   const fs = useFileSystem(API, auth.user, showToast as any);
   const ai = useAIConfig(API, auth.user, showToast as any, fs.workspacePath);
@@ -485,13 +492,6 @@ export default function Home() {
             </div>
           </div>
           <div className="flex items-center gap-2 relative shrink-0">
-            {/* Unity MCP Hata Banner'ı */}
-            {ai.unityMcpError && (
-              <div className="absolute top-full right-0 mt-2 z-50 px-3 py-2 rounded-lg border border-red-500/40 bg-red-500/10 text-red-300 text-[11px] font-medium shadow-lg whitespace-nowrap flex items-center gap-2 animate-in fade-in slide-in-from-top-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />
-                {ai.unityMcpError}
-              </div>
-            )}
             {/* C# analizi (OmniSharp) hazırlanıyor rozeti */}
             {lspStatus?.state === 'starting' && (
               <span className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-white/[0.08] bg-white/[0.03] text-[10px] font-semibold text-slate-400 whitespace-nowrap">
@@ -499,30 +499,19 @@ export default function Home() {
                 C# analizi hazırlanıyor…
               </span>
             )}
-            {/* Unity MCP Durum Göstergesi */}
-            <button
-              onClick={ai.toggleUnityMcp}
-              disabled={ai.unityMcpToggling || ai.unityMcpStatus === 'starting'}
-              title={
-                ai.unityMcpStatus === 'connected' ? t('home.unityConnected') :
-                ai.unityMcpStatus === 'running'   ? t('home.unityConnecting') :
-                ai.unityMcpStatus === 'starting'  ? t('home.unityStarting') :
-                t('home.unityOpen')
-              }
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[10px] font-bold uppercase tracking-wider transition-all disabled:opacity-50 whitespace-nowrap shrink-0 ${
-                ai.unityMcpStatus === 'connected' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20' :
-                ai.unityMcpStatus === 'running' ? 'bg-yellow-500/10 border-yellow-500/30 text-yellow-400 hover:bg-yellow-500/20' :
-                ai.unityMcpStatus === 'starting' ? 'bg-yellow-500/10 border-yellow-500/30 text-yellow-400' :
-                'bg-white/[0.03] border-white/[0.08] text-slate-500 hover:bg-white/[0.06] hover:text-slate-300'
-              }`}
-            >
-              <span className={`w-1.5 h-1.5 rounded-full ${
-                ai.unityMcpStatus === 'connected' ? 'bg-emerald-400' :
-                ai.unityMcpStatus === 'running' || ai.unityMcpStatus === 'starting' ? 'bg-yellow-400 animate-pulse' :
-                'bg-slate-600'
-              }`} />
-              Unity MCP
-            </button>
+            {/* Unity MCP durum göstergesi + gerekçe şeritleri.
+                Satır içi JSX'ten bileşene taşındı: üç ayrı ternary zincirinin
+                `else` dalı `blocked`'ı gri "kapalı" gösteriyordu ve başlıkta
+                "Unity açık olmalı" diyordu — yanlış talimat, çünkü o durumda
+                sorun Unity değil portun sahibi. Ayrıca satır içi olduğu sürece
+                hiçbiri DOM'da sınanamıyordu. */}
+            <UnityMcpToggle
+              status={ai.unityMcpStatus}
+              toggling={ai.unityMcpToggling}
+              reason={ai.unityMcpReason}
+              error={ai.unityMcpError}
+              onToggle={ai.toggleUnityMcp}
+            />
             <ModelSelector
               aiConfig={ai.aiConfig} setAiConfig={ai.setAiConfig} availableModels={ai.availableModels} providersWithKeys={ai.providersWithKeys}
               effectiveProvider={ai.effectiveProvider} displayModelName={ai.displayModelName} isModelDropdownOpen={ai.isModelDropdownOpen} setIsModelDropdownOpen={ai.setIsModelDropdownOpen}
@@ -669,6 +658,10 @@ export default function Home() {
           </div>
         </div>
       </motion.div>
+
+      {/* Bildirim kanalının çizen ucu. Bu satır olmadan `showToast` sessiz bir
+          state güncellemesinden ibaret: mesaj üretiliyor, kimse görmüyor. */}
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </div>
     </LangContext.Provider>
   );

@@ -73,6 +73,7 @@ const tr = {
   'settings.providerOpenrouter': 'OpenRouter (Çoklu Model)',
   'settings.providerSubscription': 'Abonelik (Claude Code / Codex / Gemini CLI)',
   'unity.off': 'Kapalı',
+  'unity.blocked': 'Port başkasında',
   'unity.starting': 'Başlatılıyor...',
   'unity.running': "Unity'ye bağlanılıyor",
   'unity.connected': 'Unity bağlandı ✓',
@@ -127,6 +128,9 @@ const tr = {
   'home.unityConnecting': "Unity'ye bağlanılıyor...",
   'home.unityStarting': 'Sunucu başlatılıyor...',
   'home.unityOpen': "Unity MCP'yi aç (Unity açık olmalı)",
+  // `blocked` durumunda Unity'nin açık olması hiçbir şeyi değiştirmiyor; sorun
+  // portun sahibi. Eski davranış bu duruma da "Unity açık olmalı" diyordu.
+  'home.unityBlocked': '8080 portu bize ait olmayan bir sunucuda — o sunucuyu kapatıp tekrar deneyin',
   'home.openChat': 'Sohbeti Aç',
   'home.editorHint': "Düzenlemek için bir dosya aç ya da sağdaki chat'ten direkt bir şey iste",
   'home.bugfix': 'BUG FIX',
@@ -219,6 +223,7 @@ const en: Record<keyof typeof tr, string> = {
   'settings.providerOpenrouter': 'OpenRouter (Multi-Model)',
   'settings.providerSubscription': 'Subscription (Claude Code / Codex / Gemini CLI)',
   'unity.off': 'Off',
+  'unity.blocked': 'Port taken',
   'unity.starting': 'Starting...',
   'unity.running': 'Connecting to Unity',
   'unity.connected': 'Unity connected ✓',
@@ -271,6 +276,7 @@ const en: Record<keyof typeof tr, string> = {
   'home.unityConnecting': 'Connecting to Unity...',
   'home.unityStarting': 'Starting server...',
   'home.unityOpen': 'Open Unity MCP (Unity must be open)',
+  'home.unityBlocked': 'Port 8080 is held by a server that is not ours — close it and try again',
   'home.openChat': 'Open Chat',
   'home.editorHint': 'Open a file to edit or directly ask something from the chat on the right',
   'home.bugfix': 'BUG FIX',
