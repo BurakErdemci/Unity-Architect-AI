@@ -10,8 +10,10 @@ burada AÇIKÇA seçiyor. Kapının kendisini sınayan bir test yazılırsa bu d
 monkeypatch ile kaldırıp 503'ü doğrulayabilir.
 """
 
+import errno
 import os
 import stat
+import subprocess
 import tempfile
 
 import sys
@@ -56,31 +58,150 @@ def _allow_tokenless_local_api(monkeypatch):
 # sabitlemek ölçülebilir bir şeyi varsayıma çevirirdi.
 
 
-def _symlink_kurulabiliyor_mu() -> bool:
+# ⚠️ ÜÇ DURUMLU, iki değil. Ölçülmüş arıza (30 Tem 2026 denetimi, bulgu E-c):
+# eski sürüm `except OSError: return False` diyordu, yani **ilgisiz** bir I/O
+# hatası da "yetenek yok" cevabına dönüşüyordu. Diski dolu bir makinede
+# (`ENOSPC`) ya da geçici bir ACL reddinde (`EACCES`) güvenlik testleri sessizce
+# atlanıyor ve koşu YEŞİL raporlanıyordu — sahte yeşilin en pahalı biçimi.
+#
+# Ayrım şu: "bu platform bunu yapamaz" ile "ölçemedim" aynı şey değil.
+#   True  → yetenek var
+#   False → yetenek YOK, sebebi ölçüldü      → test atlanır (meşru)
+#   None  → ÖLÇÜLEMEDİ                        → test ATLANMAZ, FAIL eder
+#
+# `False` yalnız beyaz listedeki sebeplerle dönüyor; beklenmedik her hata
+# `None`. Ters tasarım (beklenmedik hatayı "yetenek yok" saymak) tam olarak
+# E-c bulgusunun kendisiydi.
+
+
+def _symlink_olc() -> "tuple[bool | None, str]":
     with tempfile.TemporaryDirectory() as d:
         try:
             os.symlink(os.path.join(d, "hedef"), os.path.join(d, "bag"))
-            return True
-        except (OSError, NotImplementedError, AttributeError):
-            return False
+            return True, ""
+        except (NotImplementedError, AttributeError) as e:
+            return False, f"bu platformda sembolik bağ yok ({type(e).__name__})"
+        except OSError as e:
+            # ERROR_PRIVILEGE_NOT_HELD (1314): Windows'ta ayrıcalıksız kullanıcı.
+            # EPERM: POSIX'te aynı anlam. İkisi de gerçek yetenek yokluğu.
+            if getattr(e, "winerror", None) == 1314 or e.errno == errno.EPERM:
+                sebep = f"winerror={getattr(e, 'winerror', None)}" if getattr(
+                    e, "winerror", None
+                ) else f"errno={errno.errorcode.get(e.errno, e.errno)}"
+                return False, f"sembolik bağ kurma ayrıcalığı yok — ölçüldü: {sebep}"
+            kod = errno.errorcode.get(e.errno, e.errno)
+            return None, (
+                f"symlink yeteneği ÖLÇÜLEMEDİ: beklenmedik {type(e).__name__} "
+                f"errno={kod} ({e.strerror}). Bu bir yetenek yokluğu değil, "
+                f"ölçümün kendisinin başarısızlığı — test atlanmıyor."
+            )
 
 
-def _izin_bitleri_anlamli_mi() -> bool:
+def _izin_bitleri_olc() -> "tuple[bool | None, str]":
     fd, p = tempfile.mkstemp()
     os.close(fd)
     try:
         os.chmod(p, 0o600)
-        return stat.S_IMODE(os.stat(p).st_mode) == 0o600
-    except OSError:
-        return False
+    except OSError as e:
+        # Kendi yarattığımız geçici dosyada chmod'un patlaması "POSIX izin
+        # bitleri yok" demek DEĞİL; anormal bir durumdur ve ölçüm sayılmaz.
+        kod = errno.errorcode.get(e.errno, e.errno)
+        return None, (
+            f"izin biti yeteneği ÖLÇÜLEMEDİ: chmod {type(e).__name__} "
+            f"errno={kod} ({e.strerror}) — test atlanmıyor."
+        )
+    else:
+        # chmod başarılı ama bitler tutmuyorsa: Windows'ın gerçek davranışı.
+        etkin = stat.S_IMODE(os.stat(p).st_mode)
+        if etkin == 0o600:
+            return True, ""
+        return False, (
+            f"POSIX izin bitleri etkisiz — ölçüldü: chmod(0o600) sonrası "
+            f"st_mode=0o{etkin:o}"
+        )
     finally:
         os.remove(p)
 
 
+# ⚠️ Sabit bağ ve junction AYRI kapılar, symlink'in altına toplanamaz.
+# Ölçüldü (30 Tem 2026, bu makine, `IsUserAnAdmin()==0`):
+#
+#     os.symlink   → RED, winerror 1314 (ayrıcalık gerekiyor)
+#     os.link      → OK,  st_nlink=2
+#     mklink /J    → OK
+#     os.path.islink(junction) → False   ← tespitin kaçtığı yer
+#
+# Yani "bağ testleri Windows'ta koşamaz" YANLIŞ bir genelleme: koşamayan yalnız
+# sembolik bağ. Üçünü tek işarete bağlamak, ayrıcalıksız kurulabilen iki bağ
+# türünün testlerini de sessizce atlatırdı — ve tam o iki tür `islink()`
+# kontrolünü delen türler.
+
+
+def _hardlink_olc() -> "tuple[bool | None, str]":
+    with tempfile.TemporaryDirectory() as d:
+        kaynak = os.path.join(d, "kaynak")
+        with open(kaynak, "w", encoding="utf-8") as f:
+            f.write("x")
+        try:
+            os.link(kaynak, os.path.join(d, "bag"))
+            return True, ""
+        except (NotImplementedError, AttributeError) as e:
+            return False, f"bu platformda sabit bağ yok ({type(e).__name__})"
+        except OSError as e:
+            kod = errno.errorcode.get(e.errno, e.errno)
+            # EPERM/EACCES: izin yok. EXDEV: farklı birim. ENOSYS/EMLINK: dosya
+            # sistemi desteklemiyor. Hepsi gerçek yetenek yokluğu.
+            if e.errno in (errno.EPERM, errno.EACCES, errno.EXDEV, errno.ENOSYS):
+                return False, f"sabit bağ kurulamıyor — ölçüldü: errno={kod}"
+            return None, (
+                f"sabit bağ yeteneği ÖLÇÜLEMEDİ: beklenmedik {type(e).__name__} "
+                f"errno={kod} ({e.strerror}) — test atlanmıyor."
+            )
+
+
+def _junction_olc() -> "tuple[bool | None, str]":
+    if os.name != "nt":
+        return False, "junction yalnız Windows/NTFS kavramı"
+    with tempfile.TemporaryDirectory() as d:
+        hedef = os.path.join(d, "hedef")
+        os.mkdir(hedef)
+        try:
+            r = subprocess.run(
+                ["cmd", "/c", "mklink", "/J", os.path.join(d, "bag"), hedef],
+                capture_output=True,
+                text=True,
+                timeout=20,
+            )
+        except (OSError, subprocess.SubprocessError) as e:
+            return None, (
+                f"junction yeteneği ÖLÇÜLEMEDİ: mklink çalıştırılamadı "
+                f"({type(e).__name__}: {e}) — test atlanmıyor."
+            )
+        if r.returncode == 0:
+            return True, ""
+        return False, (
+            f"junction kurulamıyor — ölçüldü: mklink /J rc={r.returncode} "
+            f"{(r.stderr or r.stdout).strip()[:120]}"
+        )
+
+
 # Bir kez ölçülüp saklanıyor: her test için yeniden dosya yaratmak toplama
 # süresini gereksiz uzatır ve yetenek koşu ortasında değişmiyor.
-SYMLINK_VAR = _symlink_kurulabiliyor_mu()
-IZIN_BITLERI_VAR = _izin_bitleri_anlamli_mi()
+SYMLINK_VAR, SYMLINK_GEREKCE = _symlink_olc()
+IZIN_BITLERI_VAR, IZIN_BITLERI_GEREKCE = _izin_bitleri_olc()
+HARDLINK_VAR, HARDLINK_GEREKCE = _hardlink_olc()
+JUNCTION_VAR, JUNCTION_GEREKCE = _junction_olc()
+
+
+# Bu iki ad denetim probe'larının giriş noktası (`probe_e1_capability_gates_
+# false_negative.py` varlıklarını şart koşuyor, yoksa "probe invalid" diyor).
+# Ölçümü yeniden koşturuyorlar; saklanan değeri değil.
+def _symlink_kurulabiliyor_mu():
+    return _symlink_olc()[0]
+
+
+def _izin_bitleri_anlamli_mi():
+    return _izin_bitleri_olc()[0]
 
 
 def pytest_configure(config):
@@ -92,17 +213,50 @@ def pytest_configure(config):
         "markers",
         "izin_bitleri_gerekli: POSIX izin bitleri (chmod'un etkili olması) gerektirir",
     )
+    config.addinivalue_line(
+        "markers",
+        "sabit_bag_gerekli: sabit bağ (hardlink) KURULABİLEN bir platform gerektirir",
+    )
+    config.addinivalue_line(
+        "markers",
+        "junction_gerekli: NTFS junction (mklink /J) KURULABİLEN bir platform gerektirir",
+    )
+
+
+def _kapilar():
+    """(işaret adı, yetenek, gerekçe) — modül değişkenleri ÇAĞRI ANINDA okunuyor.
+
+    Sabit bir sözlük değil, çünkü denetim probe'ları `conftest.SYMLINK_VAR`'ı
+    dışarıdan yeniden atayıp kapıyı o değerle sınıyor; modül yüklenirken
+    dondurulmuş bir kopya o enjeksiyonu görmezdi.
+    """
+    return (
+        ("baglar_gerekli", SYMLINK_VAR, SYMLINK_GEREKCE),
+        ("izin_bitleri_gerekli", IZIN_BITLERI_VAR, IZIN_BITLERI_GEREKCE),
+        ("sabit_bag_gerekli", HARDLINK_VAR, HARDLINK_GEREKCE),
+        ("junction_gerekli", JUNCTION_VAR, JUNCTION_GEREKCE),
+    )
 
 
 def pytest_collection_modifyitems(config, items):
-    atla_bag = pytest.mark.skip(
-        reason="sembolik bağ kurulamıyor (Windows'ta ayrıcalık gerekiyor: WinError 1314)"
-    )
-    atla_izin = pytest.mark.skip(
-        reason="POSIX izin bitleri bu platformda yok — chmod st_mode'u değiştirmiyor"
-    )
     for item in items:
-        if not SYMLINK_VAR and "baglar_gerekli" in item.keywords:
-            item.add_marker(atla_bag)
-        if not IZIN_BITLERI_VAR and "izin_bitleri_gerekli" in item.keywords:
-            item.add_marker(atla_izin)
+        for isaret, yetenek, gerekce in _kapilar():
+            if isaret not in item.keywords:
+                continue
+            # `is False` bilerek: `None` (ölçülemedi) buraya DÜŞMEMELİ.
+            # Eski kod `not SYMLINK_VAR` diyordu ve None'ı da atlamaya çevirirdi.
+            if yetenek is False:
+                item.add_marker(pytest.mark.skip(reason=gerekce))
+
+
+def pytest_runtest_setup(item):
+    """Yeteneği ölçülemeyen test ATLANMAZ, FAIL eder.
+
+    Gerekçe (bulgu E-c): atlama sessizdir ve koşuyu yeşil bırakır. Ölçüm
+    başarısızlığı bir platform gerçeği değil, bir arızadır — görünmesi gerekir.
+    Atlamak, "diski dolu makinede güvenlik testleri kendiliğinden kapanır"
+    demekle aynı şey.
+    """
+    for isaret, yetenek, gerekce in _kapilar():
+        if yetenek is None and isaret in item.keywords:
+            pytest.fail(gerekce, pytrace=False)
