@@ -159,8 +159,22 @@ def _hardlink_olc() -> "tuple[bool | None, str]":
             )
 
 
+def _windows_mu() -> bool:
+    """Bu makine Windows mu?
+
+    Neden `os.name` yerinde okunmuyor: aşağıdaki sınıflandırma mantığı (hangi
+    `mklink` çıkışı "yetenek yok", hangisi "ölçülemedi") platformdan bağımsız
+    saf mantık, ama önündeki erken çıkış onu POSIX'te ulaşılamaz yapıyor. CI
+    `ubuntu-latest`'te koştuğu için o mantık orada hiç ölçülmüyordu — ve tam o
+    mantık doğrulama turunun üç durumlu kural ihlalini bulduğu yer. Dikiş,
+    testin `mklink`'i taklit ederek sınıflandırmayı her makinede sürmesini
+    sağlıyor; taklit edilen şey saf mantık olduğu için ölçüm gerçek.
+    """
+    return os.name == "nt"
+
+
 def _junction_olc() -> "tuple[bool | None, str]":
-    if os.name != "nt":
+    if not _windows_mu():
         return False, "junction yalnız Windows/NTFS kavramı"
     with tempfile.TemporaryDirectory() as d:
         hedef = os.path.join(d, "hedef")

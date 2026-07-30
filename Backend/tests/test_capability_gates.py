@@ -205,12 +205,19 @@ def test_junction_ilgisiz_hata_OLCULEMEDI_donuyor(monkeypatch):
     `_junction_olc` her sıfır olmayan `mklink` çıkışını "yetenek yok" sayıyordu —
     disk dolu, geçici komut hatası, erişim reddi dahil. Yani E-c'nin kapattığı
     sahte yeşil, onu kapatan commit'in içinde yeniden açılmıştı.
+
+    ⚠️ `_windows_mu` taklit ediliyor, çünkü fonksiyonun başındaki erken çıkış
+    POSIX'te sınıflandırmaya hiç ulaştırmıyor ve CI Linux'ta koşuyor: taklit
+    olmadan bu iddia yalnız Windows makinede ölçülür, yani kapanan bulgunun
+    nöbetçisi CI'da kör kalırdı. Taklit edilen şey saf mantık — `mklink` zaten
+    aşağıda sahteleniyor, gerçek bir Windows çağrısı olmuyor.
     """
     class _Sonuc:
         returncode = 1
         stdout = ""
         stderr = "The system cannot find the path specified."
 
+    monkeypatch.setattr(conftest, "_windows_mu", lambda: True)
     monkeypatch.setattr(conftest.subprocess, "run", lambda *a, **k: _Sonuc())
     durum, gerekce = conftest._junction_olc()
     assert durum is None, "ilgisiz hata yetenek yokluğuna dönüştü"
@@ -218,12 +225,19 @@ def test_junction_ilgisiz_hata_OLCULEMEDI_donuyor(monkeypatch):
 
 
 def test_junction_GERCEK_ayricalik_yoklugu_False_donuyor(monkeypatch):
-    """Ters yön: meşru yetenek yokluğu hâlâ `False` olmalı, yoksa her makinede FAIL."""
+    """Ters yön: meşru yetenek yokluğu hâlâ `False` olmalı, yoksa her makinede FAIL.
+
+    Windows taklidi yukarıdakiyle aynı sebeple: POSIX'te erken çıkış da `False`
+    döndürüyor ama BAŞKA bir gerekçeyle ("junction yalnız Windows kavramı"),
+    yani taklit olmadan bu test sınıflandırmayı değil erken çıkışı ölçerdi ve
+    doğru cevabı yanlış sebeple verirdi.
+    """
     class _Sonuc:
         returncode = 1
         stdout = ""
         stderr = "You do not have sufficient privilege to perform this operation."
 
+    monkeypatch.setattr(conftest, "_windows_mu", lambda: True)
     monkeypatch.setattr(conftest.subprocess, "run", lambda *a, **k: _Sonuc())
     durum, gerekce = conftest._junction_olc()
     assert durum is False

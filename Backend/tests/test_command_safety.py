@@ -10,11 +10,13 @@ döndürerek testi geçerdi — o da her komutu onay kartına sokup kullanıcıy
 refleks-onaya alıştırırdı ki bu güvenliği artırmaz.
 """
 
+import ntpath
 import os
 from pathlib import Path
 
 import pytest
 
+from agentic import command_safety
 from agentic.command_safety import auto_safe_argv, is_auto_safe, requires_approval
 
 
@@ -23,6 +25,51 @@ def workspace(tmp_path):
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "main.py").write_text("# test\n")
     return str(tmp_path)
+
+
+# ── Platform kipi: neden testler makineye bakmak yerine kipi TAKLİT ediyor ───
+#
+# Ölçüldü (30 Tem 2026, GitHub Actions): CI `ubuntu-latest`'te koşuyor, ürünün
+# ana kitlesi ise Windows. Bu dosyadaki Windows yazımları — bu modülün var olma
+# sebebi olan dört+altı biçim — koşulsuz yazılmıştı ve Linux'ta 10 test
+# kırmızıya döndü. Sebep bir ürün açığı DEĞİL: POSIX'te ters bölü kaçış
+# karakteri, `cat ..\gizli` orada `..gizli` adlı TEK bir dosyadır ve token
+# listesi `shell=False` ile aynen çalıştığı için ayrıştırıcı/çalıştırıcı
+# uyuşuyor. Yani iki platformda iki farklı doğru cevap var.
+#
+# `skipif` ile geçiştirmek en kötü seçenekti: o zaman deponun en değerli
+# güvenlik testleri CI'da HİÇ koşmaz, yalnız birinin elinde Windows makine
+# varsa ölçülürdü. Tokenizasyon saf dizge işi (dosya sistemi görmüyor), o
+# yüzden kipi taklit etmek gerçek bir ölçüm.
+#
+# Sınır açıkça yazılıyor: `_stays_in_workspace`'in workspace hapsi `realpath`
+# ile GERÇEK dosya sistemine bakıyor ve taklit edilemez — `ntpath.join` bir
+# sürücü belirtecini gördüğünde kökü atar, `posixpath.join` atmaz. O yarı
+# aşağıda `_ANCAK_WINDOWS_HOST` ile işaretli, ve dayandığı stdlib varsayımı
+# `test_windows_yol_cozucusu_bu_yazimlari_workspace_DISINA_cikariyor` ile her
+# makinede ayrıca ölçülüyor — yani atlanan iddianın nöbetçisi CI'da da var.
+
+_WINDOWS_HOST = os.name == "nt"
+
+_ANCAK_WINDOWS_HOST = pytest.mark.skipif(
+    not _WINDOWS_HOST,
+    reason=(
+        "workspace hapsi gerçek yol çözücüye bağlı (ntpath.join sürücü "
+        "belirtecinde kökü atar, posixpath atmaz); taklidi kurgu olurdu"
+    ),
+)
+
+
+@pytest.fixture
+def windows_kipi(monkeypatch):
+    """Ters bölüyü YOL AYRACI sayan kip — host ne olursa olsun."""
+    monkeypatch.setattr(command_safety, "_windows_kipi", lambda: True)
+
+
+@pytest.fixture
+def posix_kipi(monkeypatch):
+    """Ters bölüyü KAÇIŞ karakteri sayan kip — host ne olursa olsun."""
+    monkeypatch.setattr(command_safety, "_windows_kipi", lambda: False)
 
 
 # Denetimde fiilen denenen yedi saldırı — bu liste ölçümün kendisidir.
@@ -147,7 +194,7 @@ def test_without_workspace_parent_traversal_is_refused():
     assert is_auto_safe("cat notlar.txt")
 
 
-def test_windows_style_parent_traversal_is_refused():
+def test_windows_style_parent_traversal_is_refused(windows_kipi):
     """KAPANDI 30 Tem 2026 — muafiyet kalktı, önce neden durduğu burada.
 
     Açık şuydu: `shlex.split("cat ..\\gizli")` POSIX kipinde `['cat', '..gizli']`
@@ -238,35 +285,81 @@ def test_git_branch_listing_forms_still_run_without_approval(command, workspace)
 # çalıştırılan şey aynı nesne olduğu için ikinci bir yorumlayıcı kalmıyor.
 
 
-@pytest.mark.parametrize("command", [
+# Denetimin ürettiği dört yazım + iki-varyant taramasının bulduğu altı biçim.
+# Altısı denetimde ADLANDIRILMADI; sınıfın kapandığını iddia edebilmek için
+# buradalar — dört yazımı kapatmak sınıfı kapatmıyor.
+WINDOWS_YAZIMLARI = [
     r'find "x" C:\Windows\win.ini',          # C1 sürücü mutlak
     r'find "x" \\server\share\gizli',        # C2 UNC
     r"find x %USERPROFILE%",                 # C3 ortam değişkeni
     r"cat ..\gizli",                         # P2 ters bölü
-])
-def test_dort_yazim_da_onay_istiyor(command, workspace):
-    """Denetimin ürettiği dört yazım — hepsi iki workspace kipinde de kapalı."""
-    assert not is_auto_safe(command, None)
-    assert not is_auto_safe(command, workspace)
-
-
-@pytest.mark.parametrize("command", [
     r"find x %%USERPROFILE%%",               # çift yüzde
     r"cat \\?\C:\Windows\win.ini",           # uzun yol öneki
     r"cat C:\PROGRA~1\gizli.txt",            # 8.3 kısa ad
     r"cat ..\/gizli",                        # karışık ayraç
     r"cat C:..\..\..\Windows\win.ini",       # sürücü göreli + üst dizin
     "cat D:gizli.txt",                       # başka sürücü, sürücü göreli
-])
-def test_sinifin_baska_yazimlari_da_kapali(command, workspace):
-    """İki-varyant kuralı: dört yazımı kapatmak sınıfı kapatmıyor.
+]
 
-    Bu altı biçim denetimde ADLANDIRILMADI; sınıfın kapandığını iddia edebilmek
-    için burada ölçülüyorlar. Hepsi ya mutlak yol olarak yakalanıyor ya da
-    workspace dışına çözüldüğü için reddediliyor.
+
+@pytest.mark.parametrize("command", WINDOWS_YAZIMLARI)
+def test_yazimlarin_hepsi_windows_kipinde_onay_istiyor(command, windows_kipi):
+    """Sınıfın çekirdek iddiası — ve HER makinede koşan tek biçimi.
+
+    Workspace verilmiyor: o dalın tamamı saf dizge mantığı (`ntpath`/`posixpath`
+    ile mutlak yol, sürücü belirteci, `..`), dosya sistemine hiç bakmıyor.
+    Dolayısıyla Linux CI bu on yazımın hepsini gerçekten ölçüyor.
     """
     assert not is_auto_safe(command, None)
+
+
+@_ANCAK_WINDOWS_HOST
+@pytest.mark.parametrize("command", WINDOWS_YAZIMLARI)
+def test_yazimlar_workspace_verilse_de_onay_istiyor(command, workspace):
+    """Workspace bilinse bile kapalı — bu yarı gerçek yol çözücüyü gerektiriyor.
+
+    Ölçüldü: `ntpath.join(ws, r"C:\\Windows\\win.ini")` workspace'i ATIYOR,
+    `posixpath.join` atmıyor. O yüzden bu iddia yalnız Windows host'ta anlamlı;
+    dayandığı varsayım aşağıda her makinede ayrıca ölçülüyor.
+    """
     assert not is_auto_safe(command, workspace)
+
+
+@pytest.mark.parametrize("token", [
+    r"C:\Windows\win.ini", r"\\server\share\gizli", "D:gizli.txt",
+    r"..\gizli", r"C:..\..\..\Windows\win.ini",
+])
+def test_windows_yol_cozucusu_bu_yazimlari_workspace_DISINA_cikariyor(token):
+    """Yukarıdaki `skipif`in nöbetçisi: atlanan iddianın VARSAYIMINI ölçüyor.
+
+    Windows dalında workspace hapsi tamamen `ntpath.join` + `normpath`
+    davranışına dayanıyor: sürücü belirteci ya da UNC gören join kökü atıyor,
+    `..` ise normpath'te kökün dışına çıkıyor. Bu davranış sessizce değişirse
+    Windows kapısı açılır ve `skipif` yüzünden CI bunu göremezdi.
+    """
+    kok = r"C:\ws"
+    cikan = ntpath.normpath(ntpath.join(kok, token))
+    assert not cikan.lower().startswith(kok.lower() + "\\"), cikan
+
+
+@pytest.mark.parametrize("command,beklenen", [
+    (r"cat ..\gizli", ["cat", "..gizli"]),
+    (r'find "x" C:\Windows\win.ini', ["find", "x", "C:Windowswin.ini"]),
+    (r'find "x" \\server\share\gizli', ["find", "x", r"\serversharegizli"]),
+    (r"cat alt\dosya.txt", ["cat", "altdosya.txt"]),
+])
+def test_posix_kipinde_ters_bolu_KACIS_karakteri(command, beklenen, posix_kipi):
+    """POSIX'teki farklı sonuç bir açık değil, doğru cevap — iddia olarak yazılı.
+
+    `/bin/sh` de bu dizgeleri aynen böyle böler, ve token listesi `shell=False`
+    ile aynen çalıştığı için ayrıştırıcı ile çalıştırıcı orada da uyuşuyor.
+    `cat ..\\gizli` POSIX'te üst dizine çıkış değil, `..gizli` adlı tek bir
+    dosyadır; workspace hapsi onu zaten içeride tutuyor.
+
+    Bu test olmadan POSIX davranışı yalnızca "Windows testleri atlandı"
+    boşluğunda yaşardı — atlanan bir iddia, olmayan iddiadan ayırt edilemez.
+    """
+    assert command_safety._tokenize(command) == beklenen
 
 
 def test_ayni_surucude_goreli_yol_workspace_icinde_kaliyor(workspace):
@@ -278,20 +371,26 @@ def test_ayni_surucude_goreli_yol_workspace_icinde_kaliyor(workspace):
     assert is_auto_safe("cat C:notlar.txt", workspace)
 
 
-def test_denetlenen_tokenlar_calistirilan_argv_ile_AYNI(workspace):
+def test_denetlenen_tokenlar_calistirilan_argv_ile_AYNI(workspace, windows_kipi):
     """Sınıfın kökü buydu: karar bir metne, çalıştırma başka bir metne bakıyordu."""
     argv = auto_safe_argv("cat notlar.txt", workspace)
     assert argv == ["cat", "notlar.txt"]
     # Onay gerektiren komut argv vermiyor — çağıran kabuğa düşmek zorunda kalıyor
     # ama bunu ancak kullanıcı onayladıktan sonra yapabiliyor.
-    assert auto_safe_argv(r"cat ..\gizli", workspace) is None
+    #
+    # `workspace` DEĞİL `None` veriliyor: `..` kontrolü yalnız workspace'siz dalda
+    # dizge olarak yapılıyor, workspace verildiğinde hapis `realpath`'e devrediyor
+    # ve o gerçek yol çözücüye bağlı (bkz. `_ANCAK_WINDOWS_HOST`).
+    assert auto_safe_argv(r"cat ..\gizli", None) is None
 
 
-def test_ters_bolulu_yol_artik_BOZULMADAN_tasiniyor(workspace):
+def test_ters_bolulu_yol_artik_BOZULMADAN_tasiniyor(workspace, windows_kipi):
     r"""Windows yolu argv'ye sağlam gidiyor — düzeltme kullanılabilirliği kırmadı.
 
     Eski POSIX kipi `alt\dosya.txt` token'ını `altdosya.txt` yapıyordu; yani
-    kapı yalnız güvenlik kararını değil, komutun kendisini de bozuyordu.
+    kapı yalnız güvenlik kararını değil, komutun kendisini de bozuyordu. Bu
+    hâlâ POSIX'te DOĞRU sonuç (bkz. `test_posix_kipinde_ters_bolu_KACIS_
+    karakteri`); burada ölçülen, Windows kipinde bozulmadığı.
     """
     argv = auto_safe_argv(r"cat alt\dosya.txt", workspace)
     assert argv == ["cat", r"alt\dosya.txt"]

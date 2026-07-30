@@ -257,6 +257,27 @@ def _tirnak_soy(token: str) -> str:
     return token.replace('"', "")
 
 
+def _windows_kipi() -> bool:
+    """Ters bölü YOL AYRACI mı (Windows) yoksa KAÇIŞ karakteri mi (POSIX)?
+
+    Neden ayrı bir fonksiyon — yani neden `os.name` doğrudan `_tokenize`'ın
+    içinde okunmuyor: bu kapının iki yarısı var ve her makine yalnızca kendi
+    yarısını çalıştırıyor. Ölçüldü (30 Tem 2026, GitHub Actions): CI
+    `ubuntu-latest` üzerinde koşuyor, ürünün ana kitlesi ise Windows. Dikiş
+    olmadan Windows yarısı — dört yazımın kapatıldığı, bu modülün var olma
+    sebebi olan yarı — CI'da **hiç ölçülmüyor**; yalnız birinin elinde Windows
+    makine varsa ölçülüyor.
+
+    Tokenizasyon saf dizge işi, dosya sistemi görmüyor; bu yüzden bir makinede
+    diğerinin kipini taklit etmek gerçek bir ölçüm, kurgu değil. `_stays_in_
+    workspace`'in yol çözümü için aynı şey GEÇERLİ DEĞİL (orası `realpath` ile
+    gerçek dosya sistemine bakıyor) ve o yüzden orada böyle bir dikiş yok —
+    yabancı bir işletim sisteminin dosya sistemini taklit eden bir test, kendi
+    uydurduğu şeyi ölçer.
+    """
+    return os.name == "nt"
+
+
 def _tokenize(command: str) -> "list[str] | None":
     """Komutu, ÇALIŞTIRILACAK argv'ye eş bir token listesine böler.
 
@@ -270,9 +291,14 @@ def _tokenize(command: str) -> "list[str] | None":
     Ters bölüler yendiği için `ntpath.isabs` ve `..` kontrolü aynı anda
     kaçıyordu — kapı, kendisine verilen metni daha bakmadan bozuyordu.
 
+    POSIX kipinde bu yeme davranışı bir açık DEĞİL, doğru cevap: orada `/bin/sh`
+    da aynısını yapar ve token listesi zaten `shell=False` ile aynen
+    çalıştırılıyor, yani ayrıştırıcı ile çalıştırıcı uyuşuyor. `cat ..\\gizli`
+    POSIX'te `..gizli` adlı tek bir dosyadır, üst dizine çıkış değildir.
+
     Tırnak dengesizse `None`: kabuğun bunu nasıl böleceğini tahmin etmeyeceğiz.
     """
-    posix = os.name != "nt"
+    posix = not _windows_kipi()
     try:
         tokens = shlex.split(command, posix=posix)
     except ValueError:
