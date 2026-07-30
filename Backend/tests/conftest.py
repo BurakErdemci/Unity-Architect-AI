@@ -179,9 +179,24 @@ def _junction_olc() -> "tuple[bool | None, str]":
             )
         if r.returncode == 0:
             return True, ""
-        return False, (
-            f"junction kurulamıyor — ölçüldü: mklink /J rc={r.returncode} "
-            f"{(r.stderr or r.stdout).strip()[:120]}"
+        # ⚠️ Her sıfır olmayan rc "yetenek yok" DEĞİL (doğrulama turu bulgusu,
+        # 30 Tem 2026). Bu fonksiyon üç durumlu kuralı kuran commit'te yazıldı
+        # ve tam o kuralı ihlal ediyordu: disk dolu, geçici bir komut hatası ya
+        # da erişim reddi de `False`'a düşüyordu — yani E-c'nin kapattığı sahte
+        # yeşil, yeni kapının içinde yeniden açılmıştı.
+        #
+        # `mklink` ayrıcalık/destek yokluğunu bu iki metinle bildiriyor; başka
+        # her şey ölçüm başarısızlığı sayılıyor ve test ATLANMIYOR.
+        ciktı = ((r.stderr or "") + (r.stdout or "")).strip()
+        yetenek_yok = any(
+            im in ciktı.lower()
+            for im in ("privilege", "ayrıcalık", "not supported", "desteklenmiyor")
+        )
+        if yetenek_yok:
+            return False, f"junction kurulamıyor — ölçüldü: {ciktı[:120]}"
+        return None, (
+            f"junction yeteneği ÖLÇÜLEMEDİ: mklink /J rc={r.returncode} "
+            f"{ciktı[:120]} — bu bir yetenek yokluğu değil, test atlanmıyor."
         )
 
 

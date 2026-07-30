@@ -256,3 +256,52 @@ describe('useAIConfig — yoklama başarısızken durum bayat kalmıyor (bulgu I
     expect(result.current.unityMcpStatus).toBe('connected')
   })
 })
+
+describe('useAIConfig — yoklama yarışı (doğrulama turu bulgusu)', () => {
+  it('ESKİ istek YENİ sonucu ezmiyor', async () => {
+    // İki yoklama uçuştayken önce başlayan sonra dönebiliyor ve bayat durumu
+    // geri yazıyordu. Kuşak sayacı olmadan "en son dönen kazanır" oluyordu,
+    // oysa "en son BAŞLAYAN kazanmalı".
+    let birinciCoz: ((v: unknown) => void) | null = null
+    mockedAxios.get.mockImplementationOnce(
+      () => new Promise(res => { birinciCoz = res })
+    )
+    const { result } = mountHook()
+
+    // İkinci yoklama hemen dönüyor ve 'blocked' yazıyor.
+    mockedAxios.get.mockResolvedValue(statusPayload('blocked', BLOCKED_REASON))
+    await act(async () => { await result.current.refreshUnityMcpStatus() })
+    await waitFor(() => expect(result.current.unityMcpStatus).toBe('blocked'))
+
+    // Şimdi BİRİNCİ (eski) istek 'connected' ile çözülüyor — ezmemeli.
+    await act(async () => {
+      birinciCoz?.(statusPayload('connected'))
+      await Promise.resolve()
+    })
+
+    expect(result.current.unityMcpStatus).toBe('blocked')
+  })
+
+  it('unmount sonrası çözülen istek yeni interval DİRİLTMİYOR', async () => {
+    // `useEffect` cleanup'ı stopPolling() çağırıyordu ama uçuştaki istek iptal
+    // edilmiyordu; çözüldüğünde catch/then dalları YENİ bir setInterval kuruyor
+    // ve yoklama unmount'tan sonra sonsuza kadar sürüyordu. Faz 4'te catch
+    // dalına setState eklenmesi bu yolu daha görünür hale getirdi.
+    const setInterval1 = vi.spyOn(globalThis, 'setInterval')
+    let coz: ((v: unknown) => void) | null = null
+    mockedAxios.get.mockImplementation(
+      () => new Promise(res => { coz = res })
+    )
+    const { unmount } = mountHook()
+    unmount()
+    const oncekiSayi = setInterval1.mock.calls.length
+
+    await act(async () => {
+      coz?.(statusPayload('connected'))
+      await Promise.resolve()
+    })
+
+    expect(setInterval1.mock.calls.length).toBe(oncekiSayi)
+    setInterval1.mockRestore()
+  })
+})

@@ -172,6 +172,11 @@ def harden_config_file(path: str) -> bool:
             logger.warning("[config-acl] %s izni kısıtlanamadı: %s", path, e)
             return False
 
+    # ⚠️ `/inheritance:r` MİRASI kırıyor ama dosyaya DOĞRUDAN verilmiş açık
+    # yetkileri kaldırmıyor (doğrulama turu bulgusu, 30 Tem 2026). Var olan bir
+    # dosyanın üzerine yazarken o yetkiler sağ kalır ve sır okunabilir kalırdı.
+    # `/remove` önce koşuyor; hedef yoksa `icacls` zaten hata vermiyor.
+
     kullanici = os.environ.get("USERNAME", "")
     alan = os.environ.get("USERDOMAIN", "")
     if not kullanici:
@@ -180,7 +185,12 @@ def harden_config_file(path: str) -> bool:
     hesap = f"{alan}\\{kullanici}" if alan else kullanici
     try:
         proc = subprocess.run(
-            ["icacls", path, "/inheritance:r", "/grant:r", f"{hesap}:F"],
+            [
+                "icacls", path,
+                "/inheritance:r",
+                "/remove", "Everyone", "Users", "Authenticated Users",
+                "/grant:r", f"{hesap}:F",
+            ],
             capture_output=True, text=True, timeout=_GIT_TIMEOUT_S,
         )
     except (OSError, subprocess.SubprocessError) as e:

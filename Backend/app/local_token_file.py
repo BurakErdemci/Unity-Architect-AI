@@ -134,8 +134,19 @@ def _yol_esitle(yol: str) -> str:
     `GetFinalPathNameByHandleW` `\\\\?\\C:\\...` önekiyle dönüyor, `abspath` ise
     öneksiz. Büyük/küçük harf de Windows'ta anlamsız. Bu ikisi normalize
     edilmezse kontrol HER ZAMAN "yönlendirilmiş" derdi ve ürün açılmazdı.
+
+    ⚠️ UNC'nin ayrı ele alınması ŞART (doğrulama turu bulgusu, 30 Tem 2026).
+    Uzun-yol önekinin UNC biçimi `\\\\?\\UNC\\server\\share\\...` ve düz kesme
+    ondan `UNC\\server\\share\\...` bırakıyor — oysa `abspath` aynı dosya için
+    `\\\\server\\share\\...` üretiyor. İkisi eşleşmediği için ev dizini bir ağ
+    paylaşımında olan kullanıcıda token dosyası "yönlendirilmiş" sayılıp
+    REDDEDİLİYORDU: fail-closed, ama ürünü açılmaz hale getiren cinsten.
+    Ölçüldü: `unc\\server\\share\\token` != `\\\\server\\share\\token`.
     """
-    if yol.startswith("\\\\?\\"):
+    if yol.startswith("\\\\?\\UNC\\"):
+        # \\?\UNC\server\share\... → \\server\share\...
+        yol = "\\\\" + yol[8:]
+    elif yol.startswith("\\\\?\\"):
         yol = yol[4:]
     yol = os.path.normpath(yol)
     return yol.lower() if os.name == "nt" else yol

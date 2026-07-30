@@ -124,7 +124,19 @@ class CopilotProvider(BaseCLIProvider):
                 }
 
             fd, path = tempfile.mkstemp(prefix="uai_copilot_mcp_", suffix=".json")
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
+            os.close(fd)
+            # `mkstemp` dosyayı 0600 ile yaratıyor ama Windows'ta POSIX izin
+            # bitleri etkisiz (ölçüldü: `local_token_file` docstring'i), o yüzden
+            # ACL burada da açıkça kısıtlanıyor. Doğrulama turu bulgusu: bu
+            # yazıcı hardener'ı hiç çağırmıyordu.
+            from .workspace_config import harden_config_file
+
+            if not harden_config_file(path) and servers.pop("unityMCP", None) is not None:
+                logger.error(
+                    "[CopilotProvider] %s izinleri kısıtlanamadı; unityMCP kaydı "
+                    "X-API-Key ile YAZILMADI.", path,
+                )
+            with open(path, "w", encoding="utf-8") as f:
                 json.dump({"mcpServers": servers}, f, indent=2)
             self._mcp_cfg_path = path
             logger.info(f"[CopilotProvider] session MCP config yazıldı: {path}")

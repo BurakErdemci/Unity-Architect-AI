@@ -45,6 +45,10 @@ export const useAIConfig = (API: string, user: UserData | null, showToast: (msg:
   // yalnız gri bir düğmeyle kalıyor.
   const [unityMcpReason, setUnityMcpReason] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Yoklama kuşağı sayacı + montaj bayrağı; ikisi de `fetchUnityMcpStatus`'ta
+  // kullanılıyor, gerekçe orada.
+  const fetchNesilRef = useRef(0);
+  const mountedRef = useRef(true);
   const startingUntilRef = useRef<number>(0); // Toggle ON'dan itibaren 30s boyunca 'off' yanıtını yoksay
   const errorClearRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -54,8 +58,24 @@ export const useAIConfig = (API: string, user: UserData | null, showToast: (msg:
 
   const fetchUnityMcpStatus = useCallback(async () => {
     if (!API) return;
+    // Yoklama kuşağı. İki ölçülmüş arızayı birden kapatıyor (doğrulama turu,
+    // 30 Tem 2026):
+    //
+    //   1. ESKİ SONUÇ YENİYİ EZİYOR — iki yoklama uçuştayken önce başlayan
+    //      sonra dönebiliyor ve bayat durumu geri yazıyor.
+    //   2. TEMİZLİKTEN SONRA INTERVAL DİRİLİYOR — `useEffect` cleanup'ı
+    //      `stopPolling()` çağırıyor ama uçuştaki istek iptal edilmiyor; o
+    //      çözüldüğünde `catch`/`then` dalları YENİ bir `setInterval` kuruyor
+    //      ve yoklama unmount'tan sonra sonsuza kadar sürüyordu.
+    //
+    // İkinci arızayı Faz 4 açtı: `catch` dalı eskiden yalnız interval
+    // kuruyordu, şimdi `setState` de yapıyor — yani yaşayan bir sızıntıydı ve
+    // düzeltme onu görünür hale getirdi.
+    const nesil = ++fetchNesilRef.current;
+    const guncelMi = () => nesil === fetchNesilRef.current && mountedRef.current;
     try {
       const res = await axios.get(`${API}/mcp/unity/status`);
+      if (!guncelMi()) return;
       const status = res.data.status as UnityMCPStatus;
       const reason = typeof res.data?.reason === 'string' ? res.data.reason : null;
 
@@ -86,6 +106,7 @@ export const useAIConfig = (API: string, user: UserData | null, showToast: (msg:
       }
       // 'starting' veya 'running' → mevcut hızlı interval devam eder
     } catch {
+      if (!guncelMi()) return;
       // Durum artık BİLİNMİYOR. Eskiden burada yalnız yoklama aralığı
       // değişiyordu ve son başarılı ölçüm olduğu gibi kalıyordu — ölçüldü
       // (bulgu I-2): backend çöktükten sonra bile gösterge süresiz `connected`
@@ -154,10 +175,17 @@ export const useAIConfig = (API: string, user: UserData | null, showToast: (msg:
   // Başlangıçta sorgula ve sürekli kontrol et
   useEffect(() => {
     if (!API) return;
+    mountedRef.current = true;
     fetchUnityMcpStatus();
     // 8s'de bir otomatik kontrol — Unity kendi başlatmış olabilir
     pollRef.current = setInterval(fetchUnityMcpStatus, 8000);
-    return () => stopPolling();
+    return () => {
+      // Kuşağı ilerletmek uçuştaki isteğin dönüşünü ETKİSİZ kılıyor: `stopPolling`
+      // tek başına yetmiyordu, çünkü çözülen istek yeni bir interval kuruyordu.
+      mountedRef.current = false;
+      fetchNesilRef.current++;
+      stopPolling();
+    };
   }, [API]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchAIConfig = useCallback(async (userId: number) => {

@@ -197,3 +197,34 @@ def test_izin_bitleri_gerekcesi_olculen_modu_tasiyor():
         assert "st_mode=0o" in gerekce
     else:
         assert gerekce == ""
+
+
+def test_junction_ilgisiz_hata_OLCULEMEDI_donuyor(monkeypatch):
+    """Doğrulama turu bulgusu: üç durumlu kural KENDİ yeni kapımda ihlal edilmişti.
+
+    `_junction_olc` her sıfır olmayan `mklink` çıkışını "yetenek yok" sayıyordu —
+    disk dolu, geçici komut hatası, erişim reddi dahil. Yani E-c'nin kapattığı
+    sahte yeşil, onu kapatan commit'in içinde yeniden açılmıştı.
+    """
+    class _Sonuc:
+        returncode = 1
+        stdout = ""
+        stderr = "The system cannot find the path specified."
+
+    monkeypatch.setattr(conftest.subprocess, "run", lambda *a, **k: _Sonuc())
+    durum, gerekce = conftest._junction_olc()
+    assert durum is None, "ilgisiz hata yetenek yokluğuna dönüştü"
+    assert "ÖLÇÜLEMEDİ" in gerekce
+
+
+def test_junction_GERCEK_ayricalik_yoklugu_False_donuyor(monkeypatch):
+    """Ters yön: meşru yetenek yokluğu hâlâ `False` olmalı, yoksa her makinede FAIL."""
+    class _Sonuc:
+        returncode = 1
+        stdout = ""
+        stderr = "You do not have sufficient privilege to perform this operation."
+
+    monkeypatch.setattr(conftest.subprocess, "run", lambda *a, **k: _Sonuc())
+    durum, gerekce = conftest._junction_olc()
+    assert durum is False
+    assert "ölçüldü" in gerekce

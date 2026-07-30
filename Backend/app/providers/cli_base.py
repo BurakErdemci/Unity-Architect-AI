@@ -292,7 +292,22 @@ class BaseCLIProvider(AIProvider):
         # miras alınmış izinlerle diskte durur — `local_token_file`'da aynı
         # pencere 2026-07-27'de bulgu olarak kaydedilmişti.
         open(config_path, "w").close()
-        harden_config_file(config_path)
+        # ⚠️ Dönüş değeri YUTULAMAZ (doğrulama turu bulgusu, 30 Tem 2026).
+        # Eskiden çağrı yapılıp sonucu atılıyordu: ACL kısıtlanamasa bile sır
+        # yine de yazılıyordu ve kimse bilmiyordu — `harden_config_file`'ın
+        # kendi docstring'i "çağıran bunu yutmuyor" diyordu, oysa yutuyordu.
+        #
+        # Başarısızlıkta sır YAZILMIYOR: kayıttan `headers` düşürülüyor. Ürünün
+        # geri kalanı çalışmaya devam eder, yalnız unityMCP bağlanmaz — sırrı
+        # korumasız diske yazmaktansa özelliği kaybetmek doğru taraf.
+        if not harden_config_file(config_path):
+            unity = config["mcpServers"].pop("unityMCP", None)
+            if unity is not None:
+                logger.error(
+                    "[CLIProvider] %s izinleri kısıtlanamadı; unityMCP kaydı "
+                    "X-API-Key ile YAZILMADI. Unity MCP bu oturumda bağlanmayacak.",
+                    config_path,
+                )
         with open(config_path, "w") as f:
             json.dump(config, f, indent=2)
         # Dosyayı yazan nokta girdisini de yazar. Bu dosya `headers` içinde

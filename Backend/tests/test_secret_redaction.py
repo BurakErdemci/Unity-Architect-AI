@@ -114,3 +114,50 @@ def test_log_filtresi_iki_kez_takilmiyor():
     finally:
         kok.removeHandler(isleyici)
     assert sayi == 1
+
+
+# ── Doğrulama turu bulgusu: istisna metni ayrı bir yüzey ────────────────────
+
+
+def test_exc_info_traceback_da_maskeleniyor():
+    """`getMessage()` yalnız çağrının kendi metnini verir; traceback SONRA eklenir.
+
+    Ölçüldü (30 Tem 2026, doğrulama turu): `logger.exception(...)` ile sır log
+    çıktısında GÖRÜNÜYORDU. Bu modülün var oluş sebebinin ta kendisi —
+    `CalledProcessError`'ın metni argv'nin tamamını taşıyor ve tam buradan geçiyor.
+    """
+    akis = io.StringIO()
+    isleyici = logging.StreamHandler(akis)
+    kok = logging.getLogger()
+    kok.addHandler(isleyici)
+    try:
+        install_log_redaction()
+        log = logging.getLogger("sinama.exc")
+        try:
+            raise RuntimeError(f"bağlantı hatası: X-API-Key: {SIR}")
+        except RuntimeError:
+            log.exception("MCP kaydı başarısız")
+        isleyici.flush()
+        cikti = akis.getvalue()
+    finally:
+        kok.removeHandler(isleyici)
+
+    assert SIR not in cikti, "sır traceback üzerinden sızdı"
+    assert "RuntimeError" in cikti, "traceback tamamen kaybolmamalı — teşhis lazım"
+
+
+def test_stack_info_da_maskeleniyor():
+    akis = io.StringIO()
+    isleyici = logging.StreamHandler(akis)
+    kok = logging.getLogger()
+    kok.addHandler(isleyici)
+    try:
+        install_log_redaction()
+        logging.getLogger("sinama.stack").warning(
+            f"X-API-Key: {SIR}", stack_info=True
+        )
+        isleyici.flush()
+        cikti = akis.getvalue()
+    finally:
+        kok.removeHandler(isleyici)
+    assert SIR not in cikti

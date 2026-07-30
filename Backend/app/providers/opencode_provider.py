@@ -138,6 +138,19 @@ class OpenCodeProvider(BaseCLIProvider):
             except Exception:
                 pass
 
+            # Bu dosya da `X-API-Key`'i düz metin taşıyor ve workspace'in
+            # ACL'ini miras alıyordu. Sıkılaştırma `cli_base` ile aynı desende:
+            # önce boş yarat + kilitle, sonra sırrı yaz (doğrulama turu bulgusu,
+            # 30 Tem: bu yazıcı hardener'ı HİÇ çağırmıyordu).
+            from .workspace_config import harden_config_file
+
+            open(cfg_path, "w", encoding="utf-8").close()
+            if not harden_config_file(cfg_path) and isinstance(merged.get("mcp"), dict):
+                if merged["mcp"].pop("unityMCP", None) is not None:
+                    logger.error(
+                        "[OpenCodeProvider] %s izinleri kısıtlanamadı; unityMCP "
+                        "kaydı X-API-Key ile YAZILMADI.", cfg_path,
+                    )
             with open(cfg_path, "w", encoding="utf-8") as f:
                 json.dump(merged, f, indent=2)
             logger.info("[OpenCodeProvider] opencode.json yazıldı.")

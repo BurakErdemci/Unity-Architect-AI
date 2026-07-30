@@ -108,6 +108,28 @@ class _RedactingFilter(logging.Filter):
         if temiz != tam:
             record.msg = temiz
             record.args = ()
+
+        # ⚠️ İSTİSNA METNİ AYRI BİR YÜZEY (doğrulama turu bulgusu, 30 Tem 2026).
+        # `getMessage()` yalnız log çağrısının kendi metnini verir; `exc_info`
+        # ile gelen traceback ondan SONRA, biçimlendirici tarafından eklenir.
+        # Ölçüldü: `raise RuntimeError(f"... X-API-Key: {sır}")` + `logger.
+        # exception(...)` → sır çıktıda GÖRÜNÜYORDU. Bu, modülün var oluş
+        # sebebinin ta kendisi: `CalledProcessError`'ın metni argv'nin tamamını
+        # taşıyor ve o metin tam olarak buradan geçiyor.
+        #
+        # Çözüm biçimlendiriciyi beklemek yerine `exc_text`'i ŞİMDİ üretip
+        # maskelemek: `Formatter.format` `exc_text` doluysa onu yeniden
+        # üretmiyor, yani maskelenmiş hâli kullanılıyor.
+        if record.exc_info:
+            if not record.exc_text:
+                record.exc_text = logging.Formatter().formatException(record.exc_info)
+            record.exc_text = redact_secrets(record.exc_text)
+        elif record.exc_text:
+            record.exc_text = redact_secrets(record.exc_text)
+
+        # `stack_info` de aynı yoldan geliyor (logger.<level>(..., stack_info=True)).
+        if getattr(record, "stack_info", None):
+            record.stack_info = redact_secrets(record.stack_info)
         return True
 
 

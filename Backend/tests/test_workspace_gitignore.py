@@ -434,3 +434,50 @@ def test_harden_config_file_sahibe_kilitliyor(tmp_path):
         assert "SID Found:" not in acl.stdout, "Everyone hâlâ erişebiliyor"
     else:
         assert stat.S_IMODE(os.stat(hedef).st_mode) == 0o600
+
+
+def test_ACL_kisitlanamazsa_sir_YAZILMIYOR(tmp_path, monkeypatch):
+    """Doğrulama turu bulgusu: `harden_config_file`'ın dönüşü YUTULUYORDU.
+
+    `cli_base` çağrıyı yapıp sonucu atıyordu, yani ACL kısıtlanamasa bile sır
+    yine de diske yazılıyordu ve kimse bilmiyordu — hardener'ın kendi
+    docstring'i "çağıran bunu yutmuyor" diyordu, oysa yutuyordu.
+
+    Doğru taraf: sırrı korumasız yazmaktansa özelliği kaybetmek. Ürünün geri
+    kalanı çalışmaya devam eder, yalnız unityMCP bağlanmaz.
+    """
+    import providers.cli_base as cli_base
+    from providers.cli_base import BaseCLIProvider
+
+    monkeypatch.setenv("LOCAL_APP_TOKEN", "x")
+    monkeypatch.setattr(cli_base, "harden_config_file", lambda p: False, raising=False)
+    monkeypatch.setattr(
+        workspace_config, "harden_config_file", lambda p: False
+    )
+
+    class _SahteYonetici:
+        @staticmethod
+        def mcp_url():
+            return "http://127.0.0.1:8080/mcp"
+
+        @staticmethod
+        def api_headers():
+            return {"X-API-Key": "KANARYA-ACL"}
+
+    import unity_ai_mcp.unity_mcp_manager as umm
+    monkeypatch.setattr(umm, "unity_mcp_manager", _SahteYonetici())
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    provider = BaseCLIProvider.__new__(BaseCLIProvider)
+    monkeypatch.setattr(provider, "_launcher_path", lambda name: "/bin/true", raising=False)
+    monkeypatch.setattr(provider, "_ensure_exec", lambda path: None, raising=False)
+    monkeypatch.setattr(provider, "_register_mcp", lambda *a, **k: None, raising=False)
+
+    yol = provider._write_mcp_config(str(ws))
+    ham = open(yol, encoding="utf-8").read()
+
+    assert "KANARYA-ACL" not in ham, "ACL kısıtlanamadığı hâlde sır yazıldı"
+    # Ürün çalışmaya devam etmeli: unityai kaydı duruyor, yalnız unityMCP düştü.
+    assert json.loads(ham)["mcpServers"]["unityai"]
+    assert "unityMCP" not in json.loads(ham)["mcpServers"]
