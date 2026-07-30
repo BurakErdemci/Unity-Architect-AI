@@ -7,6 +7,8 @@ import json
 import secrets
 from typing import Optional
 
+from .mcp_identity import Occupant, ServerIdentity, probe_port_identity
+
 logger = logging.getLogger(__name__)
 
 # Unity bağlantı durumu
@@ -15,6 +17,10 @@ class UnityMCPStatus:
     STARTING = "starting"  # Sunucu başlatılıyor
     RUNNING = "running"    # Sunucu açık, Unity henüz bağlanmadı
     CONNECTED = "connected" # Sunucu açık + Unity bağlı
+    # Portu BAŞKASI tutuyor. "off" ile aynı şey değil ve ayrı olması şart:
+    # kullanıcı "kapalı" görünce toggle'a basıyor, başlatma reddediliyor ve
+    # sebep hiçbir yerde görünmüyordu. Bu durum kullanıcı eylemi gerektiriyor.
+    BLOCKED = "blocked"
 
 
 class UnityMCPManager:
@@ -28,8 +34,11 @@ class UnityMCPManager:
         self.process: Optional[subprocess.Popen] = None
         self.mcp_port = 8080
         self._starting = False  # Çift başlatmayı önler
-        self._health_cache_ts = 0.0   # is_running() HTTP probe cache (perf)
-        self._health_cache_val = False
+        # port_occupant() kimlik probe'u cache'i (perf). Değer artık bool DEĞİL:
+        # "biri dinliyor mu" ile "o biri BİZ miyiz" ayrı sorular ve ikincisi
+        # cevaplanmadan toggle yeşile dönüyordu.
+        self._identity_cache_ts = 0.0
+        self._identity_cache_val = Occupant(ServerIdentity.NONE, "henüz ölçülmedi")
         # MCP sunucusunun yerel REST uçlarının (/api/*) paylaşımlı sırrı. Her
         # start_server'da yenilenir; sunucu bizim değilse None kalır.
         self.local_api_token: Optional[str] = None
@@ -177,40 +186,42 @@ class UnityMCPManager:
     # ─── Subprocess Yönetimi ─────────────────────────────────────────────────
 
     def is_running(self) -> bool:
-        """Unity MCP server'ımız GERÇEKTEN ayakta mı?
+        """BİZİM Unity MCP sunucumuz ayakta mı?
 
-        ÖNEMLİ: 8080 çok yaygın bir port — sadece "biri dinliyor mu" kontrolü yanıltıcıydı:
-        alakasız bir servis (örn. başka bir dev server) 8080'deyse toggle yanlışlıkla
-        sarıya dönüyor ve CLI config'lerine unityMCP ekleniyordu. Bu yüzden:
-          1. Kendi başlattığımız subprocess canlıysa → kesin bizimki.
-          2. Değilse → 8080'de gerçekten MCP server mı var, /health (200) ile kimlik doğrula.
-        Sonuç 2sn cache'lenir (status endpoint sık polling yapıyor)."""
+        ÖNEMLİ — burada iki ayrı soru vardı ve tek boolean'a katlanmıştı:
+        "8080'de biri dinliyor mu" ve "o biri BİZ miyiz". Eskiden ikincisine
+        `/health`'in 200'ü cevap sayılıyordu; `/health` bilerek kimliksiz olduğu
+        için yabancı bir sunucu bu kontrolü bedavaya geçiyor, toggle yeşile
+        dönüyor ve trafik yabancıya gidiyordu (gerekçe ve ayırt edici test için
+        bkz. `mcp_identity` modül başlığı). Artık:
+          1. Kendi başlattığımız subprocess canlıysa → kesin bizimki, probe yok.
+          2. Değilse → kimlik probe'u; YALNIZ `OURS` "ayakta" sayılır.
+        """
+        return self.port_occupant().identity == ServerIdentity.OURS
+
+    def port_occupant(self) -> Occupant:
+        """8080'i tutanın kimliği + kullanıcıya gösterilebilir kısa sebep (2 sn cache).
+
+        Kendi sürecimiz canlıyken probe ATILMIYOR: süreç sahipliği probe'dan güçlü
+        bir kanıt, ve her durum yoklamasında bir HTTP isteği doğurmanın anlamı yok.
+        """
         if self.process and self.process.poll() is None:
-            return True
+            return Occupant(ServerIdentity.OURS, "kendi sürecimiz")
         import time
         now = time.monotonic()
-        if now - self._health_cache_ts < 2.0:
-            return self._health_cache_val
-        self._health_cache_val = self._probe_mcp_health_sync()
-        self._health_cache_ts = now
-        return self._health_cache_val
+        if now - self._identity_cache_ts < 2.0:
+            return self._identity_cache_val
+        self._identity_cache_val = probe_port_identity(self.mcp_port)
+        self._identity_cache_ts = now
+        return self._identity_cache_val
 
-    def _probe_mcp_health_sync(self) -> bool:
-        """8080 açık VE gerçekten MCP server mı (/health 200) — senkron, kısa timeout."""
-        import socket
-        try:
-            with socket.create_connection(("127.0.0.1", self.mcp_port), timeout=0.3):
-                pass
-        except OSError:
-            return False  # port hiç dinlenmiyor
-        import urllib.request
-        try:
-            with urllib.request.urlopen(
-                f"http://127.0.0.1:{self.mcp_port}/health", timeout=0.6
-            ) as r:
-                return r.status == 200
-        except Exception:
-            return False  # port dolu ama MCP server değil (alakasız servis)
+    def invalidate_identity_cache(self) -> None:
+        """Cache'i düşür — sunucuyu başlattıktan/durdurduktan sonra çağrılır.
+
+        2 sn'lik pencere normalde zararsız ama başlatma/durdurma anında yanlış
+        tarafa düşüyor: `stop_server` sonrası hâlâ "ayakta" okunabiliyordu.
+        """
+        self._identity_cache_ts = 0.0
 
     def is_unity_running(self) -> bool:
         """Unity Editor süreci çalışıyor mu kontrol eder."""
@@ -325,9 +336,23 @@ class UnityMCPManager:
         # toggle sonsuza kadar sarıda kalıyordu. Portu zorla boşaltmak da
         # seçenek değil — o süreç bizim değil. Kalan tek doğru davranış:
         # başlatmayı reddet ve sebebi söyle.
-        from .mcp_port_guard import foreign_port_owners, port_busy_message
+        #
+        # İKİ BAĞIMSIZ ÖLÇÜM var ve ikisi de gerekli:
+        #   (a) kimlik probe'u — hiçbir dış araç istemiyor, doğrudan "8080'deki
+        #       sunucunun kimlik kapısı var mı" sorusunu ölçüyor;
+        #   (b) süreç sahibi sorgusu — kullanıcıya hangi programı kapatacağını
+        #       söylüyor, ama `lsof`/`ps` yoksa SESSİZCE boş dönüyor (fail-open).
+        # Yalnız (b)'ye dayanmak, aracın bulunmadığı makinede korumayı tamamen
+        # kaybetmek demekti; (a) o boşluğu kapatıyor ve tersi de doğru — (a) tek
+        # başına kullanıcıya eyleme dönüştürülebilir bir ad veremiyor.
+        if self.port_occupant().identity == ServerIdentity.FOREIGN:
+            self.last_error = self._blocked_reason(self.port_occupant())
+            logger.error(f"[UnityMCP] {self.last_error}")
+            return False
+
+        from .mcp_port_guard import foreign_port_owner_infos, port_busy_message
         try:
-            foreign = foreign_port_owners(self.mcp_port)
+            foreign = foreign_port_owner_infos(self.mcp_port)
         except Exception as e:
             # Sorgu aracı yoksa/patlarsa engelleme: yanlışlıkla reddetmek,
             # eski (ve çoğu zaman çalışan) davranışa düşmekten daha kötü.
@@ -402,6 +427,10 @@ class UnityMCPManager:
             )
             logger.info(f"[UnityMCP] Sunucu başlatıldı (PID: {self.process.pid}, port: {self.mcp_port})")
             self._starting = False
+            # Cache'de bu porta ait eski bir kimlik ölçümü kalmış olabilir
+            # (ör. az önceki "yabancı" kararı). 2 sn boyunca ona güvenmek
+            # başlattığımız sunucuyu "yabancı" göstermek demek.
+            self.invalidate_identity_cache()
             return True
         except Exception as e:
             logger.error(f"[UnityMCP] Başlatılamadı: {e}")
@@ -421,6 +450,9 @@ class UnityMCPManager:
         süreçleri kapatıyor (bkz. mcp_port_guard).
         """
         from .mcp_port_guard import collect_owned_listeners, terminate_port_listeners
+
+        # Durdurmanın ardından 2 sn boyunca "hâlâ ayakta" okunmasın.
+        self.invalidate_identity_cache()
 
         # Ata zinciri, ARADAKİ uvx ölmeden önce örneklenmeli: uvx gidince
         # dinleyici torun init'e evlat ediniliyor (ppid=1) ve "bizim" olduğu bir
@@ -459,6 +491,9 @@ class UnityMCPManager:
 
         self._starting = False
         self.local_api_token = None
+        # İkinci kez: yukarıdaki :465 `is_running()` çağrısı durdurma SÜRERKEN
+        # ölçüm yapıp cache'i tazeliyor. O ölçüm artık geçersiz.
+        self.invalidate_identity_cache()
         logger.info("[UnityMCP] Sunucu durduruldu.")
 
     # ─── Health & Status ─────────────────────────────────────────────────────
@@ -538,24 +573,61 @@ class UnityMCPManager:
             pass
         return False
 
+    def _blocked_reason(self, occupant: Occupant) -> str:
+        """8080'i tutan yabancı süreci kullanıcıya ADIYLA anlat.
+
+        Süreç tablosu okunamazsa probe'un kendi gözlemine düşülüyor: hangi
+        programın tuttuğunu söyleyemesek bile "port bizde değil" bilgisi
+        kullanıcının elindeki tek eyleme dönüştürülebilir şey. Sessiz kalmak
+        düzeltmeye çalıştığımız arızanın kendisi.
+        """
+        from .mcp_port_guard import foreign_port_owner_infos, port_busy_message
+        try:
+            owners = foreign_port_owner_infos(self.mcp_port)
+        except Exception as e:
+            logger.debug(f"[UnityMCP] Port sahibi sorgulanamadı: {e}")
+            owners = []
+        if owners:
+            return port_busy_message(self.mcp_port, owners)
+        return (
+            f"{self.mcp_port} portunda bize ait olmayan bir sunucu var "
+            f"({occupant.detail}). O sunucuyu kapatıp tekrar deneyin."
+        )
+
     async def get_status(self) -> dict:
         """
         Tam durum bilgisini döner:
         {
-          "status": "off" | "starting" | "running" | "connected",
+          "status": "off" | "blocked" | "starting" | "running" | "connected",
           "pid": int | None,
           "port": 8080,
-          "instances": [...]
+          "instances": [...],
+          "reason": str | None   # yalnız "blocked" durumunda dolu
         }
+
+        `reason` alanı bilerek BU uçtan dönüyor: sebep eskiden yalnız toggle
+        POST'unun 500 gövdesinde vardı, yani kullanıcı toggle'a basmadan önce
+        durumu asla öğrenemiyordu.
         """
         if not self.is_running():
-            return {"status": UnityMCPStatus.OFF, "pid": None, "port": self.mcp_port, "instances": []}
+            occupant = self.port_occupant()
+            if occupant.identity == ServerIdentity.FOREIGN:
+                return {
+                    "status": UnityMCPStatus.BLOCKED,
+                    "pid": None,
+                    "port": self.mcp_port,
+                    "instances": [],
+                    "reason": self._blocked_reason(occupant),
+                }
+            return {"status": UnityMCPStatus.OFF, "pid": None, "port": self.mcp_port,
+                    "instances": [], "reason": None}
 
         pid = self.process.pid if self.process else None
 
         healthy = await self.check_health()
         if not healthy:
-            return {"status": UnityMCPStatus.STARTING, "pid": pid, "port": self.mcp_port, "instances": []}
+            return {"status": UnityMCPStatus.STARTING, "pid": pid, "port": self.mcp_port,
+                    "instances": [], "reason": None}
 
         try:
             async with httpx.AsyncClient() as client:
@@ -573,6 +645,7 @@ class UnityMCPManager:
             "pid": pid,
             "port": self.mcp_port,
             "instances": instances,
+            "reason": None,
         }
 
     # ─── Unity Paket Kurulumu ────────────────────────────────────────────────

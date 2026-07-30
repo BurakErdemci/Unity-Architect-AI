@@ -43,7 +43,7 @@ import signal
 import subprocess
 import sys
 from dataclasses import dataclass, field
-from typing import Iterable, List, Optional, Sequence, Set
+from typing import Iterable, List, Optional, Sequence, Set, Union
 
 logger = logging.getLogger(__name__)
 
@@ -87,14 +87,38 @@ class PortCleanupResult:
         return port_busy_message(self.port, self.refused)
 
 
-def port_busy_message(port: int, pids: Sequence[int]) -> str:
+def port_busy_message(port: int, owners: Sequence[Union[int, ProcessInfo]]) -> str:
     """Kullanıcıya gösterilecek metin. Tek yerde: hem açılış logu, hem toggle
-    hatası, hem stop_server uyarısı aynı cümleyi kullanmalı."""
-    joined = ", ".join(str(p) for p in pids)
+    hatası, hem stop_server uyarısı aynı cümleyi kullanmalı.
+
+    `ProcessInfo` verilirse süreç ADI da yazılır. Sebebi ölçülmüş bir eksiklik:
+    "PID 4321'i kapatın" bir kullanıcının uygulayabileceği talimat değil — hangi
+    programı kapatacağını bilmiyor. Ad elde zaten vardı ve atılıyordu.
+    """
+    joined = ", ".join(_describe_owner(owner) for owner in owners)
     return (
         f"{port} portu bize ait olmayan bir süreç tarafından kullanılıyor "
-        f"(PID: {joined}). O süreci kapatıp tekrar deneyin."
+        f"({joined}). O süreci kapatıp tekrar deneyin."
     )
+
+
+def _describe_owner(owner: Union[int, ProcessInfo]) -> str:
+    if not isinstance(owner, ProcessInfo):
+        return f"PID {owner}"
+    name = _executable_name(owner.command)
+    return f"{name} · PID {owner.pid}" if name else f"PID {owner.pid}"
+
+
+def _executable_name(command: str) -> str:
+    """Komut satırından YALNIZ çalıştırılabilir adı.
+
+    Tam komut satırı BİLEREK gösterilmiyor: başka bir programın argv'si onun
+    sırrını taşıyabilir (bu depo kendi tarafında argv'nin `ps` ile herkese
+    görünür olduğunu zaten bir gerekçe olarak kullanıyor). Kullanıcının ihtiyacı
+    olan tek şey hangi programı kapatacağı.
+    """
+    first = command.strip().split(" ", 1)[0] if command else ""
+    return os.path.basename(first)[:60]
 
 
 # ─── Süreç sorgulama ────────────────────────────────────────────────────────
@@ -278,6 +302,30 @@ def terminate_port_listeners(
     return result
 
 
+def foreign_port_owner_infos(port: int = DEFAULT_MCP_PORT) -> List[ProcessInfo]:
+    """Portu tutan ve bize ait OLMAYAN süreçler — PID **ve** komut satırıyla.
+
+    `foreign_port_owners` bunun yalnız PID'lerini veren ince sarmalayıcısı.
+    Ayrı bir fonksiyon olmasının sebebi: komut satırı `has_server_marker`
+    içinde zaten sorgulanıp atılıyordu, ve kullanıcıya gösterilecek mesajın
+    ona ihtiyacı var. Ek sistem çağrısı doğurmuyor.
+
+    Süreç tablosu okunamayan PID **yabancı sayılır** (fail-closed) — mevcut
+    davranış korunuyor. Gerekçesi: bilinmeyen bir sürecin portu tuttuğu
+    durumda başlatmayı denemek uvx'in sessizce ölmesiyle sonuçlanıyor.
+    """
+    self_pid = os.getpid()
+    infos: List[ProcessInfo] = []
+    for pid in list_listening_pids(port):
+        if pid == self_pid or is_descendant_of(pid, self_pid):
+            continue
+        info = query_process(pid)
+        if info is not None and SERVER_COMMAND_MARKER in info.command:
+            continue
+        infos.append(info if info is not None else ProcessInfo(pid=pid, ppid=None, command=""))
+    return infos
+
+
 def foreign_port_owners(port: int = DEFAULT_MCP_PORT) -> List[int]:
     """Portu tutan ve bize ait OLMAYAN PID'ler (hiçbir şey öldürmez).
 
@@ -285,11 +333,4 @@ def foreign_port_owners(port: int = DEFAULT_MCP_PORT) -> List[int]:
     edemeyip sessizce ölüyor, toggle sonsuza kadar sarıda kalıyor ve kullanıcı
     sebebi hiçbir yerde göremiyor.
     """
-    self_pid = os.getpid()
-    return [
-        pid
-        for pid in list_listening_pids(port)
-        if pid != self_pid
-        and not is_descendant_of(pid, self_pid)
-        and not has_server_marker(pid)
-    ]
+    return [info.pid for info in foreign_port_owner_infos(port)]
