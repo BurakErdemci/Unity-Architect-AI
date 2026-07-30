@@ -87,6 +87,9 @@ def test_reads_outside_workspace_require_approval(command, workspace):
     assert not is_auto_safe(command, workspace)
 
 
+@pytest.mark.baglar_gerekli
+
+
 def test_symlink_escaping_workspace_is_blocked(workspace, tmp_path):
     outside = tmp_path.parent / "outside_secret.txt"
     outside.write_text("gizli\n")
@@ -122,6 +125,53 @@ def test_without_workspace_absolute_paths_are_refused():
     assert not is_auto_safe("cat /etc/passwd")
     assert not is_auto_safe("cat ~/.ssh/id_rsa")
     assert is_auto_safe("ls")
+
+
+def test_without_workspace_parent_traversal_is_refused():
+    """`..` HER İKİ ayraçla da yakalanmalı.
+
+    Ölçüldü (30 Tem 2026, Windows / mutasyonla bulundu): kontrol
+    `".." in yol.split(os.sep)` yazılmıştı ve `os.sep` `"\\"` olduğu için
+    `"../gizli"` hiç bölünmüyordu — yani workspace bilinmiyorken
+    `cat ../gizli` ONAYSIZ geçiyordu. Bu boşluğu hiçbir test görmüyordu:
+    mevcut testler yalnız mutlak yolları sürüyordu.
+
+    İki ayraç birden sınanıyor, çünkü komut metnini model üretiyor ve hangi
+    ayracı kullandığı platforma bağlı değil.
+    """
+    assert not is_auto_safe("cat ../gizli")
+    assert not is_auto_safe("cat alt/../../gizli")
+    # TERS YÖN: ".." içermeyen düz göreli ad hâlâ serbest, yoksa kontrol
+    # "her şeyi reddet"e dönüşür ve testi geçmesi anlamsızlaşır.
+    assert is_auto_safe("cat notlar.txt")
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="shlex.split POSIX modda '\\' kaçış sayıyor: 'cat ..\\gizli' token'ı "
+           "'..gizli' oluyor ve '..' hiç görünmüyor. Düzeltmesi shlex çağrısının "
+           "kipini değiştirmek ve o TIRNAK davranışını da değiştiriyor — "
+           "ölçülmeden dokunulmayacak bir yüzey. Kayıt açık bırakıldı.",
+)
+def test_windows_style_parent_traversal_is_refused():
+    """BİLİNEN AÇIK — ters bölülü üst dizin geçişi kontrolden kaçıyor.
+
+    Bulundu 30 Tem 2026, yukarıdaki testin ilk sürümü sırasında. Zincir:
+    `shlex.split("cat ..\\gizli")` POSIX kipinde `['cat', '..gizli']` üretiyor,
+    yani ters bölü YUTULUYOR ve yol artık `..` içermiyor. Kontrol doğru
+    çalışıyor, ona ulaşan veri yanlış.
+
+    Neden `xfail(strict=True)` ve neden sessizce silinmedi: bu bir muafiyet ve
+    muafiyet de bir iddia taşıyor. `strict` sayesinde açık bir gün kapanırsa
+    test "beklenmedik geçiş" diye bağırıyor — yani kayıt kendi kendini
+    güncelliyor, kimsenin hatırlamasına bağlı değil.
+
+    ⚠️ Erişilebilirliği ÖLÇÜLMEDİ: kaçışın gerçekleşmesi için komutun ters
+    bölüyü ayraç sayan bir kabukta (cmd/PowerShell) koşması gerekiyor. Git
+    Bash'te `..\\gizli` yine `..gizli` olur ve kaçış OLUŞMAZ. Hangi kabuğun
+    kullanıldığı ölçülmeden şiddet atanmamalı.
+    """
+    assert not is_auto_safe("cat ..\\gizli")
 
 
 def test_single_source_of_truth_is_shared_by_all_call_sites():

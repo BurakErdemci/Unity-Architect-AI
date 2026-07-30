@@ -125,14 +125,25 @@ def _git_covered(ws_real: str, entries: List[str]) -> Optional[Set[str]]:
     try:
         proc = subprocess.run(
             ["git", "-C", ws_real, "check-ignore", "--no-index", "--stdin"],
-            input="\n".join(entries) + "\n",
-            capture_output=True, text=True, timeout=_GIT_TIMEOUT_S,
+            # `input` BYTES ve `text` YOK — ölçüldü (30 Tem 2026, Windows):
+            # `text=True` ile stdin `io.TextIOWrapper(newline=None)` üzerinden
+            # yazılıyor ve her `\n` platform ayracına çevriliyor (`\r\n`). git
+            # `\r`'yi YOL ADININ PARÇASI sayıyor → hiçbir girdi eşleşmiyor →
+            # fonksiyon her zaman boş küme dönüyordu. Yani git katmanı Windows'ta
+            # sessizce ÖLÜ: ürün literal karşılaştırmaya düşüyor, `*.json` gibi
+            # geniş desenler tanınmıyor ve kullanıcının `.gitignore`'una zaten
+            # kapsanan girdiler için gereksiz blok ekleniyordu.
+            # İki varyantlı ölçüm: tek fark `input=b"..."` iken rc 1 → 0 ve
+            # stdout `.mcp.json` döndü.
+            input=("\n".join(entries) + "\n").encode("utf-8"),
+            capture_output=True, timeout=_GIT_TIMEOUT_S,
         )
     except (OSError, subprocess.SubprocessError):
         return None
     if proc.returncode not in (0, 1):
         return None
-    return {line.strip() for line in proc.stdout.splitlines() if line.strip()}
+    cikti = proc.stdout.decode("utf-8", "replace")
+    return {line.strip() for line in cikti.splitlines() if line.strip()}
 
 
 def _tracked(ws_real: str, entries: List[str]) -> List[str]:

@@ -34,7 +34,9 @@ Bu fonksiyon yalnızca "onaysız geçebilir mi" sorusunu yanıtlar. False dönme
 komutun yasak olduğu anlamına gelmez; kullanıcı onaylarsa çalışır.
 """
 
+import ntpath
 import os
+import posixpath
 import shlex
 
 # Zincirleme (; | &), komut ikamesi (` $), alt kabuk ( ), yönlendirme (> <) ve
@@ -106,6 +108,27 @@ def _git_is_auto_safe(tokens: list[str]) -> bool:
     return False
 
 
+def _mutlak_gorunuyor(yol: str) -> bool:
+    """Herhangi bir ailenin mutlak yol biçimi mi?
+
+    Tek bir `os.path.isabs` yetmiyor, çünkü o çalıştığı platformun kurallarını
+    uyguluyor: Windows'ta `isabs("/etc/passwd")` **False**, POSIX'te
+    `isabs("C:\\Windows")` **False**. Oysa sınıflandırdığımız metin işletim
+    sisteminden bağımsız geliyor — onu model üretiyor. İki aileyi birden sormak
+    kararı platform ayarından ayırıyor.
+    """
+    return ntpath.isabs(yol) or posixpath.isabs(yol)
+
+
+def _ust_dizin_iceriyor(yol: str) -> bool:
+    """`..` bileşenini HER İKİ ayraçla arar.
+
+    `split(os.sep)` tek ayraca bağlı ve Windows'ta `"../x"` hiç bölünmüyordu,
+    yani üst dizin kontrolü sessizce kaçıyordu.
+    """
+    return ".." in yol.replace("\\", "/").split("/")
+
+
 def _attached_flag_value(token: str) -> str:
     """Bayrağa BİTİŞİK yazılmış değeri döndürür; değer yoksa boş string.
 
@@ -157,7 +180,16 @@ def _stays_in_workspace(tokens: list[str], workspace: str | None) -> bool:
         expanded = os.path.expanduser(candidate)
         if root is None:
             # Workspace bilinmiyor: yalnızca düz göreli yollara güveniyoruz.
-            if os.path.isabs(expanded) or candidate.startswith("~") or ".." in expanded.split(os.sep):
+            #
+            # `os.path.isabs` + `split(os.sep)` YETMİYOR ve bu ölçüldü
+            # (30 Tem 2026, Windows / Python 3.13): `isabs("/etc/passwd")`
+            # **False** dönüyor, ve `os.sep` `"\\"` olduğu için
+            # `split(os.sep)` `/`-kökenli bir yolu hiç bölmüyor — yani `..`
+            # kontrolü de aynı anda kaçıyordu. Sonuç: `cat /etc/passwd` bu
+            # dalda ONAYSIZ geçiyordu. Komut metni işletim sisteminden bağımsız
+            # geliyor (modelin ürettiği metin), o yüzden her iki ailenin de
+            # mutlak biçimi mutlak sayılıyor.
+            if _mutlak_gorunuyor(expanded) or candidate.startswith("~") or _ust_dizin_iceriyor(expanded):
                 return False
             continue
         resolved = os.path.realpath(os.path.join(root, expanded))

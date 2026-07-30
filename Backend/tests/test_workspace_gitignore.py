@@ -118,6 +118,9 @@ def test_works_in_non_git_directory(tmp_path):
     assert text.count(".mcp.json") == 1
 
 
+@pytest.mark.baglar_gerekli
+
+
 def test_symlink_escape_is_refused(tmp_path, caplog):
     """`.gitignore` workspace DIŞINA bakan bir bağsa yazma reddedilir.
 
@@ -155,6 +158,9 @@ def test_missing_workspace_does_not_raise(tmp_path, caplog):
         ensure_gitignored(str(tmp_path / "yok-boyle-bir-dizin"), [".mcp.json"])
     # Hiçbir şey fırlatılmadı = test geçti; ek olarak dosya da yaratılmamalı.
     assert not (tmp_path / "yok-boyle-bir-dizin").exists()
+
+
+@pytest.mark.izin_bitleri_gerekli
 
 
 def test_unwritable_workspace_does_not_raise(tmp_path, caplog):

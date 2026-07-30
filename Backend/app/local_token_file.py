@@ -42,6 +42,48 @@ _TOKEN_PATH = os.path.join(_TOKEN_DIR, "local-app-token")
 #         dönüyor, yazma yolunda O_CREAT modu var olan dosyaya uygulanmıyor.
 #      3. Var olan gevşek dosyaya bytlar önce yazılıp SONRA chmod ediliyordu —
 #         aradaki pencerede sır 0644'te okunabilir duruyordu.
+#
+# ── Windows (ölçüldü 2026-07-30, Python 3.13/win32) — iki POSIX varsayımı çöktü:
+#
+#      1. `os.O_NOFOLLOW` YOK. Koşulsuz kullanmak `AttributeError` üretiyordu ve
+#         `AttributeError` bir `OSError` DEĞİL, yani aşağıdaki `except OSError`
+#         onu yakalamıyor, hata çağırana sızıyordu. Ölçülen bedeli ürünün
+#         tamamı: `main.py` bu modülü import anında çağırdığı için **backend
+#         Windows'ta hiç ayağa kalkmıyordu**; `unity_mcp_manager.start_server()`
+#         False dönüyordu (Unity MCP hiç başlamıyor) ve `approval_bridge`
+#         token'ı okuyamadığı için **her onay isteğini reddediyordu.**
+#      2. POSIX izin bitleri YOK. `os.chmod(path, 0o600)` sonrası `st_mode`
+#         hâlâ `0o666` — ama `os.fchmod` VAR ve hata VERMİYOR. Yani eski kod
+#         "izni 0600'e çekildi" diye uyarı basıp hiçbir şey yapmıyordu, ve
+#         maske (`0o666 & 0o077 = 0o66`) her seferinde tuttuğu için bu yalan
+#         HER OKUMADA tekrarlanıyordu. Bu depoda kapatılmış bir sınıf:
+#         olmamış işleme "oldu" demek.
+#
+# Windows'ta sırrın korunması bu yüzden dosyanın KONUMUNA dayanıyor
+# (`%USERPROFILE%\.unity_architect_ai`, NTFS profil ACL'i). Bu bir taviz ve
+# aynı gerekçeye dayanıyor: tek kullanıcılı makinede aynı kullanıcı sırrı
+# zaten okuyabiliyor.
+
+_O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+# `os.name` üzerinden, `hasattr(os, "fchmod")` üzerinden DEĞİL: Windows'ta
+# `fchmod` var ama etkisiz, yani varlığı yanlış soruya doğru cevap veriyor.
+_POSIX_MODE_BITS = os.name == "posix"
+
+
+def _refuse_symlink(path: str) -> None:
+    """`O_NOFOLLOW` olmayan platformlarda bağ reddini açmadan ÖNCE yapar.
+
+    `O_NOFOLLOW` varsa bu fonksiyon hiçbir şey yapmıyor — çekirdek reddi atomik
+    ve bundan güçlü. Yokken kalan tek seçenek bu ve TOCTOU'ya açık: kontrolle
+    açma arasında bağ araya sokulabilir. Taviz bilerek kabul edildi, sınırı
+    ölçülü: Windows'ta sembolik bağ yaratmak `SeCreateSymbolicLinkPrivilege`
+    istiyor (ölçüldü: bu makinede `os.symlink` → WinError 1314), yani
+    saldırganın zaten yükseltilmiş yetkisi olması gerekiyor.
+    """
+    if _O_NOFOLLOW:
+        return
+    if os.path.islink(path):
+        raise OSError(f"{path} bir sembolik bağ; sır dosyası olarak kullanılmayacak.")
 
 
 def _open_secret_for_write(path: str) -> int:
@@ -55,9 +97,11 @@ def _open_secret_for_write(path: str) -> int:
     gerekir (~/.unity-mcp dizininin kendisini ele geçirmek), ki o noktada
     saldırgan zaten ev dizinine yazabiliyor demektir.
     """
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    _refuse_symlink(path)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | _O_NOFOLLOW, 0o600)
     try:
-        os.fchmod(fd, 0o600)
+        if _POSIX_MODE_BITS:
+            os.fchmod(fd, 0o600)
     except OSError:
         os.close(fd)
         raise
@@ -72,12 +116,17 @@ def read_secret_file(path: str) -> str:
     ve okuma yolu erken dönüp onu olduğu gibi bırakıyordu ((2) numaralı bulgu).
     """
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        _refuse_symlink(path)
+        fd = os.open(path, os.O_RDONLY | _O_NOFOLLOW)
     except OSError:
         return ""
     try:
         mode = stat.S_IMODE(os.fstat(fd).st_mode)
-        if mode & 0o077:
+        # İzin ölçümü ve düzeltmesi yalnız POSIX'te anlamlı. Windows'ta `st_mode`
+        # ACL'den türetilmiyor (`0o666` sabit gelir) ve `fchmod` etkisiz; koşulu
+        # kaldırmak "sıkılaştırdım" diyen ama hiçbir şey yapmayan bir uyarıyı
+        # her okumada bastırırdı.
+        if _POSIX_MODE_BITS and mode & 0o077:
             try:
                 os.fchmod(fd, 0o600)
                 logger.warning(
