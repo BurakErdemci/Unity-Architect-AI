@@ -317,8 +317,11 @@ _EXEMPT: Dict[Tuple[str, str], Tuple[int, str]] = {
     ("app/providers/workspace_config.py", "_tracked"): (
         1, "git ls-files — sistem ikilisi, sabit argv"),
     ("app/providers/workspace_config.py", "harden_config_file"): (
-        1, "icacls — Windows yerleşiği, sabit argv, sır tüketmiyor; yalnız "
-           "yazdığımız config dosyasının ACL'ini kısıtlıyor (bulgu S4b)"),
+        2, "icacls — Windows yerleşiği, sabit argv, sır tüketmiyor; yalnız "
+           "yazdığımız config dosyasının ACL'ini kısıtlıyor (bulgu S4b). "
+           "İKİ çağrı: biri kısıtlama, biri SONUCU DOĞRULAMA — rc=0 tek başına "
+           "yeterli değil, çünkü explicit ACE'ler /inheritance:r'den sağ "
+           "çıkıyor (2. doğrulama turu bulgusu)"),
     ("app/unity_ai_mcp/mcp_port_guard.py", "_run"): (
         1, "lsof/pgrep/netstat — port sahibi sorgusu; DISPLAY'siz sistem aracı"),
     ("app/unity_ai_mcp/unity_mcp_manager.py", "UnityMCPManager.is_unity_running"): (

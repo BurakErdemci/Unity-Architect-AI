@@ -202,6 +202,45 @@ def harden_config_file(path: str) -> bool:
             path, (proc.stderr or proc.stdout).strip()[:200],
         )
         return False
+
+    # ⚠️ SONUCU DOĞRULA, komutun rc'sine güvenme (2. doğrulama turu bulgusu).
+    # `/inheritance:r` yalnız MİRAS ACE'leri kaldırıyor, `/remove` yalnız
+    # adlandırdığımız üç principal'ı, `/grant:r` yalnız sahibin girdisini
+    # değiştiriyor. Dosyaya DOĞRUDAN verilmiş başka bir yetki (ör. bir
+    # `AuditReaders` grubu) bunların üçünden de sağ çıkıyordu ve fonksiyon yine
+    # `True` dönüyordu — yani "sıkılaştırıldı" diyen ama sırrı okunabilir
+    # bırakan bir yalan. Bu depoda kapatılmış bir sınıf: olmamış işleme
+    # "oldu" demek.
+    try:
+        kontrol = subprocess.run(
+            ["icacls", path], capture_output=True, text=True, timeout=_GIT_TIMEOUT_S,
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        logger.warning("[config-acl] %s ACL'i doğrulanamadı: %s", path, e)
+        return False
+    if kontrol.returncode != 0:
+        logger.warning("[config-acl] %s ACL'i okunamadı", path)
+        return False
+
+    # `icacls` çıktısı: "<yol> HESAP:(izinler)" satırları. Yolun kendisi ilk
+    # satırın başında; onu çıkarıp kalan her satırdaki hesabı topluyoruz.
+    yabanci: list[str] = []
+    for i, satir in enumerate((kontrol.stdout or "").splitlines()):
+        parca = satir[len(path):] if i == 0 and satir.startswith(path) else satir
+        parca = parca.strip()
+        if not parca or ":" not in parca:
+            continue
+        hesap_adi = parca.rsplit(":", 1)[0].strip()
+        if not hesap_adi:
+            continue
+        if hesap_adi.lower() not in (hesap.lower(), kullanici.lower()):
+            yabanci.append(hesap_adi)
+    if yabanci:
+        logger.warning(
+            "[config-acl] %s üzerinde beklenmeyen erişim kaldı: %s",
+            path, ", ".join(sorted(set(yabanci))[:5]),
+        )
+        return False
     return True
 
 

@@ -131,8 +131,17 @@ export const useAIConfig = (API: string, user: UserData | null, showToast: (msg:
     // sessizce 200 {"status":"stopped"} dönüyordu — yani kullanıcı butona
     // basıyor, hiçbir şey olmuyor ve bir hata bile görünmüyordu.
     const turningOn = unityMcpStatus === 'off' || unityMcpStatus === 'blocked';
+    // Toggle da yoklama kuşağının İÇİNDE olmalı (2. doğrulama turu bulgusu).
+    // İlk düzeltme yalnız `fetchUnityMcpStatus`'ı korumuştu; bu yol `await`
+    // sonrası hem `setState` yapıyor hem `setInterval` kuruyordu, yani unmount
+    // sırasında POST uçuştaysa temizlikten sonra yoklama yeniden doğuyordu.
+    // Ayrıca kuşağı burada İLERLETMEK şart: toggle'dan ÖNCE başlamış bir
+    // durum sorgusu, toggle'ın yazdığı `starting`/`off`'u ezebiliyordu.
+    const nesil = ++fetchNesilRef.current;
+    const guncelMi = () => nesil === fetchNesilRef.current && mountedRef.current;
     try {
       await axios.post(`${API}/mcp/unity/toggle`, { enabled: turningOn, workspace_path: workspacePath || null });
+      if (!guncelMi()) return;
       if (turningOn) {
         setUnityMcpStatus('starting');
         startingUntilRef.current = Date.now() + 30000; // 30s boyunca 'off' yanıtını yoksay
@@ -145,6 +154,7 @@ export const useAIConfig = (API: string, user: UserData | null, showToast: (msg:
         pollRef.current = setInterval(fetchUnityMcpStatus, 8000);
       }
     } catch (err: any) {
+      if (!guncelMi()) return;
       // `detail` artık HER durum kodunda okunuyor. 500'ün gövdesi portu tutan
       // sürecin ADINI taşıyor (`unity_mcp_manager._blocked_reason`) ve eskiden
       // sabit bir "toggle başarısız" metniyle eziliyordu: sebep üretiliyor ama
