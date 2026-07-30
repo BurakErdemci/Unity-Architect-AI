@@ -53,7 +53,19 @@ def symlink_escape():
     ws = tempfile.mkdtemp(prefix="ws_")
     outside = tempfile.mkdtemp(prefix="outside_")
     link = os.path.join(ws, "link")
-    os.symlink(outside, link)
+    try:
+        os.symlink(outside, link)
+    except (OSError, NotImplementedError, AttributeError):
+        # Bağ kurulamıyor (Windows: `SeCreateSymbolicLinkPrivilege` yok →
+        # WinError 1314). Fixture'ı DÜŞÜRMEK yerine `link`'i None bırakıyoruz.
+        #
+        # Sebep ölçüldü (30 Tem 2026): fixture kurulumda patladığında bu
+        # dosyanın 40 testi ERROR veriyordu, yani K1 onay kapısının TAMAMI bu
+        # makinede ölçülemez haldeydi. Oysa 40 testin yalnız 6'sı bağı
+        # kullanıyor; kalanı fixture'ı `ws`/`outside` için alıyor ve ölçtüğü şey
+        # izin mantığı, bağ değil. Bağı gerçekten kullanan 6 test
+        # `@pytest.mark.baglar_gerekli` ile işaretli — None'a hiç ulaşmıyorlar.
+        link = None
     try:
         yield ws, outside, link
     finally:
@@ -94,10 +106,16 @@ def _is_allow(res) -> bool:
 # ── DÜZELTME 1: canonical kapsama ────────────────────────────────────────────
 
 
+@pytest.mark.baglar_gerekli
+
+
 def test_symlink_escape_is_outside_workspace(symlink_escape):
     """Asıl bulgu: bağın altındaki hedef gerçekte workspace dışında."""
     ws, outside, link = symlink_escape
     assert _path_in_workspace(os.path.join(link, "escape.cs"), ws) is False
+
+
+@pytest.mark.baglar_gerekli
 
 
 def test_symlinked_workspace_root_still_accepts_its_own_files(symlink_escape):
@@ -112,6 +130,9 @@ def test_symlinked_workspace_root_still_accepts_its_own_files(symlink_escape):
     assert _path_in_workspace(os.path.join(ws, "A.cs"), ws_link) is True
     # Yol bağ üzerinden, workspace gerçek
     assert _path_in_workspace(os.path.join(ws_link, "A.cs"), ws) is True
+
+
+@pytest.mark.baglar_gerekli
 
 
 def test_nonexistent_target_is_still_classified(symlink_escape):
@@ -214,12 +235,18 @@ async def test_auto_mode_outside_read_is_free(tool, inp, symlink_escape):
     assert _is_allow(res)
 
 
+@pytest.mark.baglar_gerekli
+
+
 async def test_symlink_read_escape_shows_card(symlink_escape):
     """Düzeltme 1 ile 2'nin kesişimi: kapsama kontrolü TEK fonksiyondan gelmeli."""
     ws, _outside, link = symlink_escape
     s = _mk_session(cwd=ws, auto_approve=False, approval_timeout=2.0)
     res, ev = await _drive_gate(s, "Read", {"file_path": os.path.join(link, "gizli.txt")})
     assert ev is not None, "symlink üzerinden workspace dışı okuma kartsız geçti"
+
+
+@pytest.mark.baglar_gerekli
 
 
 async def test_write_outside_still_hard_denied(symlink_escape):
@@ -353,6 +380,9 @@ async def test_workspace_change_rebuilds_session():
     finally:
         shutil.rmtree(a, ignore_errors=True)
         shutil.rmtree(b, ignore_errors=True)
+
+
+@pytest.mark.baglar_gerekli
 
 
 async def test_same_workspace_via_symlink_reuses_session(symlink_escape):

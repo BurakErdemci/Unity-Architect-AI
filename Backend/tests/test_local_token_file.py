@@ -28,6 +28,9 @@ def isolated_token(tmp_path, monkeypatch):
     return target
 
 
+@pytest.mark.izin_bitleri_gerekli
+
+
 def test_token_file_is_owner_only(isolated_token):
     """0600 olmazsa aynı makinedeki başka kullanıcılar sırrı okur."""
     assert local_token_file.write_local_app_token("s3cret")

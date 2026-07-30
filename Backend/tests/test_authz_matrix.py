@@ -474,6 +474,14 @@ def test_the_api_docs_are_closed_in_a_packaged_build_and_open_from_source():
     program = (
         "import os, sys, json;"
         "sys.path.insert(0, os.environ['APP_DIR']);"
+        # pywin32 `sys.frozen`'a BAKIYOR ve set edilmişse `pywintypes` DLL'ini
+        # frozen sys.path'te arıyor; simülasyonda orada olmadığı için
+        # `ImportError: Module 'pywintypes' isn't in frozen sys.path` ile
+        # düşüyordu (ölçüldü 30 Tem 2026, Windows). Bayrağı kurmadan ÖNCE
+        # yüklemek yeterli: modül bir kez içeri girdikten sonra `sys.frozen`
+        # onu etkilemiyor. Gerçek paketlemede pywin32 zaten pakette olduğu için
+        # bu yalnız simülasyonun eksiğiydi, ürünün değil.
+        "\ntry:\n import pywintypes\nexcept Exception:\n pass\n"
         "frozen = os.environ.get('FAKE_FROZEN') == '1';"
         "sys.frozen = True if frozen else getattr(sys, 'frozen', False);"
         "import local_token_file;"

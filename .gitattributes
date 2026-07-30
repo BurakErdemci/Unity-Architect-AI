@@ -1,0 +1,62 @@
+# Satır sonu politikası — Windows'ta ölçülmüş bir arıza için (30 Tem 2026).
+#
+# SORUN: Git for Windows `core.autocrlf`'i SYSTEM düzeyinde `true` getiriyor
+# (ölçüldü: local ve global boş, system `true`) ve checkout her metin dosyasını
+# CRLF'e çeviriyor. Ürünün LF yazdığı kütükler böylece her yazmada tamamen
+# değişiyor — `scripts/pinned_assets.json` bunun canlı örneği ve
+# `test_pinned_assets.py::test_the_write_does_not_rewrite_every_line_ending`
+# depodaki tek kırmızı testti.
+#
+# BU DOSYA DEPO GEÇMİŞİNE DOKUNMUYOR, ölçüldü: kural eklenmeden önce `git
+# status` 17 değişik dosya gösteriyordu, eklendikten sonra da 17 — tek yeni
+# giriş bu dosyanın kendisi. Sebebi `autocrlf`'in commit yolunda zaten LF'e
+# normalize etmesi; buradaki kurallar yalnız ÇALIŞMA AĞACINI belirliyor.
+# macOS tarafı da etkilenmiyor: orada checkout hâlihazırda LF.
+#
+# ⚠️ `git add --renormalize` KOŞULMADI ve bilerek koşulmuyor. `git ls-files
+# --eol` index'te **1781 LF karşısında 295 CRLF** gösteriyor ve o 295'in
+# neredeyse tamamı `unity-mcp/TestProjects` altındaki üçüncü parti Unity
+# paketi (`com.unity.asset-store-tools`). Onları normalize etmek fork'la gelen
+# kodu yeniden yazmak olur — bu depoda unity-mcp bizim yazdığımız kaynak değil,
+# modifiye edilmiş bir dış fork.
+
+# ── Uzantısız yapılandırma dosyaları ─────────────────────────────────────────
+# Bu dosyanın kendisi de dahil: aksi hâlde her `git add`'de "LF will be replaced
+# by CRLF" uyarısı basıyor ve satır sonu politikasını yazan dosya politikanın
+# dışında kalıyor.
+.gitattributes text eol=lf
+.gitignore     text eol=lf
+
+# ── Kendi kaynak kodumuz: LF ─────────────────────────────────────────────────
+*.py     text eol=lf
+*.ts     text eol=lf
+*.tsx    text eol=lf
+*.js     text eol=lf
+*.jsx    text eol=lf
+*.json   text eol=lf
+*.md     text eol=lf
+*.yml    text eol=lf
+*.yaml   text eol=lf
+*.sh     text eol=lf
+*.css    text eol=lf
+*.cs     text eol=lf
+
+# ── Windows'a ait betikler: CRLF kalmalı ─────────────────────────────────────
+# LF'li bir .bat/.cmd'yi cmd.exe yanlış yorumluyor; bu dosyalar zaten yalnız
+# Windows'ta koşuyor, dolayısıyla platform ayracı DOĞRU olan.
+*.bat    text eol=crlf
+*.cmd    text eol=crlf
+*.ps1    text eol=crlf
+
+# ── Üçüncü parti ve Unity varlıkları: DOKUNMA ────────────────────────────────
+# `-text` "hiç dönüştürme" demek, yani bu yolların mevcut hâli aynen korunuyor.
+# unity-mcp/TestProjects üçüncü parti; Unity'nin kendi biçimleri ise GUID ve
+# seri hâl taşıyor, satır sonunu değiştirmek gereksiz bir risk.
+unity-mcp/TestProjects/** -text
+*.unity  -text
+*.prefab -text
+*.asset  -text
+*.mat    -text
+*.anim   -text
+*.controller -text
+*.meta   -text

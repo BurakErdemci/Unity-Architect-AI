@@ -426,6 +426,8 @@ class TestArsivHedefinDisinaYazamaz:
         with pytest.raises(RuntimeError, match="filter"):
             fetch_mod._extract(data, "x.tar.gz", str(staging))
 
+    @pytest.mark.baglar_gerekli
+
     def test_a_symlink_named_like_the_executable_is_refused_before_chmod(
         self, fetch_mod, tmp_path, monkeypatch
     ):
@@ -457,6 +459,8 @@ class TestSembolikBagKuruluSayilmaz:
     Sebep her üç yerde de aynı: `os.path.exists` ve `os.chmod` bağ TAKİP EDİYOR.
     """
 
+    @pytest.mark.baglar_gerekli
+
     def test_a_symlinked_marker_is_not_a_healthy_installation(self, fetch_mod, tmp_path):
         """Zincirin ilk halkası. Bu test kırılırsa indirme atlanmaya ve dışarıdaki
         bir binary 'kurulu OmniSharp' sayılmaya geri döner."""
@@ -475,6 +479,8 @@ class TestSembolikBagKuruluSayilmaz:
         (dest / "OmniSharp").write_text("")
         (dest / ".version").write_text("v1")
         assert fetch_mod._intact(str(dest), "v1", ["OmniSharp"]) is True
+
+    @pytest.mark.baglar_gerekli
 
     def test_a_symlink_named_like_the_stamp_is_refused(self, fetch_mod, tmp_path, monkeypatch):
         """Damga yazımı da bağ takip ediyordu — yazma hedefin dışına gidiyordu."""
@@ -743,6 +749,8 @@ class TestUstDizinBagiKuruluSayilmaz:
     sınamayı gerektiriyor. Tek yolu kapatmak sınıfı kapatmıyor.
     """
 
+    @pytest.mark.baglar_gerekli
+
     def test_a_symlinked_destination_directory_is_not_a_healthy_installation(
         self, fetch_mod, tmp_path
     ):
@@ -763,6 +771,8 @@ class TestUstDizinBagiKuruluSayilmaz:
         (dest / "OmniSharp").write_text("")
         (dest / ".version").write_text("v1")
         assert fetch_mod._intact(str(dest), "v1", ["OmniSharp"]) is True
+
+    @pytest.mark.baglar_gerekli
 
     def test_a_marker_reachable_only_through_an_escaping_path_is_refused(
         self, fetch_mod, tmp_path

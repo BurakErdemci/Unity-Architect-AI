@@ -311,6 +311,8 @@ class TestBinaryCozumlemeBagCalistirmaz:
     2026-07-28). İndirme tarafındaki `_intact()` kapısı ayrı ve ikisi de gerekli:
     biri kurulumu tazeler, diğeri çalıştırmayı engeller."""
 
+    @pytest.mark.baglar_gerekli
+
     def test_a_symlinked_binary_is_not_executed(self, fake_root, monkeypatch):
         monkeypatch.setattr(om, "_platform_key", lambda: "osx-arm64")
         hedef = os.path.join(fake_root, "DISARIDAKI")
@@ -361,6 +363,8 @@ class TestBagKapisiYaprakDegilYolBoyunca:
         d.mkdir(parents=True)
         return d
 
+    @pytest.mark.baglar_gerekli
+
     def test_a_symlinked_platform_directory_is_not_executed(self, fake_root):
         """`third_party/omnisharp/<plat>` bir bağ olduğunda ürün onu spawn etmemeli."""
         plat = om._platform_key()
@@ -380,6 +384,8 @@ class TestBagKapisiYaprakDegilYolBoyunca:
         with open(yol, "w") as f:
             f.write("")
         assert om._resolve_binary() == yol
+
+    @pytest.mark.baglar_gerekli
 
     def test_a_symlinked_dotnet_directory_is_not_used_as_dotnet_root(
         self, fake_root
