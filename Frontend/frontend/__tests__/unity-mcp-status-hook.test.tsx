@@ -194,3 +194,65 @@ describe('useAIConfig — toggle hatasının kullanıcıya ulaşması', () => {
     expect(result.current.unityMcpStatus).toBe('blocked')
   })
 })
+
+describe('useAIConfig — yoklama başarısızken durum bayat kalmıyor (bulgu I-2)', () => {
+  it('başarısız yoklamadan sonra connected KALMIYOR, unknown oluyor', async () => {
+    // Ölçülmüş arıza: `catch` dalı yalnız yoklama aralığını değiştiriyordu,
+    // durumu ne siliyor ne bayat işaretliyordu. Backend çöktükten sonra bile
+    // gösterge SÜRESİZ yeşil kalıyordu — yalan söyleyen bir gösterge,
+    // göstergesizlikten kötü. K1/c'nin bütün varlık sebebi yabancı sunucu
+    // tespiti; tespit sonucu kullanıcıya ulaşmıyorsa azaltma etkisiz.
+    mockedAxios.get.mockResolvedValue(statusPayload('connected'))
+    const { result } = mountHook()
+    await waitFor(() => expect(result.current.unityMcpStatus).toBe('connected'))
+
+    mockedAxios.get.mockRejectedValue(new Error('status endpoint unavailable'))
+    await act(async () => { await result.current.refreshUnityMcpStatus() })
+
+    expect(result.current.unityMcpStatus).toBe('unknown')
+  })
+
+  it('unknown, off DEĞİL — geçici hata "sunucun kapandı" demek değil', async () => {
+    // Ters yön. `off` bir "aç" davetidir; geçici bir ağ hatasında onu göstermek
+    // kullanıcıyı sunucusu kapanmış sanmaya iter ve gereksiz bir toggle'a
+    // sürükler. Eski `catch` yorumunun bu kısmı haklıydı, eksik olan üçüncü
+    // seçenekti.
+    mockedAxios.get.mockResolvedValue(statusPayload('connected'))
+    const { result } = mountHook()
+    await waitFor(() => expect(result.current.unityMcpStatus).toBe('connected'))
+
+    mockedAxios.get.mockRejectedValue(new Error('network down'))
+    await act(async () => { await result.current.refreshUnityMcpStatus() })
+
+    expect(result.current.unityMcpStatus).not.toBe('off')
+    expect(result.current.unityMcpStatus).not.toBe('connected')
+  })
+
+  it('bayat blocked SEBEBİ de temizleniyor', async () => {
+    // Sebep `blocked` durumuyla yaşıyor. Yoklama koptuğunda durumu bilmiyoruz,
+    // dolayısıyla sebebi ekranda bırakmak "port başkasında" diye ölçülmemiş
+    // bir iddiayı sürdürmek olurdu.
+    mockedAxios.get.mockResolvedValue(statusPayload('blocked', BLOCKED_REASON))
+    const { result } = mountHook()
+    await waitFor(() => expect(result.current.unityMcpReason).toBe(BLOCKED_REASON))
+
+    mockedAxios.get.mockRejectedValue(new Error('network down'))
+    await act(async () => { await result.current.refreshUnityMcpStatus() })
+
+    expect(result.current.unityMcpStatus).toBe('unknown')
+    expect(result.current.unityMcpReason).toBeNull()
+  })
+
+  it('yoklama düzelince durum geri geliyor — kalıcı bir kilit değil', async () => {
+    // Bu olmadan "her hatada unknown'a kilitle" de testi geçerdi ve ürün
+    // toparlanamaz hale gelirdi.
+    mockedAxios.get.mockRejectedValue(new Error('down'))
+    const { result } = mountHook()
+    await waitFor(() => expect(result.current.unityMcpStatus).toBe('unknown'))
+
+    mockedAxios.get.mockResolvedValue(statusPayload('connected'))
+    await act(async () => { await result.current.refreshUnityMcpStatus() })
+
+    expect(result.current.unityMcpStatus).toBe('connected')
+  })
+})

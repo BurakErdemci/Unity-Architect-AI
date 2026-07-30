@@ -77,6 +77,7 @@ const tr = {
   'unity.starting': 'Başlatılıyor...',
   'unity.running': "Unity'ye bağlanılıyor",
   'unity.connected': 'Unity bağlandı ✓',
+  'unity.unknown': 'Durum bilinmiyor',
   // ModelSelector
   'models.cloud': 'Bulut API Modelleri',
   'models.subscription': 'Abonelik (CLI) Modelleri',
@@ -125,6 +126,7 @@ const tr = {
   'workspace.logout': 'Çıkış Yap',
   // home.tsx inline
   'home.unityConnected': 'Unity bağlı — kapatmak için tıkla',
+  'home.unityUnknown': 'Durum bilinmiyor — sunucuya ulaşılamıyor',
   'home.unityConnecting': "Unity'ye bağlanılıyor...",
   'home.unityStarting': 'Sunucu başlatılıyor...',
   'home.unityOpen': "Unity MCP'yi aç (Unity açık olmalı)",
@@ -227,6 +229,7 @@ const en: Record<keyof typeof tr, string> = {
   'unity.starting': 'Starting...',
   'unity.running': 'Connecting to Unity',
   'unity.connected': 'Unity connected ✓',
+  'unity.unknown': 'Status unknown',
   // ModelSelector
   'models.cloud': 'Cloud API Models',
   'models.subscription': 'Subscription (CLI) Models',
@@ -273,6 +276,7 @@ const en: Record<keyof typeof tr, string> = {
   'workspace.logout': 'Sign Out',
   // home.tsx inline
   'home.unityConnected': 'Unity connected — click to disconnect',
+  'home.unityUnknown': 'Status unknown — server unreachable',
   'home.unityConnecting': 'Connecting to Unity...',
   'home.unityStarting': 'Starting server...',
   'home.unityOpen': 'Open Unity MCP (Unity must be open)',

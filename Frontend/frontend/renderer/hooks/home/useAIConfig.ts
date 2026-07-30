@@ -10,8 +10,20 @@ import { AIConfig, AvailableModels, UserData } from '../../components/home/types
  * bir durum olması şart: `off` bir "aç" davetidir, `blocked` ise kullanıcıdan
  * BAŞKA bir eylem ister (çakışan sunucuyu kapatmak) ve toggle'a basmak
  * sunucumuzu başlatmıyor.
+ *
+ * `unknown` = son yoklama BAŞARISIZ oldu, durum artık bilinmiyor (bulgu I-2,
+ * 30 Tem 2026). Üçünden de ayrı bir durum olması şart:
+ *
+ *   • `connected` DEĞİL — çünkü ölçüm yok. Eski davranış son başarılı ölçümü
+ *     korumaktı ve ölçüldü: backend çöktükten sonra bile gösterge SÜRESİZ
+ *     yeşil kalıyordu. K1/c'nin bütün varlık sebebi yabancı sunucu tespiti;
+ *     tespit sonucu kullanıcıya ulaşmıyorsa yapılan azaltma etkisiz.
+ *   • `off` DEĞİL — o bir "aç" daveti ve geçici bir ağ hatasında kullanıcıyı
+ *     sunucusu kapanmış sanmaya iter. Eski `catch` yorumu bu yüzden durumu
+ *     `off` yapmıyordu ve o kısım HAKLIYDI; eksik olan üçüncü seçenekti.
+ *   • `blocked` DEĞİL — o, kimlik testinin YABANCI dediği ölçülmüş bir sonuç.
  */
-export type UnityMCPStatus = 'off' | 'blocked' | 'starting' | 'running' | 'connected';
+export type UnityMCPStatus = 'off' | 'blocked' | 'starting' | 'running' | 'connected' | 'unknown';
 
 export const useAIConfig = (API: string, user: UserData | null, showToast: (msg: string, type: any) => void, workspacePath?: string) => {
   const [aiConfig, setAiConfig] = useState<AIConfig>({
@@ -74,7 +86,16 @@ export const useAIConfig = (API: string, user: UserData | null, showToast: (msg:
       }
       // 'starting' veya 'running' → mevcut hızlı interval devam eder
     } catch {
-      // Hata olsa bile durumu 'off' yapma, sadece tekrar dene
+      // Durum artık BİLİNMİYOR. Eskiden burada yalnız yoklama aralığı
+      // değişiyordu ve son başarılı ölçüm olduğu gibi kalıyordu — ölçüldü
+      // (bulgu I-2): backend çöktükten sonra bile gösterge süresiz `connected`
+      // gösteriyordu. Yalan söyleyen bir gösterge, göstergesizlikten kötü.
+      //
+      // `off` yapılmıyor: o bir "aç" daveti ve geçici bir ağ hatasında
+      // kullanıcıyı sunucusu kapanmış sanmaya iter. Eski yorumun bu kısmı
+      // haklıydı; eksik olan "bilinmiyor" seçeneğiydi.
+      setUnityMcpStatus('unknown');
+      setUnityMcpReason(null);
       stopPolling();
       pollRef.current = setInterval(fetchUnityMcpStatus, 5000);
     }

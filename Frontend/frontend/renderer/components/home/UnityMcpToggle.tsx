@@ -46,6 +46,15 @@ const TONE: Record<UnityMCPStatus, { btn: string; dot: string; title: Anahtar }>
     dot: 'bg-emerald-400',
     title: 'home.unityConnected',
   },
+  unknown: {
+    // Gri ve nabızsız. Nabız bu üründe "çalışıyor, bekle" demek; burada
+    // çalışan bir şey olduğunu bilmiyoruz. Yeşil bırakmak bulgu I-2'ydi:
+    // yoklama başarısızken gösterge süresiz `connected` kalıyordu ve
+    // kullanıcı yabancı bir sunucuya bağlı olduğunu göremiyordu.
+    btn: 'bg-white/[0.03] border-white/[0.08] text-slate-500 hover:bg-white/[0.06] hover:text-slate-300',
+    dot: 'bg-slate-500',
+    title: 'home.unityUnknown',
+  },
 };
 
 interface UnityMcpToggleProps {

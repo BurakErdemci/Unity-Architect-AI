@@ -84,6 +84,10 @@ export const SettingsModal = ({
     starting:  { label: t('unity.starting'),  dot: "bg-yellow-400 animate-pulse", bg: "bg-yellow-500/5",   border: "border-yellow-500/20" },
     running:   { label: t('unity.running'),   dot: "bg-yellow-400 animate-pulse", bg: "bg-yellow-500/5",   border: "border-yellow-500/20" },
     connected: { label: t('unity.connected'), dot: "bg-emerald-400",              bg: "bg-emerald-500/5",  border: "border-emerald-500/20" },
+    // Gri ve nabızsız: durum bilinmiyor, "çalışıyor" da denmiyor. Yeşil
+    // bırakmak bulgu I-2'nin ta kendisiydi — yoklama başarısızken gösterge
+    // süresiz `connected` kalıyordu.
+    unknown:   { label: t('unity.unknown'),   dot: "bg-slate-500",                bg: "bg-slate-900/50",   border: "border-slate-700/50" },
   };
   // Anahtarın AÇIK görünmesi için sunucunun BİZİM olması gerekiyor. Eski koşul
   // `!== 'off'` idi ve `blocked`'ı açık sayıyordu — oysa o durumda 8080'de duran
