@@ -320,3 +320,62 @@ def test_yuzde_isareti_tek_basina_mesru(workspace):
     """
     assert is_auto_safe("git log --format=%H", workspace)
     assert is_auto_safe("echo 100%", workspace)
+
+
+def test_uc_calistirma_yolu_da_argv_kullaniyor(workspace, monkeypatch):
+    """Karar kaynağı ortaktı ama ÇALIŞTIRMA yolu üç ayrı yerdeydi.
+
+    Faz 1'de düzeltme önce yalnız `bash_tool` ve `unityai_cli`'a uygulandı;
+    `file_tools.run_command` `shell=True` ile kaldı ve sınıf o yoldan açık
+    kaldı. Bu tam olarak "kuralı koda uygulamak ölçüme uygulamak değildir"
+    vakası: üç çağrı yolundan ikisi ölçülmüştü.
+    """
+    import tools.file_tools as file_tools
+
+    yakalanan = {}
+
+    class _Sonuc:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def _sahte_run(hedef, **kw):
+        yakalanan["hedef"] = hedef
+        yakalanan["shell"] = kw.get("shell")
+        return _Sonuc()
+
+    monkeypatch.setattr(file_tools.subprocess, "run", _sahte_run)
+
+    # Onaysız geçebilen komut: kabuk YOK, token listesi doğrudan gidiyor.
+    file_tools.run_command("cat notlar.txt", workspace)
+    assert yakalanan["hedef"] == ["cat", "notlar.txt"]
+    assert yakalanan["shell"] is False
+
+    # Onay gerektiren komut (çağıran zaten onaylattı): kabuk kullanılabilir,
+    # çünkü kullanıcı ham dizgeyi gördü ve tam olarak onu onayladı.
+    file_tools.run_command("npm install && npm test", workspace)
+    assert yakalanan["hedef"] == "npm install && npm test"
+    assert yakalanan["shell"] is True
+
+
+def test_hicbir_calistirma_yolu_ham_dizgeyi_kabuga_vermiyor():
+    """Statik kontrol: `subprocess.run(command, shell=True)` deseni kalmamalı.
+
+    Davranış testi yalnız `file_tools`'u sürüyor (diğer ikisi async/CLI).
+    Bu kontrol üçünü birden kapsıyor ve yeni bir çağrı yolu eklendiğinde de
+    yakalar — sınıfın geri gelmesinin en olası biçimi bu.
+    """
+    from pathlib import Path as _Path
+
+    kok = _Path(__file__).resolve().parent.parent / "app"
+    yollar = [
+        kok / "tools" / "file_tools.py",
+        kok / "unityai_cli.py",
+        kok / "unity_ai_mcp" / "tools" / "bash_tool.py",
+    ]
+    for yol in yollar:
+        kaynak = yol.read_text(encoding="utf-8")
+        assert "auto_safe_argv" in kaynak, f"{yol.name} argv kapısını kullanmıyor"
+        # Ham `command` değişkenini doğrudan kabuğa veren çağrı kalmamalı.
+        assert "\n            command,\n            shell=True," not in kaynak, yol.name
+        assert "\n                command,\n                shell=True," not in kaynak, yol.name

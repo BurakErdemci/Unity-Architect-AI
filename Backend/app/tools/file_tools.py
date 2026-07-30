@@ -139,19 +139,38 @@ def delete_file(file_path: str, workspace_path: str) -> dict:
 
 import subprocess
 
+from agentic.command_safety import auto_safe_argv as _auto_safe_argv
+
+
 def run_command(command: str, workspace_path: str) -> dict:
     """
     Terminalde bir sistem komutu çalıştırır (örn: npm install, git status, unity build vb.).
+
+    Onay kararı burada VERİLMİYOR: `agent_runner._approval_command_for` komutu
+    `requires_approval`'a sorup gerekiyorsa kartı çıkarıyor ve onaylanmazsa bu
+    fonksiyona hiç gelinmiyor. Burada yalnız ÇALIŞTIRMA kipi seçiliyor.
+
+    ⚠️ Bu ayrım Faz 1'de gözden kaçtı ve düzeltme önce yalnız `bash_tool` ile
+    `unityai_cli`'a uygulandı — karar kaynağı üçünde de ortaktı, ama çalıştırma
+    yolu üç ayrı yerdeydi ve bu üçüncüsü `shell=True` ile kalmıştı. Yani
+    ayrıştırıcı/çalıştırıcı uyuşmazlığı sınıfı bu yoldan hâlâ açıktı.
     """
     try:
         # Git ve diğer araçların interaktif soru sormasını engelle
         env = os.environ.copy()
         env["GIT_TERMINAL_PROMPT"] = "0"
-        
+
+        # Onaysız geçebilen komut kabuğa HİÇ verilmiyor: denetlenen token listesi
+        # doğrudan çalışıyor. `None` dönmesi komutun onay gerektirdiği (ve
+        # çağıran tarafından zaten onaylandığı) anlamına gelir — kullanıcı ham
+        # dizgeyi gördüğü için orada kabuk kullanmak güvenli.
+        argv = _auto_safe_argv(command, workspace_path)
+        hedef, kabuk_kullan = (command, True) if argv is None else (argv, False)
+
         # Arka planda sessizce çalıştır
         process = subprocess.run(
-            command,
-            shell=True,
+            hedef,
+            shell=kabuk_kullan,
             cwd=workspace_path,
             text=True,
             capture_output=True,
