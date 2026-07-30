@@ -11,10 +11,11 @@ refleks-onaya alıştırırdı ki bu güvenliği artırmaz.
 """
 
 import os
+from pathlib import Path
 
 import pytest
 
-from agentic.command_safety import is_auto_safe, requires_approval
+from agentic.command_safety import auto_safe_argv, is_auto_safe, requires_approval
 
 
 @pytest.fixture
@@ -146,30 +147,27 @@ def test_without_workspace_parent_traversal_is_refused():
     assert is_auto_safe("cat notlar.txt")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="shlex.split POSIX modda '\\' kaçış sayıyor: 'cat ..\\gizli' token'ı "
-           "'..gizli' oluyor ve '..' hiç görünmüyor. Düzeltmesi shlex çağrısının "
-           "kipini değiştirmek ve o TIRNAK davranışını da değiştiriyor — "
-           "ölçülmeden dokunulmayacak bir yüzey. Kayıt açık bırakıldı.",
-)
 def test_windows_style_parent_traversal_is_refused():
-    """BİLİNEN AÇIK — ters bölülü üst dizin geçişi kontrolden kaçıyor.
+    """KAPANDI 30 Tem 2026 — muafiyet kalktı, önce neden durduğu burada.
 
-    Bulundu 30 Tem 2026, yukarıdaki testin ilk sürümü sırasında. Zincir:
-    `shlex.split("cat ..\\gizli")` POSIX kipinde `['cat', '..gizli']` üretiyor,
-    yani ters bölü YUTULUYOR ve yol artık `..` içermiyor. Kontrol doğru
-    çalışıyor, ona ulaşan veri yanlış.
+    Açık şuydu: `shlex.split("cat ..\\gizli")` POSIX kipinde `['cat', '..gizli']`
+    üretiyordu, yani ters bölü YUTULUYOR ve yol artık `..` içermiyordu. Kontrol
+    doğru çalışıyordu, ona ulaşan veri yanlıştı.
 
-    Neden `xfail(strict=True)` ve neden sessizce silinmedi: bu bir muafiyet ve
-    muafiyet de bir iddia taşıyor. `strict` sayesinde açık bir gün kapanırsa
-    test "beklenmedik geçiş" diye bağırıyor — yani kayıt kendi kendini
-    güncelliyor, kimsenin hatırlamasına bağlı değil.
+    `xfail(strict=True)` bilerek konmuştu ve işini yaptı: düzeltme geldiğinde
+    test "beklenmedik geçiş" diye bağırdı, yani muafiyeti kimsenin hatırlamasına
+    gerek kalmadan kendisi kaldırttı.
 
-    ⚠️ Erişilebilirliği ÖLÇÜLMEDİ: kaçışın gerçekleşmesi için komutun ters
-    bölüyü ayraç sayan bir kabukta (cmd/PowerShell) koşması gerekiyor. Git
-    Bash'te `..\\gizli` yine `..gizli` olur ve kaçış OLUŞMAZ. Hangi kabuğun
-    kullanıldığı ölçülmeden şiddet atanmamalı.
+    Eski gerekçedeki iki iddia da ölçüldü ve İKİSİ DE yanlıştı:
+
+      • *"Düzeltmesi shlex'in kipini değiştirmek ve o TIRNAK davranışını da
+        değiştiriyor — ölçülmeden dokunulmayacak bir yüzey."* Tırnak davranışı
+        gerçekten değişti, ama artık zararsız: token listesi hem denetlenen hem
+        çalıştırılan şey olduğu için (`auto_safe_argv`) tırnak soymadaki bir
+        fark güvenlik açığı üretemiyor. `_tirnak_soy` bu yüzden basit.
+      • *"Erişilebilirliği ÖLÇÜLMEDİ."* Ölçüldü: ürün `subprocess(shell=True)`
+        ile `COMSPEC`'i, yani **cmd.exe**'yi çağırıyordu — ters bölüyü ayraç
+        sayan kabuk tam olarak oydu. Açık erişilebilirdi.
     """
     assert not is_auto_safe("cat ..\\gizli")
 
@@ -226,3 +224,99 @@ def test_mutating_git_branch_forms_require_approval(command, workspace):
 ])
 def test_git_branch_listing_forms_still_run_without_approval(command, workspace):
     assert is_auto_safe(command, workspace)
+
+
+# ── Faz 1: ayrıştırıcı/çalıştırıcı uyuşmazlığı sınıfı ────────────────────────
+#
+# Sınıfın kökü: karar `shlex`'in ürettiği token listesinden veriliyordu, komutu
+# çalıştıran ise `shell=True` üzerinden cmd.exe idi. İkisi aynı dizgeyi farklı
+# okuyor. Dört yazım (sürücü mutlak, UNC, %VAR%, ters bölü) tam olarak o
+# aralıktan geçiyordu.
+#
+# Yapısal düzeltme `auto_safe_argv`: karar ile token listesi TEK çağrıdan çıkıyor
+# ve çağıran o listeyi `shell=False` ile çalıştırıyor. Denetlenen şey ile
+# çalıştırılan şey aynı nesne olduğu için ikinci bir yorumlayıcı kalmıyor.
+
+
+@pytest.mark.parametrize("command", [
+    r'find "x" C:\Windows\win.ini',          # C1 sürücü mutlak
+    r'find "x" \\server\share\gizli',        # C2 UNC
+    r"find x %USERPROFILE%",                 # C3 ortam değişkeni
+    r"cat ..\gizli",                         # P2 ters bölü
+])
+def test_dort_yazim_da_onay_istiyor(command, workspace):
+    """Denetimin ürettiği dört yazım — hepsi iki workspace kipinde de kapalı."""
+    assert not is_auto_safe(command, None)
+    assert not is_auto_safe(command, workspace)
+
+
+@pytest.mark.parametrize("command", [
+    r"find x %%USERPROFILE%%",               # çift yüzde
+    r"cat \\?\C:\Windows\win.ini",           # uzun yol öneki
+    r"cat C:\PROGRA~1\gizli.txt",            # 8.3 kısa ad
+    r"cat ..\/gizli",                        # karışık ayraç
+    r"cat C:..\..\..\Windows\win.ini",       # sürücü göreli + üst dizin
+    "cat D:gizli.txt",                       # başka sürücü, sürücü göreli
+])
+def test_sinifin_baska_yazimlari_da_kapali(command, workspace):
+    """İki-varyant kuralı: dört yazımı kapatmak sınıfı kapatmıyor.
+
+    Bu altı biçim denetimde ADLANDIRILMADI; sınıfın kapandığını iddia edebilmek
+    için burada ölçülüyorlar. Hepsi ya mutlak yol olarak yakalanıyor ya da
+    workspace dışına çözüldüğü için reddediliyor.
+    """
+    assert not is_auto_safe(command, None)
+    assert not is_auto_safe(command, workspace)
+
+
+def test_ayni_surucude_goreli_yol_workspace_icinde_kaliyor(workspace):
+    """Ters yön: `C:dosya.txt` workspace'e çözülüyor, yani reddedilmemeli.
+
+    Bu iddia olmadan yukarıdaki test "her sürücü-göreli biçimi reddet" ile de
+    geçerdi ve meşru bir kullanım sessizce onaya düşerdi.
+    """
+    assert is_auto_safe("cat C:notlar.txt", workspace)
+
+
+def test_denetlenen_tokenlar_calistirilan_argv_ile_AYNI(workspace):
+    """Sınıfın kökü buydu: karar bir metne, çalıştırma başka bir metne bakıyordu."""
+    argv = auto_safe_argv("cat notlar.txt", workspace)
+    assert argv == ["cat", "notlar.txt"]
+    # Onay gerektiren komut argv vermiyor — çağıran kabuğa düşmek zorunda kalıyor
+    # ama bunu ancak kullanıcı onayladıktan sonra yapabiliyor.
+    assert auto_safe_argv(r"cat ..\gizli", workspace) is None
+
+
+def test_ters_bolulu_yol_artik_BOZULMADAN_tasiniyor(workspace):
+    r"""Windows yolu argv'ye sağlam gidiyor — düzeltme kullanılabilirliği kırmadı.
+
+    Eski POSIX kipi `alt\dosya.txt` token'ını `altdosya.txt` yapıyordu; yani
+    kapı yalnız güvenlik kararını değil, komutun kendisini de bozuyordu.
+    """
+    argv = auto_safe_argv(r"cat alt\dosya.txt", workspace)
+    assert argv == ["cat", r"alt\dosya.txt"]
+
+
+def test_glob_kabuk_gidince_de_genisliyor(workspace):
+    """Kabuk devreden çıktı, genişletme Python'a geçti.
+
+    Telafi edilmezse `ls *.py` argv'de `*.py` adlı dosya araması olurdu. Onaya
+    düşürmek de bir seçenekti ama bu modülün kendi gerekçesine göre refleks-onay
+    güvenliği azaltıyor.
+    """
+    (Path(workspace) / "bir.py").write_text("x", encoding="utf-8")
+    (Path(workspace) / "iki.py").write_text("y", encoding="utf-8")
+    (Path(workspace) / "not.txt").write_text("z", encoding="utf-8")
+    assert auto_safe_argv("ls *.py", workspace) == ["ls", "bir.py", "iki.py"]
+    # Eşleşme yoksa desen olduğu gibi kalıyor: komut kendi hatasını versin.
+    assert auto_safe_argv("ls *.rs", workspace) == ["ls", "*.rs"]
+
+
+def test_yuzde_isareti_tek_basina_mesru(workspace):
+    """`%` kontrol karakteri YAPILMADI: cmd.exe yalnız `%AD%` biçimini genişletir.
+
+    Ölçüldü — `%`'i düz kontrol karakteri yapmak `git log --format=%H`'yi onaya
+    sokuyordu ve mevcut regresyon testini kırıyordu.
+    """
+    assert is_auto_safe("git log --format=%H", workspace)
+    assert is_auto_safe("echo 100%", workspace)

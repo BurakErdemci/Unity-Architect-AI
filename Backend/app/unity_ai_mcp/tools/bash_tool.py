@@ -10,7 +10,10 @@ from mcp.server.fastmcp import FastMCP
 from unity_ai_mcp.approval_bridge import request_approval
 from unity_ai_mcp.tools.file_tools import _resolve
 
-from agentic.command_safety import is_auto_safe as _is_safe  # noqa: F401  (tek kaynak — bkz command_safety.py)
+from agentic.command_safety import (  # noqa: F401  (tek kaynak — bkz command_safety.py)
+    auto_safe_argv as _auto_safe_argv,
+    is_auto_safe as _is_safe,
+)
 
 
 def _parse_file_write(command: str):
@@ -87,7 +90,12 @@ def register_bash_tool(mcp: FastMCP, get_workspace: callable):
                 f.write(new_content)
             return f"✅ Yazıldı: {path}"
 
-        if not _is_safe(command, workspace):
+        # Karar ve token listesi TEK çağrıdan geliyor. Ayrı ayrı almak (önce
+        # "güvenli mi" sorup sonra ham dizgeyi çalıştırmak) denetlenen metin ile
+        # çalıştırılan metnin ayrışmasına izin veriyordu; C1/C2/C3/P2'nin dördü
+        # de o aralıktan geçiyordu.
+        argv = _auto_safe_argv(command, workspace)
+        if argv is None:
             result = await request_approval(
                 tool_name="bash",
                 params={"command": command},
@@ -96,10 +104,16 @@ def register_bash_tool(mcp: FastMCP, get_workspace: callable):
             if not result.get("approved"):
                 return f"❌ Komut reddedildi: {command}"
 
+        # Onaysız geçen komut kabuğa HİÇ verilmiyor: argv doğrudan çalışıyor,
+        # yani `%VAR%` genişlemesi, ikinci ayrıştırma ve zincirleme yapısal
+        # olarak imkânsız. Onaylanmış komut kabukla çalışmaya devam ediyor —
+        # kullanıcı ham dizgeyi gördü ve tam olarak onu onayladı.
+        hedef, kabuk_kullan = (command, True) if argv is None else (argv, False)
+
         try:
             proc = subprocess.run(
-                command,
-                shell=True,
+                hedef,
+                shell=kabuk_kullan,
                 cwd=workspace,
                 capture_output=True,
                 text=True,

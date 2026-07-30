@@ -34,14 +34,33 @@ Bu fonksiyon yalnızca "onaysız geçebilir mi" sorusunu yanıtlar. False dönme
 komutun yasak olduğu anlamına gelmez; kullanıcı onaylarsa çalışır.
 """
 
+import glob
 import ntpath
 import os
 import posixpath
+import re
 import shlex
 
 # Zincirleme (; | &), komut ikamesi (` $), alt kabuk ( ), yönlendirme (> <) ve
 # satır sonu. Bunlardan biri varsa komut artık tek bir program çağrısı değildir.
 _CONTROL_CHARS = (";", "|", "&", "`", "$", ">", "<", "(", ")", "\n", "\r")
+
+# cmd.exe'nin genişletme biçimi. Liste POSIX kabuğu için yazılmıştı ve bu yüzden
+# eksikti: `find "x" %USERPROFILE%\.ssh\id_rsa` onaysız geçiyordu — shlex
+# `%USERPROFILE%` diye bir dosya adı görüyor, cmd.exe onu ev dizinine
+# genişletiyordu (bulgu C3; ölçüldü: workspace verilmiş olması KURTARMIYORDU).
+#
+# Neden düz karakter değil de desen: cmd.exe yalnız `%AD%` biçimini genişletir,
+# tek başına `%` literaldir. `%`'i kontrol karakteri yapmak `git log --format=%H`
+# gibi meşru komutları onaya sokuyordu (ölçüldü — mevcut regresyon testi kırıldı)
+# ve bu modülün kendi gerekçesine göre refleks-onay güvenliği AZALTIYOR.
+#
+# ⚠️ Bu desen tek başına sınıfı kapatmıyor ve kapatmak için de konmadı —
+# beşinci bir yazım (^ kaçışı, 8.3 kısa ad, \\?\ öneki) her zaman mümkün.
+# Sınıfı kapatan şey `auto_safe_argv`: onaysız komut artık kabuğa hiç
+# verilmiyor. Bu ikinci katman, çünkü bu modül ürünün TEK karar kaynağı ve
+# ileride başka bir çağrı yolu yine `shell=True` kullanabilir.
+_CMD_ENV_EXPANSION = re.compile(r"%[^%\s]+%")
 
 # Üç eski listenin birleşimi. Hepsi salt-okunur, hiçbiri dosya yazmaz.
 _SAFE_COMMANDS = frozenset({
@@ -120,6 +139,23 @@ def _mutlak_gorunuyor(yol: str) -> bool:
     return ntpath.isabs(yol) or posixpath.isabs(yol)
 
 
+def _surucu_belirteci_var(yol: str) -> bool:
+    """`D:dosya.txt` gibi SÜRÜCÜYE göreli biçim mi?
+
+    `isabs` buna **False** diyor ve teknik olarak haklı — mutlak değil. Ama
+    hangi dizine göreli olduğu o sürücünün *kendi* geçerli dizinine bağlı, yani
+    workspace bilinmiyorken nereye çıktığı da bilinmiyor. Bu, modülün en baştaki
+    kuralının ("nereye çıktığını bilemediğimiz bir yolu onaysız okumayız") tam
+    olarak kapsadığı durum.
+
+    Ölçüldü (30 Tem 2026): `ntpath.join(ws, "D:x")` workspace'i **atıyor** ve
+    geriye `D:x` kalıyor; workspace verildiğinde bu yüzden zaten reddediliyordu.
+    Açık kalan yalnız workspace=None dalıydı. Bulgu, dört yazımı kapattıktan
+    SONRA iki-varyant taramasında çıktı — yani sınıfın beşinci yazımıydı.
+    """
+    return bool(ntpath.splitdrive(yol)[0])
+
+
 def _ust_dizin_iceriyor(yol: str) -> bool:
     """`..` bileşenini HER İKİ ayraçla arar.
 
@@ -189,7 +225,12 @@ def _stays_in_workspace(tokens: list[str], workspace: str | None) -> bool:
             # dalda ONAYSIZ geçiyordu. Komut metni işletim sisteminden bağımsız
             # geliyor (modelin ürettiği metin), o yüzden her iki ailenin de
             # mutlak biçimi mutlak sayılıyor.
-            if _mutlak_gorunuyor(expanded) or candidate.startswith("~") or _ust_dizin_iceriyor(expanded):
+            if (
+                _mutlak_gorunuyor(expanded)
+                or _surucu_belirteci_var(expanded)
+                or candidate.startswith("~")
+                or _ust_dizin_iceriyor(expanded)
+            ):
                 return False
             continue
         resolved = os.path.realpath(os.path.join(root, expanded))
@@ -198,6 +239,99 @@ def _stays_in_workspace(tokens: list[str], workspace: str | None) -> bool:
         if resolved != root and not resolved.startswith(root + os.sep):
             return False
     return True
+
+
+def _tirnak_soy(token: str) -> str:
+    """`posix=False` tokenizasyonunun bıraktığı tırnakları temizler.
+
+    Neden gerekli: `posix=False` ters bölüyü korur (istediğimiz) ama tırnakları
+    token'ın İÇİNDE bırakır. Ölçüldü: `cat "C:\\Windows\\win.ini"` token'ı
+    `'"C:\\Windows\\win.ini"'` oluyor ve `ntpath.isabs` ona **False** diyor —
+    yani tırnak eklemek mutlak yol kontrolünü atlatırdı.
+
+    Basit soyma yeterli, çünkü bu token ARTIK hem denetlenen hem çalıştırılan
+    şey (bkz. `auto_safe_argv`). cmd.exe'nin tırnak kurallarını birebir taklit
+    etmek gerekmiyor; iki taraf aynı listeye baktığı sürece aradaki fark
+    güvenlik açığı değil, olsa olsa bir kullanılabilirlik farkı olur.
+    """
+    return token.replace('"', "")
+
+
+def _tokenize(command: str) -> "list[str] | None":
+    """Komutu, ÇALIŞTIRILACAK argv'ye eş bir token listesine böler.
+
+    Platforma göre kip değiştiriyor ve bu bilinçli: POSIX'te ters bölü bir
+    kaçış karakteri, Windows'ta yol ayracı. Tek kip kullanmak ikisinden birini
+    yanlış okumak demek. Ölçüldü (Windows, `posix=True`):
+
+        'cat C:\\Windows\\win.ini'  → ['cat', 'C:Windowswin.ini']
+        'cat ..\\gizli'             → ['cat', '..gizli']
+
+    Ters bölüler yendiği için `ntpath.isabs` ve `..` kontrolü aynı anda
+    kaçıyordu — kapı, kendisine verilen metni daha bakmadan bozuyordu.
+
+    Tırnak dengesizse `None`: kabuğun bunu nasıl böleceğini tahmin etmeyeceğiz.
+    """
+    posix = os.name != "nt"
+    try:
+        tokens = shlex.split(command, posix=posix)
+    except ValueError:
+        return None
+    return tokens if posix else [_tirnak_soy(t) for t in tokens]
+
+
+def _globlari_genislet(tokens: list[str], workspace: str | None) -> list[str]:
+    """Glob desenlerini Python'da genişletir.
+
+    Kabuk devreden çıkınca (bkz. `auto_safe_argv`) genişletme de onunla gitti:
+    `ls *.py` argv'de `*.py` adlı bir dosya araması olurdu. Bu işi burada
+    yapıyoruz, çünkü alternatif — glob'lu komutları onaya düşürmek — bu
+    modülün kendi ölçümüne göre (yukarıdaki docstring) kullanıcıyı refleks
+    onaya alıştırıp güvenliği AZALTIYOR.
+
+    Eşleşme bulunamazsa desen olduğu gibi bırakılıyor; bu kabukların çoğunun
+    davranışı ve komutun kendi hata mesajını vermesini sağlıyor.
+    """
+    if not tokens:
+        return tokens
+    kok = workspace or os.getcwd()
+    sonuc = [tokens[0]]
+    for token in tokens[1:]:
+        if token.startswith("-") or not any(ch in token for ch in "*?["):
+            sonuc.append(token)
+            continue
+        try:
+            eslesme = sorted(glob.glob(token, root_dir=kok))
+        except (OSError, ValueError):
+            eslesme = []
+        sonuc.extend(eslesme or [token])
+    return sonuc
+
+
+def auto_safe_argv(command: str, workspace: str | None = None) -> "list[str] | None":
+    """Onaysız çalıştırılabilecek komutun argv'si; onay gerekiyorsa ``None``.
+
+    Bu fonksiyon Faz 1 düzeltmesinin çekirdeği. Eski akış kararı bir metin
+    üzerinde veriyor, sonra AYNI metni `shell=True` ile cmd.exe'ye teslim
+    ediyordu — yani denetlenen dizge ile çalıştırılan dizge arasında ikinci bir
+    yorumlayıcı vardı. Dört ayrı yazım (sürücü mutlak, UNC, `%VAR%`, ters bölü)
+    tam olarak o boşluktan geçiyordu ve her biri kapatıldığında beşincisi
+    mümkün kalıyordu.
+
+    Token listesini kararla BİRLİKTE döndürmek o boşluğu yapısal olarak
+    kapatıyor: çağıran bu listeyi `shell=False` ile çalıştırdığında denetlenen
+    şey ile çalıştırılan şey aynı nesne olur. Ham dizgeyi yeniden yorumlayacak
+    bir taraf kalmadığı için "beşinci yazım" diye bir kategori de kalmıyor.
+
+    ⚠️ Çağıranın sözleşmesi: dönen liste `shell=False` ile çalıştırılacak.
+    `None` döndüğünde komut yasak değildir — yalnızca onay ister.
+    """
+    if not is_auto_safe(command, workspace):
+        return None
+    tokens = _tokenize(command)
+    if not tokens:
+        return None
+    return _globlari_genislet(tokens, workspace)
 
 
 def is_auto_safe(command: str, workspace: str | None = None) -> bool:
@@ -211,15 +345,14 @@ def is_auto_safe(command: str, workspace: str | None = None) -> bool:
         return False
 
     raw = command.strip()
-    if any(ch in raw for ch in _CONTROL_CHARS):
+    if any(ch in raw for ch in _CONTROL_CHARS) or _CMD_ENV_EXPANSION.search(raw):
         return False
 
-    try:
-        tokens = shlex.split(raw)
-    except ValueError:
-        # Dengesiz tırnak: kabuğun bunu nasıl böleceğini tahmin etmeyeceğiz.
-        return False
-
+    # Dengesiz tırnak `None` döner: kabuğun bunu nasıl böleceğini tahmin
+    # etmeyeceğiz. Tokenizasyon `auto_safe_argv` ile AYNI fonksiyondan geliyor;
+    # denetlenen token'ların çalıştırılanlardan farklı olması bu yüzden mümkün
+    # değil (bulgu C1/C2/C3/P2'nin tamamı o farktan çıkıyordu).
+    tokens = _tokenize(raw)
     if not tokens:
         return False
 

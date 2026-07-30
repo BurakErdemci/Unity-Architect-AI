@@ -35,7 +35,7 @@ import subprocess
 # Bu importlar unity_ai_mcp/tools/ içindeki dosyaları DEĞİŞTİRMEZ, sadece kullanır.
 from unity_ai_mcp.approval_bridge import request_approval
 from unity_ai_mcp.tools.file_tools import _resolve
-from unity_ai_mcp.tools.bash_tool import _is_safe, _parse_file_write
+from unity_ai_mcp.tools.bash_tool import _auto_safe_argv, _is_safe, _parse_file_write
 
 
 def _workspace() -> str:
@@ -163,7 +163,10 @@ def cmd_bash(args) -> int:
         print(f"✅ Yazıldı: {path}")
         return 0
 
-    if not _is_safe(command, workspace):
+    # Gerekçe bash_tool.py'deki ikiziyle aynı: karar ile token tek çağrıdan
+    # geliyor, böylece denetlenen metin ile çalıştırılan metin ayrışamıyor.
+    argv = _auto_safe_argv(command, workspace)
+    if argv is None:
         result = asyncio.run(request_approval(
             tool_name="bash",
             params={"command": command},
@@ -173,10 +176,12 @@ def cmd_bash(args) -> int:
             print(f"❌ Komut reddedildi: {command}")
             return 1
 
+    hedef, kabuk_kullan = (command, True) if argv is None else (argv, False)
+
     try:
         proc = subprocess.run(
-            command,
-            shell=True,
+            hedef,
+            shell=kabuk_kullan,
             cwd=workspace,
             capture_output=True,
             text=True,
