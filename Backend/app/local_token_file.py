@@ -71,19 +71,120 @@ _POSIX_MODE_BITS = os.name == "posix"
 
 
 def _refuse_symlink(path: str) -> None:
-    """`O_NOFOLLOW` olmayan platformlarda bağ reddini açmadan ÖNCE yapar.
+    """Açmadan ÖNCEKİ ucuz eleme. Tek başına YETMEZ — asıl kontrol açıştan sonra.
 
-    `O_NOFOLLOW` varsa bu fonksiyon hiçbir şey yapmıyor — çekirdek reddi atomik
-    ve bundan güçlü. Yokken kalan tek seçenek bu ve TOCTOU'ya açık: kontrolle
-    açma arasında bağ araya sokulabilir. Taviz bilerek kabul edildi, sınırı
-    ölçülü: Windows'ta sembolik bağ yaratmak `SeCreateSymbolicLinkPrivilege`
-    istiyor (ölçüldü: bu makinede `os.symlink` → WinError 1314), yani
-    saldırganın zaten yükseltilmiş yetkisi olması gerekiyor.
+    ⚠️ Bu fonksiyonun eski gerekçesi *"saldırganın zaten yükseltilmiş yetkisi
+    olması gerekiyor"* diyordu ve bu ÖLÇÜLEREK YANLIŞLANDI (30 Tem 2026,
+    `IsUserAnAdmin()==0`):
+
+        os.symlink  → RED (winerror 1314, ayrıcalık gerekiyor)
+        os.link     → OK   (sabit bağ, ayrıcalıksız)
+        mklink /J   → OK   (junction, ayrıcalıksız)
+
+    Yani ayrıcalık yalnız SEMBOLİK bağ için gerekiyordu; sırrı yönlendirmenin
+    ayrıcalıksız iki yolu daha vardı. Üstelik `os.path.islink()` ikisini de
+    görmüyor (junction için ölçüldü: `False`), `O_NOFOLLOW` da yalnız sembolik
+    bağı reddediyor. Kontrol, kendisini atlatan yöntemlere kördü.
+
+    Doğru soru "bu yol bir bağ mı" değil, "AÇTIĞIM ŞEY beklediğim dosya mı" —
+    ona `_dogrula_kimlik` cevap veriyor ve TOCTOU'ya da o kapalı.
     """
     if _O_NOFOLLOW:
         return
     if os.path.islink(path):
         raise OSError(f"{path} bir sembolik bağ; sır dosyası olarak kullanılmayacak.")
+
+
+def _fd_gercek_yol(fd: int) -> "str | None":
+    """Açık tanıtıcının çekirdeğe göre GERÇEK yolu; sorulamıyorsa ``None``.
+
+    Windows'ta `GetFinalPathNameByHandleW` junction/symlink zincirini çözüp
+    tanıtıcının fiilen hangi dosyaya bağlandığını söylüyor. Ölçüldü: junction'lı
+    bir ana dizinde açılan tanıtıcı `...\\saldirgan\\local-app-token` döndürüyor,
+    oysa istenen `...\\token-home\\local-app-token` idi.
+
+    POSIX'te taşınabilir bir karşılığı yok (Linux `/proc/self/fd`, macOS
+    `F_GETPATH` — ikisi de platforma özgü), o yüzden `None` dönüyor ve çağıran
+    `realpath` karşılaştırmasına düşüyor.
+    """
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+        import msvcrt
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.GetFinalPathNameByHandleW.argtypes = [
+            wintypes.HANDLE, wintypes.LPWSTR, wintypes.DWORD, wintypes.DWORD
+        ]
+        kernel32.GetFinalPathNameByHandleW.restype = wintypes.DWORD
+        tampon = ctypes.create_unicode_buffer(32768)
+        n = kernel32.GetFinalPathNameByHandleW(
+            msvcrt.get_osfhandle(fd), tampon, 32767, 0
+        )
+        return tampon.value if n else None
+    except (OSError, ImportError, ValueError):
+        return None
+
+
+def _yol_esitle(yol: str) -> str:
+    """Karşılaştırma için yolu tek biçime indirger.
+
+    `GetFinalPathNameByHandleW` `\\\\?\\C:\\...` önekiyle dönüyor, `abspath` ise
+    öneksiz. Büyük/küçük harf de Windows'ta anlamsız. Bu ikisi normalize
+    edilmezse kontrol HER ZAMAN "yönlendirilmiş" derdi ve ürün açılmazdı.
+    """
+    if yol.startswith("\\\\?\\"):
+        yol = yol[4:]
+    yol = os.path.normpath(yol)
+    return yol.lower() if os.name == "nt" else yol
+
+
+def _dogrula_kimlik(fd: int, beklenen_yol: str) -> None:
+    """AÇILAN tanıtıcı gerçekten beklenen dosya mı? Değilse `OSError`.
+
+    Kontrolün açıştan SONRA yapılması TOCTOU'yu kapatıyor: kontrol ile açma
+    arasına bağ sokulsa bile, elimizdeki tanıtıcı zaten yönlendirilmiş dosyaya
+    bağlı ve kimliği o hâliyle sorgulanıyor. Açmadan önce bakan her kontrol
+    (eski `_refuse_symlink` dahil) o yarışı kaybediyordu.
+
+    İki ayrı yönlendirme biçimi ölçülüyor:
+
+      • **Yol yönlendirmesi** (junction / symlink, ana dizin dahil): tanıtıcının
+        gerçek yolu istenen yolla eşleşmeli.
+      • **Sabit bağ**: aynı içeriğin başka bir adı varsa (`st_nlink > 1`) sır
+        o addan da okunabilir. `islink()` bunu görmüyor (ölçüldü: `False`),
+        `O_NOFOLLOW` da reddetmiyor — sabit bağ bir bağ değil, ikinci bir addır.
+    """
+    st = os.fstat(fd)
+    nlink = getattr(st, "st_nlink", 1)
+    if nlink > 1:
+        raise OSError(
+            f"{beklenen_yol} için açılan dosyanın {nlink} adı var (sabit bağ); "
+            "sır dosyası olarak kullanılmayacak."
+        )
+
+    gercek = _fd_gercek_yol(fd)
+    if gercek is None:
+        # POSIX dalı: tanıtıcıdan yol sorulamıyor. `O_NOFOLLOW` son bileşeni
+        # zaten koruyor; kalan risk ARA DİZİN sembolik bağı ve o, ev dizinine
+        # yazma yetkisi gerektiriyor. Bu dal bu makinede ÖLÇÜLEMEDİ —
+        # `test_local_token_file.py`'deki karşılığı da o yüzden atlanıyor.
+        if _yol_esitle(os.path.realpath(beklenen_yol)) != _yol_esitle(
+            os.path.abspath(beklenen_yol)
+        ):
+            raise OSError(
+                f"{beklenen_yol} yolunda sembolik bağ var; sır dosyası olarak "
+                "kullanılmayacak."
+            )
+        return
+
+    if _yol_esitle(gercek) != _yol_esitle(os.path.abspath(beklenen_yol)):
+        raise OSError(
+            f"{beklenen_yol} başka bir dosyaya yönlendirilmiş ({gercek}); "
+            "sır dosyası olarak kullanılmayacak."
+        )
 
 
 def _open_secret_for_write(path: str) -> int:
@@ -93,15 +194,19 @@ def _open_secret_for_write(path: str) -> int:
     ilk bayttan ÖNCE koşuyor. Böylece sır hiçbir an gevşek izinle diskte
     bulunmuyor — (3) numaralı bulgu buydu.
 
-    O_NOFOLLOW yalnız SON bileşeni korur; ara dizinler için ayrı bir saldırı
-    gerekir (~/.unity-mcp dizininin kendisini ele geçirmek), ki o noktada
-    saldırgan zaten ev dizinine yazabiliyor demektir.
+    ⚠️ `O_TRUNC` açılıştan ÇIKARILDI. Eskiden açılışta içerik boşalıyordu; ana
+    dizin junction ise bu, saldırganın seçtiği dosyayı kimlik doğrulanmadan
+    KESMEK demekti. Şimdi sıra: aç → kimliği doğrula → izni sıkılaştır →
+    kısalt → yaz. Sır hâlâ hiçbir an gevşek izinle diskte bulunmuyor, ama
+    yönlendirme durumunda hedef dosyaya hiç dokunulmuyor.
     """
     _refuse_symlink(path)
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | _O_NOFOLLOW, 0o600)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | _O_NOFOLLOW, 0o600)
     try:
+        _dogrula_kimlik(fd, path)
         if _POSIX_MODE_BITS:
             os.fchmod(fd, 0o600)
+        os.ftruncate(fd, 0)
     except OSError:
         os.close(fd)
         raise
@@ -121,6 +226,15 @@ def read_secret_file(path: str) -> str:
     except OSError:
         return ""
     try:
+        # Okuma yolu da doğrulanıyor: junction'lı bir ana dizin, saldırganın
+        # yerleştirdiği token'ı ürüne KABUL ETTİRİYORDU (probe ile üretildi).
+        # Yönlendirme varsa boş dönüyoruz — sahte bir sırla devam etmek,
+        # sırrı sızdırmak kadar tehlikeli.
+        try:
+            _dogrula_kimlik(fd, path)
+        except OSError as e:
+            logger.error(f"[local-token] {path} kimliği doğrulanamadı: {e}")
+            return ""
         mode = stat.S_IMODE(os.fstat(fd).st_mode)
         # İzin ölçümü ve düzeltmesi yalnız POSIX'te anlamlı. Windows'ta `st_mode`
         # ACL'den türetilmiyor (`0o666` sabit gelir) ve `fchmod` etkisiz; koşulu
