@@ -285,12 +285,19 @@ class BaseCLIProvider(AIProvider):
             logger.info("[CLIProvider] Unity MCP aktif, .mcp.json'a eklendi.")
 
         config_path = os.path.join(workspace, ".mcp.json")
+        from .workspace_config import ensure_gitignored, harden_config_file
+
+        # Sıra önemli: dosya önce BOŞ yaratılıp kilitleniyor, sır ondan sonra
+        # yazılıyor. Ters sırada (yaz → kilitle) sır, ACL düzeltilene kadar
+        # miras alınmış izinlerle diskte durur — `local_token_file`'da aynı
+        # pencere 2026-07-27'de bulgu olarak kaydedilmişti.
+        open(config_path, "w").close()
+        harden_config_file(config_path)
         with open(config_path, "w") as f:
             json.dump(config, f, indent=2)
         # Dosyayı yazan nokta girdisini de yazar. Bu dosya `headers` içinde
         # unityMCP `X-API-Key`'ini düz metin taşıyor ve kullanıcının deposunda
         # duruyor (bkz. workspace_config).
-        from .workspace_config import ensure_gitignored
         ensure_gitignored(workspace, [".mcp.json"])
 
         # Subclass'a MCP kayıt yaptır (claude, codex, agy için farklı davranış)

@@ -107,6 +107,15 @@ from routes import (
 logging.basicConfig(level=logging.INFO)
 logging.root.setLevel(logging.INFO)
 
+# Sır maskesi log işleyicilerine burada takılıyor — `basicConfig`'ten HEMEN
+# sonra, çünkü o çağrı kök işleyiciyi yaratıyor ve maske ondan önce takılamaz.
+# Çağrı yerlerine tek tek `redact_secrets` eklemek yerine tek nokta seçildi:
+# denetimde iki sağlayıcının hata yolunda çağrının HİÇ olmadığı bulundu ve
+# unutulan çağrı, olmayan korumadır (bkz. secret_redaction docstring).
+from secret_redaction import install_log_redaction  # noqa: E402
+
+install_log_redaction()
+
 logger = logging.getLogger(__name__)
 
 class _SuppressPollingEndpoints(logging.Filter):

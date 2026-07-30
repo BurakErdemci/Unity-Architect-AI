@@ -146,17 +146,73 @@ def _git_covered(ws_real: str, entries: List[str]) -> Optional[Set[str]]:
     return {line.strip() for line in cikti.splitlines() if line.strip()}
 
 
-def _tracked(ws_real: str, entries: List[str]) -> List[str]:
-    """git'in HÂLÂ takip ettiği girdiler. Ölçülemezse boş liste."""
+def harden_config_file(path: str) -> bool:
+    """Sır taşıyan bir workspace config dosyasını sahibine kilitler.
+
+    Neden gerekli (bulgu S4b): bu dosyalar `X-API-Key`'i DÜZ METİN taşıyor ve
+    workspace'in ACL'ini MİRAS alıyor. Paylaşımlı ya da CI workspace'inde ana
+    dizinde `Everyone (RX)` varsa sır makinedeki her hesap tarafından
+    okunabiliyordu — dosyanın kendisi hiç incelenmeden.
+
+    Neden ortak modülde, çağrı yerinde değil: aynı sırrı ÜÇ yazıcı üretiyor
+    (`cli_base._write_mcp_config`, `copilot_provider`, `opencode_provider`).
+    Korumayı birine gömmek, bu depoda tekrar tekrar ölçülmüş "güvenlik
+    kararının kopyalanması" sınıfını yeniden üretirdi.
+
+    Windows'ta miras kırılıp yalnız mevcut hesaba tam erişim veriliyor; POSIX'te
+    0600. Dönüş değeri sıkılaştırmanın ÖLÇÜLDÜĞÜNÜ söylüyor — çağıran bunu
+    yutmuyor, log'a yazıyor: sessizce başarısız olan bir sıkılaştırma, hiç
+    olmayandan kötüdür çünkü korunduğu sanılır.
+    """
+    if os.name != "nt":
+        try:
+            os.chmod(path, 0o600)
+            return True
+        except OSError as e:
+            logger.warning("[config-acl] %s izni kısıtlanamadı: %s", path, e)
+            return False
+
+    kullanici = os.environ.get("USERNAME", "")
+    alan = os.environ.get("USERDOMAIN", "")
+    if not kullanici:
+        logger.warning("[config-acl] %s: USERNAME okunamadı, ACL kısıtlanmadı", path)
+        return False
+    hesap = f"{alan}\\{kullanici}" if alan else kullanici
+    try:
+        proc = subprocess.run(
+            ["icacls", path, "/inheritance:r", "/grant:r", f"{hesap}:F"],
+            capture_output=True, text=True, timeout=_GIT_TIMEOUT_S,
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        logger.warning("[config-acl] %s için icacls çalıştırılamadı: %s", path, e)
+        return False
+    if proc.returncode != 0:
+        logger.warning(
+            "[config-acl] %s ACL'i kısıtlanamadı: %s",
+            path, (proc.stderr or proc.stdout).strip()[:200],
+        )
+        return False
+    return True
+
+
+def _tracked(ws_real: str, entries: List[str]) -> Optional[List[str]]:
+    """git'in HÂLÂ takip ettiği girdiler. ÖLÇÜLEMEZSE ``None`` — boş liste DEĞİL.
+
+    ⚠️ Eskiden her hata `[]`'e eşleniyordu ve çağıran onu "takip edilen yok"
+    diye okuyordu: fail-OPEN. Aynı dosyadaki kardeşi `_git_covered` ise
+    ölçemediğinde `None` dönüp muhafazakâr davranıyordu — tek dosyada iki zıt
+    hata felsefesi (bulgu E-b). Ayrım artık çağıranın elinde: "takip edilmiyor"
+    ile "bakamadım" farklı şeyler ve ikincisi sessizce geçilemez.
+    """
     try:
         proc = subprocess.run(
             ["git", "-C", ws_real, "ls-files", "--"] + entries,
             capture_output=True, text=True, timeout=_GIT_TIMEOUT_S,
         )
     except (OSError, subprocess.SubprocessError):
-        return []
+        return None
     if proc.returncode != 0:
-        return []
+        return None
     return [line.strip() for line in proc.stdout.splitlines() if line.strip()]
 
 
@@ -229,17 +285,39 @@ def ensure_gitignored(workspace: str, entries: Iterable[str]) -> None:
             if not (covered is not None and e in covered)
             and not _literal_present(existing, e)
         ]
-        if not missing:
-            return
-
-        _atomic_write(path, _compose(existing, missing), ws_real)
-        logger.info("[gitignore] %s: %s eklendi.", path, ", ".join(missing))
+        if missing:
+            _atomic_write(path, _compose(existing, missing), ws_real)
+            logger.info("[gitignore] %s: %s eklendi.", path, ", ".join(missing))
 
         # gitignore ZATEN takip edilen bir dosyayı geri almaz. Ürün bunu
         # kendiliğinden düzeltmiyor: kullanıcının deposunda sessizce index
         # değiştirmek (`git rm --cached`) kabul edilemez — o karar onun.
-        still_tracked = _tracked(ws_real, missing)
-        if still_tracked:
+        #
+        # ⚠️ İKİ REGRESYON burada kapandı (bulgu E-a, `b1204f1` ile erişilebilir
+        # olmuştu):
+        #
+        #   1. Sorgu `missing` ile yapılıyordu. Ama `covered` girdiler —
+        #      yani git'in ZATEN yok saydıkları — `missing`'e hiç girmiyor,
+        #      dolayısıyla takip kontrolünden de kaçıyorlardı. Oysa asıl
+        #      tehlikeli durum tam olarak bu: bir dosya hem yok sayılıyor
+        #      HEM takip ediliyor olabilir ve o zaman sır depoda demektir.
+        #      Sorgu artık `wanted`'ın tamamıyla yapılıyor.
+        #   2. `if not missing: return` erken dönüşü, eklenecek yeni girdi
+        #      olmadığında kontrole hiç ulaşılmamasına yol açıyordu — yani
+        #      kurulu bir workspace'te uyarı bir daha ASLA ateşlenmiyordu.
+        still_tracked = _tracked(ws_real, wanted)
+        if still_tracked is None:
+            # Uyarı yalnız GERÇEKTEN bir depo varken anlamlı. `.git` yoksa
+            # "takip" diye bir şey de yok ve uyarı her oturumda gürültü olurdu —
+            # uyarı körlüğü, bu dosyanın kaçındığı sınıfın aynısı. Depo VARKEN
+            # ölçememek ise gerçek bir bilinmezlik ve sessiz geçilemez.
+            if os.path.exists(os.path.join(ws_real, ".git")):
+                logger.warning(
+                    "[gitignore] %s: takip durumu ÖLÇÜLEMEDİ (git çalıştırılamadı). "
+                    "Girdiler depoda takipli olabilir; kontrol edin: git ls-files",
+                    path,
+                )
+        elif still_tracked:
             logger.warning(
                 "[gitignore] %s git tarafından ZATEN takip ediliyor; gitignore "
                 "bunu geri almaz. Sırrın depoya girmemesi için: "

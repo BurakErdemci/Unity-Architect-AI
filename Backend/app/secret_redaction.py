@@ -1,10 +1,23 @@
 """Log'a giden metinden sırları silen TEK kaynak.
 
 Neden gerekli: `subprocess.run(..., check=True)` başarısız olduğunda fırlattığı
-`CalledProcessError`'ın `str()`'i KOMUT LİSTESİNİN TAMAMINI taşıyor. O listede
-Unity MCP transport URL'i var ve paylaşımlı sır o URL'in yol segmentinde. Yani
-tek bir başarısız MCP kayıt denemesi sırrı düz metin olarak log dosyasına
+`CalledProcessError`'ın `str()`'i KOMUT LİSTESİNİN TAMAMINI taşıyor. Yani tek
+bir başarısız MCP kayıt denemesi sırrı düz metin olarak log dosyasına
 yazıyordu — 2026-07-27 denetiminde probe ile üretildi.
+
+⚠️ SIR YER DEĞİŞTİRDİ, koruma yerinde kalmıştı (bulgu S3, 30 Tem 2026).
+Bu modül yazıldığında paylaşımlı sır transport URL'inin YOL SEGMENTİNDE
+duruyordu ve `_MCP_PATH_SECRET` tam olarak orayı maskeliyordu. Sır o zamandan
+beri `X-API-Key` BAŞLIĞINA taşındı; kayıt komutu artık
+``--header "X-API-Key: <sır>"`` biçiminde. Eski iki desenin ikisi de bunu
+kaçırıyordu:
+
+    _MCP_PATH_SECRET → sırrın ARTIK OLMADIĞI yeri koruyordu
+    _ENV_ASSIGNMENT  → `=` ayracı ve `[A-Z_]` bekliyordu; `X-API-Key: <sır>`
+                       iki nokta kullanıyor ve adında tire var
+
+Ders, bu depoda tekrarlayan bir sınıf: bir korumanın hedefi taşındığında koruma
+sessizce boşa düşüyor ve testler yeşil kaldığı için kimse fark etmiyor.
 
 Neden hata metni tamamen atılmıyor: kaydın NEDEN başarısız olduğu teşhis için
 gerekli bilgi. Metin korunuyor, yalnız sır maskeleniyor.
@@ -15,17 +28,97 @@ kopyalanmıştı. Aynı oturumda kapatılan bulguların en sık tekrarlayan sın
 birine uygulanması demek.
 """
 
+import logging
 import re
 
-# token_urlsafe(32) → [A-Za-z0-9_-] alfabesinde ~43 karakter. Alt sınır 20:
-# daha kısa bir yol segmenti sır değil, gerçek bir rota adıdır ("/mcp/hub").
-_MCP_PATH_SECRET = re.compile(r"(/mcp/)[A-Za-z0-9_\-]{20,}")
+# token_urlsafe(32) → [A-Za-z0-9_-] alfabesinde ~43 karakter. Alt sınır 20 idi;
+# 12'ye çekildi çünkü daha kısa sırlar da üretilebiliyor ve maskelenmiyordu.
+# 12'nin altına inilmedi: gerçek rota adları ("hub", "sse", "messages",
+# "stream") hepsi bunun altında ve onları maskelemek log'u okunmaz yapardı.
+_MCP_PATH_SECRET = re.compile(r"(/mcp/)[A-Za-z0-9_\-]{12,}")
+
 # LOCAL_APP_TOKEN=..., ANTHROPIC_API_KEY=..., X_API_SECRET=... gibi atamalar
 _ENV_ASSIGNMENT = re.compile(r"((?:TOKEN|KEY|SECRET)[A-Z_]*=)\S+")
+
+# `X-API-Key: <sır>` gibi HTTP başlıkları. `_ENV_ASSIGNMENT`'tan üç farkı var ve
+# üçü de S3'ün kaçmasının sebebiydi: ayraç `=` değil `:`, ad tire içeriyor, ve
+# harf kipi karışık.
+#
+# İki ayrıntı ölçülerek eklendi, ikisi de ilk denemede yanlıştı:
+#
+#  • `(?<![A-Za-z0-9])` ŞART. Onsuz desen dizenin ORTASINDAN eşleşiyor ve
+#    "monkey: banana" → "monkey: <REDACTED>" oluyordu (monKEY). Yanlış pozitif
+#    log'u okunmaz yapar, okunmayan log da teşhis değeri taşımaz.
+#  • Değer `\S+` OLAMAZ. "Authorization: Bearer xyz123" içinde `\S+` yalnız
+#    "Bearer"ı yutuyor ve asıl sır AÇIKTA kalıyordu — yarım maskeleme, hiç
+#    maskelememekten tehlikeli çünkü bakan kişi korunduğunu sanıyor.
+#    Değer artık satırın kalanı; tırnak/virgül/süslü parantezde duruyor ki
+#    argv ya da JSON içine gömülü başlıklarda komşu alanları yutmasın.
+_HEADER_SECRET = re.compile(
+    r"((?<![A-Za-z0-9])(?:[A-Za-z0-9]+[-_])*"
+    r"(?:TOKEN|KEY|SECRET|AUTH|APIKEY)[A-Za-z0-9_-]*\s*:\s*)"
+    r"[^\"',}\n\r]+",
+    re.IGNORECASE,
+)
 
 
 def redact_secrets(text: str) -> str:
     if not text:
         return text
     text = _MCP_PATH_SECRET.sub(r"\1<REDACTED>", text)
-    return _ENV_ASSIGNMENT.sub(r"\1<REDACTED>", text)
+    text = _ENV_ASSIGNMENT.sub(r"\1<REDACTED>", text)
+    return _HEADER_SECRET.sub(r"\1<REDACTED>", text)
+
+
+class _RedactingFilter(logging.Filter):
+    """Log'a giden HER kaydı maskeden geçirir.
+
+    Neden çağrı yeri yeri değil de filtre: denetimde `copilot_provider:133` ve
+    `opencode_provider:147` hata yollarında `redact_secrets` çağrısının HİÇ
+    olmadığı bulundu. Tek tek eklemek aynı hatayı tekrarlamak olurdu — bu
+    modülün kendi gerekçesi zaten "güvenlik kararının kopyalanması" sınıfını
+    adlandırıyor: kopya, düzeltmenin kopyalardan yalnız birine uygulanması
+    demek.
+
+    Sistematik tarama sırra dokunan başka noktalar da gösterdi (`agy_provider`
+    mcp_config yazımı, `kimi_provider` config.toml, `approval_bridge` POST).
+    Filtre bunların hepsini ve HENÜZ YAZILMAMIŞ olanları da kapsıyor; çağrı
+    yerine bağlı bir çözüm yalnız bugün bilinenleri kapsardı.
+
+    ⚠️ Maskeleme FORMATLANMIŞ mesaja uygulanıyor, ham `msg`'e değil. İlk sürüm
+    ham `msg`'i maskeliyordu ve kendi testi onu yakaladı:
+
+        logger.warning("MCP config yazılamadı: X-API-Key: %s", sır)
+
+    Burada `msg` içindeki `X-API-Key: %s` desene UYUYOR, yani `%s` yer tutucusu
+    da `<REDACTED>` ile değişiyordu. Sonra `msg % args` "not all arguments
+    converted" ile patlıyor ve logging kaydı **tamamen düşürüyor** — sırrı
+    korurken log'u yok eden bir düzeltme. Formatlanmış metni maskelemek hem
+    yer tutucu sorununu hem `args` içindeki sırları tek adımda çözüyor.
+    """
+
+    def filter(self, record: "logging.LogRecord") -> bool:
+        try:
+            tam = record.getMessage()
+        except Exception:
+            # Bozuk format dizgesi bizim sorunumuz değil; kaydı olduğu gibi
+            # geçiriyoruz ki asıl hata görünür kalsın.
+            return True
+        temiz = redact_secrets(tam)
+        if temiz != tam:
+            record.msg = temiz
+            record.args = ()
+        return True
+
+
+def install_log_redaction() -> None:
+    """Maskeyi kök logger'ın tüm işleyicilerine takar. Yeniden çağrılabilir.
+
+    Kök logger'a filtre eklemek YETMEZ: `logging.Filter` yalnız o logger'a
+    doğrudan verilen kayıtlara uygulanır, alt logger'lardan yayılanlara
+    uygulanmaz. İşleyici düzeyinde takmak yayılan kayıtları da kapsıyor.
+    """
+    kok = logging.root
+    for isleyici in kok.handlers:
+        if not any(isinstance(f, _RedactingFilter) for f in isleyici.filters):
+            isleyici.addFilter(_RedactingFilter())

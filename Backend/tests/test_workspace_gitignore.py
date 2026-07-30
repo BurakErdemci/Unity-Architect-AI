@@ -18,6 +18,7 @@ tekrarlayan arıza şekli "birbiriyle uyuşması gereken iki yer uyuşmuyor".
 import json
 import logging
 import os
+import stat
 import subprocess
 import sys
 
@@ -25,6 +26,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "app"))
 
+from providers import workspace_config  # noqa: E402
 from providers.workspace_config import (  # noqa: E402
     BLOCK_BEGIN,
     BLOCK_END,
@@ -336,3 +338,99 @@ def test_call_site_agent_runner_project_mcp_json(tmp_path):
     assert "unityMCP" in written["mcpServers"]
     assert ".mcp.json" in _read(tmp_path / ".gitignore"), \
         "Claude SDK yolundaki .mcp.json yazım noktası bağlanmamış"
+
+
+# ── 30 Tem 2026 denetimi: E-a regresyonu, E-b fail-open, S4b ACL ────────────
+
+
+def _depo_kur(tmp_path, takipli=True):
+    subprocess.run(["git", "init", "-q", str(tmp_path)], capture_output=True, timeout=30)
+    cfg = tmp_path / ".mcp.json"
+    cfg.write_text('{"headers":{"X-API-Key":"KANARYA-91zQ"}}', encoding="utf-8")
+    if takipli:
+        subprocess.run(["git", "-C", str(tmp_path), "add", "-f", ".mcp.json"],
+                       capture_output=True, timeout=30)
+    return cfg
+
+
+def test_takip_uyarisi_girdi_ZATEN_varken_de_atesleniyor(tmp_path, caplog):
+    """E-a'nın ikinci yarısı: `if not missing: return` erken dönüşü.
+
+    İlk çağrıda girdi `.gitignore`'a ekleniyor. İKİNCİ çağrıda `missing` boş
+    kalıyor ve eski kod oracıkta dönüyordu — yani kurulu bir workspace'te
+    "bu dosya git'te takipli" uyarısı bir daha ASLA ateşlenmiyordu.
+    """
+    _depo_kur(tmp_path)
+    workspace_config.ensure_gitignored(str(tmp_path), [".mcp.json"])
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        workspace_config.ensure_gitignored(str(tmp_path), [".mcp.json"])
+
+    assert any("ZATEN takip ediliyor" in r.message for r in caplog.records), \
+        "girdi zaten varken takip uyarısı düştü"
+
+
+def test_git_YOK_SAYSA_BILE_takip_uyarisi_atesleniyor(tmp_path, caplog):
+    """E-a'nın birinci yarısı: sorgu `missing` ile yapılıyordu.
+
+    `covered` girdiler — git'in ZATEN yok saydıkları — `missing`'e hiç girmiyor,
+    dolayısıyla takip kontrolünden de kaçıyorlardı. Oysa asıl tehlikeli durum
+    tam olarak bu: dosya hem yok sayılıyor HEM takip ediliyor, yani sır depoda.
+    """
+    _depo_kur(tmp_path)
+    (tmp_path / ".gitignore").write_text(".mcp.json\n", encoding="utf-8")
+
+    with caplog.at_level(logging.WARNING):
+        workspace_config.ensure_gitignored(str(tmp_path), [".mcp.json"])
+
+    assert any("ZATEN takip ediliyor" in r.message for r in caplog.records)
+
+
+def test_tracked_olcemedigi_zaman_None_donuyor():
+    """E-b: fail-OPEN idi. Her hata `[]`'e eşleniyor, çağıran "takip yok" sanıyordu.
+
+    Kardeşi `_git_covered` ölçemediğinde `None` dönüp muhafazakâr davranıyordu —
+    tek dosyada iki zıt hata felsefesi. Ayrım artık çağıranda.
+    """
+    assert workspace_config._tracked("/olmayan-dizin-xyz", [".mcp.json"]) is None
+
+
+def test_olculemedi_uyarisi_git_deposu_YOKKEN_susuyor(tmp_path, caplog):
+    """Ters yön: uyarı doğru olmalı ama gürültü de OLMAMALI.
+
+    `.git` yoksa "takip" diye bir şey yok; her oturumda uyarmak kullanıcıyı
+    uyarı körlüğüne alıştırırdı — bu dosyanın kaçındığı sınıfın aynısı.
+    """
+    (tmp_path / ".mcp.json").write_text("{}", encoding="utf-8")
+    with caplog.at_level(logging.WARNING):
+        workspace_config.ensure_gitignored(str(tmp_path), [".mcp.json"])
+    assert not any("ÖLÇÜLEMEDİ" in r.message for r in caplog.records)
+
+
+def test_olculemedi_uyarisi_depo_VARKEN_atesleniyor(tmp_path, caplog, monkeypatch):
+    """...ama depo varken ölçememek gerçek bir bilinmezlik ve sessiz geçilemez."""
+    _depo_kur(tmp_path, takipli=False)
+    monkeypatch.setattr(workspace_config, "_tracked", lambda *a, **k: None)
+    with caplog.at_level(logging.WARNING):
+        workspace_config.ensure_gitignored(str(tmp_path), [".mcp.json"])
+    assert any("ÖLÇÜLEMEDİ" in r.message for r in caplog.records)
+
+
+def test_harden_config_file_sahibe_kilitliyor(tmp_path):
+    """S4b: config dosyası workspace'in ACL'ini miras alıyordu.
+
+    Paylaşımlı ya da CI workspace'inde ana dizinde `Everyone (RX)` varsa
+    `X-API-Key` makinedeki her hesap tarafından okunabiliyordu.
+    """
+    hedef = tmp_path / ".mcp.json"
+    hedef.write_text('{"headers":{"X-API-Key":"KANARYA"}}', encoding="utf-8")
+
+    assert workspace_config.harden_config_file(str(hedef)) is True
+
+    if os.name == "nt":
+        acl = subprocess.run(["icacls", str(hedef), "/findsid", "*S-1-1-0"],
+                             capture_output=True, text=True, timeout=20)
+        assert "SID Found:" not in acl.stdout, "Everyone hâlâ erişebiliyor"
+    else:
+        assert stat.S_IMODE(os.stat(hedef).st_mode) == 0o600

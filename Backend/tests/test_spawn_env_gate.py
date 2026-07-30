@@ -316,6 +316,9 @@ _EXEMPT: Dict[Tuple[str, str], Tuple[int, str]] = {
         1, "git check-ignore — sistem ikilisi, sabit argv, sır tüketmiyor"),
     ("app/providers/workspace_config.py", "_tracked"): (
         1, "git ls-files — sistem ikilisi, sabit argv"),
+    ("app/providers/workspace_config.py", "harden_config_file"): (
+        1, "icacls — Windows yerleşiği, sabit argv, sır tüketmiyor; yalnız "
+           "yazdığımız config dosyasının ACL'ini kısıtlıyor (bulgu S4b)"),
     ("app/unity_ai_mcp/mcp_port_guard.py", "_run"): (
         1, "lsof/pgrep/netstat — port sahibi sorgusu; DISPLAY'siz sistem aracı"),
     ("app/unity_ai_mcp/unity_mcp_manager.py", "UnityMCPManager.is_unity_running"): (
