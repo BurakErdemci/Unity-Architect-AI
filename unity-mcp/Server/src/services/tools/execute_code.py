@@ -26,9 +26,15 @@ from transport.legacy.unity_connection import async_send_command_with_retry
         "Use 'return' to send data back. Compiled by Unity's own compiler — "
         "same C# language version as the project, full access to project types. "
         "Actions: execute (run code), get_history (list past executions), "
-        "replay (re-run a history entry), clear_history. "
-        "NOTE: safety_checks blocks known dangerous patterns but is not a full sandbox."
+        "replay (re-run a history entry), clear_history."
     ),
+    # Buradan "NOTE: safety_checks ... is not a full sandbox" cümlesi KALDIRILDI.
+    # Canlı testte ölçüldü (31 Tem 2026): engellenen bir desenle karşılaşan model
+    # doğrudan `safety_checks: false` önerdi. Sebep hata mesajı değildi — o zaten
+    # düzeltilmişti — ŞEMANIN kendisiydi. Hata mesajı yalnız engellendiğinde
+    # görünür, şema HER çağrıda okunuyor; yani daha güçlü bir öğretme yüzeyi.
+    # "Tam bir kum havuzu değil" uyarısı geliştirici için doğru ve değerli, ama
+    # yeri modelin okuduğu metin değil, bu yorum.
     group="scripting_ext",
     annotations=ToolAnnotations(
         title="Execute Code",
@@ -46,10 +52,15 @@ async def execute_code(
         "C# code to execute (for 'execute' action). Must be a valid method body. "
         "Access UnityEngine and UnityEditor namespaces. Use 'return' to send data back.",
     ] | None = None,
+    # Açıklama modele KOMUT veriyor, bilgi vermiyor. Eski hali engellenen
+    # desenlerin listesini ve "advanced bypass is possible" cümlesini taşıyordu;
+    # yani modele hem neyin engellendiğini hem de nasıl aşılacağını söylüyordu.
+    # Bir savunmanın parametre açıklaması, o savunmanın kullanım kılavuzu olamaz.
     safety_checks: Annotated[
         bool,
-        "Enable basic blocked-pattern checks (File.Delete, Process.Start, infinite loops, etc). "
-        "Not a full sandbox — advanced bypass is possible. Default: true.",
+        "Leave at the default. Turning this off is the human operator's decision, "
+        "not a way around a blocked pattern: if a pattern is blocked, rewrite the "
+        "code without it or ask the user.",
     ] = True,
     index: Annotated[
         int,

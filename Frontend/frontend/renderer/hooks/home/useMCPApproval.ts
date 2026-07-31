@@ -184,6 +184,22 @@ export const unityOzeti = (tool: string, params: any): string => {
   // Gerekçe de yanlıştı: birden fazla Editor bağlıyken "hangi proje" sorusu
   // detay değil, kararın KENDİSİ. Yamanın iki yarısının birbirini iptal
   // etmesi, ikisini ayrı zamanlarda yazmanın bedeli.
+  // GÜVENLİK KONTROLLERİ KAPALIYSA bunu EN ÜSTTE bağır. Parametre zaten
+  // aşağıdaki döngüde `safety_checks: false` diye yazılıyordu, ama uzun bir
+  // parametre listesinin ortasındaki küçük bir satır, kararın en önemli
+  // parçasını taşıyamaz — kullanıcı kodu okur, bayrağı kaçırır.
+  //
+  // Koşul `=== false` DEĞİL, "true değilse". Fark bir uyarı için önemli:
+  // `=== false` yazsaydık `"false"` dizesi ya da `0` gibi bozuk bir yük
+  // uyarıyı SESSİZCE düşürürdü — yani uyarı tam da yükün güvenilmez olduğu
+  // durumda kaybolurdu. Karar veren kod (kapının kendisi) `is True`/`=== true`
+  // ile fail-CLOSED çalışır; GÖSTEREN kod fail-LOUD çalışmalı.
+  const guvenlikBayragi = params && typeof params === 'object'
+    ? (params as any).safety_checks
+    : undefined;
+  if (guvenlikBayragi !== undefined && guvenlikBayragi !== true) {
+    satirlar.push('⚠️ GÜVENLİK KONTROLLERİ KAPALI — dosya silme, süreç başlatma ve sonsuz döngü kontrolleri bu çağrıda ÇALIŞMAYACAK.');
+  }
   const hedef = params && typeof params === 'object' ? (params as any).unity_instance : undefined;
   if (typeof hedef === 'string' && hedef) {
     satirlar.push(`unity_instance: ${hedef}`);
