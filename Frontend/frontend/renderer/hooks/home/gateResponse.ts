@@ -142,6 +142,22 @@ export function gateFailure(action: GateAction, delivery: GateDelivery): GateFai
     return { message: `${label} geçersiz bulundu. İşlem yapılmadı.`, type: 'error' };
   }
 
+  // Onay süresi dolmuş: backend kartı geri çekmiş ve REDDEDİLDİ olarak
+  // yazmış (200 sn — iki istemci de 180 sn'de pes ediyor, yani bekleyen
+  // kalmamış). Bu BELİRSİZ değil KESİN bir sonuç, o yüzden aşağıdaki
+  // "bilinmiyor" dalına düşmemeli: düştüğünde kullanıcı "tanınmadı:
+  // gate_expired" okuyup işlemin yapılmış olabileceğini sanıyordu
+  // (doğrulama turu bulgusu, 31 Tem 2026). Backend sebebi gönderiyor;
+  // eklediğimiz sebebi burada düşürmek, eklemeyi boşa çıkarırdı.
+  if (status === 'gate_expired') {
+    return {
+      message:
+        `${label} için onay süresi dolmuştu, işlem YAPILMADI. ` +
+        `İsteği yeniden çalıştırabilirsiniz.`,
+      type: 'error',
+    };
+  }
+
   // 2xx alındı ama sonuç OKUNAMADI — bu da BELİRSİZ, kesin başarısızlık değil.
   //
   // Buradaki eski metin "İşlem yapılmadı" diyordu ve bu, üstteki `fetch`

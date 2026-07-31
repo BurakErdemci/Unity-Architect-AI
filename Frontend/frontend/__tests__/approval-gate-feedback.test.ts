@@ -681,6 +681,21 @@ describe('gateFailure — belirsiz teslimat kesin başarısızlıktan ayrılır'
     expect(belirsiz()?.uncertain).toBe(true)
   })
 
+  it('gate_expired KESİN sayılır — "bilinmiyor" dalına düşmez', () => {
+    // Doğrulama turu bulgusu (31 Tem 2026): backend süresi dolmuş bir gate'i
+    // REDDEDİLDİ olarak yazıp sebebini gönderiyordu, ama frontend'de karşılığı
+    // olmadığı için "tanınmadı: gate_expired" ve "yapılıp yapılmadığı
+    // BİLİNMİYOR" deniyordu. Oysa sonuç kesin: bekleyen kalmadığı için işlem
+    // yapılmadı. Sebebi eklemenin değeri, onu düşürmemekten geliyor.
+    const sonuc = gateFailure('command', {
+      httpOk: true, httpStatus: 200,
+      body: { status: 'gate_expired', error: 'Onay süresi doldu.' },
+    })
+    expect(sonuc?.uncertain).not.toBe(true)
+    expect(yapilmadiIddiasi(sonuc!.message)).toBe(true)
+    expect(sonuc!.message).not.toMatch(/tanınmadı/)
+  })
+
   it('belirsiz mesaj "işlem yapılmadı" DEMEZ — yapılmış olabilir', () => {
     expect(yapilmadiIddiasi(belirsiz()!.message)).toBe(false)
   })
