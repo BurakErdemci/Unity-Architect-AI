@@ -357,6 +357,26 @@ describe('uçtan uca · köprüden gelen istek gerçekten ekrana çıkar', () =>
     expect(govde.textContent).toContain('KRITIK.prefab')
   })
 
+  it('İÇ İÇE batch_execute\'ta da silme GİZLENMİYOR — derinlik sınırı yok', async () => {
+    // 3. denetim turu, med: ilk düzeltmede derinlik sınırı (6) vardı ve o,
+    // kapattığı sınıfı geri açıyordu — 6. derinlikteki alt ağaç yine tek parça
+    // kesiliyor, üstelik uyarı da basılmıyordu. Sunucu iç içe paketleri 8
+    // derinliğe kadar sınıflandırıyor, yani şekil erişilebilir.
+    const uzun = 'y'.repeat(400)
+    const ic = { tool: 'batch_execute', params: { commands: [
+      { tool: 'manage_asset', params: { action: 'create', name: uzun } },
+      { tool: 'manage_asset', params: { action: 'delete', name: 'DERIN.prefab' } },
+    ] } }
+    mockedAxios.get.mockResolvedValue({ data: { pending: {
+      'g14': { tool: 'batch_execute', params: { commands: [
+        { tool: 'batch_execute', params: { commands: [ic] } },
+      ] }, workspace_path: '/ws' },
+    } } })
+    await act(async () => { render(React.createElement(Harness)) })
+    const govde = await screen.findByText(/batch_execute/)
+    expect(govde.textContent).toContain('DERIN.prefab')
+  })
+
   it('BOZUK parametreli eski araç kartsız KALMIYOR', async () => {
     // 2. denetim turu, low ama etkisi geniş: `params: null` gelince eski dal
     // destructuring'de patlıyordu ve istisna gate KURULDUKTAN sonra düştüğü

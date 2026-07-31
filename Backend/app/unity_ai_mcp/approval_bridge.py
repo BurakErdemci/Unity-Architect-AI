@@ -53,12 +53,24 @@ async def request_approval(
     gate_id = uuid.uuid4().hex[:10]
     logger.info(f"[approval_bridge] {tool_name} için onay isteniyor (gate: {gate_id})")
 
-    # POST — 10 saniye boyunca 1s aralıkla retry
+    # POST — 10 saniyelik DUVAR SAATİ bütçesi, 1 sn aralıkla retry.
+    #
+    # ⚠️ İlk düzeltmede yalnız aşağıdaki yoklama döngüsü saate bağlanmıştı; bu
+    # faz `range(10)` olarak kalmıştı ve her deneme kendi 8 sn'sini + 1 sn
+    # uykusunu harcayabildiği için "10 sn" fiilen ~90 SANİYE olabiliyordu — ve
+    # bu, 180 sn'lik kullanıcı beklemesi daha BAŞLAMADAN önce. Aynı sınıfın
+    # yarısını düzeltip diğer yarısını bırakmak, düzeltilmiş sanılan bir
+    # gecikme üretiyordu (3. denetim turu, 31 Tem 2026).
+    _POST_BUTCESI = 10.0
     posted = False
     immediate_result = None
-    for attempt in range(10):
+    post_bitis = time.monotonic() + _POST_BUTCESI
+    attempt = -1
+    while time.monotonic() < post_bitis:
+        attempt += 1
         try:
-            async with httpx.AsyncClient(timeout=8.0) as client:
+            kalan = max(0.5, post_bitis - time.monotonic())
+            async with httpx.AsyncClient(timeout=min(8.0, kalan)) as client:
                 resp = await client.post(
                     f"{BACKEND_URL}/mcp-approval-request",
                     json={
@@ -81,6 +93,10 @@ async def request_approval(
                     break
         except Exception as e:
             logger.warning(f"[approval_bridge] POST denemesi {attempt+1} başarısız: {e}")
+            # Bütçe dolduysa uyumuyoruz: son denemenin ardından gelen uyku,
+            # ilan edilen süreyi tam bir saniye aşan kuyruk oluyordu.
+            if time.monotonic() + 1.0 >= post_bitis:
+                break
             await asyncio.sleep(1.0)
 
     if not posted:

@@ -125,6 +125,10 @@ async def _onay_iste(tool_name: str, params: Mapping[str, Any]) -> dict:
                 }
         except Exception as e:
             logger.warning("[approval-gate] POST %s başarısız: %s", deneme, e)
+        # Bütçe dolduysa uyumuyoruz. Koşulsuz uyku, son denemenin ardından
+        # ilan edilen süreye tam bir saniye ekliyordu (3. denetim turu).
+        if time.monotonic() + 1.0 >= bitis:
+            break
         await asyncio.sleep(1.0)
 
     if not gonderildi:

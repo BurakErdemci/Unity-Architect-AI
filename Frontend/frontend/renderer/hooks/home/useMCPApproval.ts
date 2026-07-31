@@ -118,19 +118,35 @@ const POLL_FAILURE_ALERT_AFTER = 5;
  * kalkıyordu.
  *
  * Kırpma artık YAPRAK başına. Satır sınırına ulaşılırsa gizlenen alan sayısı
- * kartta AÇIKÇA yazılıyor: sessiz kırpma, kırpmanın kendisinden tehlikeli. */
+ * kartta AÇIKÇA yazılıyor: sessiz kırpma, kırpmanın kendisinden tehlikeli.
+ *
+ * ⚠️ İlk düzeltmede DERİNLİK SINIRI (6) vardı ve o sınıfı geri açıyordu: iç içe
+ * bir `batch_execute` 6. derinliğe ulaşınca alt ağaç yine tek parça kesiliyor,
+ * üstelik uyarı bile basılmıyordu. Sunucu sınıflandırması iç içe paketleri 8
+ * derinliğe kadar destekliyor, yani şekil erişilebilirdi (3. denetim turu,
+ * 31 Tem 2026). Sınırı BÜYÜTMEK yamamak olurdu — kaldırıldı, yerine döngü
+ * koruması kondu. Ders: bir kapatmanın içine konan "makul" sabit, kapattığı
+ * sınıfın yeni bir örneğini üretebiliyor. */
 const OZET_SATIR_SINIRI = 200;
 const OZET_DEGER_SINIRI = 200;
-const OZET_DERINLIK_SINIRI = 6;
 
 export const unityOzeti = (tool: string, params: any): string => {
   const satirlar: string[] = [];
   let atlanan = 0;
+  // Döngü koruması: MCP yükü JSON'dan geldiği için döngü İÇEREMEZ, ama bu
+  // fonksiyon başka bir çağıran tarafından da kullanılabilir ve sonsuz
+  // özyineleme kartı hiç çizdirmez — yani gizlemenin en sert biçimi olurdu.
+  const gorulen = new WeakSet<object>();
 
   const yaz = (onek: string, deger: any, derinlik: number): void => {
     if (satirlar.length >= OZET_SATIR_SINIRI) { atlanan += 1; return; }
     const nesne = deger !== null && typeof deger === 'object';
-    if (nesne && derinlik < OZET_DERINLIK_SINIRI) {
+    if (nesne) {
+      if (gorulen.has(deger as object)) {
+        satirlar.push(`${onek}: (döngüsel referans — gösterilmedi)`);
+        return;
+      }
+      gorulen.add(deger as object);
       const girdiler: Array<[string, any]> = Array.isArray(deger)
         ? deger.map((v, i) => [String(i), v])
         : Object.entries(deger);
