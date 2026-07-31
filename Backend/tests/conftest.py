@@ -173,9 +173,69 @@ def _windows_mu() -> bool:
     return os.name == "nt"
 
 
+# Ayrıcalık ya da dosya sistemi desteği yokluğunun SAYISAL karşılıkları.
+# Metin yerine bunlara bakmanın sebebi doğrulama turu bulgusu (30 Tem 2026):
+# sınıflandırma `mklink`'in İngilizce/Türkçe çıktısını eşliyordu, yani Almanca
+# ya da Fransızca bir Windows'ta o metinler hiç gelmeyecek ve meşru bir yetenek
+# yokluğu "ÖLÇÜLEMEDİ"ye düşüp testleri FAIL ettirecekti. Sayı çevrilmiyor.
+_JUNCTION_YETENEK_YOK = frozenset({
+    1314,  # ERROR_PRIVILEGE_NOT_HELD
+    50,    # ERROR_NOT_SUPPORTED — birim reparse point taşımıyor (exFAT/FAT32)
+    1,     # ERROR_INVALID_FUNCTION — aynı sınıf, bazı birimler bunu döndürüyor
+})
+
+
+def _junction_olusturucu():
+    """Dilden bağımsız junction kurucusu; yoksa ``None``.
+
+    Ölçüldü (31 Tem 2026, bu makine, AYRICALIKSIZ): `_winapi.CreateJunction`
+    var, junction'ı kurdu (`os.path.islink` → `False`, `realpath` farklı) ve
+    hatalarını sayısal `winerror` ile bildirdi (hatalı yol → `winerror=3`).
+    Yani `mklink` metnini ayrıştırmaya gerek yok.
+
+    Ayrı bir fonksiyon olmasının sebebi test edilebilirlik: hem yokluğu
+    (son çare dalı) hem de hata sınıflandırması taklit edilebilsin.
+    """
+    try:
+        import _winapi
+    except ImportError:
+        return None
+    return getattr(_winapi, "CreateJunction", None)
+
+
 def _junction_olc() -> "tuple[bool | None, str]":
     if not _windows_mu():
         return False, "junction yalnız Windows/NTFS kavramı"
+    olustur = _junction_olusturucu()
+    if olustur is None:
+        return _junction_olc_mklink()
+    with tempfile.TemporaryDirectory() as d:
+        hedef = os.path.join(d, "hedef")
+        os.mkdir(hedef)
+        try:
+            olustur(hedef, os.path.join(d, "bag"))
+            return True, ""
+        except OSError as e:
+            we = getattr(e, "winerror", None)
+            if we in _JUNCTION_YETENEK_YOK:
+                return False, f"junction kurulamıyor — ölçüldü: winerror={we}"
+            return None, (
+                f"junction yeteneği ÖLÇÜLEMEDİ: CreateJunction winerror={we} "
+                f"errno={e.errno} ({e}) — bu bir yetenek yokluğu değil, "
+                "test atlanmıyor."
+            )
+
+
+def _junction_olc_mklink() -> "tuple[bool | None, str]":
+    """Son çare: `_winapi.CreateJunction` yoksa `mklink` metnine bakılır.
+
+    ⚠️ Bu dal ADLANDIRILMIŞ bir varsayıma dayanıyor: *"makinenin Windows dili
+    İngilizce ya da Türkçe"*. Başka bir dilde meşru yetenek yokluğu `None`'a
+    düşer ve test FAIL eder — fail-CLOSED, ama yanlış sebeple kırmızı.
+    Varsayımı kaldıramıyoruz çünkü `mklink` hata kodunu sayı olarak vermiyor;
+    onun yerine dalın kendisi son çareye indirildi. CPython'da `CreateJunction`
+    3.5'ten beri var, yani bu dala düşen bir kurulum beklenmiyor.
+    """
     with tempfile.TemporaryDirectory() as d:
         hedef = os.path.join(d, "hedef")
         os.mkdir(hedef)

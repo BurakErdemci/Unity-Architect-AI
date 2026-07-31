@@ -206,20 +206,18 @@ def test_junction_ilgisiz_hata_OLCULEMEDI_donuyor(monkeypatch):
     disk dolu, geçici komut hatası, erişim reddi dahil. Yani E-c'nin kapattığı
     sahte yeşil, onu kapatan commit'in içinde yeniden açılmıştı.
 
-    ⚠️ `_windows_mu` taklit ediliyor, çünkü fonksiyonun başındaki erken çıkış
-    POSIX'te sınıflandırmaya hiç ulaştırmıyor ve CI Linux'ta koşuyor: taklit
-    olmadan bu iddia yalnız Windows makinede ölçülür, yani kapanan bulgunun
-    nöbetçisi CI'da kör kalırdı. Taklit edilen şey saf mantık — `mklink` zaten
-    aşağıda sahteleniyor, gerçek bir Windows çağrısı olmuyor.
+    ⚠️ Ölçülen artık SON ÇARE dalı (`_junction_olc_mklink`). 31 Tem 2026'da
+    birincil ölçüm `_winapi.CreateJunction`'a taşındı, ama metin dalı kodda
+    duruyor — dolayısıyla nöbetçisi de duruyor. `mklink` sahtelendiği için
+    gerçek bir Windows çağrısı olmuyor, test her makinede koşuyor.
     """
     class _Sonuc:
         returncode = 1
         stdout = ""
         stderr = "The system cannot find the path specified."
 
-    monkeypatch.setattr(conftest, "_windows_mu", lambda: True)
     monkeypatch.setattr(conftest.subprocess, "run", lambda *a, **k: _Sonuc())
-    durum, gerekce = conftest._junction_olc()
+    durum, gerekce = conftest._junction_olc_mklink()
     assert durum is None, "ilgisiz hata yetenek yokluğuna dönüştü"
     assert "ÖLÇÜLEMEDİ" in gerekce
 
@@ -227,18 +225,76 @@ def test_junction_ilgisiz_hata_OLCULEMEDI_donuyor(monkeypatch):
 def test_junction_GERCEK_ayricalik_yoklugu_False_donuyor(monkeypatch):
     """Ters yön: meşru yetenek yokluğu hâlâ `False` olmalı, yoksa her makinede FAIL.
 
-    Windows taklidi yukarıdakiyle aynı sebeple: POSIX'te erken çıkış da `False`
-    döndürüyor ama BAŞKA bir gerekçeyle ("junction yalnız Windows kavramı"),
-    yani taklit olmadan bu test sınıflandırmayı değil erken çıkışı ölçerdi ve
-    doğru cevabı yanlış sebeple verirdi.
+    Bu da son çare dalını ölçüyor; birincil dalın karşılığı aşağıda, sayısal
+    `winerror` üzerinden.
     """
     class _Sonuc:
         returncode = 1
         stdout = ""
         stderr = "You do not have sufficient privilege to perform this operation."
 
-    monkeypatch.setattr(conftest, "_windows_mu", lambda: True)
     monkeypatch.setattr(conftest.subprocess, "run", lambda *a, **k: _Sonuc())
-    durum, gerekce = conftest._junction_olc()
+    durum, gerekce = conftest._junction_olc_mklink()
     assert durum is False
     assert "ölçüldü" in gerekce
+
+
+# ── guard (b): sınıflandırma artık DİLE değil sayısal winerror'a bakıyor ─────
+
+
+def _junction_patlatan(winerror):
+    """`CreateJunction` yerine geçip verilen `winerror` ile patlayan sahte."""
+    def patla(*a, **k):
+        raise _hata(OSError, errno.EACCES, "induced", winerror=winerror)
+    return patla
+
+
+@pytest.mark.parametrize("winerror,ad", [(1314, "PRIVILEGE_NOT_HELD"),
+                                         (50, "NOT_SUPPORTED"),
+                                         (1, "INVALID_FUNCTION")])
+def test_junction_yetenek_yoklugu_SAYIYLA_taniniyor(monkeypatch, winerror, ad):
+    """Guard (b): meşru yetenek yokluğu metne değil sayıya bağlı tanınıyor.
+
+    Bulgu buydu: sınıflandırma `mklink`'in İngilizce/Türkçe çıktısını eşliyordu,
+    yani Almanca bir Windows'ta bu üç durum `None`'a düşüp testleri FAIL
+    ettirirdi. `winerror` çevrilmiyor, o yüzden dilden bağımsız.
+    """
+    monkeypatch.setattr(conftest, "_windows_mu", lambda: True)
+    monkeypatch.setattr(conftest, "_junction_olusturucu",
+                        lambda: _junction_patlatan(winerror))
+    durum, gerekce = conftest._junction_olc()
+    assert durum is False, f"{ad} yetenek yokluğu sayılmadı"
+    assert str(winerror) in gerekce and "ölçüldü" in gerekce
+
+
+def test_junction_ilgisiz_winerror_OLCULEMEDI_donuyor(monkeypatch):
+    """Üç durumlu kural birincil dalda da geçerli: ilgisiz hata `None`.
+
+    Ters yönün nöbetçisi — yukarıdaki test tek başına "her şeye `False` de"
+    diyen bir kodla da geçerdi.
+    """
+    monkeypatch.setattr(conftest, "_windows_mu", lambda: True)
+    monkeypatch.setattr(conftest, "_junction_olusturucu",
+                        lambda: _junction_patlatan(3))  # ERROR_PATH_NOT_FOUND
+    durum, gerekce = conftest._junction_olc()
+    assert durum is None, "ilgisiz winerror yetenek yokluğuna dönüştü"
+    assert "ÖLÇÜLEMEDİ" in gerekce
+
+
+def test_junction_kurucusu_YOKSA_son_careye_dusuyor(monkeypatch):
+    """`_winapi.CreateJunction` bulunmayan bir kurulumda metin dalı devrede.
+
+    Aksi halde guard, kapattığı dalı ULAŞILAMAZ değil YOK sanır ve o kurulumda
+    junction ölçümü tamamen kaybolurdu.
+    """
+    monkeypatch.setattr(conftest, "_windows_mu", lambda: True)
+    monkeypatch.setattr(conftest, "_junction_olusturucu", lambda: None)
+
+    class _Sonuc:
+        returncode = 0
+        stdout = "Junction created"
+        stderr = ""
+
+    monkeypatch.setattr(conftest.subprocess, "run", lambda *a, **k: _Sonuc())
+    durum, _ = conftest._junction_olc()
+    assert durum is True, "son çare dalına düşülmedi"

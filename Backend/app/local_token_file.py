@@ -128,6 +128,35 @@ def _fd_gercek_yol(fd: int) -> "str | None":
         return None
 
 
+def _harf_duyarsiz_kip() -> bool:
+    """Yol karşılaştırması büyük/küçük harfi YOK SAYSIN mı (Windows) sayması mı?
+
+    Ayrı bir fonksiyon, çünkü bu kapının iki yarısı var ve her makine yalnız
+    kendi yarısını çalıştırıyor — CI `ubuntu-latest`'te koşuyor, ürünün ana
+    kitlesi Windows ([[windows-test-kapisi]]'nde ölçülmüş sınıf). Dikiş
+    olmadan harf-duyarsızlık guard'ı yalnız bir Windows makinesinde ölçülür.
+    Taklit gerçek bir ölçüm: karşılaştırılan dosyalar testte de GERÇEK ve
+    kimlikleri gerçekten farklı; taklit edilen tek şey hangi dalın seçildiği.
+    """
+    return os.name == "nt"
+
+
+def _yol_normalize(yol: str) -> str:
+    """Uzun-yol önekini atar ve `normpath` uygular — harf DÖNÜŞÜMÜ YAPMAZ.
+
+    `_yol_esitle`'den ayrı durmasının sebebi: büyük/küçük harf farkının
+    kaybolduğu yer tam olarak orası, ve `_dogrula_kimlik`'in bu farkı görmesi
+    gerekiyor (aşağıdaki case-sensitivity guard'ı). Aynı normalleştirmeyi iki
+    yerde tekrarlamak, ikisinin zamanla ayrışması demekti.
+    """
+    if yol.startswith("\\\\?\\UNC\\"):
+        # \\?\UNC\server\share\... → \\server\share\...
+        yol = "\\\\" + yol[8:]
+    elif yol.startswith("\\\\?\\"):
+        yol = yol[4:]
+    return os.path.normpath(yol)
+
+
 def _yol_esitle(yol: str) -> str:
     """Karşılaştırma için yolu tek biçime indirger.
 
@@ -142,14 +171,40 @@ def _yol_esitle(yol: str) -> str:
     paylaşımında olan kullanıcıda token dosyası "yönlendirilmiş" sayılıp
     REDDEDİLİYORDU: fail-closed, ama ürünü açılmaz hale getiren cinsten.
     Ölçüldü: `unc\\server\\share\\token` != `\\\\server\\share\\token`.
+
+    ⚠️ Harf dönüşümü bir VARSAYIMA dayanıyor: *"token dizini case-insensitive"*.
+    Windows'ta varsayılan öyle, ama zorunlu değil — ölçüldü (31 Tem 2026, bu
+    makine, AYRICALIKSIZ): `fsutil file setCaseSensitiveInfo <dizin> enable`
+    **rc=0** döndü, ardından `token` ile `Token` aynı dizinde yan yana durdu ve
+    `st_ino`'ları FARKLI çıktı. Yani iki ayrı dosya burada tek dosya gibi
+    görünebiliyor. Varsayımı kod zorlamadığı için bu fonksiyon değil,
+    `_dogrula_kimlik` ek bir kimlik ölçümüyle kapatıyor.
     """
-    if yol.startswith("\\\\?\\UNC\\"):
-        # \\?\UNC\server\share\... → \\server\share\...
-        yol = "\\\\" + yol[8:]
-    elif yol.startswith("\\\\?\\"):
-        yol = yol[4:]
-    yol = os.path.normpath(yol)
-    return yol.lower() if os.name == "nt" else yol
+    yol = _yol_normalize(yol)
+    return yol.lower() if _harf_duyarsiz_kip() else yol
+
+
+def _ayni_dosya(fd: int, yol: str) -> bool:
+    """Açık tanıtıcı ile `yol` AYNI dosya mı — ada değil kimliğe bakarak.
+
+    Ölçüldü (31 Tem 2026, Windows, `Backend\\venv`): `os.fstat` bu platformda da
+    anlamlı `st_ino`/`st_dev` dolduruyor — aynı yolun `stat`'ı tanıtıcıyla
+    eşleşti, başka bir dosya eşleşmedi.
+
+    Ölçemediğimiz her durumda `False` dönüyor (kimlik alınamadı, dosya yok,
+    `st_ino` sıfır). Çağıran bunu ek bir VE koşulu olarak kullanıyor, yani
+    ölçememek kabule değil REDDE dönüşüyor.
+    """
+    try:
+        st1 = os.fstat(fd)
+        st2 = os.stat(yol)
+    except OSError:
+        return False
+    if not st1.st_ino:
+        # Kimliği olmayan bir dosya sistemi (bazı ağ/FAT birimleri): iddia
+        # üretmiyoruz. `0 == 0` eşitliği sahte bir "aynı dosya" olurdu.
+        return False
+    return (st1.st_ino, st1.st_dev) == (st2.st_ino, st2.st_dev)
 
 
 def _dogrula_kimlik(fd: int, beklenen_yol: str) -> None:
@@ -191,11 +246,40 @@ def _dogrula_kimlik(fd: int, beklenen_yol: str) -> None:
             )
         return
 
-    if _yol_esitle(gercek) != _yol_esitle(os.path.abspath(beklenen_yol)):
+    beklenen_mutlak = os.path.abspath(beklenen_yol)
+    if _yol_esitle(gercek) != _yol_esitle(beklenen_mutlak):
         raise OSError(
             f"{beklenen_yol} başka bir dosyaya yönlendirilmiş ({gercek}); "
             "sır dosyası olarak kullanılmayacak."
         )
+
+    # Buraya gelindiyse yollar EŞİT sayıldı. Ama yalnızca harf farkı silindiği
+    # için mi eşit sayıldılar? Öyleyse `_yol_esitle`'nin varsayımı ("dizin
+    # case-insensitive") devrede demektir ve o varsayım case-sensitive bir NTFS
+    # dizininde ÇÖKÜYOR: `token` ile `Token` iki ayrı dosya (ölçüldü, bkz.
+    # `_yol_esitle`). O yüzden bu dar dalda ada değil KİMLİĞE bakıyoruz.
+    #
+    # Neden bu bir TOCTOU riski DEĞİL: kontrol yalnız EK bir VE koşulu. Zaten
+    # reddedilen hiçbir durumu kabule çeviremez, yalnızca kabul edilecek dar bir
+    # durumu reddedebilir. Yarışı kaybetmenin sonucu fail-CLOSED.
+    #
+    # Sınıfın BAŞKA İKİ yazımı adlandırılıp ÖLÇÜLDÜ (31 Tem 2026) — ikisi de
+    # buraya hiç gelmiyor, ilk karşılaştırmada fail-CLOSED düşüyorlar:
+    #   • 8.3 kısa ad (`UZUNAD~1\token.txt`) → RED. Bu red ürünü açılmaz
+    #     yapabilirdi (UNC blocker'ıyla aynı sınıf), ama erişilemez: ölçüldü,
+    #     `_TOKEN_DIR` = `C:\Users\burcu\.unity_architect_ai`, yani ürün yolu
+    #     `expanduser` ile UZUN formda üretiyor, kısa form yalnız çağıran onu
+    #     elle verirse oluşur.
+    #   • Unicode NFC/NFD (`étiket.txt`) → RED. Windows'ta NFD adı zaten
+    #     açılamıyor (`os.path.exists` → False), yani senaryo bu platformda
+    #     kurulamıyor; macOS'ta kurulabilir ve orada da fail-CLOSED.
+    if _yol_normalize(gercek) != _yol_normalize(beklenen_mutlak):
+        if not _ayni_dosya(fd, beklenen_yol):
+            raise OSError(
+                f"{beklenen_yol} ile açılan dosya ({gercek}) yalnızca büyük/küçük "
+                "harfte ayrışıyor ve AYNI dosya değil (case-sensitive dizin); "
+                "sır dosyası olarak kullanılmayacak."
+            )
 
 
 def _open_secret_for_write(path: str) -> int:

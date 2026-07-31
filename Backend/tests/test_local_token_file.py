@@ -249,3 +249,115 @@ def test_POSIX_ara_dizin_sembolik_bagi_reddediliyor(tmp_path, monkeypatch):
     monkeypatch.delenv("LOCAL_APP_TOKEN", raising=False)
 
     assert local_token_file.read_local_app_token() == ""
+
+
+# ── guard (a): harf-duyarsız karşılaştırmanın varsayımı çöktüğünde ───────────
+#
+# 2. doğrulama turu bulgusu (30 Tem 2026): `_yol_esitle` her Windows yolunu
+# `lower()` yapıyor, yani `Token` ile `token` EŞİT sayılıyor. Varsayım
+# *"kullanıcı token dizinini case-sensitive yapmadı"* — operatör davranışı, kod
+# zorlamıyor, o yüzden `demoted` değil `guard`.
+#
+# Varsayımın çökebildiği ÖLÇÜLDÜ (31 Tem 2026, bu makine, AYRICALIKSIZ):
+# `fsutil file setCaseSensitiveInfo <dizin> enable` → rc=0, ardından `token` ile
+# `Token` yan yana durdu ve `st_ino`'ları farklı çıktı.
+#
+# Aşağıdaki testler `fsutil`e BAĞLI DEĞİL: karşılaştırılan iki dosya gerçekten
+# ayrı iki dosya (adları farklı olabilir — `gercek` dizesi zaten taklit) ve
+# kimlik ölçümü gerçek `fstat`/`stat` ile yapılıyor. Taklit edilen tek şey iki
+# adlandırılmış dikiş: hangi platform kipinde olduğumuz ve tanıtıcının çekirdeğe
+# göre yolu. Böylece guard POSIX CI'da da ölçülüyor.
+
+
+@pytest.fixture
+def harf_duyarsiz_kip(monkeypatch):
+    """Windows'un harf-duyarsız karşılaştırma kipini her makinede kurar."""
+    monkeypatch.setattr(local_token_file, "_harf_duyarsiz_kip", lambda: True)
+
+
+def test_ayni_dosya_kimligi_ada_degil_inode_a_bakiyor(tmp_path):
+    """Guard'ın dayandığı ölçüm aleti — bozuksa guard'ın iddiası boş olur."""
+    a = tmp_path / "a.txt"
+    a.write_text("a", encoding="utf-8")
+    b = tmp_path / "b.txt"
+    b.write_text("b", encoding="utf-8")
+
+    fd = os.open(str(a), os.O_RDONLY)
+    try:
+        assert local_token_file._ayni_dosya(fd, str(a)) is True
+        assert local_token_file._ayni_dosya(fd, str(b)) is False
+        # Ölçülemeyen durum kabule DEĞİL redde dönüşmeli.
+        assert local_token_file._ayni_dosya(fd, str(tmp_path / "yok")) is False
+    finally:
+        os.close(fd)
+
+
+def test_yalniz_harfte_ayrisan_BASKA_dosya_reddediliyor(
+    tmp_path, monkeypatch, harf_duyarsiz_kip
+):
+    """Guard'ın çekirdeği: harf farkı silinince eşit görünen İKİ AYRI dosya.
+
+    Senaryo: beklenen `mesru.txt`, tanıtıcı ise saldırganın dosyasına bağlı ve
+    çekirdek onun yolunu yalnızca büyük harfle ayrışan bir dize olarak
+    döndürüyor. Harf-duyarsız karşılaştırma "aynı dosya" diyor; kimlik ölçümü
+    demiyor. Guard olmadan bu kabul edilirdi.
+    """
+    mesru = tmp_path / "mesru.txt"
+    mesru.write_text("MESRU", encoding="utf-8")
+    saldirgan = tmp_path / "saldirgan.txt"
+    saldirgan.write_text("SALDIRGAN", encoding="utf-8")
+
+    monkeypatch.setattr(
+        local_token_file, "_fd_gercek_yol", lambda fd: str(mesru).upper()
+    )
+    fd = os.open(str(saldirgan), os.O_RDONLY)
+    try:
+        with pytest.raises(OSError, match="case-sensitive"):
+            local_token_file._dogrula_kimlik(fd, str(mesru))
+    finally:
+        os.close(fd)
+
+
+def test_harf_farki_AYNI_dosyaysa_kabul_ediliyor(
+    tmp_path, monkeypatch, harf_duyarsiz_kip
+):
+    """Ters yön — yoksa guard ürünü Windows'ta açılmaz hale getirirdi.
+
+    Harf-duyarsız bir dizinde `C:\\X\\Token` ile `C:\\x\\token` gerçekten AYNI
+    dosya; guard bunu reddederse token hiç okunamaz. Bu testi geçmeyen bir
+    guard, kapattığı açıktan daha pahalıya mal olur.
+    """
+    mesru = tmp_path / "mesru.txt"
+    mesru.write_text("MESRU", encoding="utf-8")
+
+    monkeypatch.setattr(
+        local_token_file, "_fd_gercek_yol", lambda fd: str(mesru).upper()
+    )
+    fd = os.open(str(mesru), os.O_RDONLY)
+    try:
+        local_token_file._dogrula_kimlik(fd, str(mesru))  # patlamamalı
+    finally:
+        os.close(fd)
+
+
+def test_harf_DUYARLI_kipte_yol_karsilastirmasi_zaten_yakaliyor(
+    tmp_path, monkeypatch
+):
+    """POSIX kipinde guard'a hiç gerek yok — reddi ilk kontrol veriyor.
+
+    Bu iddia yazılı, çünkü guard'ın POSIX'te sessiz kalması bir eksiklik değil:
+    orada `_yol_esitle` harfi korumakla zaten farklı iki yol görüyor.
+    """
+    monkeypatch.setattr(local_token_file, "_harf_duyarsiz_kip", lambda: False)
+    mesru = tmp_path / "mesru.txt"
+    mesru.write_text("MESRU", encoding="utf-8")
+
+    monkeypatch.setattr(
+        local_token_file, "_fd_gercek_yol", lambda fd: str(mesru).upper()
+    )
+    fd = os.open(str(mesru), os.O_RDONLY)
+    try:
+        with pytest.raises(OSError, match="yönlendirilmiş"):
+            local_token_file._dogrula_kimlik(fd, str(mesru))
+    finally:
+        os.close(fd)
