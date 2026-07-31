@@ -601,13 +601,23 @@ def create_mcp_server(project_scoped_tools: bool) -> FastMCP:
                 # (doğrulama turu bulgusu, 31 Tem 2026). Artık kartta yazan ad,
                 # komutun gerçekten gideceği oturumun adı.
                 if not urun_bakim_cagrisi_mi(request):
+                    # Etiket AD ve HASH'i birlikte taşıyor. `project or hash`
+                    # yazmak ayırt ediciyi düşürüyordu: `C:\A\Game` ve
+                    # `C:\B\Game` aynı anda bağlıyken ikisinin de adı `Game`,
+                    # yani kart hangi projeyi onayladığını SÖYLEMİYORDU — komut
+                    # ise hash'le seçilen oturuma gidiyordu (kapanış turu
+                    # bulgusu, 31 Tem 2026). Proje adı benzersiz DEĞİL; benzersiz
+                    # olan hash. Kullanıcıya okunur adı, ayırt ediciyi ise
+                    # yanında veriyoruz.
                     cozulmus_hedef = None
                     if session_details is not None:
-                        cozulmus_hedef = (
-                            getattr(session_details, "project", None)
-                            or getattr(session_details, "hash", None)
-                        )
-                    if not isinstance(cozulmus_hedef, str):
+                        ad = getattr(session_details, "project", None)
+                        oz = getattr(session_details, "hash", None)
+                        if isinstance(ad, str) and isinstance(oz, str) and ad and oz:
+                            cozulmus_hedef = f"{ad}@{oz}"
+                        else:
+                            cozulmus_hedef = ad if isinstance(ad, str) and ad else oz
+                    if not isinstance(cozulmus_hedef, str) or not cozulmus_hedef:
                         cozulmus_hedef = unity_instance if isinstance(unity_instance, str) else None
                     try:
                         await kapiyi_gec(
