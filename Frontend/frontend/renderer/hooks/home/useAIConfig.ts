@@ -212,13 +212,28 @@ export const useAIConfig = (API: string, user: UserData | null, showToast: (msg:
     } catch (err) { console.error("Config hatası:", err); }
   }, [API, providersWithKeys]);
 
+  // ⚠️ `user?.sessionToken` bağımlılıkta OLMAK ZORUNDA. Eskiden yalnız `[API]`
+  // vardı ve fonksiyon ilk render'ın `user`'ına kilitleniyordu; o anda token
+  // henüz `useAuth`'un başlangıç değeri olan `'local'` (IPC `app-token-get`
+  // sonradan çözülüyor). Sonuç ÖLÇÜLDÜ: istek daima `X-Session-Token: local`
+  // ile gidiyor, `_check_token` 401 veriyor, `catch` sessizce yutuyor ve
+  // `availableModels` sonsuza kadar boş kalıyor.
+  //
+  // Kullanıcıya yansıması: BÜTÜN bulut/API modelleri listeden kayboluyor
+  // (bölüm `cloudGroups.length > 0` ile gizleniyor) ve `dynamic` alanı olmayan
+  // CLI grupları — Claude Code, Antigravity, Kimi — boş açılıyor. Kendi
+  // `/cli-models/{cli}` ucundan besleneni (codex/copilot/cursor/opencode)
+  // etkilenmiyordu; arızayı bu kadar kafa karıştırıcı yapan da o asimetriydi.
+  //
+  // Açık başlık `axios.defaults.headers.common`daki DOĞRU değeri de eziyor,
+  // yani genel varsayılan burada kurtarıcı olamıyor.
   const fetchAvailableModels = useCallback(async () => {
     if (!API) return;
     try {
       const res = await axios.get(`${API}/available-models`, { headers: { 'X-Session-Token': user?.sessionToken ?? '' } });
       if (res.data) setAvailableModels(res.data);
     } catch (err) { console.error("Modeller alınamadı:", err); }
-  }, [API]);
+  }, [API, user?.sessionToken]);
 
   const fetchProvidersWithKeys = useCallback(async (userId: number) => {
     if (!API) return;
