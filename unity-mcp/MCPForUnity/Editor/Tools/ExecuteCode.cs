@@ -158,11 +158,22 @@ namespace MCPForUnity.Editor.Tools
                 return new ErrorResponse($"Invalid history index. Valid range: 0-{_history.Count - 1}");
 
             var entry = _history[index.Value];
+            // Çağıran `safety_checks` gönderdiyse ONUN dediği geçerli; geçmişteki
+            // değer yalnız hiç gönderilmediğinde kullanılır ve o durumda da
+            // güvenli tarafa (açık) düşülür.
+            //
+            // Eskiden koşulsuz `entry.safetyChecksEnabled` alınıyordu: bir kez
+            // `safety_checks=false` ile koşan kod, sonraki her replay'de sessizce
+            // yine kontrolsüz koşuyordu. Onay kartı da bunu gösteremiyordu, çünkü
+            // kart yalnız gönderilen parametreleri yazıyor — kullanıcı
+            // `action: replay, index: 3` görüp kontrollerin kapalı olduğunu
+            // bilemiyordu. Miras alınan bir izin, verilmemiş bir izindir.
+            bool replaySafety = @params["safety_checks"]?.Value<bool>() ?? true;
             var replayParams = JObject.FromObject(new
             {
                 action = ActionExecute,
                 code = entry.code,
-                safety_checks = entry.safetyChecksEnabled,
+                safety_checks = replaySafety,
             });
             return await HandleExecute(replayParams);
         }
@@ -364,7 +375,14 @@ namespace MCPForUnity.Editor.Tools
             foreach (var pattern in _blockedPatterns)
             {
                 if (code.IndexOf(pattern, StringComparison.OrdinalIgnoreCase) >= 0)
-                    return $"Code contains blocked pattern: '{pattern}'. Disable safety checks with safety_checks=false if this is intentional.";
+                    // Mesaj bypass'ı ARTIK ÖĞRETMİYOR. Eski hâli
+                    // "Disable safety checks with safety_checks=false if this is
+                    // intentional" diyordu: engellenen bir deseni gören modele,
+                    // aynı yanıtta engeli kaldırmanın tam parametresi veriliyordu.
+                    // Bir savunmanın hata metni, o savunmanın kullanım kılavuzu
+                    // olmamalı. Bayrak hâlâ var (kullanıcı bilinçli olarak
+                    // kapatabilir) ama artık öneri olarak sunulmuyor.
+                    return $"Code contains blocked pattern: '{pattern}'. Rewrite the code without it, or ask the user to allow this explicitly.";
             }
             return null;
         }

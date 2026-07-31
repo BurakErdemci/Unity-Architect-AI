@@ -533,6 +533,26 @@ def create_mcp_server(project_scoped_tools: bool) -> FastMCP:
                 if not command_type:
                     return JSONResponse({"success": False, "error": "Missing 'type' field"}, status_code=400)
 
+                # ── Onay kapısı (K1 ADIM 4) ─────────────────────────────────
+                # Bu rota `on_call_tool` middleware'ine UĞRAMIYOR ve keyfi bir
+                # `command_type`'ı Unity'ye yolluyor — `execute_code` dahil.
+                # Kapıyı yalnız MCP yoluna koymak, kapıyı `curl` ile atlatmak
+                # demekti: upstream'in kendi belgesi bunu üçüncü katman olarak
+                # ilan ediyor (*"CLI commands call Unity via HTTP; both route to
+                # the same C# HandleCommand methods"*).
+                #
+                # Paylaşılan sır burada YETMİYOR: o sır rotayı bir kimliğe
+                # bağlıyor ama kullanıcıya bir şey SORMUYOR, ve kapının varlık
+                # sebebi tam olarak "kullanıcı habersizken proje değişmesin".
+                from transport.approval_gate import ApprovalDenied, kapiyi_gec, urun_bakim_cagrisi_mi
+                if not urun_bakim_cagrisi_mi(request):
+                    try:
+                        await kapiyi_gec(command_type, params if isinstance(params, dict) else {})
+                    except ApprovalDenied as red:
+                        return JSONResponse(
+                            {"success": False, "error": str(red)}, status_code=403
+                        )
+
                 # Get available sessions
                 sessions = await PluginHub.get_sessions()
                 if not sessions.sessions:

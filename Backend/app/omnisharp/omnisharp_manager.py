@@ -461,6 +461,13 @@ class OmniSharpManager:
                 "http://localhost:8080/api/command", method="POST",
                 data=b'{"type": "manage_editor", "params": {"action": "sync_csproj"}}',
                 headers={"Content-Type": "application/json",
+                         # Köken işareti: bu çağrı MODELDEN değil ürünün kendi
+                         # bakımından geliyor, yani onay kartı çıkarmamalı
+                         # (K1 ADIM 4). Rotanın paylaşılan sırrı bu ayrımı
+                         # yapamıyor — o sır `unity-mcp` CLI'ında da var.
+                         # ⚠️ Güvenlik sınırı değil köken işareti; gerekçesi
+                         # `approval_gate.urun_bakim_cagrisi_mi`'de.
+                         "X-UnityAI-Maintenance": os.environ.get("LOCAL_APP_TOKEN", ""),
                          **unity_mcp_manager.api_headers()})
             with urllib.request.urlopen(req, timeout=60) as resp:
                 body = json.loads(resp.read().decode("utf-8", "replace"))

@@ -73,6 +73,14 @@ async def execute_code(
         if index is None:
             return {"success": False, "message": "Parameter 'index' is required for 'replay' action."}
         params_dict["index"] = index
+        # `safety_checks` replay'de de AÇIKÇA gönderiliyor. Eskiden gönderilmiyordu
+        # ve C# tarafı geçmişteki değeri miras alıyordu (`ExecuteCode.cs`
+        # `HandleReplay` → `entry.safetyChecksEnabled`): bir kez `false` ile
+        # koşan kod, sonraki her replay'de sessizce yine kontrolsüz koşuyordu.
+        # Onay kartı da bunu gösteremiyordu, çünkü kart yalnız gönderilen
+        # parametreleri yazıyor — kullanıcı `action: replay, index: 3` görüp
+        # güvenlik kontrollerinin kapalı olduğunu BİLEMİYORDU.
+        params_dict["safety_checks"] = safety_checks
     elif action == "get_history":
         params_dict["limit"] = max(1, min(limit, 50))
 

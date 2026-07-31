@@ -158,6 +158,51 @@ async def _hemen(_saniye):
     return None
 
 
+# ── ADIM 4: /api/command'ın köken işareti ───────────────────────────────────
+
+
+class _SahteIstek:
+    def __init__(self, basliklar):
+        self.headers = basliklar
+
+
+def test_bakim_isareti_ancak_TAM_eslesince_muaf(monkeypatch):
+    """`/api/command` kapıya uğruyor; yalnız ürünün kendi bakımı muaf.
+
+    Rotanın kendi paylaşılan sırrı bu ayrımı YAPAMIYOR — o sır `unity-mcp`
+    CLI'ında da var. `LOCAL_APP_TOKEN` ürünün backend oturum sırrı, yani
+    "bu çağrı üründen geldi" sorusuna cevap veren tek işaret.
+    """
+    monkeypatch.setenv("LOCAL_APP_TOKEN", "gizli-deger")
+    assert approval_gate.urun_bakim_cagrisi_mi(
+        _SahteIstek({"X-UnityAI-Maintenance": "gizli-deger"})) is True
+    assert approval_gate.urun_bakim_cagrisi_mi(
+        _SahteIstek({"X-UnityAI-Maintenance": "yanlis"})) is False
+    assert approval_gate.urun_bakim_cagrisi_mi(_SahteIstek({})) is False
+
+
+def test_bakim_isareti_BOS_token_ile_kimseyi_muaf_yapmiyor(monkeypatch):
+    """Fail-CLOSED. Boş dize eşleşmesi, başlığı boş gönderen HERKESİ muaf yapardı
+    — yani kapı token'ı olmayan bir kurulumda tamamen açılırdı."""
+    monkeypatch.setenv("LOCAL_APP_TOKEN", "")
+    assert approval_gate.urun_bakim_cagrisi_mi(
+        _SahteIstek({"X-UnityAI-Maintenance": ""})) is False
+    assert approval_gate.urun_bakim_cagrisi_mi(
+        _SahteIstek({"X-UnityAI-Maintenance": "her ne"})) is False
+
+
+def test_bakim_isareti_baslik_okunamazsa_muaf_DEGIL(monkeypatch):
+    """Ölçemediğimiz durum kabule değil kapıya dönüşmeli."""
+    monkeypatch.setenv("LOCAL_APP_TOKEN", "gizli-deger")
+
+    class _Patlayan:
+        @property
+        def headers(self):
+            raise RuntimeError("başlık okunamıyor")
+
+    assert approval_gate.urun_bakim_cagrisi_mi(_Patlayan()) is False
+
+
 # ── bütçe: sayıya değil DUVAR SAATİNE bağlı ─────────────────────────────────
 
 

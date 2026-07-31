@@ -161,4 +161,28 @@ def test_replay_omits_irrelevant_params(mock_unity):
     asyncio.run(execute_code(SimpleNamespace(), action="replay", index=0))
     assert "code" not in mock_unity["params"]
     assert "limit" not in mock_unity["params"]
-    assert "safety_checks" not in mock_unity["params"]
+
+
+# --- replay MUST carry safety_checks (K1 ADIM 5) ---
+#
+# This file previously asserted the opposite: that replay omits safety_checks.
+# That assertion encoded the flaw. With it omitted, the C# side fell back to the
+# value stored in history (`ExecuteCode.cs` HandleReplay -> entry.safetyChecksEnabled),
+# so code that once ran with checks disabled kept running that way on every
+# later replay - silently. The approval card could not show it either, because
+# the card lists the parameters that are sent: the user saw `action: replay,
+# index: 3` and had no way to know the checks were off.
+#
+# An inherited permission is a permission nobody granted.
+
+
+def test_replay_sends_safety_checks_explicitly(mock_unity):
+    asyncio.run(execute_code(SimpleNamespace(), action="replay", index=0))
+    assert mock_unity["params"]["safety_checks"] is True
+
+
+def test_replay_forwards_an_explicit_opt_out(mock_unity):
+    """The flag still works - it is now visible rather than inherited."""
+    asyncio.run(execute_code(
+        SimpleNamespace(), action="replay", index=0, safety_checks=False))
+    assert mock_unity["params"]["safety_checks"] is False

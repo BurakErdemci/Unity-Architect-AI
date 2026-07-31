@@ -165,6 +165,40 @@ async def _onay_iste(tool_name: str, params: Mapping[str, Any]) -> dict:
     }
 
 
+_BAKIM_BASLIGI = "X-UnityAI-Maintenance"
+
+
+def urun_bakim_cagrisi_mi(request: Any) -> bool:
+    """İstek, MODELİN değil ÜRÜNÜN kendi bakım işi mi?
+
+    Kapının varlık sebebi *"kullanıcı habersizken proje değişmesin"*. Ürünün
+    kendi bakım çağrısı (bugün tek örnek: workspace açılırken `manage_editor
+    sync_csproj`) model kaynaklı değil — onu kartla sormak, kullanıcıya kendi
+    tıklamasının sonucunu onaylatmak olurdu ve refleks-onaya alıştırırdı.
+
+    İşaret `LOCAL_APP_TOKEN`: ürünün backend oturum sırrı. Seçilme sebebi
+    `/api/command`'ın kendi paylaşılan sırrının YETMEMESİ — o sır `unity-mcp`
+    CLI'ında da var, yani "bu çağrı üründen geldi" sorusunu ayırt etmiyor.
+
+    ⚠️ Bunun NE OLMADIĞI yazılı olsun: bu bir güvenlik sınırı DEĞİL, bir KÖKEN
+    işareti. Sırrı okuyabilen yerel bir süreç onu taklit edebilir — ama aynı
+    süreç zaten backend'in `/mcp-approval-respond` ucuna gidip kendi kartını
+    onaylayabilir, yani bu işaret yeni bir zayıflık AÇMIYOR. Tek kullanıcılı
+    yerel bir makinede sırrı okuyabilmek ile kontrol sahibi olmak aynı şey.
+
+    Token yoksa hiçbir istek bakım sayılmaz (fail-CLOSED): boş dize eşleşmesi,
+    başlığı boş gönderen herkesi muaf yapardı.
+    """
+    token = os.environ.get("LOCAL_APP_TOKEN", "")
+    if not token:
+        return False
+    try:
+        gelen = request.headers.get(_BAKIM_BASLIGI, "")
+    except Exception:
+        return False
+    return bool(gelen) and gelen == token
+
+
 async def kapiyi_gec(tool_name: str, params: Mapping[str, Any] | None) -> None:
     """Yazma ise onay ister; onay yoksa `ApprovalDenied` fırlatır.
 
