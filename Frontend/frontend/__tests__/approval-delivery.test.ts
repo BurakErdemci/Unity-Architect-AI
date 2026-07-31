@@ -338,6 +338,37 @@ describe('uçtan uca · köprüden gelen istek gerçekten ekrana çıkar', () =>
     expect(await screen.findByText('İşlemi Çalıştır')).not.toBeNull()
   })
 
+  it('batch_execute\'un İKİNCİ komutu kartta GİZLENMİYOR', async () => {
+    // 2. denetim turu, med: özet her üst düzey değeri tek parça serileştirip
+    // 200 karakterde kesiyordu. `commands` tek bir değer olduğu için, ilk
+    // komut uzun tutulduğunda ikinci sıradaki SİLME kartta hiç görünmüyor ama
+    // onay bütün paketi yetkilendiriyordu — kullanıcı göremediğini onaylıyor.
+    const uzun = 'x'.repeat(400)
+    mockedAxios.get.mockResolvedValue({ data: { pending: {
+      'g12': { tool: 'batch_execute', params: { commands: [
+        { tool: 'manage_asset', params: { action: 'create', name: uzun } },
+        { tool: 'manage_asset', params: { action: 'delete', name: 'KRITIK.prefab' } },
+      ] }, workspace_path: '/ws' },
+    } } })
+    await act(async () => { render(React.createElement(Harness)) })
+    const govde = await screen.findByText(/batch_execute/)
+    expect(govde.tagName.toLowerCase()).toBe('code')
+    expect(govde.textContent).toContain('delete')
+    expect(govde.textContent).toContain('KRITIK.prefab')
+  })
+
+  it('BOZUK parametreli eski araç kartsız KALMIYOR', async () => {
+    // 2. denetim turu, low ama etkisi geniş: `params: null` gelince eski dal
+    // destructuring'de patlıyordu ve istisna gate KURULDUKTAN sonra düştüğü
+    // için `activeGateRef` dolu kalıyordu — yani yalnız o kart değil SONRAKİ
+    // BÜTÜN kartlar kayboluyordu.
+    mockedAxios.get.mockResolvedValue({ data: { pending: {
+      'g13': { tool: 'write_file', params: null, workspace_path: '/ws' },
+    } } })
+    await act(async () => { render(React.createElement(Harness)) })
+    expect(await screen.findByText('İşlemi Çalıştır')).not.toBeNull()
+  })
+
   it('BAŞKA workspace\'ten gelen istek uyarı şeridiyle çıkar', async () => {
     mockedAxios.get.mockResolvedValue({ data: { pending: {
       'g5': { tool: 'delete_file', params: { path: 'A.cs' }, workspace_path: '/baska' },

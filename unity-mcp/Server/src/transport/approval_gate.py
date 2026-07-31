@@ -98,7 +98,13 @@ async def _onay_iste(tool_name: str, params: Mapping[str, Any]) -> dict:
     while time.monotonic() < bitis:
         deneme += 1
         try:
-            async with httpx.AsyncClient(timeout=8.0) as client:
+            # Zaman aşımı KALAN bütçeye kırpılıyor. Sınır tek başına yalnız yeni
+            # bir denemenin BAŞLAMASINI engelliyordu; süren deneme kendi 8 sn'sini
+            # harcayabildiği için "10 sn" fiilen ~18 sn olabiliyordu (denetim
+            # bulgusu, 31 Tem 2026). 0,5 sn taban: sıfır zaman aşımı isteği
+            # anında öldürür ve bütçenin son dilimini boşa harcardı.
+            kalan = max(0.5, bitis - time.monotonic())
+            async with httpx.AsyncClient(timeout=min(8.0, kalan)) as client:
                 resp = await client.post(
                     f"{_BACKEND_URL}/mcp-approval-request",
                     json=govde,

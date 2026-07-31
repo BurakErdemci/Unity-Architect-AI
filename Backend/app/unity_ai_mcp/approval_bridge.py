@@ -9,6 +9,7 @@ Akış:
 import uuid
 import asyncio
 import logging
+import time
 import httpx
 from typing import Any
 
@@ -95,21 +96,35 @@ async def request_approval(
         )
         return immediate_result
 
-    # Kullanıcı cevabını bekle — 360 × 0.5s = 180 saniye (diff incelemek için makul süre)
+    # Kullanıcı cevabını bekle — bütçe DUVAR SAATİNE bağlı, deneme sayısına
+    # değil. Eskiden `for i in range(360)` idi ve "180 sn" diye yazılıydı; ama
+    # her tur 0,5 sn uykuya EK olarak 5 sn'ye kadar HTTP zaman aşımı
+    # harcayabildiği için, bağlantıyı kabul edip yanıt vermeyen bir backend'de
+    # 360 × 5,5 ≈ 1980 sn (33 dakika) sürüyordu — ve o sürede çağrıyı bekleyen
+    # asistan turu da kilitli kalıyordu. Ölçüm ve sınıf denetim turundan
+    # (31 Tem 2026); kardeş istemci `unity-mcp/Server/src/transport/
+    # approval_gate.py` aynı anda aynı şekilde düzeltildi. İkisinin bütçesi
+    # BİLEREK aynı: aynı kartı bekleyen iki istemciden birinin erken pes etmesi,
+    # kartın bir tarafta yaşayıp diğerinde ölmesi demek.
+    _BEKLEME_BUTCESI = 180.0
     logger.info(f"[approval_bridge] Kullanıcı cevabı bekleniyor (gate: {gate_id})")
-    for i in range(360):
+    bitis = time.monotonic() + _BEKLEME_BUTCESI
+    i = 0
+    while time.monotonic() < bitis:
+        i += 1
         await asyncio.sleep(0.5)
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
+            kalan = max(0.5, bitis - time.monotonic())
+            async with httpx.AsyncClient(timeout=min(5.0, kalan)) as client:
                 res = await client.get(f"{BACKEND_URL}/mcp-approval-result/{gate_id}", headers=_get_headers())
                 data = res.json()
                 if data.get("status") != "pending":
                     logger.info(f"[approval_bridge] Cevap alındı: {data}")
                     return data
         except Exception as e:
-            if i % 10 == 0:  # Her 5 saniyede bir logla
+            if i % 10 == 1:  # Her ~5 saniyede bir logla
                 logger.warning(f"[approval_bridge] Polling hatası: {e}")
             continue
 
     logger.warning(f"[approval_bridge] Zaman aşımı (gate: {gate_id})")
-    return {"approved": False, "error": "Zaman aşımı (180s)"}
+    return {"approved": False, "error": f"Zaman aşımı ({int(_BEKLEME_BUTCESI)}s)"}

@@ -108,15 +108,55 @@ const POLL_FAILURE_ALERT_AFTER = 5;
  * bloğu taşıyabiliyor ve kırpılmamış hali kartı ekrandan taşırır — okunamayan
  * bir kart, okunmadan onaylanan bir karttır.
  */
+/** Özet ÖZYİNELİYOR — ve sebebi bir denetim bulgusu (31 Tem 2026, med).
+ *
+ * İlk yazımı her üst düzey değeri TEK PARÇA serileştirip 200 karakterde
+ * kesiyordu. `batch_execute`'ta bütün alt komutlar tek bir `commands` değeri
+ * olduğu için, ilk komut uzun tutulduğunda ikinci sıradaki bir SİLME işlemi
+ * kartta hiç görünmüyordu — ama onay bütün paketi yetkilendiriyordu. Yani
+ * kullanıcı göremediği bir şeyi onaylıyordu ve kartın varlık sebebi ortadan
+ * kalkıyordu.
+ *
+ * Kırpma artık YAPRAK başına. Satır sınırına ulaşılırsa gizlenen alan sayısı
+ * kartta AÇIKÇA yazılıyor: sessiz kırpma, kırpmanın kendisinden tehlikeli. */
+const OZET_SATIR_SINIRI = 200;
+const OZET_DEGER_SINIRI = 200;
+const OZET_DERINLIK_SINIRI = 6;
+
 export const unityOzeti = (tool: string, params: any): string => {
-  const satirlar = Object.entries(params || {})
+  const satirlar: string[] = [];
+  let atlanan = 0;
+
+  const yaz = (onek: string, deger: any, derinlik: number): void => {
+    if (satirlar.length >= OZET_SATIR_SINIRI) { atlanan += 1; return; }
+    const nesne = deger !== null && typeof deger === 'object';
+    if (nesne && derinlik < OZET_DERINLIK_SINIRI) {
+      const girdiler: Array<[string, any]> = Array.isArray(deger)
+        ? deger.map((v, i) => [String(i), v])
+        : Object.entries(deger);
+      if (girdiler.length === 0) { satirlar.push(`${onek}: (boş)`); return; }
+      for (const [anahtar, alt] of girdiler) {
+        yaz(onek ? `${onek}.${anahtar}` : anahtar, alt, derinlik + 1);
+      }
+      return;
+    }
+    const metin = typeof deger === 'string' ? deger : JSON.stringify(deger);
+    const guvenli = metin === undefined ? 'undefined' : String(metin);
+    const kisa = guvenli.length > OZET_DEGER_SINIRI
+      ? `${guvenli.slice(0, OZET_DEGER_SINIRI)}…`
+      : guvenli;
+    satirlar.push(`${onek}: ${kisa}`);
+  };
+
+  const kok = params && typeof params === 'object' ? Object.entries(params) : [];
+  for (const [anahtar, deger] of kok) {
     // `unity_instance` yönlendirme detayı, kullanıcının kararına girmiyor.
-    .filter(([anahtar]) => anahtar !== 'unity_instance')
-    .map(([anahtar, deger]) => {
-      const metin = typeof deger === 'string' ? deger : JSON.stringify(deger);
-      const kisa = metin && metin.length > 200 ? `${metin.slice(0, 200)}…` : metin;
-      return `${anahtar}: ${kisa}`;
-    });
+    if (anahtar === 'unity_instance') continue;
+    yaz(anahtar, deger, 0);
+  }
+  if (atlanan > 0) {
+    satirlar.push(`… ${atlanan} alan daha gösterilmedi — kart sınırına ulaşıldı`);
+  }
   return satirlar.length ? `${tool}\n${satirlar.join('\n')}` : tool;
 };
 
@@ -237,7 +277,19 @@ export const useMCPApproval = ({
       activeGateRef.current = gate;
       setActiveGate(gate);
 
-      if (tool === 'write_file') {
+      // Eski üç kart PARAMETRE ŞEKLİNE bağlı: `params` bir nesne değilse
+      // destructuring, `path` dize değilse `path.split` istisna atıyor. Ve
+      // istisna gate KURULDUKTAN sonra düştüğü için `activeGateRef` dolu
+      // kalıyor, yani yalnız o kart değil SONRAKİ BÜTÜN kartlar kayboluyordu
+      // (denetim bulgusu, 31 Tem 2026). Şekli önceden ölçüp uymayanı genel
+      // karta düşürmek, kartsız kalmaktan her durumda iyidir.
+      const yuk = params && typeof params === 'object' ? params : {};
+      const eskiKartCizilebilir =
+        (tool === 'write_file' && typeof yuk.path === 'string') ||
+        (tool === 'delete_file' && typeof yuk.path === 'string') ||
+        (tool === 'bash' && typeof yuk.command === 'string');
+
+      if (tool === 'write_file' && eskiKartCizilebilir) {
         const { path, content, original } = params;
         if (!original) {
           // Yeni dosya → FileCreationApproval
@@ -264,10 +316,10 @@ export const useMCPApproval = ({
             gateId,
           });
         }
-      } else if (tool === 'delete_file') {
+      } else if (tool === 'delete_file' && eskiKartCizilebilir) {
         clearActiveCardRef.current = () => setPendingDelete(null);
         setPendingDelete({ path: params.path, messageId: MCP_MSG_ID });
-      } else if (tool === 'bash') {
+      } else if (tool === 'bash' && eskiKartCizilebilir) {
         clearActiveCardRef.current = () => setPendingCommand(null);
         setPendingCommand({ command: params.command, gateId, messageId: MCP_MSG_ID });
       } else {
