@@ -212,6 +212,7 @@ class TestUnityInstanceMiddlewareSessionManagement:
 # MIDDLEWARE INJECTION & CONTEXT FLOW TESTS
 # ============================================================================
 
+@pytest.mark.usefixtures("onay_kapisi_devre_disi")
 class TestUnityInstanceMiddlewareInjection:
     """Test middleware injection of instance into context state."""
 

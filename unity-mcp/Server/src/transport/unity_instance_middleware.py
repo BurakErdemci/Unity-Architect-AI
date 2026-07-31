@@ -412,7 +412,40 @@ class UnityInstanceMiddleware(Middleware):
     async def on_call_tool(self, context: MiddlewareContext, call_next):
         """Inject active Unity instance into tool context if available."""
         await self._inject_unity_instance(context)
+        await self._require_approval(context)
         return await call_next(context)
+
+    async def _require_approval(self, context: MiddlewareContext) -> None:
+        """Mutasyon araçları kullanıcı onayından geçmeden Unity'ye ulaşmaz.
+
+        Buraya konmasının sebebi ölçüldü: MCP trafiğinin TAMAMI bu noktadan
+        geçiyor, dinamik custom tool'lar dahil, ve 9 sağlayıcının 9'u da aynı
+        uca gidiyor. Sağlayıcı bayraklarını tek tek kapatmak (Cursor `--trust`,
+        Copilot `--allow-tool`, Codex `approval_mode="approve"`) altı ayrı yerde
+        aynı kapıyı kurmak olurdu ve biri unutulduğunda sessizce açılırdı.
+
+        Sıra önemli: `_inject_unity_instance`'DAN SONRA, `call_next`'ten ÖNCE.
+        Enjeksiyon `unity_instance` argümanını mesajdan `pop` ediyor, yani kapı
+        onun ardından çalışınca kullanıcıya gösterilen parametreler Unity'ye
+        gerçekten gidecek olanlarla aynı oluyor — denetlenen ile çalıştırılanın
+        ayrışması bu depoda daha önce gerçek bir bulgu üretti.
+        """
+        mesaj = getattr(context, "message", None)
+        tool_name = getattr(mesaj, "name", None)
+        if not tool_name:
+            # Adı okunamayan bir çağrıyı sınıflandıramayız. Kütük fail-closed
+            # olduğu için burada da fail-closed davranmak tutarlı olurdu, ama
+            # bu dal yalnız MCP mesaj şekli değiştiğinde oluşur ve o durumda
+            # bütün araçları kilitlemek ürünü çalışmaz hale getirir. Gürültülü
+            # bırakıp geçiyoruz: sessiz kalmak, kapının kaybolduğunu gizlerdi.
+            _diag.error(
+                "on_call_tool: araç adı okunamadı (message=%r) — onay kapısı bu "
+                "çağrı için ÇALIŞMADI.", type(mesaj).__name__,
+            )
+            return
+        params = getattr(mesaj, "arguments", None)
+        from transport.approval_gate import kapiyi_gec
+        await kapiyi_gec(tool_name, params if isinstance(params, dict) else {})
 
     async def on_read_resource(self, context: MiddlewareContext, call_next):
         """Inject active Unity instance into resource context if available."""

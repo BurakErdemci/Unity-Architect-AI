@@ -254,6 +254,27 @@ class AgentRunner:
         return ("".join(blocks) + "\n" + user_message) if blocks else user_message
 
     async def run(self, user_message: str) -> AsyncGenerator[AgentEvent, None]:
+        """Turun MODUNU kaydeder, sonra asıl döngüyü çalıştırır.
+
+        Neden ince bir sarmalayıcı: unityMCP onay kapısı (K1) ayrı bir süreçte
+        ve tur anahtarını taşıyamıyor, dolayısıyla "şu an Auto turu koşuyor mu"
+        sorusuna backend'in cevap verebilmesi gerekiyor. Kayıt tek bir yerde
+        duruyor çünkü sağlayıcı başına kaydetmek (bugün yalnız OpenCode'da
+        olduğu gibi) diğer sekiz yolu sessizce dışarıda bırakırdı.
+
+        `with` bilerek: `run` bir async generator ve tüketici onu erken
+        kapatabiliyor (kullanıcı "Durdur"a bastığında oluyor). `try/finally`
+        yerine bağlam yöneticisi, istisna ve generator kapanışının ikisinde de
+        sayacı düşürüyor — açık kalan bir sayaç, tur bittikten sonra da
+        oto-onay veren bir pencere demekti.
+        """
+        from agentic.approval_policy import ambient_turn
+        with ambient_turn(self.workspace_path or ".",
+                          getattr(self, "generation_mode", "auto")):
+            async for _event in self._run_inner(user_message):
+                yield _event
+
+    async def _run_inner(self, user_message: str) -> AsyncGenerator[AgentEvent, None]:
         """
         Agentic loop'u çalıştırır. Her adımda AgentEvent yield eder.
         """

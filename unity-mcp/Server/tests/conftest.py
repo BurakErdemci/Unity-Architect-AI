@@ -85,3 +85,24 @@ def restore_global_config():
 
     for key, value in prior.items():
         setattr(global_config, key, value)
+
+
+@pytest.fixture
+def onay_kapisi_devre_disi(monkeypatch):
+    """Onay kapısını yalnız bu testin süresince kapatır.
+
+    Neden AÇIKÇA istenen bir fixture, `autouse` DEĞİL: kapıyı bütün suite için
+    otomatik kapatan bir anahtar, kapı bir gün kaybolduğunda hiçbir testi
+    kırmazdı — yani sahte yeşil üretirdi. Bunu isteyen test, kapıyı değil
+    Unity instance ENJEKSİYONUNU ölçtüğünü beyan etmiş oluyor; kapının kendi
+    ölçümü `test_approval_gate.py`'de.
+
+    Patch modül niteliğine yapılıyor çünkü middleware `kapiyi_gec`'i çağrı
+    anında import ediyor (geç import, döngüsel bağımlılığı da önlüyor).
+    """
+    from transport import approval_gate
+
+    async def _gec(_tool, _params):
+        return None
+
+    monkeypatch.setattr(approval_gate, "kapiyi_gec", _gec)

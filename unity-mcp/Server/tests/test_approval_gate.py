@@ -1,0 +1,238 @@
+"""Onay kapısının kendisi — K1'in boğazı.
+
+⚠️ Bu suite CI'DA KOŞMUYOR (`.github/workflows/test.yml` üç ayak taşıyor:
+backend, frontend, PowerShell). Ölçülmüş bir risk, bu dosyaya özgü değil: aynı
+şey kütüğü koruyan 6 tripwire için de geçerli. Elle ateşlenmesi gerekiyor:
+
+    PYTHONPATH=unity-mcp/Server/src Backend/venv/Scripts/python.exe -m pytest \
+        unity-mcp/Server/tests/test_approval_gate.py
+
+Testlerin hepsi ağ ÇAĞIRMADAN koşuyor: `_onay_iste` taklit ediliyor, çünkü
+ölçülmek istenen şey HTTP değil KARARIN kendisi — hangi çağrı kapıya uğruyor,
+uğrayan reddedilince ne oluyor.
+"""
+
+import asyncio
+import sys
+from pathlib import Path
+
+import pytest
+
+_SRC = Path(__file__).resolve().parents[1] / "src"
+if str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
+
+from transport import approval_gate  # noqa: E402
+from transport.approval_gate import ApprovalDenied, kapiyi_gec  # noqa: E402
+
+
+def _kos(coro):
+    return asyncio.run(coro)
+
+
+@pytest.fixture
+def sorulanlar(monkeypatch):
+    """Kapının backend'e sorduğu her çağrıyı kaydeder; hep ONAY döner."""
+    kayit = []
+
+    async def sahte(tool_name, params):
+        kayit.append((tool_name, dict(params)))
+        return {"approved": True}
+
+    monkeypatch.setattr(approval_gate, "_onay_iste", sahte)
+    return kayit
+
+
+@pytest.fixture
+def reddet(monkeypatch):
+    async def sahte(tool_name, params):
+        return {"approved": False, "error": "sınama reddi"}
+
+    monkeypatch.setattr(approval_gate, "_onay_iste", sahte)
+
+
+# ── kapıya kimin uğradığı ────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("tool,params", [
+    ("read_console", {"action": "get"}),
+    ("manage_packages", {"action": "list_packages"}),
+    ("manage_material", {"action": "ping"}),
+])
+def test_OKUMA_kapiya_hic_ugramiyor(tool, params, sorulanlar):
+    """Keşif araçları her turda çağrılıyor; onlara ağ maliyeti bindirmek kapıyı
+    kullanıcının kapatmak isteyeceği bir şeye çevirirdi."""
+    _kos(kapiyi_gec(tool, params))
+    assert sorulanlar == [], f"{tool} okuma olduğu halde onay istendi"
+
+
+def test_preflight_REFRESH_yapan_okumalar_da_onay_istiyor(sorulanlar):
+    """`manage_scene get_hierarchy` okuma GİBİ görünüyor ama kart çıkarıyor.
+
+    Bu bir kusur değil, kullanıcının 29 Tem kararı: 8 araç koşulsuz
+    `preflight(refresh_if_dirty=True)` çağırıyor, yani proje dışarıdan kirliyse
+    asset import + script derlemesi + muhtemel domain reload aracın KENDİ
+    işinden ÖNCE koşuyor — okuma action'larında bile.
+
+    > *"Read çağrısının doğru çalışması ama bunun kartla gelmesi gerek adım
+    >  adım modda böyle bir çözüm lazım"*
+
+    Kabul edilmiş bedel: en sık çağrılan keşif aracı artık her turda kart
+    çıkarıyor. Test bunu SABİTLİYOR — biri "okuma neden kart çıkarıyor" deyip
+    kütüğü gevşetirse bu kırmızı olur ve kararı hatırlatır.
+    """
+    _kos(kapiyi_gec("manage_scene", {"action": "get_hierarchy"}))
+    assert [t for t, _ in sorulanlar] == ["manage_scene"]
+
+
+@pytest.mark.parametrize("tool,params", [
+    ("manage_gameobject", {"action": "create"}),
+    ("execute_code", {"code": "x"}),
+    ("read_console", {"action": "clear"}),   # aynı araç, action'a göre YAZMA
+])
+def test_YAZMA_onaydan_geciyor(tool, params, sorulanlar):
+    _kos(kapiyi_gec(tool, params))
+    assert [t for t, _ in sorulanlar] == [tool]
+
+
+def test_BILINMEYEN_arac_yazma_sayiliyor(sorulanlar):
+    """Kütük fail-closed: yeni bir araç eklenip kütüğe yazılmazsa kapı ISIRIR.
+
+    Ters kurulmuş olsaydı (bilinmeyen → okuma) kütüğe eklenmeyi unutulan her
+    araç sessizce kapısız kalırdı — kapının en olası sessiz açılma yolu bu.
+    """
+    _kos(kapiyi_gec("uydurma_arac_xyz", {"action": "her ne"}))
+    assert [t for t, _ in sorulanlar] == ["uydurma_arac_xyz"]
+
+
+def test_batch_execute_IC_cagriyi_gorup_onay_istiyor(sorulanlar):
+    """Dış ada bakan bir kapı, tüm mutasyonların tek pakette geçmesine izin verir."""
+    _kos(kapiyi_gec("batch_execute", {
+        "commands": [{"tool": "manage_gameobject", "params": {"action": "create"}}]
+    }))
+    assert [t for t, _ in sorulanlar] == ["batch_execute"]
+
+
+# ── reddin sonucu ────────────────────────────────────────────────────────────
+
+
+def test_RED_cagriyi_durduruyor(reddet):
+    """Kapının tek işi bu: reddedilen çağrı Unity'ye ULAŞMAMALI.
+
+    `kapiyi_gec` `call_next`'ten ÖNCE çağrıldığı için fırlatan bir istisna
+    çağrıyı gerçekten iptal ediyor; sessizce `False` dönmek onu geçirirdi.
+    """
+    with pytest.raises(ApprovalDenied) as e:
+        _kos(kapiyi_gec("manage_gameobject", {"action": "delete"}))
+    assert "manage_gameobject" in str(e.value)
+    assert "sınama reddi" in str(e.value)
+
+
+def test_backend_ULASILAMAZSA_reddediliyor(monkeypatch):
+    """Fail-CLOSED: ürün kapalıyken mutasyon geçmez, okuma çalışmaya devam eder.
+
+    Kullanıcı kararı (29 Tem): reddedilen alternatif *"ürün yoksa kapıyı hiç
+    kurma"* idi — o, güvenlik sınırını "uygulama açık mı" sorusuna bağlar ve
+    kapı "ürünü kapat" denerek atlatılır.
+    """
+    def hep_patla(*a, **k):
+        # `async def` DEĞİL: `async with httpx.AsyncClient(...)` çağrının
+        # DÖNÜŞÜNÜ bağlam yöneticisi olarak kullanıyor, coroutine'i değil.
+        # İlk yazımı async'ti ve testi yanlış sebeple geçirdi.
+        raise OSError("bağlantı yok")
+
+    monkeypatch.setattr(approval_gate.httpx, "AsyncClient", hep_patla)
+    monkeypatch.setattr(approval_gate.asyncio, "sleep", _hemen)
+
+    with pytest.raises(ApprovalDenied):
+        _kos(kapiyi_gec("manage_asset", {"action": "create"}))
+
+    # Aynı koşullarda OKUMA hâlâ çalışıyor — kapı ürünü kilitlemiyor.
+    _kos(kapiyi_gec("read_console", {"action": "get"}))
+
+
+async def _hemen(_saniye):
+    return None
+
+
+# ── kablolama: kapı VAR olmak yetmez, BAĞLI olmalı ──────────────────────────
+
+
+class _SahteMesaj:
+    def __init__(self, ad, args):
+        self.name = ad
+        self.arguments = args
+
+
+class _SahteBaglam:
+    def __init__(self, ad, args):
+        self.message = _SahteMesaj(ad, args)
+
+
+def _middleware(monkeypatch):
+    from transport.unity_instance_middleware import UnityInstanceMiddleware
+
+    mw = UnityInstanceMiddleware()
+
+    async def enjeksiyon_yok(_ctx):
+        return None
+
+    monkeypatch.setattr(mw, "_inject_unity_instance", enjeksiyon_yok)
+    return mw
+
+
+def test_middleware_kapiyi_GERCEKTEN_cagiriyor(monkeypatch):
+    """`on_call_tool`'dan kapı satırı silinirse bu test kırmızı olur.
+
+    Neden ayrı yazıldı: yukarıdaki testlerin hepsi `kapiyi_gec`'i DOĞRUDAN
+    çağırıyor, yani kapının mantığını ölçüyor, bağlı olup olmadığını değil.
+    Bu depoda tam o ayrım daha önce ölçüldü — kütük doğruydu ama kapı
+    kablolamasına uygulanan mutasyon 7 testi birden kırmıştı; kablolamasız
+    bir kütük hiçbir şey korumaz.
+    """
+    mw = _middleware(monkeypatch)
+
+    async def reddet(_tool, _params):
+        return {"approved": False, "error": "kablolama sınaması"}
+
+    monkeypatch.setattr(approval_gate, "_onay_iste", reddet)
+
+    ulasildi = []
+
+    async def call_next(_ctx):
+        ulasildi.append(True)
+        return "UNITY'YE ULAŞTI"
+
+    with pytest.raises(ApprovalDenied):
+        _kos(mw.on_call_tool(
+            _SahteBaglam("manage_gameobject", {"action": "create"}), call_next))
+    assert ulasildi == [], "kapı reddetti ama çağrı yine de Unity'ye gitti"
+
+
+def test_middleware_ONAYLANINCA_cagriyi_gecirıyor(monkeypatch):
+    """Ters yön — yoksa 'her şeyi reddet' diyen bir kapı da yukarıdakini geçerdi."""
+    mw = _middleware(monkeypatch)
+
+    async def onayla(_tool, _params):
+        return {"approved": True}
+
+    monkeypatch.setattr(approval_gate, "_onay_iste", onayla)
+
+    async def call_next(_ctx):
+        return "UNITY'YE ULAŞTI"
+
+    sonuc = _kos(mw.on_call_tool(
+        _SahteBaglam("manage_gameobject", {"action": "create"}), call_next))
+    assert sonuc == "UNITY'YE ULAŞTI"
+
+
+def test_token_YOKSA_da_kapi_calisiyor_ve_reddi_secer(monkeypatch):
+    """Sır ortamda yoksa çağrı kimliksiz gider ve backend'de reddedilir.
+
+    Sırrın ikinci bir okuyucusu BİLEREK yazılmadı: `local_token_file`'daki
+    bağ/junction/TOCTOU korumalarının sertleştirilmemiş bir kopyası olurdu.
+    Eksik token'ın kabule değil REDDE dönüşmesi o kararın bedeli ve burada
+    sabitleniyor.
+    """
+    monkeypatch.delenv("LOCAL_APP_TOKEN", raising=False)
+    assert approval_gate._headers() == {}

@@ -85,6 +85,7 @@ class TestInstanceRoutingBasics:
         assert await middleware.get_active_instance(ctx) == "Project@global"
 
 
+@pytest.mark.usefixtures("onay_kapisi_devre_disi")
 class TestInstanceRoutingIntegration:
     """Test that instance routing works end-to-end for all tool categories."""
 
@@ -292,6 +293,7 @@ class TestInstanceRoutingHTTP:
         assert "Name@hash" in result["error"]
 
 
+@pytest.mark.usefixtures("onay_kapisi_devre_disi")
 class TestInstanceRoutingRaceConditions:
     """Test for race conditions and timing issues."""
 
@@ -362,6 +364,7 @@ class TestInstanceRoutingRaceConditions:
             "create_script must route to the instance set by set_active_instance"
 
 
+@pytest.mark.usefixtures("onay_kapisi_devre_disi")
 class TestInstanceRoutingSequentialOperations:
     """Test the exact failure scenario from user report."""
 
