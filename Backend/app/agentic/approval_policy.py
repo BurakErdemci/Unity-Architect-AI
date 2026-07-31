@@ -80,6 +80,7 @@ def should_auto_approve(token: str | None, workspace_path: str) -> bool:
 # da düşüyor, yani "auto turu bitti ama sinyal açık kaldı" hali oluşmuyor.
 
 _AMBIENT_AUTO = 0
+_AMBIENT_TOPLAM = 0
 
 
 class ambient_turn:
@@ -88,27 +89,44 @@ class ambient_turn:
     Sayaç (bool değil) çünkü aynı anda birden fazla tur koşabiliyor: iç içe ya
     da paralel bir tur bittiğinde diğerininki hâlâ açık kalmalı. Bool olsaydı
     ilk biten, koşmaya devam eden turun sinyalini kapatırdı.
+
+    İKİ sayaç tutuluyor, biri değil — sebebi aşağıda `ambient_auto_approve`'da.
     """
 
     def __init__(self, workspace_path: str, generation_mode: str) -> None:
         self._auto = generation_mode == "auto"
 
     def __enter__(self) -> "ambient_turn":
-        global _AMBIENT_AUTO
-        if self._auto:
-            with _LOCK:
+        global _AMBIENT_AUTO, _AMBIENT_TOPLAM
+        with _LOCK:
+            _AMBIENT_TOPLAM += 1
+            if self._auto:
                 _AMBIENT_AUTO += 1
         return self
 
     def __exit__(self, *_exc) -> None:
-        global _AMBIENT_AUTO
-        if self._auto:
-            with _LOCK:
+        global _AMBIENT_AUTO, _AMBIENT_TOPLAM
+        with _LOCK:
+            _AMBIENT_TOPLAM = max(0, _AMBIENT_TOPLAM - 1)
+            if self._auto:
                 _AMBIENT_AUTO = max(0, _AMBIENT_AUTO - 1)
         return None
 
 
 def ambient_auto_approve() -> bool:
-    """Şu an Auto modda koşan en az bir tur var mı?"""
+    """Koşan turların HEPSİ Auto modda mı?
+
+    "En az biri" DEĞİL "hepsi" — ve fark bir açığı kapatıyor. İlk yazımı "en az
+    bir auto turu var mı" idi; o hâliyle aynı anda bir auto ve bir step turu
+    koşarken, STEP turunun mutasyonları da sessizce oto-onaylanırdı. Yani adım
+    modunun kapısı, kullanıcının başka bir sekmede başlattığı ilgisiz bir auto
+    turu yüzünden kaybolurdu — kapının varlık sebebini yok eden bir hal.
+
+    Kapı ayrı süreçte olduğu için çağrının HANGİ turdan geldiğini bilemiyoruz;
+    bilinemeyen bir şey hakkında en güvenli varsayım, koşanlardan herhangi biri
+    onay istiyorsa onay istemektir. Bedeli: auto turu koşarken açılan bir step
+    turu, auto turun kartlarını da geri getirir. Bu yön DOĞRU yön — fazladan
+    kart bir rahatsızlık, eksik kart bir açık.
+    """
     with _LOCK:
-        return _AMBIENT_AUTO > 0
+        return _AMBIENT_TOPLAM > 0 and _AMBIENT_AUTO == _AMBIENT_TOPLAM

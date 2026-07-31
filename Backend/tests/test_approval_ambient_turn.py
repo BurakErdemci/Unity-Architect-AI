@@ -24,11 +24,36 @@ from agentic.approval_policy import (
 
 @pytest.fixture(autouse=True)
 def temiz_sayac():
-    """Her test sıfırdan başlasın — sayaç modül düzeyinde ve testler sızdırır."""
+    """Her test sıfırdan başlasın — sayaçlar modül düzeyinde ve testler sızdırır."""
     import agentic.approval_policy as ap
     ap._AMBIENT_AUTO = 0
+    ap._AMBIENT_TOPLAM = 0
     yield
     ap._AMBIENT_AUTO = 0
+    ap._AMBIENT_TOPLAM = 0
+
+
+@pytest.mark.parametrize("digerinin_modu", ["step", "plan"])
+def test_ESZAMANLI_step_turu_oto_onayi_KAPATIYOR(digerinin_modu):
+    """Arka plan güvenlik incelemesinin işaret ettiği fail-open, kapatıldı.
+
+    İlk yazım "en az bir auto turu var mı" diye soruyordu. O hâliyle kullanıcı
+    bir sekmede auto, başka bir sekmede step turu koşturduğunda, STEP turunun
+    mutasyonları da sessizce oto-onaylanıyordu — yani adım modunun kapısı
+    ilgisiz bir tur yüzünden kayboluyordu.
+
+    Kapı ayrı süreçte olduğu için çağrının hangi turdan geldiği bilinemiyor;
+    bilinemeyen bir şey hakkında güvenli varsayım "koşanlardan biri onay
+    istiyorsa onay iste"dir.
+    """
+    with ambient_turn("/ws", "auto"):
+        assert ambient_auto_approve() is True
+        with ambient_turn("/ws2", digerinin_modu):
+            assert ambient_auto_approve() is False, (
+                f"{digerinin_modu} turu koşarken oto-onay açık kaldı"
+            )
+        # Diğer tur bitince auto turu yine kendi başına
+        assert ambient_auto_approve() is True
 
 
 def test_auto_turu_koserken_sinyal_ACIK():
