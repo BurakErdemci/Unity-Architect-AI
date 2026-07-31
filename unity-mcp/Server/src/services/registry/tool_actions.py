@@ -181,6 +181,21 @@ def classify(tool_name: str, params: Mapping[str, Any] | None = None, *, _depth:
     if not isinstance(action, str):
         return WRITE
 
+    # Case is normalised because the TOOLS normalise it. Measured 31 Jul 2026:
+    # `manage_packages` accepts `action="LIST_PACKAGES"` and lowercases it
+    # internally, so the call runs as the read-only `list_packages` while the
+    # classifier saw an unknown action and answered WRITE. That direction is
+    # fail-closed - a read gets a card, nothing leaks - but it is still wrong,
+    # and being wrong in the safe direction is how a gate trains people to
+    # click through. Normalising here keeps the classifier's answer aligned
+    # with what the tool actually does.
+    #
+    # Only case is folded, deliberately: the ledger's keys are exact action
+    # names, and matching anything looser (prefixes, separators) would let an
+    # unknown action borrow a known one's verdict - the failure direction that
+    # actually leaks.
+    action = action.lower()
+
     # Parameter-dependent actions are checked first: they appear in neither
     # read_actions nor write_actions, because the action name alone does not
     # determine the answer.

@@ -199,7 +199,11 @@ def urun_bakim_cagrisi_mi(request: Any) -> bool:
     return bool(gelen) and gelen == token
 
 
-async def kapiyi_gec(tool_name: str, params: Mapping[str, Any] | None) -> None:
+async def kapiyi_gec(
+    tool_name: str,
+    params: Mapping[str, Any] | None,
+    hedef: str | None = None,
+) -> None:
     """Yazma ise onay ister; onay yoksa `ApprovalDenied` fırlatır.
 
     Okuma araçlarında hiçbir ağ çağrısı yapılmaz — keşif araçları (hiyerarşi
@@ -214,8 +218,25 @@ async def kapiyi_gec(tool_name: str, params: Mapping[str, Any] | None) -> None:
     if classify(tool_name, params or {}) == "read":
         return
 
-    sonuc = await _onay_iste(tool_name, params or {})
-    if sonuc.get("approved"):
+    # HEDEF karta yazılıyor. Sebebi bir denetim bulgusu (31 Tem 2026, med):
+    # `_inject_unity_instance` yönlendirme argümanını mesajdan `pop` ediyor ve
+    # kapı ondan SONRA koştuğu için kart hangi Unity projesinin değişeceğini
+    # göstermiyordu. Birden fazla Editor bağlıyken kullanıcı "A projesinde"
+    # sanıp onaylıyor, komut B'de koşuyordu.
+    #
+    # ⚠️ Bu, bu dosyada yazılı bir iddiayı da düzeltiyor: "kapı enjeksiyondan
+    # sonra koşuyor, böylece gösterilen parametreler Unity'ye gidecek olanlarla
+    # AYNI" deniyordu. Yanlıştı — `pop` edilen argüman tam olarak eksik olandı.
+    gosterilecek = dict(params or {})
+    if hedef:
+        gosterilecek["unity_instance"] = hedef
+
+    sonuc = await _onay_iste(tool_name, gosterilecek)
+    # Doğruluk (truthiness) DEĞİL kimlik karşılaştırması. Ölçüldü (31 Tem 2026):
+    # `bool("false")`, `bool("no")` ve `bool([0])` hepsi `True` dönüyor, yani
+    # bozuk ya da sürüm-uyumsuz bir yanıt onay sayılıyordu. Bu dosyanın kendi
+    # sözleşmesi "bozuk yanıt = RED" diyor; doğruluk onu sessizce çeviriyordu.
+    if sonuc.get("approved") is True:
         if sonuc.get("automatic"):
             logger.info("[approval-gate] %s otomatik onaylandı (aktif auto turu).", tool_name)
         else:

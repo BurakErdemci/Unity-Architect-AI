@@ -158,6 +158,64 @@ async def _hemen(_saniye):
     return None
 
 
+# ── karta HANGİ projenin değişeceği yazılıyor ───────────────────────────────
+
+
+def test_karta_HEDEF_proje_yaziliyor(monkeypatch):
+    """Toplu denetim bulgusu (med): kart hangi Unity projesinin değişeceğini
+    göstermiyordu.
+
+    `_inject_unity_instance` yönlendirme argümanını mesajdan `pop` ediyor ve
+    kapı ondan SONRA koşuyor; yani kapının gördüğü parametrelerde hedef YOK.
+    Birden fazla Editor bağlıyken kullanıcı "A projesinde" sanıp onaylıyor,
+    komut B'de koşuyordu.
+
+    ⚠️ Bu, kapı kodunda YAZILI bir iddiayı da yalanlamıştı: "kapı enjeksiyondan
+    sonra koşuyor, böylece gösterilen parametreler Unity'ye gidecek olanlarla
+    aynı". `pop` edilen argüman tam olarak eksik olandı.
+    """
+    gorulen = []
+
+    async def yakala(tool, params):
+        gorulen.append(dict(params))
+        return {"approved": True}
+
+    monkeypatch.setattr(approval_gate, "_onay_iste", yakala)
+    _kos(kapiyi_gec("manage_gameobject", {"action": "delete"}, hedef="ProjeB"))
+    assert gorulen[0]["unity_instance"] == "ProjeB"
+    assert gorulen[0]["action"] == "delete"
+
+
+def test_hedef_YOKSA_kart_yine_de_cikiyor(monkeypatch):
+    """Hedef okunamazsa kart hedefsiz çıkar ama ÇIKAR — kartı hiç çıkarmamak
+    kullanıcıyı 180 sn'lik sessiz bir redde kilitlerdi."""
+    gorulen = []
+
+    async def yakala(tool, params):
+        gorulen.append(dict(params))
+        return {"approved": True}
+
+    monkeypatch.setattr(approval_gate, "_onay_iste", yakala)
+    _kos(kapiyi_gec("manage_gameobject", {"action": "delete"}, hedef=None))
+    assert "unity_instance" not in gorulen[0]
+
+
+def test_onay_ancak_GERCEK_true_ile_veriliyor(monkeypatch):
+    """Bozuk bir onay yanıtı kabul sayılmamalı.
+
+    Ölçüldü: `bool("false")`, `bool("no")`, `bool([0])` hepsi `True`. Kapının
+    sözleşmesi "bozuk yanıt = RED" diyor; doğruluk (truthiness) o sözleşmeyi
+    sessizce tersine çeviriyordu.
+    """
+    for bozuk in ["false", "no", [0], 1, "true"]:
+        async def sahte(tool, params, _b=bozuk):
+            return {"approved": _b}
+
+        monkeypatch.setattr(approval_gate, "_onay_iste", sahte)
+        with pytest.raises(ApprovalDenied):
+            _kos(kapiyi_gec("manage_asset", {"action": "delete"}))
+
+
 # ── ADIM 4: /api/command'ın köken işareti ───────────────────────────────────
 
 

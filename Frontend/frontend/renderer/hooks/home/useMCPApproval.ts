@@ -128,7 +128,17 @@ const POLL_FAILURE_ALERT_AFTER = 5;
  * koruması kondu. Ders: bir kapatmanın içine konan "makul" sabit, kapattığı
  * sınıfın yeni bir örneğini üretebiliyor. */
 const OZET_SATIR_SINIRI = 200;
-const OZET_DEGER_SINIRI = 200;
+/** Yaprak başına gösterilen karakter.
+ *
+ * 200 idi ve bir denetim bulgusu (31 Tem 2026) onu şöyle kırdı: uzun bir
+ * `execute_code` gövdesinin YIKICI kısmı 200. karakterden sonraysa kartta hiç
+ * görünmüyordu — kullanıcı zararsız görünen bir başlangıcı onaylıyordu. Kart
+ * kaydırılabilir bir blok, yani asıl kısıt okunabilirlik değil dürüstlük.
+ *
+ * 4000, gerçek yüklerin neredeyse tamamını gösteriyor; aşıldığında GİZLENEN
+ * KARAKTER SAYISI yazılıyor. Sessiz kırpma ile sayılı kırpma arasındaki fark,
+ * kullanıcının "burada dahası var mı" sorusunu sorabilmesi. */
+const OZET_DEGER_SINIRI = 4000;
 
 export const unityOzeti = (tool: string, params: any): string => {
   const satirlar: string[] = [];
@@ -159,7 +169,7 @@ export const unityOzeti = (tool: string, params: any): string => {
     const metin = typeof deger === 'string' ? deger : JSON.stringify(deger);
     const guvenli = metin === undefined ? 'undefined' : String(metin);
     const kisa = guvenli.length > OZET_DEGER_SINIRI
-      ? `${guvenli.slice(0, OZET_DEGER_SINIRI)}…`
+      ? `${guvenli.slice(0, OZET_DEGER_SINIRI)}… [+${guvenli.length - OZET_DEGER_SINIRI} karakter gizlendi]`
       : guvenli;
     satirlar.push(`${onek}: ${kisa}`);
   };

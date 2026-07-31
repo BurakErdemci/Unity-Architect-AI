@@ -377,6 +377,34 @@ describe('uçtan uca · köprüden gelen istek gerçekten ekrana çıkar', () =>
     expect(govde.textContent).toContain('DERIN.prefab')
   })
 
+  it('uzun execute_code gövdesi kesilirse GİZLENEN MİKTAR yazılıyor', async () => {
+    // Toplu denetim bulgusu (med): yaprak başına 200 karakterlik kırpma, uzun
+    // bir `execute_code` gövdesinin YIKICI kısmını kartta hiç göstermiyordu —
+    // kullanıcı zararsız görünen bir başlangıcı onaylıyordu. Sınır büyütüldü
+    // ve aşıldığında gizlenen karakter sayısı yazılıyor: sessiz kırpma ile
+    // sayılı kırpma arasındaki fark, "burada dahası var mı" sorusunu
+    // sorabilmek.
+    const kod = 'A'.repeat(4100) + 'System.IO.File.Delete(kritik);'
+    mockedAxios.get.mockResolvedValue({ data: { pending: {
+      'g15': { tool: 'execute_code', params: { action: 'execute', code: kod }, workspace_path: '/ws' },
+    } } })
+    await act(async () => { render(React.createElement(Harness)) })
+    const govde = await screen.findByText(/execute_code/)
+    expect(govde.textContent).toMatch(/karakter gizlendi/)
+  })
+
+  it('4000 karakterin ALTINDAKİ gövde TAM gösteriliyor', async () => {
+    // Ters yön: sınır, gerçek yüklerin neredeyse tamamını göstermeli.
+    const kod = 'B'.repeat(300) + 'DELETE_MARKER'
+    mockedAxios.get.mockResolvedValue({ data: { pending: {
+      'g16': { tool: 'execute_code', params: { action: 'execute', code: kod }, workspace_path: '/ws' },
+    } } })
+    await act(async () => { render(React.createElement(Harness)) })
+    const govde = await screen.findByText(/execute_code/)
+    expect(govde.textContent).toContain('DELETE_MARKER')
+    expect(govde.textContent).not.toMatch(/karakter gizlendi/)
+  })
+
   it('BOZUK parametreli eski araç kartsız KALMIYOR', async () => {
     // 2. denetim turu, low ama etkisi geniş: `params: null` gelince eski dal
     // destructuring'de patlıyordu ve istisna gate KURULDUKTAN sonra düştüğü

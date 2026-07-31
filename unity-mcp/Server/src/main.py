@@ -547,7 +547,15 @@ def create_mcp_server(project_scoped_tools: bool) -> FastMCP:
                 from transport.approval_gate import ApprovalDenied, kapiyi_gec, urun_bakim_cagrisi_mi
                 if not urun_bakim_cagrisi_mi(request):
                     try:
-                        await kapiyi_gec(command_type, params if isinstance(params, dict) else {})
+                        # `unity_instance` gövdenin ÜST düzeyinde, `params`'ın
+                        # içinde değil — yalnız `params`'ı kapıya vermek, hangi
+                        # projenin değişeceğini karttan gizliyordu (aynı sınıf
+                        # MCP yolunda da vardı, 31 Tem denetimi).
+                        await kapiyi_gec(
+                            command_type,
+                            params if isinstance(params, dict) else {},
+                            hedef=unity_instance if isinstance(unity_instance, str) else None,
+                        )
                     except ApprovalDenied as red:
                         return JSONResponse(
                             {"success": False, "error": str(red)}, status_code=403

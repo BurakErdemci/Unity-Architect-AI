@@ -444,8 +444,21 @@ class UnityInstanceMiddleware(Middleware):
             )
             return
         params = getattr(mesaj, "arguments", None)
+        # Çözülmüş hedef state'ten geri okunuyor: `_inject_unity_instance` onu
+        # mesajdan `pop` etti, yani karta yazılacak tek kaynak burası. Okunamazsa
+        # `None` geçiyoruz — kart hedefsiz çıkar ama ÇIKAR; kartı hiç çıkarmamak
+        # kullanıcıyı 180 sn'lik sessiz bir redde kilitlerdi.
+        hedef = None
+        try:
+            hedef = await context.fastmcp_context.get_state("unity_instance")
+        except Exception as exc:
+            _diag.warning("on_call_tool: hedef okunamadı (%s), kart hedefsiz çıkacak", exc)
         from transport.approval_gate import kapiyi_gec
-        await kapiyi_gec(tool_name, params if isinstance(params, dict) else {})
+        await kapiyi_gec(
+            tool_name,
+            params if isinstance(params, dict) else {},
+            hedef=hedef if isinstance(hedef, str) else None,
+        )
 
     async def on_read_resource(self, context: MiddlewareContext, call_next):
         """Inject active Unity instance into resource context if available."""
