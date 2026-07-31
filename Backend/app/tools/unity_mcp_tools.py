@@ -142,14 +142,23 @@ async def load_unity_tools_async() -> bool:
         _cached_tools = [_mcp_schema_to_tool_def(t) for t in mcp_tools]
         _cached_functions = {t.name: _make_tool_function(t.name) for t in mcp_tools}
         logger.info(f"[UnityMCP] {len(_cached_tools)} tool yüklendi: {[t['name'] for t in _cached_tools]}")
-        # Bağlantı kurulunca Unity Console'a bilgi logu gönder
-        try:
-            await _call_tool_on_server("execute_code", {
-                "action": "execute",
-                "code": 'UnityEngine.Debug.Log("<color=#4FC3F7><b>[Unity Architect AI]</b></color> MCP bağlantısı kuruldu ✓ — AI artık Unity Editor\'ı kontrol edebilir.");'
-            })
-        except Exception:
-            pass  # Log gönderilemese bile tool yüklemesi başarılı sayılır
+        # ⚠️ BURAYA "bağlantı kuruldu" AFİŞİ EKLEME. Eskiden burada Unity
+        # konsoluna renkli bir Debug.Log basan bir `execute_code` çağrısı vardı
+        # ve canlı testte (31 Tem 2026) şu ölçüldü: onay kapısı devreye girdikten
+        # sonra o çağrı, kullanıcı hiçbir şey yazmamışken bile ekrana onay kartı
+        # çıkarıyor. Sebep kapıda değil: `ambient_auto_approve` koşan tur
+        # olmasını şart koşuyor (`_AMBIENT_TOPLAM > 0`), afiş ise herhangi bir
+        # turun dışında, bağlantı kurulurken gönderiliyor — yani oto modda bile
+        # oto-onaya giremiyor ve girmemeli de.
+        #
+        # Kaldırıldı, muaf tutulmadı. İki gerekçe:
+        #   1. Dekoratif bir konsol satırı için kütükteki EN tehlikeli araç
+        #      kullanılıyordu (`execute_code` = keyfi C# derleyip çalıştırma).
+        #   2. Muafiyet eklemek kapıya yeni bir yüzey açardı; bilgi zaten
+        #      kaybolmuyor, bağlantı durumu arayüzdeki UNITY MCP rozetinde var.
+        #
+        # Ders: anlamsız kartlar refleks-onaya alıştırır ve asıl tehlikeli kartı
+        # da okunmadan geçirtir — yani bu bir kozmetik mesele değil.
         return True
     except Exception as e:
         logger.debug(f"[UnityMCP] Tool listesi alınamadı (Unity henüz bağlanmadı): {e}")
