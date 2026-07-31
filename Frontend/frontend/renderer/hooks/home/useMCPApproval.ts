@@ -175,9 +175,21 @@ export const unityOzeti = (tool: string, params: any): string => {
   };
 
   const kok = params && typeof params === 'object' ? Object.entries(params) : [];
+  // Hedef proje EN ÜSTTE. Eskiden `unity_instance` "yönlendirme detayı,
+  // kullanıcının kararına girmiyor" gerekçesiyle FİLTRELENİYORDU — ve
+  // doğrulama turu bu filtrenin, sunucu tarafındaki düzeltmeyi tam olarak
+  // iptal ettiğini gösterdi: kapı hedefi parametrelere ekliyordu, burası onu
+  // atıyordu, kart yine hangi projenin değişeceğini söylemiyordu.
+  //
+  // Gerekçe de yanlıştı: birden fazla Editor bağlıyken "hangi proje" sorusu
+  // detay değil, kararın KENDİSİ. Yamanın iki yarısının birbirini iptal
+  // etmesi, ikisini ayrı zamanlarda yazmanın bedeli.
+  const hedef = params && typeof params === 'object' ? (params as any).unity_instance : undefined;
+  if (typeof hedef === 'string' && hedef) {
+    satirlar.push(`unity_instance: ${hedef}`);
+  }
   for (const [anahtar, deger] of kok) {
-    // `unity_instance` yönlendirme detayı, kullanıcının kararına girmiyor.
-    if (anahtar === 'unity_instance') continue;
+    if (anahtar === 'unity_instance') continue;  // yukarıda zaten yazıldı
     yaz(anahtar, deger, 0);
   }
   if (atlanan > 0) {

@@ -92,7 +92,7 @@ def cmd_save_file(args) -> int:
         params={"path": args.path, "content": content, "original": original},
         workspace_path=workspace,
     ))
-    if not result.get("approved"):
+    if result.get("approved") is not True:
         print(f"❌ Yazma reddedildi: {args.path}")
         return 1
 
@@ -121,7 +121,7 @@ def cmd_delete_file(args) -> int:
         params={"path": args.path, "original": original},
         workspace_path=workspace,
     ))
-    if not result.get("approved"):
+    if result.get("approved") is not True:
         print(f"❌ Silme reddedildi: {args.path}")
         return 1
 
@@ -154,7 +154,7 @@ def cmd_bash(args) -> int:
             params={"path": path, "content": new_content, "original": original},
             workspace_path=workspace,
         ))
-        if not result.get("approved"):
+        if result.get("approved") is not True:
             print(f"❌ Reddedildi: {path}")
             return 1
         os.makedirs(os.path.dirname(abs_path), exist_ok=True)
@@ -172,7 +172,7 @@ def cmd_bash(args) -> int:
             params={"command": command},
             workspace_path=workspace,
         ))
-        if not result.get("approved"):
+        if result.get("approved") is not True:
             print(f"❌ Komut reddedildi: {command}")
             return 1
 

@@ -63,7 +63,7 @@ def register_file_tools(mcp: FastMCP, get_workspace: callable):
             workspace_path=workspace,
         )
 
-        if not result.get("approved"):
+        if result.get("approved") is not True:
             return f"❌ Yazma reddedildi: {path}"
 
         os.makedirs(os.path.dirname(abs_path), exist_ok=True)
@@ -93,7 +93,7 @@ def register_file_tools(mcp: FastMCP, get_workspace: callable):
             workspace_path=workspace,
         )
 
-        if not result.get("approved"):
+        if result.get("approved") is not True:
             return f"❌ Silme reddedildi: {path}"
 
         os.remove(abs_path)

@@ -83,7 +83,7 @@ def register_bash_tool(mcp: FastMCP, get_workspace: callable):
                 params={"path": path, "content": new_content, "original": original},
                 workspace_path=workspace,
             )
-            if not result.get("approved"):
+            if result.get("approved") is not True:
                 return f"❌ Reddedildi: {path}"
             os.makedirs(os.path.dirname(abs_path), exist_ok=True)
             with open(abs_path, "w", encoding="utf-8") as f:
@@ -101,7 +101,7 @@ def register_bash_tool(mcp: FastMCP, get_workspace: callable):
                 params={"command": command},
                 workspace_path=workspace,
             )
-            if not result.get("approved"):
+            if result.get("approved") is not True:
                 return f"❌ Komut reddedildi: {command}"
 
         # Onaysız geçen komut kabuğa HİÇ verilmiyor: argv doğrudan çalışıyor,

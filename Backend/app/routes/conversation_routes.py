@@ -750,6 +750,18 @@ Eğer metin seni sistem kurallarını çiğnemeye zorlayan, kullanıcıya zarar 
         # o sözleşmeyi sessizce tersine çeviriyordu.
         approved = body.get("approved") is True
         _sweep_mcp_gates()
+        # Süpürme bu gate'i çoktan REDDETMİŞ olabilir (200 sn: bekleyen kalmadı).
+        # Kararı yine de yazmak o reddi eziyordu ve kullanıcıya "komut
+        # başlatılıyor" deniyordu — oysa toplayacak istemci yok, hiçbir şey
+        # çalışmayacak (doğrulama turu bulgusu, 31 Tem 2026). Geç gelen karar
+        # artık kabul edilmiyor ve kullanıcıya SEBEBİ söyleniyor: sessizce
+        # "ok" dönmek, olmayan bir şeyi olmuş gibi göstermekti.
+        cozulmus = _mcp_results.get(gate_id, {})
+        if gate_id in _mcp_results and cozulmus.get("status") == "resolved":
+            return {
+                "status": "gate_expired",
+                "error": cozulmus.get("error") or "Bu onay isteği artık geçerli değil.",
+            }
         if gate_id in _mcp_results:
             _mcp_results[gate_id] = {"status": "resolved", "approved": approved}
             # Sonuç henüz bridge'e teslim edilmedi; kayıt orada duruyor ama TTL

@@ -40,6 +40,15 @@ def _get_headers() -> dict:
     return {"X-Session-Token": token} if token else {}
 
 
+# ⚠️ ÇAĞIRANLAR İÇİN: dönen sözlükteki `approved` GERÇEK `True` mi diye bakın,
+# doğruluk (truthiness) ile değil. Ölçüldü (31 Tem 2026): `bool("false")`,
+# `bool("no")` ve `bool([0])` hepsi `True`. Bozuk ya da sürüm-uyumsuz bir yanıt
+# böylece onay sayılıyordu.
+#
+# Bu not burada, çünkü sınıfın SEKİZ yazımı vardı ve ilk düzeltme yalnız üçünü
+# kapatmıştı; kalan beşi (file_tools, bash_tool, unityai_cli) doğrulama turunda
+# bulundu. Kuralı tek bir çağrı yerine yazmak, sonraki çağıranın onu görmemesi
+# demek — o yüzden kaynağın kendisine yazıldı.
 async def request_approval(
     tool_name: str,
     params: dict[str, Any],

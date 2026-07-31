@@ -405,6 +405,24 @@ describe('uçtan uca · köprüden gelen istek gerçekten ekrana çıkar', () =>
     expect(govde.textContent).not.toMatch(/karakter gizlendi/)
   })
 
+  it('kart HANGİ Unity projesinin değişeceğini yazıyor', async () => {
+    // Doğrulama turu bulgusu (med): yamanın iki yarısı birbirini iptal
+    // ediyordu. Sunucu hedefi `params.unity_instance` olarak ekliyordu, ama
+    // buradaki özetleyici tam o anahtarı filtreliyordu ("yönlendirme detayı,
+    // kullanıcının kararına girmiyor" gerekçesiyle). Gerekçe yanlıştı: birden
+    // fazla Editor bağlıyken "hangi proje" sorusu detay değil, kararın kendisi.
+    mockedAxios.get.mockResolvedValue({ data: { pending: {
+      'g17': {
+        tool: 'manage_gameobject',
+        params: { action: 'delete', name: 'Player', unity_instance: 'ProjeB' },
+        workspace_path: '/ws',
+      },
+    } } })
+    await act(async () => { render(React.createElement(Harness)) })
+    const govde = await screen.findByText(/manage_gameobject/)
+    expect(govde.textContent).toContain('ProjeB')
+  })
+
   it('BOZUK parametreli eski araç kartsız KALMIYOR', async () => {
     // 2. denetim turu, low ama etkisi geniş: `params: null` gelince eski dal
     // destructuring'de patlıyordu ve istisna gate KURULDUKTAN sonra düştüğü
