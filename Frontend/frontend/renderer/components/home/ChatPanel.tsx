@@ -56,7 +56,7 @@ interface ChatPanelProps {
   setDiffFile: (val: any | null) => void;
   pendingDelete: { path: string; messageId: number } | null;
   setPendingDelete: (val: any | null) => void;
-  pendingCommand: { command: string; gateId: string; messageId: number } | null;
+  pendingCommand: { command: string; gateId: string; messageId: number; kind?: 'shell' | 'unity' } | null;
   setPendingCommand: (val: any | null) => void;
   /** Kararın backend'e ULAŞMADIĞINI döner (`null` = ulaştı). Kart, başarı
    *  iddiasını buna bakarak basar; hata metnini çağrılan taraf kendi basıyor. */
@@ -418,10 +418,11 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                     />
                   )}
 
-                  {/* Terminal Command Approval */}
+                  {/* Komut ya da Unity işlemi onayı — metni `kind` seçiyor */}
                   {pendingCommand && pendingCommand.messageId === msg.id && (
                     <CommandApproval
                       command={pendingCommand.command}
+                      kind={pendingCommand.kind}
                       onConfirm={async () => {
                         // onApproveCommand kuyruktaki sıradaki onayı kendi gösterir → burada setPendingCommand(null) ÇAĞIRMA
                         const failure = await onApproveCommand(pendingCommand.gateId, true);

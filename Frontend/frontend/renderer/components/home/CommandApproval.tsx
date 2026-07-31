@@ -1,16 +1,45 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { Terminal, X, Check, AlertTriangle } from 'lucide-react';
+import { Terminal, X, Check, AlertTriangle, Box } from 'lucide-react';
 import { useLang } from '../../lib/i18n';
 
 interface CommandApprovalProps {
   command: string;
   onConfirm: () => void;
   onCancel: () => void;
+  /** Neyin onaylandığı. Metni ve ikonu bu seçiyor.
+   *
+   * Ayrım güvenlik açısından zorunlu: aynı kartı Unity araç çağrıları için
+   * "Terminal Komutu Onayı" başlığıyla göstermek, kullanıcıya onayladığı şeyi
+   * YANLIŞ söylerdi. Onaylanan bir kabuk komutu değil, Unity projesini
+   * değiştiren bir araç çağrısı. Kablolama (onay/ret, gate kimliği) ortak
+   * kalıyor — ayrışan yalnız kullanıcının okuduğu şey. */
+  kind?: 'shell' | 'unity';
 }
 
-export const CommandApproval: React.FC<CommandApprovalProps> = ({ command, onConfirm, onCancel }) => {
+/** Metin anahtarları BİRLİK tipinde tutuluyor: `t` yalnız bilinen anahtarları
+ *  kabul ediyor, yani `t(\`${ns}.title\`)` gibi bir şablon dizge derlenmezdi.
+ *  Tablo aynı zamanda eksik çeviriyi derleme anında yakalıyor. */
+const METIN = {
+  shell: {
+    title: 'cmdApproval.title',
+    confirm: 'cmdApproval.confirm',
+    run: 'cmdApproval.run',
+    warning: 'cmdApproval.warning',
+  },
+  unity: {
+    title: 'unityApproval.title',
+    confirm: 'unityApproval.confirm',
+    run: 'unityApproval.run',
+    warning: 'unityApproval.warning',
+  },
+} as const;
+
+export const CommandApproval: React.FC<CommandApprovalProps> = ({ command, onConfirm, onCancel, kind = 'shell' }) => {
   const { t } = useLang();
+  const unity = kind === 'unity';
+  const m = METIN[kind];
+  const Ikon = unity ? Box : Terminal;
   return (
     <motion.div
       initial={{ opacity: 0, y: 10, scale: 0.95 }}
@@ -20,7 +49,7 @@ export const CommandApproval: React.FC<CommandApprovalProps> = ({ command, onCon
       <div className="flex items-center justify-between px-4 py-2.5 bg-amber-500/10 border-b border-amber-500/20">
         <div className="flex items-center gap-2 text-amber-400 font-bold text-[11px] uppercase tracking-wider">
           <AlertTriangle size={14} />
-          {t('cmdApproval.title')}
+          {t(m.title)}
         </div>
         <button onClick={onCancel} className="text-slate-500 hover:text-white transition-colors">
           <X size={14} />
@@ -30,15 +59,15 @@ export const CommandApproval: React.FC<CommandApprovalProps> = ({ command, onCon
       <div className="p-4">
         <div className="flex items-start gap-3 mb-4">
           <div className="w-10 h-10 rounded-full bg-amber-500/20 flex items-center justify-center shrink-0">
-            <Terminal size={20} className="text-amber-400" />
+            <Ikon size={20} className="text-amber-400" />
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-[13px] text-white font-medium leading-tight mb-2">
-              {t('cmdApproval.confirm')}
+              {t(m.confirm)}
             </p>
             <div className="bg-black/50 rounded-lg px-3 py-2 border border-white/5">
               <code className="text-[11px] text-emerald-400 font-mono break-all leading-relaxed">
-                <span className="text-slate-600 mr-1.5 select-none">$</span>
+                {!unity && <span className="text-slate-600 mr-1.5 select-none">$</span>}
                 {command}
               </code>
             </div>
@@ -51,7 +80,7 @@ export const CommandApproval: React.FC<CommandApprovalProps> = ({ command, onCon
             className="flex-1 flex items-center justify-center gap-2 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-[12px] font-bold transition-all shadow-lg shadow-amber-900/20 active:scale-[0.98]"
           >
             <Check size={14} className="stroke-[3px]" />
-            {t('cmdApproval.run')}
+            {t(m.run)}
           </button>
           <button
             onClick={onCancel}
@@ -64,7 +93,7 @@ export const CommandApproval: React.FC<CommandApprovalProps> = ({ command, onCon
 
       <div className="px-4 py-2 bg-black/40 border-t border-amber-500/10">
         <p className="text-[10px] text-slate-600 italic">
-          * {t('cmdApproval.warning')}
+          * {t(m.warning)}
         </p>
       </div>
     </motion.div>

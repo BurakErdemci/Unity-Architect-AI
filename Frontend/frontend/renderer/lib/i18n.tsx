@@ -118,6 +118,13 @@ const tr = {
   'cmdApproval.run': 'Komutu Çalıştır',
   'cmdApproval.cancel': 'İptal',
   'cmdApproval.warning': 'Bu komut sisteminizde çalışacak.',
+  // Unity aracı onayı — aynı kart, FARKLI metin. Terminal metniyle göstermek
+  // kullanıcıya yanlış şeyi onaylatırdı: onaylanan bir kabuk komutu değil,
+  // Unity projesini değiştiren bir araç çağrısı.
+  'unityApproval.title': 'Unity İşlemi Onayı',
+  'unityApproval.confirm': 'Bu Unity işlemini çalıştırmak istediğine emin misin?',
+  'unityApproval.run': 'İşlemi Çalıştır',
+  'unityApproval.warning': 'Bu işlem Unity projeni değiştirecek.',
   // WorkspaceScreen
   'workspace.welcome': 'Hoş geldin,',
   'workspace.subtitle': 'Başlamak için çalışma alanını seç',
@@ -268,6 +275,11 @@ const en: Record<keyof typeof tr, string> = {
   'cmdApproval.run': 'Run Command',
   'cmdApproval.cancel': 'Cancel',
   'cmdApproval.warning': 'This command will run on your system.',
+  // Unity tool approval — same card, DIFFERENT wording (see the Turkish block).
+  'unityApproval.title': 'Unity Operation Approval',
+  'unityApproval.confirm': 'Are you sure you want to run this Unity operation?',
+  'unityApproval.run': 'Run Operation',
+  'unityApproval.warning': 'This operation will modify your Unity project.',
   // WorkspaceScreen
   'workspace.welcome': 'Welcome,',
   'workspace.subtitle': 'Select a workspace to get started',

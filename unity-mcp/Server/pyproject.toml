@@ -64,6 +64,17 @@ where = ["src"]
 [tool.setuptools.package-dir]
 "" = "src"
 
+# Kütük bir VERİ dosyası ve wheel'e kendiliğinden GİRMİYOR — ölçüldü
+# (31 Tem 2026): bu satır olmadan `uv build --wheel` çıktısında
+# `services/registry/tool_actions.py` var ama `tool_actions.json` YOK.
+# Ürün sunucuyu `uvx --from <Server dizini>` ile kurup çalıştırdığı için
+# (`unity_mcp_manager.py`), eksik JSON çalışma anında `FileNotFoundError`
+# demek: onay kapısı ilk araç çağrısında patlar ve YAZMALAR DEĞİL OKUMALAR DA
+# ölür. Kaynaktan koşan testler `PYTHONPATH` kullandığı için bu dağıtım
+# sınırını hiç görmüyor.
+[tool.setuptools.package-data]
+"services.registry" = ["*.json"]
+
 [tool.setuptools]
 py-modules = ["main"]
 

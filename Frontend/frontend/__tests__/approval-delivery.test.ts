@@ -295,6 +295,49 @@ describe('uçtan uca · köprüden gelen istek gerçekten ekrana çıkar', () =>
     expect(await screen.findByText('Komutu Çalıştır')).not.toBeNull()
   })
 
+  it('unityMCP aracı karta dönüşür — ve METNİ Unity diyor, terminal DEMİYOR', async () => {
+    // Dış denetim bulgusu (31 Tem 2026, HIGH): kanca yalnız üç eski adı
+    // (`write_file`/`delete_file`/`bash`) tanıyordu. Kütükteki 45 Unity
+    // aracının HİÇBİRİ onlarla eşleşmiyor, dolayısıyla K1 kapısı kurulduğu an
+    // adım modunda her Unity yazması kartsız kalıp 180 sn sonra sessizce
+    // reddediliyordu — kullanıcıya hiç sorulmadan.
+    mockedAxios.get.mockResolvedValue({ data: { pending: {
+      'g9': { tool: 'manage_gameobject', params: { action: 'delete', name: 'Player' }, workspace_path: '/ws' },
+    } } })
+    await act(async () => { render(React.createElement(Harness)) })
+    expect(await screen.findByText('İşlemi Çalıştır')).not.toBeNull()
+    // Metnin doğru olması güvenliğin parçası: kullanıcı neyi onayladığını
+    // bilmeli. Terminal metniyle göstermek yanlış şeyi onaylattırırdı.
+    expect(screen.queryByText('Komutu Çalıştır')).toBeNull()
+  })
+
+  it('kartın gövdesi HANGİ işlem olduğunu gösteriyor', async () => {
+    // Yalnız araç adını göstermek "neyi siliyorum" sorusunu cevapsız bırakır;
+    // okunmadan onaylanan bir kart kapının kendisini boşa çıkarır.
+    mockedAxios.get.mockResolvedValue({ data: { pending: {
+      'g10': { tool: 'manage_gameobject', params: { action: 'delete', name: 'Player' }, workspace_path: '/ws' },
+    } } })
+    await act(async () => { render(React.createElement(Harness)) })
+    const govde = await screen.findByText(/manage_gameobject/)
+    // ⚠️ Kapsam KARTIN GÖVDESİNE daraltılıyor. İlk yazımı yalnız metni
+    // arıyordu ve kart hiç render olmazken bile YEŞİLDİ — araç adı ekranda
+    // başka bir yerde (gate şeridinde) de geçiyor. Kendi nöbetçim sahte yeşil
+    // verdi; `<code>` etiketi kartın gövdesini diğerlerinden ayırıyor.
+    expect(govde.tagName.toLowerCase()).toBe('code')
+    expect(govde.textContent).toContain('action: delete')
+    expect(govde.textContent).toContain('name: Player')
+  })
+
+  it('TANINMAYAN bir araç da kartsız KALMIYOR', async () => {
+    // Genel dal bilerek "tanınmayan"ı da kapsıyor: yarın eklenen bir araç
+    // kartsız kalırsa kapı kullanıcıya ulaşmaz ve istek sessizce ölür.
+    mockedAxios.get.mockResolvedValue({ data: { pending: {
+      'g11': { tool: 'gelecekte_eklenen_arac', params: { x: 1 }, workspace_path: '/ws' },
+    } } })
+    await act(async () => { render(React.createElement(Harness)) })
+    expect(await screen.findByText('İşlemi Çalıştır')).not.toBeNull()
+  })
+
   it('BAŞKA workspace\'ten gelen istek uyarı şeridiyle çıkar', async () => {
     mockedAxios.get.mockResolvedValue({ data: { pending: {
       'g5': { tool: 'delete_file', params: { path: 'A.cs' }, workspace_path: '/baska' },

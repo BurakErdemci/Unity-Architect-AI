@@ -27,7 +27,7 @@ export const useChat = (
   const [isCompacting, setIsCompacting] = useState(false);
   const [isAnalyzingProject, setIsAnalyzingProject] = useState(false);
   const [pendingFix, setPendingFix] = useState<{ data: any; messageId?: number; applied?: boolean } | null>(null);
-  const [pendingCommand, setPendingCommand] = useState<{ command: string; gateId: string; messageId: number } | null>(null);
+  const [pendingCommand, setPendingCommand] = useState<{ command: string; gateId: string; messageId: number; kind?: 'shell' | 'unity' } | null>(null);
   const [pendingQuestion, setPendingQuestion] = useState<{ questions: any[]; gateId: string; messageId: number } | null>(null);
   // Canlı aktivite: Claude'un o an ne yaptığı (düşünüyor/araç/subagent) + token sayacı.
   // Backend status event'lerinden beslenir; done/error/stop'ta temizlenir.
@@ -55,7 +55,7 @@ export const useChat = (
   // onay/soru aynı anda gelebilir. Tek state'te tutarsak ikincisi birincisini EZER
   // ve ezilen gate 300sn bekleyip tıkanır ("düşünüyor"da kalır). Bu yüzden bekleyen
   // ek onay/soruları kuyruğa alıp tek tek gösteririz; biri çözülünce sıradaki açılır.
-  const pendingCommandQueueRef = useRef<Array<{ command: string; gateId: string; messageId: number }>>([]);
+  const pendingCommandQueueRef = useRef<Array<{ command: string; gateId: string; messageId: number; kind?: 'shell' | 'unity' }>>([]);
   const pendingQuestionQueueRef = useRef<Array<{ questions: any[]; gateId: string; messageId: number }>>([]);
 
   const fetchConversations = useCallback(async (userId: number) => {

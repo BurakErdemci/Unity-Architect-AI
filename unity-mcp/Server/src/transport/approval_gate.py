@@ -34,6 +34,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 import uuid
 from typing import Any, Mapping
 
@@ -50,9 +51,17 @@ _BACKEND_URL = os.environ.get(
 # `approval_bridge.py` ile BİLEREK aynı: aynı uçları, aynı bekleme bütçesiyle
 # kullanan iki istemcinin farklı zaman aşımlarına sahip olması, aynı kartın bir
 # tarafta yaşayıp diğerinde ölmesi demek olurdu.
-_POST_DENEME = 10          # 10 × 1 sn — ürün henüz açılıyorsa yetişsin
+#
+# ⚠️ Bütçeler DUVAR SAATİNE bağlı, deneme SAYISINA değil — ve fark 33 dakika.
+# Denetim turu ölçtü (31 Tem 2026): "180 sn" diye yazılmış yoklama döngüsü,
+# yanıt vermeyen ama bağlantı kabul eden bir backend'de her turda 0,5 sn uyku
+# ÜSTÜNE 5 sn HTTP zaman aşımı harcıyor → 360 × 5,5 sn ≈ 1980 sn. O sürede
+# çağrıyı bekleyen asistan turu da kilitli kalıyor. Sayıyla ifade edilen bir
+# bütçe, adım başına gecikme değiştiğinde sessizce büyüyor; saatle ifade edilen
+# büyümüyor.
+_POST_BUTCESI = 10.0       # sn — ürün henüz açılıyorsa yetişsin
 _BEKLEME_ADIMI = 0.5
-_BEKLEME_ADEDI = 360       # 180 sn: diff okuyup karar vermek için makul süre
+_BEKLEME_BUTCESI = 180.0   # sn — diff okuyup karar vermek için makul süre
 
 
 class ApprovalDenied(RuntimeError):
@@ -84,7 +93,10 @@ async def _onay_iste(tool_name: str, params: Mapping[str, Any]) -> dict:
     }
 
     gonderildi = False
-    for deneme in range(_POST_DENEME):
+    bitis = time.monotonic() + _POST_BUTCESI
+    deneme = 0
+    while time.monotonic() < bitis:
+        deneme += 1
         try:
             async with httpx.AsyncClient(timeout=8.0) as client:
                 resp = await client.post(
@@ -106,7 +118,7 @@ async def _onay_iste(tool_name: str, params: Mapping[str, Any]) -> dict:
                     "error": f"Onay servisi kimliği reddetti (HTTP {resp.status_code}).",
                 }
         except Exception as e:
-            logger.warning("[approval-gate] POST %s başarısız: %s", deneme + 1, e)
+            logger.warning("[approval-gate] POST %s başarısız: %s", deneme, e)
         await asyncio.sleep(1.0)
 
     if not gonderildi:
@@ -115,10 +127,17 @@ async def _onay_iste(tool_name: str, params: Mapping[str, Any]) -> dict:
             "error": "Onay servisine ulaşılamadı; işlem güvenlik nedeniyle reddedildi.",
         }
 
-    for i in range(_BEKLEME_ADEDI):
+    bitis = time.monotonic() + _BEKLEME_BUTCESI
+    i = 0
+    while time.monotonic() < bitis:
+        i += 1
         await asyncio.sleep(_BEKLEME_ADIMI)
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
+            # Kalan bütçeden fazlasını tek bir istekte harcamıyoruz: yanıt
+            # vermeyen bir backend'de sabit 5 sn, bütçeyi adım adım aşan şeyin
+            # ta kendisiydi.
+            kalan = max(0.5, bitis - time.monotonic())
+            async with httpx.AsyncClient(timeout=min(5.0, kalan)) as client:
                 res = await client.get(
                     f"{_BACKEND_URL}/mcp-approval-result/{gate_id}",
                     headers=_headers(),
@@ -127,10 +146,13 @@ async def _onay_iste(tool_name: str, params: Mapping[str, Any]) -> dict:
             if veri.get("status") != "pending":
                 return veri
         except Exception as e:
-            if i % 20 == 0:
+            if i % 20 == 1:
                 logger.warning("[approval-gate] sonuç yoklaması hatası: %s", e)
 
-    return {"approved": False, "error": "Onay zaman aşımına uğradı (180 sn)."}
+    return {
+        "approved": False,
+        "error": f"Onay zaman aşımına uğradı ({int(_BEKLEME_BUTCESI)} sn).",
+    }
 
 
 async def kapiyi_gec(tool_name: str, params: Mapping[str, Any] | None) -> None:

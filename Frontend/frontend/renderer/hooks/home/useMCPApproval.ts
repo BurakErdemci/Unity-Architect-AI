@@ -68,7 +68,7 @@ interface MCPApprovalHookParams {
   workspacePath: string | null;
   setPendingGenFiles: (val: { files: PendingFile[]; messageId: number } | null) => void;
   setPendingDelete: (val: { path: string; messageId: number } | null) => void;
-  setPendingCommand: (val: { command: string; gateId: string; messageId: number } | null) => void;
+  setPendingCommand: (val: { command: string; gateId: string; messageId: number; kind?: 'shell' | 'unity' } | null) => void;
   setPendingFix: (val: any) => void;
   // Kararın backend'e ULAŞMADIĞINI kullanıcıya bildirmek için. Opsiyonel:
   // hook'u test/başka bağlamda toast'sız kurmak mümkün kalsın.
@@ -99,6 +99,26 @@ const POLL_INTERVAL_MS = 1000;
  * geçici kesinti sessiz kalıyor, kalıcı arıza görünür oluyor.
  */
 const POLL_FAILURE_ALERT_AFTER = 5;
+
+/** Unity araç çağrısını kartta okunacak tek bir metne indirger.
+ *
+ * Onay kartının işi kullanıcıya NE onayladığını göstermek; yalnız araç adını
+ * göstermek (`manage_gameobject`) "neyi siliyorum" sorusunu cevapsız bırakır.
+ * Parametreler bu yüzden yazılıyor ama KIRPILIYOR: `execute_code` bütün bir C#
+ * bloğu taşıyabiliyor ve kırpılmamış hali kartı ekrandan taşırır — okunamayan
+ * bir kart, okunmadan onaylanan bir karttır.
+ */
+export const unityOzeti = (tool: string, params: any): string => {
+  const satirlar = Object.entries(params || {})
+    // `unity_instance` yönlendirme detayı, kullanıcının kararına girmiyor.
+    .filter(([anahtar]) => anahtar !== 'unity_instance')
+    .map(([anahtar, deger]) => {
+      const metin = typeof deger === 'string' ? deger : JSON.stringify(deger);
+      const kisa = metin && metin.length > 200 ? `${metin.slice(0, 200)}…` : metin;
+      return `${anahtar}: ${kisa}`;
+    });
+  return satirlar.length ? `${tool}\n${satirlar.join('\n')}` : tool;
+};
 
 /**
  * Gate'in workspace'i ile üründe açık workspace uyuşmuyor mu?
@@ -251,11 +271,25 @@ export const useMCPApproval = ({
         clearActiveCardRef.current = () => setPendingCommand(null);
         setPendingCommand({ command: params.command, gateId, messageId: MCP_MSG_ID });
       } else {
-        // Tanınmayan araç: kart çizemiyoruz. Sırayı işgal etmesin — bırak,
-        // köprü kendi zaman aşımında fail-closed reddetsin.
-        activeGateRef.current = null;
-        setActiveGate(null);
-        continue;
+        // Unity araçları ve tanınmayan her şey: TEK bir genel kart.
+        //
+        // ⚠️ Burası eskiden kartı hiç çizmiyor, gate'i bırakıp köprünün zaman
+        // aşımına terk ediyordu. K1 kapısı kurulunca o dal ürünü kullanılamaz
+        // hale getirdi: kütükteki 45 Unity aracının HİÇBİRİ yukarıdaki üç
+        // eski adla (`write_file`/`delete_file`/`bash`) eşleşmiyor, yani adım
+        // modunda her Unity yazması 180 sn bekleyip sessizce reddediliyordu ve
+        // kullanıcıya hiç sorulmuyordu. Dış denetim bunu HIGH olarak buldu.
+        //
+        // Genel kart bilerek "tanınmayan"ı da kapsıyor: yeni bir araç
+        // eklendiğinde kart kaybolmasın. Kartsız kalmak, kapının kullanıcıya
+        // ulaşmadığı ve isteğin sessizce öldüğü hal demek.
+        clearActiveCardRef.current = () => setPendingCommand(null);
+        setPendingCommand({
+          command: unityOzeti(tool, params),
+          gateId,
+          messageId: MCP_MSG_ID,
+          kind: 'unity',
+        });
       }
       break;  // aynı anda tek kart
     }

@@ -81,7 +81,7 @@ interface McpApprovalCardsProps {
   setPendingGenFiles: (val: any) => void;
   pendingDelete: { path: string; messageId: number } | null;
   setPendingDelete: (val: any) => void;
-  pendingCommand: { command: string; gateId: string; messageId: number } | null;
+  pendingCommand: { command: string; gateId: string; messageId: number; kind?: 'shell' | 'unity' } | null;
   setPendingCommand: (val: any) => void;
   pendingFix: { data: any; messageId?: number; applied?: boolean; gateId?: string } | null;
   setPendingFix: (val: any) => void;
@@ -375,6 +375,7 @@ export const McpApprovalCards: React.FC<McpApprovalCardsProps> = ({
           {lock(
           <CommandApproval
             command={pendingCommand.command}
+            kind={pendingCommand.kind}
             onConfirm={async () => {
               const result = await decide(true);
               setPendingCommand(null);

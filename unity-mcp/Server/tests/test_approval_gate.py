@@ -143,6 +143,9 @@ def test_backend_ULASILAMAZSA_reddediliyor(monkeypatch):
 
     monkeypatch.setattr(approval_gate.httpx, "AsyncClient", hep_patla)
     monkeypatch.setattr(approval_gate.asyncio, "sleep", _hemen)
+    # Bütçe duvar saatine bağlı olduğu için uykuyu taklit etmek testi
+    # hızlandırmıyor, SICAK döngüye çeviriyor — bütçenin kendisi kısaltılıyor.
+    monkeypatch.setattr(approval_gate, "_POST_BUTCESI", 0.2)
 
     with pytest.raises(ApprovalDenied):
         _kos(kapiyi_gec("manage_asset", {"action": "create"}))
@@ -153,6 +156,61 @@ def test_backend_ULASILAMAZSA_reddediliyor(monkeypatch):
 
 async def _hemen(_saniye):
     return None
+
+
+# ── bütçe: sayıya değil DUVAR SAATİNE bağlı ─────────────────────────────────
+
+
+class _Yanit:
+    def __init__(self, kod, govde):
+        self.status_code = kod
+        self._govde = govde
+
+    def json(self):
+        return self._govde
+
+
+class _CevapsizClient:
+    """POST'u kabul eden ama sonucu asla döndürmeyen bir backend taklidi."""
+
+    def __init__(self, *a, **k):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    async def post(self, *a, **k):
+        return _Yanit(200, {"status": "ok"})
+
+    async def get(self, *a, **k):
+        raise OSError("backend yanıt vermiyor")
+
+
+def test_yoklama_butcesi_SAYIYA_degil_saate_bagli(monkeypatch):
+    """Denetim turu bulgusu: "180 sn" yazan döngü 33 dakika sürebiliyordu.
+
+    Sebep çarpımsaldı — 360 tur × (0,5 sn uyku + 5 sn HTTP zaman aşımı). Bütçe
+    deneme SAYISIYLA ifade edilince, adım başına gecikme değiştiğinde sessizce
+    büyüyor. O sürede çağrıyı bekleyen asistan turu da kilitli kalıyor.
+
+    Test bütçeyi küçültüp gerçek geçen süreyi ölçüyor: sayı tabanlı eski
+    döngüde bu koşu en az 180 saniye sürerdi.
+    """
+    import time as _t
+
+    monkeypatch.setattr(approval_gate, "_POST_BUTCESI", 5.0)
+    monkeypatch.setattr(approval_gate, "_BEKLEME_BUTCESI", 0.2)
+    monkeypatch.setattr(approval_gate.httpx, "AsyncClient", _CevapsizClient)
+
+    basla = _t.monotonic()
+    with pytest.raises(ApprovalDenied):
+        _kos(kapiyi_gec("manage_asset", {"action": "create"}))
+    gecen = _t.monotonic() - basla
+
+    assert gecen < 5.0, f"bütçe aşıldı: {gecen:.1f} sn"
 
 
 # ── kablolama: kapı VAR olmak yetmez, BAĞLI olmalı ──────────────────────────
