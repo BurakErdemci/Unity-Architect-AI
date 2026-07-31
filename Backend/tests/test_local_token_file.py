@@ -275,69 +275,133 @@ def harf_duyarsiz_kip(monkeypatch):
     monkeypatch.setattr(local_token_file, "_harf_duyarsiz_kip", lambda: True)
 
 
-def test_ayni_dosya_kimligi_ada_degil_inode_a_bakiyor(tmp_path):
-    """Guard'ın dayandığı ölçüm aleti — bozuksa guard'ın iddiası boş olur."""
-    a = tmp_path / "a.txt"
-    a.write_text("a", encoding="utf-8")
-    b = tmp_path / "b.txt"
-    b.write_text("b", encoding="utf-8")
+@pytest.fixture
+def case_sensitive_dizin(tmp_path):
+    """Aynı adın iki yazımının YAN YANA durabildiği gerçek bir dizin.
 
-    fd = os.open(str(a), os.O_RDONLY)
-    try:
-        assert local_token_file._ayni_dosya(fd, str(a)) is True
-        assert local_token_file._ayni_dosya(fd, str(b)) is False
-        # Ölçülemeyen durum kabule DEĞİL redde dönüşmeli.
-        assert local_token_file._ayni_dosya(fd, str(tmp_path / "yok")) is False
-    finally:
-        os.close(fd)
-
-
-def test_yalniz_harfte_ayrisan_BASKA_dosya_reddediliyor(
-    tmp_path, monkeypatch, harf_duyarsiz_kip
-):
-    """Guard'ın çekirdeği: harf farkı silinince eşit görünen İKİ AYRI dosya.
-
-    Senaryo: beklenen `mesru.txt`, tanıtıcı ise saldırganın dosyasına bağlı ve
-    çekirdek onun yolunu yalnızca büyük harfle ayrışan bir dize olarak
-    döndürüyor. Harf-duyarsız karşılaştırma "aynı dosya" diyor; kimlik ölçümü
-    demiyor. Guard olmadan bu kabul edilirdi.
+    POSIX'te bedava — dizinler zaten case-sensitive, yani bu testler CI Linux'ta
+    KOŞUYOR. Windows'ta `fsutil` ile açılıyor; ölçüldü (31 Tem 2026, bu makine,
+    AYRICALIKSIZ) `setCaseSensitiveInfo ... enable` rc=0 döndü. Yetenek yoksa
+    ölçüm yapılamıyor demektir ve o zaman atlanıyor — yeteneğin YOKLUĞUNU
+    "geçti" saymamak için üç durumlu kapıların aynı mantığı.
     """
-    mesru = tmp_path / "mesru.txt"
-    mesru.write_text("MESRU", encoding="utf-8")
-    saldirgan = tmp_path / "saldirgan.txt"
-    saldirgan.write_text("SALDIRGAN", encoding="utf-8")
+    if os.name != "nt":
+        return tmp_path
+    import subprocess
 
-    monkeypatch.setattr(
-        local_token_file, "_fd_gercek_yol", lambda fd: str(mesru).upper()
+    r = subprocess.run(
+        ["fsutil", "file", "setCaseSensitiveInfo", str(tmp_path), "enable"],
+        capture_output=True, text=True,
     )
-    fd = os.open(str(saldirgan), os.O_RDONLY)
-    try:
-        with pytest.raises(OSError, match="case-sensitive"):
-            local_token_file._dogrula_kimlik(fd, str(mesru))
-    finally:
-        os.close(fd)
+    if r.returncode != 0:
+        pytest.skip(
+            "case-sensitive dizin kurulamadı — ölçüldü: "
+            f"fsutil rc={r.returncode} {(r.stdout + r.stderr).strip()[:100]}"
+        )
+    return tmp_path
 
 
-def test_harf_farki_AYNI_dosyaysa_kabul_ediliyor(
-    tmp_path, monkeypatch, harf_duyarsiz_kip
-):
+def test_harf_farki_iki_AYRI_giris_ise_gercek_sayiliyor(case_sensitive_dizin):
+    """Guard'ın çekirdeği, GERÇEK dosya sistemi durumuyla.
+
+    ⚠️ Bu testin eski hâli KURGUYDU ve 3. doğrulama turu onu yakaladı: tanıtıcı
+    bir dosyaya bağlıyken `_fd_gercek_yol` taklidi ilgisiz BAŞKA bir dosyanın
+    yolunu döndürüyordu, yani `os.open` / `GetFinalPathNameByHandleW` / `os.stat`
+    arasındaki gerçek ilişki hiç ölçülmüyordu. Şimdi iki yazım da diskte
+    gerçekten duruyor ve karar onların varlığından çıkıyor.
+    """
+    (case_sensitive_dizin / "token").write_text("mesru", encoding="utf-8")
+    (case_sensitive_dizin / "TOKEN").write_text("saldirgan", encoding="utf-8")
+    assert {"token", "TOKEN"} <= set(os.listdir(case_sensitive_dizin))
+
+    assert local_token_file._harf_farki_GERCEK_mi(
+        str(case_sensitive_dizin / "TOKEN"), str(case_sensitive_dizin / "token")
+    ) is True
+
+
+def test_harf_farki_tek_giris_ise_ayni_adin_yazimi_sayiliyor(tmp_path):
     """Ters yön — yoksa guard ürünü Windows'ta açılmaz hale getirirdi.
 
-    Harf-duyarsız bir dizinde `C:\\X\\Token` ile `C:\\x\\token` gerçekten AYNI
-    dosya; guard bunu reddederse token hiç okunamaz. Bu testi geçmeyen bir
-    guard, kapattığı açıktan daha pahalıya mal olur.
+    Harf-duyarsız bir dizinde çekirdek dosyanın diskteki yazımını döndürüyor,
+    çağıran başka türlü yazmış olabiliyor; ikisi AYNI dosya. Guard bunu
+    reddederse token hiç okunamaz — kapattığı açıktan pahalıya mal olur.
     """
-    mesru = tmp_path / "mesru.txt"
-    mesru.write_text("MESRU", encoding="utf-8")
+    (tmp_path / "token").write_text("mesru", encoding="utf-8")
+    assert "TOKEN" not in os.listdir(tmp_path)
 
-    monkeypatch.setattr(
-        local_token_file, "_fd_gercek_yol", lambda fd: str(mesru).upper()
-    )
-    fd = os.open(str(mesru), os.O_RDONLY)
-    try:
-        local_token_file._dogrula_kimlik(fd, str(mesru))  # patlamamalı
-    finally:
-        os.close(fd)
+    assert local_token_file._harf_farki_GERCEK_mi(
+        str(tmp_path / "TOKEN"), str(tmp_path / "token")
+    ) is False
+
+
+def test_bilesen_ayristirmasi_kok_bicimlerini_dogru_cozuyor():
+    """Ayrıştırma elle `split(os.sep)` DEĞİL — o, kökü yanlış yere koyuyordu.
+
+    Ölçüldü (31 Tem 2026): elle bölünce sürücüye yakın bir bileşenin ebeveyni
+    `"C:"` çıkıyor ve `os.listdir("C:")` kökü değil o sürücünün çalışma dizinini
+    listeliyor. Yani kontrol YANLIŞ dizine bakıp "iki giriş yok" diyebilirdi.
+    """
+    if os.name == "nt":
+        ust, ad = local_token_file._bilesenler(r"C:\a\b")[0]
+        assert ust == "C:\\" and ad == "a"
+        assert local_token_file._bilesenler(r"\\server\share\d\t")[0][0] == (
+            "\\\\server\\share\\"
+        )
+    else:
+        assert local_token_file._bilesenler("/a/b")[0] == ("/", "a")
+
+
+def test_iki_bilesen_ayrisiyorsa_GERCEK_olani_yakalaniyor(case_sensitive_dizin):
+    """Sınıfın ikinci yazımı: fark tek bileşende değil, birden fazlasında.
+
+    Döngü ilk masum bileşende durursa (yalnız bir yazım var) sonrakini hiç
+    ölçmez ve gerçek olanı kaçırırdı. İki-varyant kuralı ölçümle uygulanıyor.
+    """
+    (case_sensitive_dizin / "ara").mkdir()
+    (case_sensitive_dizin / "ARA").mkdir()
+    (case_sensitive_dizin / "ara" / "token").write_text("mesru", encoding="utf-8")
+    (case_sensitive_dizin / "ARA" / "token").write_text("saldirgan", encoding="utf-8")
+
+    assert local_token_file._harf_farki_GERCEK_mi(
+        str(case_sensitive_dizin / "ARA" / "token"),
+        str(case_sensitive_dizin / "ara" / "token"),
+    ) is True
+
+
+def test_harf_farki_OLCULEMEZSE_gercek_sayiliyor():
+    """Listeleyemediğimiz bir dizin hakkında iddia üretmiyoruz — fail-CLOSED."""
+    yok = os.path.join(os.sep, "olmayan-dizin-xyz", "alt", "token")
+    assert local_token_file._harf_farki_GERCEK_mi(
+        yok.replace("token", "TOKEN"), yok
+    ) is True
+
+
+@pytest.mark.junction_gerekli
+def test_case_only_junction_sirri_SIZDIRMIYOR(case_sensitive_dizin, monkeypatch):
+    """3. doğrulama turunun blocker'ı, uçtan uca — ürün ucundan ölçülüyor.
+
+    Ölçüldü (31 Tem 2026): düzeltmeden ÖNCE `read_secret_file` saldırganın
+    token'ını DÖNDÜRÜYORDU. Kimlik karşılaştırması bu senaryoyu göremiyordu,
+    çünkü `os.stat(beklenen)` de junction'ı takip edip aynı dosyaya çıkıyordu.
+
+    Junction bir Windows kavramı olduğu için bu uçtan uca ölçüm yalnız orada
+    koşuyor; sınıfın MANTIĞI ise yukarıdaki üç testte her makinede ölçülüyor.
+    """
+    import _winapi
+
+    buyuk = case_sensitive_dizin / "TOKEN-HOME"
+    buyuk.mkdir()
+    (buyuk / "local-app-token").write_text("SALDIRGANIN-TOKENI", encoding="utf-8")
+    kucuk = case_sensitive_dizin / "token-home"
+    _winapi.CreateJunction(str(buyuk), str(kucuk))
+
+    hedef = kucuk / "local-app-token"
+    monkeypatch.setattr(local_token_file, "_TOKEN_DIR", str(kucuk))
+    monkeypatch.setattr(local_token_file, "_TOKEN_PATH", str(hedef))
+    monkeypatch.delenv("LOCAL_APP_TOKEN", raising=False)
+
+    assert local_token_file.read_secret_file(str(hedef)) == ""
+    assert local_token_file.read_local_app_token() == ""
 
 
 def test_harf_DUYARLI_kipte_yol_karsilastirmasi_zaten_yakaliyor(

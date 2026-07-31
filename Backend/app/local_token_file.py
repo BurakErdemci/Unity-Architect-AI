@@ -184,27 +184,71 @@ def _yol_esitle(yol: str) -> str:
     return yol.lower() if _harf_duyarsiz_kip() else yol
 
 
-def _ayni_dosya(fd: int, yol: str) -> bool:
-    """Açık tanıtıcı ile `yol` AYNI dosya mı — ada değil kimliğe bakarak.
+def _bilesenler(yol: str) -> "list[tuple[str, str]]":
+    """Yolu kökten yaprağa `(ebeveyn_dizin, ad)` çiftlerine ayırır.
 
-    Ölçüldü (31 Tem 2026, Windows, `Backend\\venv`): `os.fstat` bu platformda da
-    anlamlı `st_ino`/`st_dev` dolduruyor — aynı yolun `stat`'ı tanıtıcıyla
-    eşleşti, başka bir dosya eşleşmedi.
-
-    Ölçemediğimiz her durumda `False` dönüyor (kimlik alınamadı, dosya yok,
-    `st_ino` sıfır). Çağıran bunu ek bir VE koşulu olarak kullanıyor, yani
-    ölçememek kabule değil REDDE dönüşüyor.
+    ⚠️ `yol.split(os.sep)` ile elle bölmek YANLIŞ ve sebebi ölçüldü (31 Tem
+    2026): öyle bölünce sürücüye yakın bir bileşenin ebeveyni `"C:"` çıkıyor ve
+    `os.listdir("C:")` kökü DEĞİL o sürücünün çalışma dizinini listeliyor —
+    ölçüldü, `listdir("C:")` ile `listdir("C:\\\\")` farklı kümeler döndürdü.
+    UNC'de de sunucu/paylaşım bileşenleri elle bölmeyi bozuyor. `os.path.split`
+    bu kuralları kendisi biliyor, o yüzden ayrıştırma ona bırakıldı.
     """
-    try:
-        st1 = os.fstat(fd)
-        st2 = os.stat(yol)
-    except OSError:
-        return False
-    if not st1.st_ino:
-        # Kimliği olmayan bir dosya sistemi (bazı ağ/FAT birimleri): iddia
-        # üretmiyoruz. `0 == 0` eşitliği sahte bir "aynı dosya" olurdu.
-        return False
-    return (st1.st_ino, st1.st_dev) == (st2.st_ino, st2.st_dev)
+    parcalar = []
+    p = yol
+    while True:
+        ust, ad = os.path.split(p)
+        if not ad or ust == p:
+            break
+        parcalar.append((ust, ad))
+        p = ust
+    parcalar.reverse()
+    return parcalar
+
+
+def _harf_farki_GERCEK_mi(gercek: str, beklenen: str) -> bool:
+    """İki yol yalnız harfte ayrışıyor: aynı adın farklı yazımı mı, İKİ AYRI ad mı?
+
+    ⚠️ Bu fonksiyon bir öncekinin (`_ayni_dosya`, kimlik karşılaştırması) YERİNE
+    geçti ve sebebi ölçüldü — 3. doğrulama turu, 31 Tem 2026. Kimlik
+    karşılaştırması bu soruyu CEVAPLAYAMIYOR, çünkü `os.stat(beklenen)` de
+    yönlendirmeyi takip ediyor:
+
+        case-sensitive üst dizin içinde
+            TOKEN-HOME\\local-app-token   ← saldırganın dosyası
+            token-home  → junction → TOKEN-HOME
+
+    Burada tanıtıcı da `os.stat(beklenen)` da AYNI saldırgan dosyaya çıkıyor,
+    yani `st_ino`/`st_dev` eşleşiyor ve kimlik kontrolü "aynı dosya" diyordu.
+    Ölçüldü: `read_secret_file` saldırganın token'ını DÖNDÜRDÜ. Guard, kapattığını
+    sandığı sınıfı açık bırakmıştı.
+
+    Doğru ayırt edici kimlik değil ADLANDIRMA: dosya sistemi bu iki yazımı ayrı
+    iki dizin girişi olarak mı tutuyor? Üst dizinin listesi bunu yönlendirmeyi
+    takip etmeden söylüyor — yukarıdaki kurulumda `os.listdir` ölçüldü ve
+    `['TOKEN-HOME', 'token-home']` döndü.
+
+    `True` = harf farkı GERÇEK, reddet. Ölçemediğimiz her durum da `True`
+    (fail-CLOSED): listeleyemediğimiz bir dizin hakkında iddia üretmiyoruz.
+    """
+    g = _bilesenler(_yol_normalize(gercek))
+    b = _bilesenler(_yol_normalize(beklenen))
+    if len(g) != len(b):
+        # Bileşen sayısı farklıysa bu bir harf farkı değil, yapı farkı.
+        return True
+    for (_, g_ad), (ust, b_ad) in zip(g, b):
+        if g_ad == b_ad:
+            continue
+        if g_ad.lower() != b_ad.lower():
+            return True  # harf dışı fark — çağıran zaten reddetmiş olmalıydı
+        try:
+            girisler = set(os.listdir(ust))
+        except OSError:
+            return True
+        if g_ad in girisler and b_ad in girisler:
+            # İki yazım da AYRI birer giriş: case-sensitive dizin, iki farklı ad.
+            return True
+    return False
 
 
 def _dogrula_kimlik(fd: int, beklenen_yol: str) -> None:
@@ -257,7 +301,12 @@ def _dogrula_kimlik(fd: int, beklenen_yol: str) -> None:
     # için mi eşit sayıldılar? Öyleyse `_yol_esitle`'nin varsayımı ("dizin
     # case-insensitive") devrede demektir ve o varsayım case-sensitive bir NTFS
     # dizininde ÇÖKÜYOR: `token` ile `Token` iki ayrı dosya (ölçüldü, bkz.
-    # `_yol_esitle`). O yüzden bu dar dalda ada değil KİMLİĞE bakıyoruz.
+    # `_yol_esitle`). Bu dar dalda bu yüzden ADLANDIRMAYA bakılıyor.
+    #
+    # ⚠️ Burada önce KİMLİK karşılaştırması vardı (`_ayni_dosya`) ve 3. doğrulama
+    # turu onu ÖLÇEREK yanlışladı: `os.stat(beklenen)` yönlendirmeyi takip
+    # ettiği için saldırganın dosyası kendisiyle karşılaştırılıyordu ve kontrol
+    # "aynı dosya" diyordu. Ayrıntı ve ölçüm `_harf_farki_GERCEK_mi`'de.
     #
     # Neden bu bir TOCTOU riski DEĞİL: kontrol yalnız EK bir VE koşulu. Zaten
     # reddedilen hiçbir durumu kabule çeviremez, yalnızca kabul edilecek dar bir
@@ -274,10 +323,10 @@ def _dogrula_kimlik(fd: int, beklenen_yol: str) -> None:
     #     açılamıyor (`os.path.exists` → False), yani senaryo bu platformda
     #     kurulamıyor; macOS'ta kurulabilir ve orada da fail-CLOSED.
     if _yol_normalize(gercek) != _yol_normalize(beklenen_mutlak):
-        if not _ayni_dosya(fd, beklenen_yol):
+        if _harf_farki_GERCEK_mi(gercek, beklenen_mutlak):
             raise OSError(
                 f"{beklenen_yol} ile açılan dosya ({gercek}) yalnızca büyük/küçük "
-                "harfte ayrışıyor ve AYNI dosya değil (case-sensitive dizin); "
+                "harfte ayrışıyor ve bunlar AYRI iki ad (case-sensitive dizin); "
                 "sır dosyası olarak kullanılmayacak."
             )
 
