@@ -107,6 +107,364 @@ class TestPromptArgvdeGorunmuyor(unittest.TestCase):
                                   f"{ad}: argv'de kalıyor ama adlandırılmış istisna değil")
 
 
+class TestHamCikti_LoglaKaydedilmiyor(unittest.TestCase):
+    """Denetim bulgusu `prompt-derived-log-disclosure` (1 Ağu 2026).
+
+    `[CMD]`'yi maskelemek yetmedi: Codex dalı her ham stdout satırının ilk 300
+    karakterini INFO seviyesinde basıyordu ve Codex'in ham stdout'u MODELİN
+    CEVABINI taşıyor. Cevap prompt'u tekrarlayabiliyor ya da okuduğu dosya
+    içeriğini taşıyabiliyor → aynı kalıcı log dosyasına bu yoldan geri giriyordu.
+
+    Sır maskesi bunu kurtarmıyor: o ADLANDIRILMIŞ kimlik bilgilerini maskeliyor,
+    serbest metni değil.
+    """
+
+    def test_RAW_log_satiri_cocugun_ciktisini_TASIMIYOR(self):
+        """Kaynak metnini değil DAVRANIŞI ölçer: gerçek `analyze_code` koşuyor,
+        sahte bir Codex çocuğu stdin'de aldığı canary'yi kendi cevabı gibi geri
+        yazıyor, ve log işleyicisi o canary'yi görüyor mu diye bakılıyor."""
+        import asyncio
+        import logging
+        from providers import cli_base
+
+        canary = "GIZLI-CEVAP-ICERIGI-9b21c7"
+
+        class SahteCodex(cli_base.BaseCLIProvider):
+            prompt_via_stdin = True
+
+            def _write_mcp_config(self, workspace):
+                return ""
+
+            def _get_file_tree(self, workspace):
+                return ""
+
+            def _build_cmd(self, prompt, thinking_level="medium", workspace=None):
+                self._stdin_payload = prompt
+                cocuk = ("import json,sys; p=sys.stdin.read(); "
+                         "print(json.dumps({'type':'item.completed',"
+                         "'item':{'type':'agent_message','text':p}}))")
+                return [sys.executable, "-c", cocuk]
+
+        yakalanan = []
+
+        class Yakala(logging.Handler):
+            def emit(self, record):
+                yakalanan.append(record.getMessage())
+
+        h = Yakala()
+        eski_seviye, eski_yayilim = cli_base.logger.level, cli_base.logger.propagate
+        cli_base.logger.setLevel(logging.INFO)
+        cli_base.logger.propagate = False
+        cli_base.logger.addHandler(h)
+        try:
+            async def kostur():
+                async for _ev in SahteCodex(binary_name="gpt-test").analyze_code(
+                        canary, cwd=os.path.dirname(__file__)):
+                    pass
+            asyncio.run(kostur())
+        finally:
+            cli_base.logger.removeHandler(h)
+            cli_base.logger.setLevel(eski_seviye)
+            cli_base.logger.propagate = eski_yayilim
+
+        raw_satirlari = [m for m in yakalanan if "[RAW#" in m]
+        # POZİTİF KONTROL: RAW yolu gerçekten koştu mu? Koşmadıysa test boştur.
+        self.assertTrue(raw_satirlari, "[RAW#] satırı hiç üretilmedi — test bir şey ölçmüyor")
+        for m in raw_satirlari:
+            self.assertNotIn(canary, m, "çocuğun çıktısı kalıcı log satırına giriyor")
+
+
+class TestDogrulamaTuruBulgulari(unittest.TestCase):
+    """Doğrulama turunun (1 Ağu 2026) taşıma/yaşam döngüsünde bulduğu üç kusur."""
+
+    def test_STDERR_satiri_da_icerik_TASIMIYOR(self):
+        """`stderr_prompt_log_disclosure`: stdout'u susturmak yetmiyordu —
+        `_drain_stderr` her satırı kelimesi kelimesine kalıcı log'a yazıyordu ve
+        bir CLI/model prompt'u oraya da yankılayabiliyor."""
+        yol = os.path.join(os.path.dirname(__file__), "..", "app", "providers", "cli_base.py")
+        with open(yol, encoding="utf-8") as f:
+            satirlar = [s for s in f.read().splitlines()
+                        if "[STDERR]" in s and "logger." in s]
+        self.assertTrue(satirlar, "[STDERR] log satırı bulunamadı — test bayatlamış")
+        for s in satirlar:
+            self.assertNotIn("{decoded}", s, f"ham stderr içeriği loglanıyor: {s.strip()}")
+
+    def test_prompt_TESLIM_EDILEMEZSE_tur_basarili_sayilmiyor(self):
+        """`broken_pipe_prompt_not_delivered`: ilk düzeltme kırık boruyu yalnız
+        loglayıp devam ediyordu → prompt teslim EDİLMEMİŞken çocuğun geçerli
+        stdout'u ve `exit 0`'ı gerçek cevap sanılıyordu. Sessiz yanlış cevap,
+        görünür hatadan pahalı."""
+        import asyncio
+        from providers.cli_base import BaseCLIProvider
+
+        class StdinKapatan(BaseCLIProvider):
+            prompt_via_stdin = True
+
+            def _write_mcp_config(self, workspace):
+                return ""
+
+            def _get_file_tree(self, workspace):
+                return ""
+
+            def _build_cmd(self, prompt, thinking_level="medium", workspace=None):
+                self._stdin_payload = prompt
+                # stdin'i okumadan KAPATIR, sonra geçerli bir cevap basıp 0 döner.
+                cocuk = ("import sys,os,json; os.close(0); "
+                         "print(json.dumps({'type':'item.completed','item':"
+                         "{'type':'agent_message','text':'ISTENMEYEN_BASARI'}}))")
+                return [sys.executable, "-c", cocuk]
+
+        olaylar = []
+
+        async def kostur():
+            async for ev in StdinKapatan(binary_name="gpt-test").analyze_code(
+                    "Z" * 500_000, cwd=os.path.dirname(__file__)):
+                olaylar.append(ev)
+
+        asyncio.run(kostur())
+        hatalar = [e for e in olaylar if e.get("type") == "error"]
+        metinler = "".join(str(e.get("content", "")) for e in olaylar)
+        self.assertTrue(hatalar, "teslim edilemeyen prompt sessizce başarılı sayıldı")
+        self.assertNotIn("ISTENMEYEN_BASARI", metinler,
+                         "sorulmamış bir soruya gelen cevap kullanıcıya sunuluyor")
+
+    def test_DURDUR_ust_uste_binen_TUM_turlari_kapsiyor(self):
+        """`concurrent_turn_stop_orphan` için GUARD: `active_provider` tek
+        yuvaydı, ikinci tur birincinin referansını eziyordu ve Durdur yalnız
+        sonuncuya ulaşıyordu. Eşzamanlılığı engelleyen bir kod YOK — sadece
+        arayüz alışkanlığı vardı; alışkanlık enforcement değildir."""
+        from providers.oneshot_cli import OneShotSession
+
+        class SahteSaglayici:
+            def __init__(self):
+                self._active_process = None
+                self.iptal_edildi = False
+
+            async def cancel_active_process(self):
+                self.iptal_edildi = True
+                return True
+
+        s = OneShotSession("copilot", 1)
+        birinci, ikinci = SahteSaglayici(), SahteSaglayici()
+        s.active_provider = birinci
+        s.active_provider = ikinci   # ikinci tur birinciyi EZİYORDU
+        self.assertIn(birinci, s.iptal_edilecekler(),
+                      "ilk turun süreci Durdur'un kapsamı dışında kalıyor")
+        self.assertIn(ikinci, s.iptal_edilecekler())
+
+
+class TestDogrulamaTuru2Bulgulari(unittest.TestCase):
+    """İkinci doğrulama turunun taşıma/oturum tarafında bulduğu üç kusur."""
+
+    def test_BASARISIZ_turda_da_stderr_icerigi_loga_girmiyor(self):
+        """`stderr_failure_log_leak`: satır logunu ölçüye çevirmek yetmiyordu —
+        `[FAILED]`/`[NO_OUTPUT]` dalları aynı tamponu bütün hâlinde log'a
+        basıyordu. İçerik kullanıcıya gitmeye DEVAM etmeli, diske değil."""
+        import asyncio
+        import logging
+        from providers import cli_base
+
+        canary = "CANARY-STDERR-7c1"
+
+        class StderrYazan(cli_base.BaseCLIProvider):
+            prompt_via_stdin = True
+
+            def _write_mcp_config(self, workspace):
+                return ""
+
+            def _get_file_tree(self, workspace):
+                return ""
+
+            def _build_cmd(self, prompt, thinking_level="medium", workspace=None):
+                # canary YALNIZ stdin'den gidiyor — argv'ye hiç girmiyor ki
+                # ölçüm `[CMD]` satırıyla karışmasın.
+                self._stdin_payload = prompt
+                return [sys.executable, "-c",
+                        "import sys; p=sys.stdin.read(); sys.stderr.write(p); "
+                        "sys.stderr.flush(); sys.exit(7)"]
+
+        kayitlar, olaylar = [], []
+
+        class Yakala(logging.Handler):
+            def emit(self, record):
+                kayitlar.append(record.getMessage())
+
+        h = Yakala()
+        eski_s, eski_y = cli_base.logger.level, cli_base.logger.propagate
+        cli_base.logger.setLevel(logging.INFO)
+        cli_base.logger.propagate = False
+        cli_base.logger.addHandler(h)
+        try:
+            async def kostur():
+                async for ev in StderrYazan(binary_name="gpt-test").analyze_code(
+                        canary, cwd=os.path.dirname(__file__)):
+                    olaylar.append(ev)
+            asyncio.run(kostur())
+        finally:
+            cli_base.logger.removeHandler(h)
+            cli_base.logger.setLevel(eski_s)
+            cli_base.logger.propagate = eski_y
+
+        self.assertFalse([m for m in kayitlar if canary in m],
+                         "çocuğun stderr içeriği kalıcı log'a giriyor")
+        # POZİTİF KONTROL: teşhis kaybolmadı — içerik kullanıcıya ulaşıyor.
+        self.assertTrue(any(canary in str(e.get("content", "")) for e in olaylar),
+                        "hata mesajı da içeriği kaybetmiş — teşhis yok oldu")
+
+    def test_agy_oturumu_da_UST_USTE_binen_turlari_kapsiyor(self):
+        """`agy_concurrent_stop_orphan`: aynı tek-yuva deseni `AgySession`'da da
+        vardı; ilk düzeltme yalnız `OneShotSession`'ı kapatmıştı. Bir sınıfı
+        kapatmak, kaç kopyası olduğunu SAYMAYI gerektiriyor."""
+        from providers.agy_session import AgySession
+        s = AgySession(1)
+        a, b = object(), object()
+        s.active_provider = a
+        s.active_provider = b
+        self.assertIn(a, s.iptal_edilecekler(), "ilk turun süreci Durdur dışında")
+        self.assertIn(b, s.iptal_edilecekler())
+
+    def test_KAPANMIS_oturuma_gec_gelen_saglayici_DAMGALANIYOR(self):
+        """`oneshot_provider_after_close`: kapanıştan SONRA atanan bir sağlayıcı
+        hiçbir Durdur yoluna görünmüyordu.
+
+        ⚠️ İlk çözüm zamanlamaya dayanıyordu (süreci 5 sn bekleyip bir kez iptal)
+        ve üçüncü doğrulama turu tam oradan girdi: süreç tavandan sonra doğarsa
+        gözlemci kalmıyordu. Sözleşme değişti — sağlayıcı DAMGALANIYOR ve spawn
+        hiç yapılmıyor (bkz. TestDogrulamaTuru3Bulgulari).
+        """
+        import asyncio
+        from providers import oneshot_cli
+
+        class Sahte:
+            def __init__(self):
+                self._active_process = None
+
+        async def senaryo():
+            s = oneshot_cli.get_session("copilot", 4242)
+            await oneshot_cli.close_session("copilot", 4242)
+            gec = Sahte()
+            s.active_provider = gec          # kapanmış oturuma geç atama
+            self.assertTrue(getattr(gec, "_oturum_kapandi", False),
+                            "kapanıştan sonra atanan sağlayıcı damgalanmadı")
+
+        asyncio.run(senaryo())
+
+
+class TestDogrulamaTuru3Bulgulari(unittest.TestCase):
+    """Üçüncü doğrulama turunun yaşam döngüsünde bulduğu iki kusur.
+
+    İkisi de aynı dersi verdi: bir yarışı SONRADAN iptal ederek kazanmaya
+    çalışmak yakınsamıyor — tavan ne olursa olsun ötesi var. Ölçüt değişti,
+    yarış kaldırıldı: kapanmış oturumda çocuk süreç HİÇ doğmuyor.
+    """
+
+    def test_KAPANMIS_oturumda_surec_HIC_DOGMUYOR(self):
+        import asyncio
+        from providers import oneshot_cli, agy_session
+        from providers.cli_base import BaseCLIProvider
+
+        class Uyuyan(BaseCLIProvider):
+            prompt_via_stdin = True
+
+            def _write_mcp_config(self, workspace):
+                return ""
+
+            def _get_file_tree(self, workspace):
+                return ""
+
+            def _build_cmd(self, prompt, thinking_level="medium", workspace=None):
+                self._stdin_payload = prompt
+                return [sys.executable, "-c", "import time; time.sleep(20)"]
+
+        async def senaryo():
+            for ad, oturum_al, kapat in (
+                ("oneshot", lambda: oneshot_cli.get_session("copilot", 7001),
+                            lambda: oneshot_cli.close_session("copilot", 7001)),
+                ("agy", lambda: agy_session.get_session(7002),
+                        lambda: agy_session.close_session(7002)),
+            ):
+                s = oturum_al()
+                await kapat()
+                p = Uyuyan(binary_name="probe-gate")
+                s.active_provider = p          # kapanıştan SONRA atama
+                olaylar = [ev async for ev in p.analyze_code("merhaba", cwd=".")]
+                with self.subTest(oturum=ad):
+                    self.assertIsNone(p._active_process,
+                                      f"{ad}: kapanmış oturumda çocuk süreç doğdu")
+                    self.assertTrue(any(e.get("type") == "error" for e in olaylar),
+                                    f"{ad}: engelleme kullanıcıya bildirilmedi")
+
+        asyncio.run(senaryo())
+
+    def test_stdin_KAPANIS_hatasi_da_cevabi_engelliyor(self):
+        """`stdin_close_failure_answer`: kapanış asenkron — `drain()` çocuk okuma
+        ucunu kapatmadan dönebiliyor ve `close()` hatayı senkron yüzeye
+        çıkarmıyor. Hata `wait_closed()`'da fırlıyor; o nokta beklenmediği için
+        teslim edilmemiş prompt'un ardından gelen cevap kabul ediliyordu."""
+        yol = os.path.join(os.path.dirname(__file__), "..", "app", "providers", "cli_base.py")
+        with open(yol, encoding="utf-8") as f:
+            kaynak = f.read()
+        # Kaynak nöbetçisi: davranışı sürmek gerçek bir asyncio transport seam'i
+        # gerektiriyor; burada kollanan şey çağrının VARLIĞI — düşerse sınıf geri gelir.
+        self.assertIn("wait_closed()", kaynak,
+                      "stdin kapanışı beklenmiyor — ertelenmiş hata görünmez olur")
+
+
+class TestStdinDevriTeslimindeIptalCalisiyor(unittest.TestCase):
+    """Denetim bulgusu `uncancellable-pre-reader-stall` (1 Ağu 2026).
+
+    `_active_process` yalnız write+drain+close bittikten SONRA atanıyordu. Çocuk
+    stdin'i tüketmeden oyalanırsa `drain()` dolu boruda bloke oluyor ve o
+    pencerede süreç ÇALIŞIYOR ama `cancel_active_process` onu göremiyor:
+    Durdur'a basan kullanıcı `False` alıyor, tur ve çocuk süreç ayakta kalıyor.
+
+    Pencere prompt argv'deyken YOKTU — stdin'e taşıma onu açtı. Yani bu, K5(b)
+    düzeltmesinin kendi getirdiği kusurdu.
+    """
+
+    def test_stdin_bloke_olsa_bile_DURDUR_sureci_yakaliyor(self):
+        import asyncio
+        from providers.cli_base import BaseCLIProvider
+
+        class OkumayanCocuk(BaseCLIProvider):
+            prompt_via_stdin = True
+
+            def _write_mcp_config(self, workspace):
+                return ""
+
+            def _get_file_tree(self, workspace):
+                return ""
+
+            def _build_cmd(self, prompt, thinking_level="medium", workspace=None):
+                self._stdin_payload = prompt
+                # stdin'i HİÇ okumadan bekler → drain() dolu boruda bloke olur.
+                return [sys.executable, "-c", "import time; time.sleep(30)"]
+
+        p = OkumayanCocuk(binary_name="probe-stall")
+
+        async def senaryo():
+            async def tur():
+                async for _ev in p.analyze_code("Y" * 200_000,
+                                                cwd=os.path.dirname(__file__)):
+                    pass
+            gorev = asyncio.create_task(tur())
+            # Süreç doğduğu ANDAN itibaren iptal edilebilmeli.
+            for _ in range(100):
+                if p._active_process is not None:
+                    break
+                await asyncio.sleep(0.1)
+            self.assertIsNotNone(p._active_process,
+                                 "süreç doğdu ama kayıt edilmedi — Durdur onu göremez")
+            iptal = await p.cancel_active_process()
+            self.assertTrue(iptal, "Durdur çalışan çocuğu sonlandıramadı")
+            try:
+                await asyncio.wait_for(gorev, timeout=20)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                gorev.cancel()
+
+        asyncio.run(senaryo())
+
+
 class TestPromptLogaGirmiyor(unittest.TestCase):
     """K5(a) — `[CMD]` satırı kalıcı log dosyasına ne yazıyor?"""
 

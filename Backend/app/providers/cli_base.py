@@ -429,6 +429,14 @@ class BaseCLIProvider(AIProvider):
                 yield {"type": "error", "content": f"⚠️ {_label} CLI bu bilgisayarda kurulu değil (PATH'te bulunamadı). Lütfen kurun veya farklı bir model seçin."}
                 return
 
+            # SPAWN ÖNCESİ KAPI — oturum kapandıysa çocuk süreç HİÇ doğmuyor.
+            # Damgayı `saglayici_sahipligi` koyuyor; gerekçesi orada. `_cancel_requested`
+            # KULLANILAMAZ çünkü bu fonksiyon onu başında sıfırlıyor; bu damga kalıcı.
+            if getattr(self, "_oturum_kapandi", False):
+                logger.warning(f"[CLIProvider:{self.binary_name}] oturum kapalı — spawn edilmedi")
+                yield {"type": "error", "content": "İşlem durduruldu."}
+                return
+
             # cmd[0]'i tam yola çöz + Windows .cmd/.bat ise cmd.exe ile sar (WinError 2 fix).
             spawn_cmd = self._resolve_exec(cmd)
 
@@ -538,10 +546,55 @@ class BaseCLIProvider(AIProvider):
                     creationflags=_CREATE_NO_WINDOW,
                     limit=self._CLI_STREAM_LIMIT_BYTES,
                 )
+                # ⚠️ SÜREÇ, stdin'e YAZMADAN ÖNCE kaydediliyor.
+                #
+                # Denetim bulgusu (1 Ağu 2026, `stdin_handoff_uncancellable.py`):
+                # `_active_process` yalnız write+drain+close bittikten sonra
+                # atanıyordu. Çocuk stdin'i tüketmeden oyalanırsa `drain()` dolu
+                # boruda bloke oluyor ve o pencerede süreç ÇALIŞIYOR ama
+                # `cancel_active_process` onu göremiyor: Durdur'a basan kullanıcı
+                # `False` alıyor, tur ve çocuk süreç ayakta kalıyor. Pencere
+                # prompt argv'deyken yoktu; stdin'e taşıma onu açtı.
+                #
+                # Atama spawn'ın hemen ardına alınınca pencere kapanıyor: artık
+                # süreç var olduğu andan itibaren iptal edilebilir.
+                self._active_process = process
                 if _stdin_prompt is not None:
-                    process.stdin.write(_stdin_prompt.encode("utf-8"))
-                    await process.stdin.drain()
-                    process.stdin.close()
+                    try:
+                        process.stdin.write(_stdin_prompt.encode("utf-8"))
+                        await process.stdin.drain()
+                        process.stdin.close()
+                        # ⚠️ `close()` YETMİYOR — kapanış ASENKRON.
+                        # Üçüncü doğrulama turu (`stdin_close_failure_answer`):
+                        # `drain()` boru tamponu yüzünden çocuk okuma ucunu
+                        # kapatmadan ÖNCE dönebiliyor ve `close()` hatayı
+                        # senkron yüzeye çıkarmıyor; hata `wait_closed()`'da
+                        # fırlıyor. O nokta beklenmediği için teslim edilmemiş
+                        # bir prompt'un ardından gelen cevap kabul ediliyordu.
+                        await process.stdin.wait_closed()
+                    except (BrokenPipeError, ConnectionResetError) as _e:
+                        # ⛔ YUTULMUYOR — TUR BURADA BİTİYOR.
+                        #
+                        # İlk düzeltme bunu yalnız loglayıp devam ediyordu ve
+                        # doğrulama turu onu kırdı (`broken_pipe_prompt_not_
+                        # delivered.py`, 1 Ağu 2026): prompt teslim EDİLMEMİŞken
+                        # çocuğun geçerli bir stdout'u ve `exit 0`'ı kabul
+                        # ediliyordu → kullanıcı, sorusunun sorulmadığı bir
+                        # cevabı gerçek cevap sanıyordu. Sessiz yanlış cevap,
+                        # görünür hatadan pahalıya geliyor.
+                        logger.error(
+                            f"[CLIProvider:{self.binary_name}] prompt stdin'e yazılamadı "
+                            f"(çocuk erken kapandı): {type(_e).__name__}")
+                        try:
+                            process.kill()
+                        except (ProcessLookupError, OSError):
+                            pass
+                        yield {"type": "error", "content": (
+                            "⚠️ İstek CLI'a iletilemedi (süreç girdi kanalını erken kapattı). "
+                            "Mesajınız işlenmedi — lütfen tekrar deneyin.")}
+                        return
+            # agy dalı için (ve non-agy'de zararsız tekrar) — orada stdin
+            # DEVNULL, yani yukarıdaki pencere hiç oluşmuyor.
             self._active_process = process
             _stdout_reader = process.stdout
             logger.info(f"[CLIProvider:{self.binary_name}] PID={process.pid} başlatıldı")
@@ -561,7 +614,17 @@ class BaseCLIProvider(AIProvider):
                     _last_activity = _loop.time()
                     decoded = line.decode("utf-8", errors="ignore").rstrip()
                     stderr_buffer.append(decoded)
-                    logger.warning(f"[CLIProvider:{self.binary_name}][STDERR] {decoded}")
+                    # İÇERİK DEĞİL ÖLÇÜ — `[RAW#]` ile aynı gerekçe, ve doğrulama
+                    # turu bunu ayrı bir yol olarak buldu (`stderr_prompt_log_
+                    # disclosure.py`, 1 Ağu 2026): stdout'u susturmak yetmiyordu,
+                    # çocuğun stderr'i aynı kalıcı dosyaya kelimesi kelimesine
+                    # akıyordu ve bir CLI/model prompt'u oraya da yankılayabiliyor.
+                    #
+                    # TEŞHİS KAYBOLMUYOR: satırların TAMAMI `stderr_buffer`'da
+                    # duruyor ve tur başarısız olduğunda kullanıcıya gösterilen
+                    # hata mesajına zaten oradan giriyor. Kaybedilen tek şey,
+                    # BAŞARILI turların içeriğinin de diskte kalıcı birikmesiydi.
+                    logger.warning(f"[CLIProvider:{self.binary_name}][STDERR] {len(decoded)} bayt")
 
             stderr_task = asyncio.create_task(_drain_stderr())
 
@@ -654,10 +717,22 @@ class BaseCLIProvider(AIProvider):
                 if _is_agy and re.match(r'^You\s*(>|\(press)', raw):
                     continue
                 line_count += 1
-                # Ham stdout — Codex için her satırı logla (debug)
+                # Codex akışının İZİ — içeriği DEĞİL.
+                #
+                # Bu satır eskiden her ham stdout satırının ilk 300 karakterini
+                # basıyordu ve "(debug)" diye işaretliydi. Denetimde ölçüldü
+                # (1 Ağu 2026, `codex_raw_output_log_leak.py`): Codex'in ham
+                # stdout'u modelin CEVAP metnini taşıyor, cevap da prompt'u
+                # tekrarlayabiliyor ya da okuduğu dosya içeriğini içerebiliyor.
+                # Yani prompt'u argv'den ve `[CMD]`'den çıkarmak yetmiyordu —
+                # aynı kalıcı log dosyasına (`%TEMP%/unity-architect-ai.log`)
+                # bu yoldan geri giriyordu. Sır maskesi de kurtarmıyor: o
+                # ADLANDIRILMIŞ kimlik bilgilerini maskeliyor, serbest metni değil.
+                #
+                # Teşhis değeri korunuyor: satır sayısı ve boyut akışın
+                # ilerlediğini gösteriyor, içerik göstermeden.
                 if self.binary_name.startswith("gpt-"):
-                    _preview = raw[:300] + ("..." if len(raw) > 300 else "")
-                    logger.info(f"[CLIProvider:{self.binary_name}][RAW#{line_count}] {_preview}")
+                    logger.info(f"[CLIProvider:{self.binary_name}][RAW#{line_count}] {len(raw)} bayt")
 
                 import json as _json
                 _is_json_provider = (
@@ -999,7 +1074,13 @@ class BaseCLIProvider(AIProvider):
                 }
             elif process.returncode not in (0, 1, None):
                 stderr_full = "\n".join(stderr_buffer)
-                logger.error(f"[CLIProvider:{self.binary_name}][FAILED] rc={process.returncode}\nSTDERR:\n{stderr_full}")
+                # İÇERİK KULLANICIYA GİDER, DİSKE GİTMEZ. Doğrulama turu 2
+                # (`stderr_failure_log_leak.py`): satır logunu ölçüye çevirmek
+                # yetmiyordu — başarısız turda aynı tampon burada bütün hâlinde
+                # log'a basılıyordu, yani kalıcı dosyaya giden yol açıktı.
+                # Aşağıdaki `yield` içeriği kullanıcıya taşımaya devam ediyor.
+                logger.error(f"[CLIProvider:{self.binary_name}][FAILED] rc={process.returncode} "
+                             f"stderr={len(stderr_buffer)} satır / {len(stderr_full)} bayt")
                 yield {
                     "type": "error",
                     "content": f"❌ CLI hata (rc={process.returncode}): {stderr_full[:500] or '(boş)'}",
@@ -1012,7 +1093,9 @@ class BaseCLIProvider(AIProvider):
                 # agent_runner._run_agy_session). Bu yüzden agy'de boş stdout'u hata SAYMA;
                 # diğer CLI'larda (claude/codex) boş stdout gerçek başarısızlıktır.
                 stderr_full = "\n".join(stderr_buffer)
-                logger.error(f"[CLIProvider:{self.binary_name}][NO_OUTPUT] Stdout boş!\nSTDERR:\n{stderr_full}")
+                # Gerekçe [FAILED] dalıyla aynı: ölçü diske, içerik kullanıcıya.
+                logger.error(f"[CLIProvider:{self.binary_name}][NO_OUTPUT] Stdout boş! "
+                             f"stderr={len(stderr_buffer)} satır / {len(stderr_full)} bayt")
                 yield {"type": "error", "content": f"⚠️ Çıktı yok. Hata: {stderr_full[:500]}"}
             elif not full_text.strip() and self.binary_name.startswith(("cursor-", "copilot-", "opencode:")):
                 # Yeni CLI'lar rc=1 ile ölürken stdout'a yalnız init event'leri basmış
@@ -1021,7 +1104,9 @@ class BaseCLIProvider(AIProvider):
                 _err_lines = [l for l in stderr_buffer if "error" in l.lower()] or stderr_buffer
                 if _err_lines:
                     _msg = "\n".join(_err_lines)[:400]
-                    logger.error(f"[CLIProvider:{self.binary_name}][EMPTY_TEXT] {_msg}")
+                    # Gerekçe [FAILED] dalıyla aynı: ölçü diske, içerik kullanıcıya.
+                    logger.error(f"[CLIProvider:{self.binary_name}][EMPTY_TEXT] "
+                                 f"{len(_err_lines)} hata satırı / {len(_msg)} bayt")
                     _hint = ""
                     if "not available" in _msg.lower() and self.binary_name.startswith("copilot-"):
                         _hint = "\n💡 Bu model Copilot planında kullanılamıyor olabilir — 'Copilot Auto' modelini deneyin."

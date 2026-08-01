@@ -29,6 +29,8 @@ import shutil
 import logging
 from typing import Dict, List, Optional, Tuple
 
+from .saglayici_sahipligi import SaglayiciSahipligi, oturumu_kapat
+
 logger = logging.getLogger(__name__)
 
 CLI_KEYS = ("cursor", "copilot", "opencode", "kimi")
@@ -37,14 +39,16 @@ CLI_KEYS = ("cursor", "copilot", "opencode", "kimi")
 # ─────────────────────────────────────────────────────────────────
 # Sohbet başına resume durumu (agy_session ile aynı kalıp)
 # ─────────────────────────────────────────────────────────────────
-class OneShotSession:
+class OneShotSession(SaglayiciSahipligi):
     def __init__(self, cli: str, conversation_id: int):
         self.cli = cli
         self.conversation_id = conversation_id
-        self.session_id: Optional[str] = None  # CLI'ın resume anahtarı
+        self.session_id: Optional[str] = None  # CLI'in resume anahtari
         self.ctx_injected: bool = False        # transcript ilk turda enjekte edildi mi
         self.auto_approve: bool = False
-        self.active_provider = None            # Durdur için çalışan subprocess sahibi
+        # Durdur icin calisan subprocess sahipleri - tek yuva DEGIL kume.
+        # Gerekce ve olcum: `saglayici_sahipligi.py`.
+        self._sahiplik_kur()
 
 
 _SESSIONS: Dict[Tuple[str, int], OneShotSession] = {}
@@ -60,10 +64,8 @@ def get_session(cli: str, conversation_id: int) -> OneShotSession:
 
 
 async def close_session(cli: str, conversation_id: int) -> None:
-    session = _SESSIONS.pop((cli, conversation_id), None)
-    provider = getattr(session, "active_provider", None) if session else None
-    if provider is not None:
-        await provider.cancel_active_process()
+    # SONUNCUSU degil HEPSI - gerekce saglayici_sahipligi.py'de.
+    await oturumu_kapat(_SESSIONS.pop((cli, conversation_id), None))
 
 
 async def close_all_sessions() -> None:

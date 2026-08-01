@@ -34,6 +34,7 @@ import ntpath
 import os
 import posixpath
 import time
+import unicodedata
 import uuid
 from pathlib import Path
 from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Set
@@ -393,21 +394,107 @@ def _read_target_outside_workspace(tool_name: str, inp: dict, workspace: str) ->
     return not _path_in_workspace(target, workspace)
 
 
-# Onay kartında bir yaprağın gösterileceği üst sınır.
+def _bos_mu(metin) -> bool:
+    """Gövde GÖZLE boş mu — ölçüt bir liste değil, KATEGORİ.
+
+    Üç turda üç kez aşıldı: `""` → `"  \\t "` → U+3164 HANGUL FILLER →
+    varyasyon seçicileri (`variation_selector_blank_no_warning`). Her seferinde
+    ölçüte bir karakter eklendi ve kırmızı takım bir sonrakini buldu; yani liste
+    tutmak yakınsamıyor.
+
+    Yeni ölçüt: metinde MÜREKKEP BIRAKAN tek bir karakter var mı? Boşluklar,
+    kontrol/format karakterleri, birleşen işaretler (varyasyon seçicileri dahil)
+    ve bilinen boş-çizilenler mürekkep bırakmıyor. Aksanlı gerçek metin bundan
+    etkilenmiyor: aksanın altındaki TABAN harf görünür bir karakter.
+    """
+    if not isinstance(metin, str):
+        return True
+    return all(
+        parca.isspace()
+        or parca in _GORUNMEZLER
+        or unicodedata.category(parca) in _GORUNMEZ_KATEGORILER
+        for parca in metin
+    )
+
+
+# Mürekkep bırakmayan Unicode kategorileri: kontrol/format/ayrılmış (C*),
+# birleşen işaretler (Mn/Me — varyasyon seçicileri buraya düşüyor) ve ayırıcılar.
+_GORUNMEZ_KATEGORILER = frozenset({"Cc", "Cf", "Cs", "Co", "Cn", "Mn", "Me", "Zs", "Zl", "Zp"})
+
+# Kategorisi "görünür" diyen ama pratikte boş çizilen karakterler (çoğu `Lo`).
 #
-# Sayı frontend'deki `OZET_DEGER_SINIRI` ile BİLEREK aynı ve aynı gerekçeyle:
-# 200 karakterlik eski sınır, uzun bir gövdenin yıkıcı kısmı sonda olduğunda onu
-# kartta hiç göstermiyordu — kullanıcı zararsız görünen bir başlangıcı onaylıyordu
-# (31 Tem 2026 denetim bulgusu). Aşıldığında GİZLENEN KARAKTER SAYISI yazılıyor;
-# sessiz kırpma, sayılı kırpmadan tehlikeli.
-_KART_DEGER_SINIRI = 4000
+# Doğrulama turu 2 bunları `strip()` tabanlı "gözle boş" ölçütünün ve `Cf`/`Cc`
+# tabanlı kaçışın ARASINDAN geçirdi (`invisible_nonwhitespace_write.py`,
+# U+3164 HANGUL FILLER — kategori `Lo`). İkisi de kategoriye bakıyordu, bu
+# karakterlerin kategorisi ise görünürlükleri hakkında hiçbir şey söylemiyor.
+#
+# ⚠️ LİSTE TÜKETİCİ DEĞİL ve öyleymiş gibi davranılmamalı — Unicode'un
+# "default ignorable" kümesinin tamamı `unicodedata` üzerinden sorgulanamıyor.
+# Buradaki karakterler bilinen boş-çizilenler; yeni bir örnek çıkarsa listeye
+# eklenir. Kalan risk raporda açıkça yazılı.
+_GORUNMEZLER = frozenset("ㅤᅟᅠ⠀ﾠ឴឵᠎")
 
 
-def _kirp(metin: str, sinir: int = _KART_DEGER_SINIRI) -> str:
-    metin = metin if isinstance(metin, str) else str(metin)
-    if len(metin) <= sinir:
-        return metin
-    return f"{metin[:sinir]}… [+{len(metin) - sinir} karakter gizlendi]"
+def _kirp(metin: str) -> str:
+    """Onay kartındaki bir yaprağı gösterime hazırlar. KIRPMA YOK — sebebi ölçüldü.
+
+    Burada 4000 karakterlik bir sınır vardı ve denetim onu kırdı
+    (1 Ağu 2026, `approval_hidden_suffix.py`): 4000 zararsız karakterin ARDINA
+    yıkıcı bir son ek konulduğunda kart zararsız başlangıcı + "gizlendi" notunu
+    gösteriyor, Onayla ise gövdenin TAMAMINI yetkilendiriyordu. Kullanıcının
+    göremediği bir şeyi onaylaması, kartın var olma sebebini ortadan kaldırıyor.
+
+    ⛔ Sınırı BÜYÜTMEK çözüm değildi: eşik nereye konursa konsun "eşikten
+    sonrasını gizle" sınıfı ayakta kalırdı ve saldırgan eşiği zaten biliyor.
+    Ölçüt değişti — kart, yetkilendirdiği metnin TAMAMINI gösteriyor.
+
+    Bunun bedeli SSE'de daha büyük bir olay; kabul edilebilir çünkü bu olay
+    onay başına BİR kez çıkıyor (sohbet çipi gövdeyi hiç taşımıyor, bkz.
+    `tam_govde`) ve gövdenin boyu modelin çıktı sınırıyla zaten bağlı. Kart
+    kendi içinde kaydırılıyor, yani uzun gövde düğmeleri de itmiyor.
+    """
+    # ⛔ BURADA KAÇIŞ YOK. Kaçış TEK yerde, `_describe_tool`'un çıkışında.
+    # Doğrulama turu 2 bunu kırdı (`double_escape_write_body.py`): `_kirp` de
+    # kaçırıyordu, çıkış da kaçırıyordu → tek bir ters bölü kartta DÖRT ters
+    # bölü olarak görünüyordu. Yani kart, onaylanan içeriği yanlış gösteriyordu
+    # ve "idempotent" diye yazdığım docstring ters bölü çiftlemesi eklendiği an
+    # yanlışa dönmüştü. İki kaçış noktası, tanım gereği tek çıkış noktası değil.
+    return metin if isinstance(metin, str) else str(metin)
+
+
+def _gorunur_kil(metin: str, *, ters_bolu_cift: bool = True) -> str:
+    """Görünmez / yazı yönünü değiştiren karakterleri GÖRÜNÜR kaçışlara çevirir.
+
+    Denetim bulgusu (1 Ağu 2026, `approval_bidi_controls.py`): gövdedeki bir
+    RLO (U+202E) tarayıcıda uygulanıyor ve kartta okunan sıra, diske yazılacak
+    bayt sırasından FARKLI olabiliyor. React ham HTML'i engelliyor ama bunlar
+    HTML değil, metnin kendisi — yani kaçış bu sınıfı görmüyor.
+
+    ÖLÇÜT BİR LİSTE DEĞİL KATEGORİ: Unicode `Cf` (format) ve `Cc` (kontrol)
+    sınıfındaki her karakter kaçırılıyor, satırsonu ve sekme hariç. Elle yazılmış
+    bir karakter listesi, listede olmayan bir sonraki karakterle sessizce
+    aşılırdı; kategori ölçütü yeni eklenen karakterleri de kapsıyor.
+    """
+    def _cevir(parca: str) -> str:
+        if parca in ("\n", "\t"):
+            return parca
+        if unicodedata.category(parca) in ("Cf", "Cc") or parca in _GORUNMEZLER:
+            return f"\\u{ord(parca):04X}"
+        if parca == "\\" and ters_bolu_cift:
+            # TERS BÖLÜ DE KAÇIRILIYOR — yoksa kaçış kendi çıktısıyla ÇAKIŞIR.
+            # ⚠️ JSON bölümünde bu KAPALI (`ters_bolu_cift=False`): orada ters
+            # bölüyü JSON'un kendi kaçışı zaten tekilleştiriyor, ikinci bir
+            # çiftleme tek bir ters bölüyü DÖRT ters bölü gösterirdi — yani
+            # düzelttiğimiz yanlış-gösterim sınıfını JSON'da geri açardı.
+            # Doğrulama turu bulgusu (`approval_escape_collision.py`): gerçek bir
+            # U+202E ile düz metin olarak yazılmış altı karakterlik `‮`
+            # kartta AYNI görünüyordu, yani iki farklı bayt dizisi ayırt
+            # edilemiyordu. Ters bölü çiftlenince gerçek kontrol `‮`,
+            # düz metin ise `\\u202E` olarak çıkıyor.
+            return "\\\\"
+        return parca
+
+    return "".join(_cevir(parca) for parca in metin)
 
 
 def _yazma_govdesi(tool_name: str, inp: dict) -> str:
@@ -422,10 +509,41 @@ def _yazma_govdesi(tool_name: str, inp: dict) -> str:
     Edit/MultiEdit'te diff metin olarak veriliyor (eski/yeni), çünkü kararı
     değiştiren şey tam olarak o iki dize.
     """
+    # BOŞ GÖVDE SESSİZ GEÇEMEZ. Denetim bulgusu (1 Ağu 2026,
+    # `approval_empty_write.py`): `content=""` ile bir yazma, gövde "yok" sayılıp
+    # yalnız `Write → yol` üretiyordu — yani var olan bir dosyayı SIFIR BAYTA
+    # indiren işlem, kartta içeriksiz bir özetten ayırt edilemiyordu. Kullanıcı
+    # silme etkisi olan bir işlemi hiçbir uyarı görmeden onaylıyordu.
+    #
+    # ⚠️ ÖLÇÜT "boş dize" DEĞİL "GÖZLE BOŞ". Doğrulama turu ilk hâli kırdı
+    # (`whitespace_write_ambiguous.py`): uyarı Python doğruluk testine bağlıydı,
+    # yani yalnız `""`'i kapsıyordu; `"   \t\n  "` sıradan gövde yolundan geçip
+    # kartta bomboş bir alan olarak çiziliyordu — aynı yıkıcı etki, uyarısız.
+    #
+    # ⚠️ UYARI METNİ ARACA GÖRE. İkinci kırılma (`notebook_empty_false_zero_
+    # byte_warning.py`): `Write`'ın "dosya sıfır bayta inecek" cümlesi
+    # `NotebookEdit`'e de uygulanıyordu, oysa boş bir HÜCRE kaynağı defteri
+    # sıfırlamıyor. Kartın yanlış bir şey söylemesi, az şey söylemesinden kötü.
+    # ⚠️ UYARILAR BİLMEDİĞİMİZ BİR ETKİYİ İDDİA ETMİYOR.
+    #
+    # Üçüncü doğrulama turu iki kez aynı sınıftan vurdu: "dosyanın mevcut içeriği
+    # silinecek" cümlesi YENİ bir dosya yazımında olmayan bir içeriğin silindiğini
+    # iddia ediyordu (`new_empty_file_warning_overstates`), ve boş kaynaklı bir
+    # `insert` "hücrenin içeriği silinecek" diyordu, oysa hücre EKLENİYORDU
+    # (`notebook_insert_warning_misstates`). Backend dosyanın var olup olmadığını
+    # bilmiyor; bilmediğini söylemek yerine YAPILACAK ŞEYİ söylüyor.
+    BOS_DOSYA = "⚠️ YAZILACAK İÇERİK GÖZLE BOŞ (dosyaya boş/görünmez içerik yazılacak)."
+    BOS_HUCRE = "⚠️ HÜCRE KAYNAĞI GÖZLE BOŞ (hücreye boş/görünmez kaynak yazılacak)."
+    SIL_HUCRE = ("⚠️ HÜCRE SİLİNİYOR — bu hücre (içeriği ve üst verisiyle) "
+                 "defterden kaldırılacak.")
     if tool_name == "Write":
-        return _kirp(inp.get("content", ""))
+        icerik = inp.get("content", "")
+        return BOS_DOSYA if _bos_mu(icerik) else _kirp(icerik)
     if tool_name == "NotebookEdit":
-        return _kirp(inp.get("new_source", ""))
+        kaynak = inp.get("new_source", "")
+        if inp.get("edit_mode") == "delete":
+            return SIL_HUCRE
+        return BOS_HUCRE if _bos_mu(kaynak) else _kirp(kaynak)
     if tool_name == "Edit":
         return (f"- {_kirp(inp.get('old_string', ''))}\n"
                 f"+ {_kirp(inp.get('new_string', ''))}")
@@ -444,7 +562,68 @@ def _yazma_govdesi(tool_name: str, inp: dict) -> str:
 
 
 def _describe_tool(tool_name: str, inp: dict, *, tam_govde: bool = False) -> str:
-    """Onay kartında / chip başlığında gösterilecek insan-okunur açıklama.
+    """Onay kartı metnini üretir ve TEK ÇIKIŞ NOKTASINDA görünür kılar.
+
+    Sarmalayıcı ayrı duruyor çünkü denetimin bidi bulgusu (F5) yalnız yazma
+    gövdesinde değil, kartın HER dalında yaşıyordu: dosya YOLU, `Bash` komutu,
+    `WebFetch` adresi — hepsi modelin seçtiği metin ve hepsi doğrudan karta
+    gidiyordu. Tek tek dalları yamamak sınıfı kapatmaz; yarın eklenen dal onu
+    sessizce geri açar. Kaçış bu yüzden dalların içinde değil, çıkışta.
+
+    `_gorunur_kil` idempotent: kaçırılmış bir dizide artık Cf/Cc karakteri
+    kalmadığı için ikinci geçiş onu değiştirmiyor.
+    """
+    ozet = _describe_tool_ham(tool_name, inp, tam_govde=tam_govde)
+    if not tam_govde:
+        return _gorunur_kil(ozet)
+
+    # ⭐ KARTIN YETKİLİ BÖLÜMÜ: onaylanan girdinin TAMAMI.
+    #
+    # Üç doğrulama turu bu kararı zorladı. Kart, keyfi bir araç girdisini ELLE
+    # YAZILMIŞ düzyazıyla özetliyordu; özet tanım gereği kayıplı, dolayısıyla her
+    # turda bir sonraki eksik alan bulundu: `content` eklendi → `cell_id` yoktu →
+    # `cell_type` yoktu → `Bash`ta `run_in_background` yoktu. Bu, eşik
+    # kovalamanın düzyazı hâli: vaka kapatıyor, SINIFI kapatmıyor.
+    #
+    # Ölçüt değişti. Düzyazı artık yalnızca BAŞLIK (okunurluk için); kartın
+    # yetkilendirdiği şeyi gösteren bölüm ham girdinin kendisi. Böylece iki
+    # özellik İNŞA GEREĞİ doğru oluyor:
+    #   • kart, Onayla'nın yetkilendirdiği her alanı gösterir (alan atlanamaz),
+    #   • iki farklı girdi asla aynı kartı üretemez (çakışma imkânsız).
+    try:
+        # ⚠️ `ensure_ascii=True` BİLİNÇLİ — kartın AYIRT ETME yeteneği buradan geliyor.
+        #
+        # Denge şu: okunabilir bölüm içeriği olduğu gibi göstermeli (bir yol
+        # `C:\Assets` diye görünmeli), ama o zaman gerçek bir U+202E ile düz metin
+        # olarak yazılmış `\u202E` aynı görünür. Ters bölüyü çiftleyerek ayırmak
+        # denendi ve içerik gösterimini bozdu (`double_escape_write_body`).
+        # `ensure_ascii=True` ikisini de bedelsiz çözüyor: gerçek kontrol JSON'da
+        # `\u202e`, düz metin ise `\\u202E` olarak çıkıyor. Türkçe karakterler bu
+        # bölümde kaçışlı görünür — okunacak yer YUKARIDAKİ bölüm, burası KESİN olan.
+        tam = json.dumps(inp, ensure_ascii=True, indent=2, sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        tam = repr(inp)
+    # İki bölüm İKİ FARKLI kaçışla: düzyazı başlıkta ters bölü çiftleniyor
+    # (orada tekilleştirecek başka bir katman yok), JSON'da çiftlenmiyor (JSON
+    # zaten `\\` yazıyor). Görünmez/yön değiştiren karakterler İKİSİNDE DE
+    # kaçırılıyor — `ensure_ascii=False` onları ham bırakıyor, yani JSON tek
+    # başına yeterli bir savunma değil.
+    # HİÇBİR BÖLÜMDE ters bölü çiftlenmiyor:
+    #   • okunabilir başlık/gövde, içeriği OLDUĞU GİBİ göstermeli — bir C# yolu
+    #     `C:\Assets` orada `C:\\Assets` diye görünürse kart, onaylanan içeriği
+    #     yanlış gösterir (üçüncü tur bunu `double_escape_write_body` ile ölçtü);
+    #   • JSON bölümünde zaten JSON'un kendi `\\` kuralı var, üstüne ikinci bir
+    #     çiftleme binmesi aynı yanlış-gösterimi oraya taşırdı.
+    # Ayırt etme işi (gerçek U+202E ile düz metin `\u202E`) JSON bölümüne ait:
+    # orada ilki `\u202E`, ikincisi `\\u202E` olarak çıkıyor, yani kart iki
+    # farklı bayt dizisini hâlâ ayırt ediyor — ama bunu okunurluğu bozmadan yapıyor.
+    return (_gorunur_kil(ozet, ters_bolu_cift=False)
+            + "\n\n── ONAYLANAN GİRDİ (tamamı) ──\n"
+            + _gorunur_kil(tam, ters_bolu_cift=False))
+
+
+def _describe_tool_ham(tool_name: str, inp: dict, *, tam_govde: bool = False) -> str:
+    """Kart metninin ham hâli — kaçış YAPMAZ, çağıranı `_describe_tool`.
 
     `tam_govde` İKİ ÇAĞIRANI ayırıyor ve varsayılanı KAPALI:
       • ONAY KARTI (True) — kullanıcı burada karar veriyor, yazılacak içeriği
@@ -457,13 +636,39 @@ def _describe_tool(tool_name: str, inp: dict, *, tam_govde: bool = False) -> str
     """
     try:
         if tool_name in ("Write", "Edit", "MultiEdit", "NotebookEdit"):
-            yol = inp.get("file_path", inp.get("path", "?"))
+            # ⚠️ `notebook_path` DA OKUNUYOR. Doğrulama turu bulgusu
+            # (`notebook_approval_fields_omitted.py`): `NotebookEdit` hedefini bu
+            # anahtarda taşıyor, biz yalnız `file_path`/`path`'e bakıyorduk →
+            # kart `NotebookEdit → ?` yazıyordu. Üstelik hücre ve işlem türü de
+            # yoktu, yani AYRI iki işlem (güvenli bir hücrede değiştirme vs
+            # kritik bir hücreyi silme) birbirinin AYNI kartı üretiyordu.
+            yol = inp.get("file_path", inp.get("path", inp.get("notebook_path", "?")))
+            if tool_name == "NotebookEdit":
+                # Hedefi tekilleştiren alanlar başlığa giriyor: kart, onayladığı
+                # işlemi başka bir işlemden ayırt edilebilir kılmak zorunda.
+                # `cell_type` de burada: doğrulama turu 2 ölçtü ki aynı kaynağı
+                # `code` ya da `markdown` hücresi olarak eklemek FARKLI iki işlem
+                # ama kartları birbirinin aynısıydı (`notebook_cell_type_collision`).
+                _hucre = inp.get("cell_id", "?")
+                _kip = inp.get("edit_mode", "replace")
+                _tip = inp.get("cell_type", "?")
+                yol = f"{yol} · hücre={_hucre} · işlem={_kip} · tür={_tip}"
             govde = _yazma_govdesi(tool_name, inp) if tam_govde else ""
             # Gövde gerçekten boşsa (ör. boş dosya yazımı) başlığın altına boş
             # satır koyup kartı yanıltıcı biçimde "içerik yok gibi" göstermeyelim.
             return f"{tool_name} → {yol}\n\n{govde}" if govde else f"{tool_name} → {yol}"
         if tool_name == "Bash":
-            return inp.get("command", "")
+            komut = inp.get("command", "")
+            if not tam_govde:
+                return komut
+            # ONAY KARTINDA ÇALIŞTIRMA KİPİ DE GÖRÜNÜYOR. Doğrulama turu 2
+            # (`bash_fields_omitted.py`): aynı komutu ön planda 1 sn zaman aşımıyla
+            # ya da arka planda 10 dk ile çalıştırmak AYNI kartı üretiyordu, oysa
+            # Onayla iki farklı sözlüğü yetkilendiriyor. Kullanıcı, onayladığı
+            # çocuğun turdan sonra da yaşayıp yaşamayacağını göremiyordu.
+            _ek = [f"{a}={inp[a]}" for a in ("timeout", "run_in_background",
+                                             "description") if a in inp]
+            return f"{komut}\n[{' · '.join(_ek)}]" if _ek else komut
         if tool_name == "Read":
             return inp.get("file_path", "")
         if tool_name in ("LS", "NotebookRead"):
@@ -478,9 +683,14 @@ def _describe_tool(tool_name: str, inp: dict, *, tam_govde: bool = False) -> str
             return inp.get("url", "")
         if tool_name == "WebSearch":
             return inp.get("query", "")
-        if tool_name.startswith("mcp__"):
-            return f"{tool_name} {json.dumps(inp, ensure_ascii=False)[:160]}"
-        return f"{tool_name} {json.dumps(inp, ensure_ascii=False)[:160]}"
+        # MCP ve tanınmayan araçlar. 160 karakterlik kesme SADECE çip için:
+        # doğrulama turu (`mcp_approval_suffix_truncated.py`) gösterdi ki onay
+        # kartında bu kesme, C3'ün tam olarak aynı kusuruydu — 220 zararsız
+        # karakterin ardındaki `operation=DESTRUCTIVE_...` alanı kartta hiç
+        # görünmüyor ama Onayla sözlüğün TAMAMINI yetkilendiriyordu. Yazma
+        # araçlarında kaldırdığım kesmenin bu daldaki ikizi.
+        _yuk = json.dumps(inp, ensure_ascii=False)
+        return f"{tool_name} {_yuk if tam_govde else _yuk[:160]}"
     except Exception:
         return tool_name
 

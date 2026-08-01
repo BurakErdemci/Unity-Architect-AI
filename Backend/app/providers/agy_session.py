@@ -26,13 +26,15 @@ import sqlite3
 import logging
 from typing import Dict, Optional, Tuple, Set, List
 
+from .saglayici_sahipligi import SaglayiciSahipligi, oturumu_kapat
+
 logger = logging.getLogger(__name__)
 
 _CONV_DIR = os.path.expanduser(os.path.join("~", ".gemini", "antigravity-cli", "conversations"))
 _ASSISTANT_STEP_TYPE = 15  # canlı doğrulandı: steps.step_type==15 → asistan mesajı
 
 
-class AgySession:
+class AgySession(SaglayiciSahipligi):
     """Sohbet başına agy disk-resume koordinasyon durumu (agy ephemeral process
     olduğu için canlı subprocess TUTULMAZ — gerçek 'session' agy'nin disk db'sidir)."""
 
@@ -42,7 +44,9 @@ class AgySession:
         self.last_step_idx: int = -1          # db'den okunan son step idx (incremental)
         self.ctx_injected: bool = False       # proje bağlamı ilk turda enjekte edildi mi
         self.auto_approve: bool = False
-        self.active_provider = None            # Durdur için çalışan subprocess sahibi
+        # Durdur için çalışan subprocess sahipleri — tek yuva DEĞİL küme.
+        # Gerekçe ve ölçüm: `saglayici_sahipligi.py`.
+        self._sahiplik_kur()
 
 
 _SESSIONS: Dict[int, AgySession] = {}
@@ -57,10 +61,8 @@ def get_session(conversation_id: int) -> AgySession:
 
 
 async def close_session(conversation_id: int) -> None:
-    session = _SESSIONS.pop(conversation_id, None)
-    provider = getattr(session, "active_provider", None) if session else None
-    if provider is not None:
-        await provider.cancel_active_process()
+    # SONUNCUSU değil HEPSİ — gerekçe saglayici_sahipligi.py'de.
+    await oturumu_kapat(_SESSIONS.pop(conversation_id, None))
 
 
 async def close_all_sessions() -> None:
