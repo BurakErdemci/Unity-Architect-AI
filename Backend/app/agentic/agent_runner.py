@@ -76,7 +76,76 @@ def _urunun_kaydi_mi(ad: str, tanim: object) -> bool:
     komut = tanim.get("command")
     if isinstance(komut, str) and "unity_architect_ai" in komut.replace("\\", "/").lower():
         return True
+    if _eski_url_bicimi_mi(tanim.get("url")):
+        return True
     return False
+
+
+def _eski_url_bicimi_mi(url: object) -> bool:
+    """Sırrın URL YOLUNDA taşındığı eski ürün biçimi mi?
+
+    Denetim bulgusu (`legacy-url-secret-missed`) ve git geçmişinde doğrulandı:
+    ürün bir dönem sırrı `headers` yerine yol segmentinde taşıyordu —
+    `e988258` ile geldi, `c69f3eb` ("sırrı URL'den başlığa taşı") ile bitti.
+    O aralıkta kurulmuş bir workspace'in `.mcp.json`'ında `X-API-Key` BAŞLIĞI
+    YOK, sır `/mcp/<sır>` yolunda. Yalnız başlığa bakan bir imza kontrolü onu
+    kaçırıyordu — yani temizlik, sırrın gerçekten diskte kaldığı vakayı
+    atlıyordu.
+
+    Ölçüt dar tutuldu: yerel bir adres VE `/mcp/` altında boş olmayan bir ek
+    segment. Bugünkü biçim (`/mcp`, ek segment yok) buraya DÜŞMEZ; onu zaten
+    başlık imzası yakalıyor.
+    """
+    if not isinstance(url, str):
+        return False
+    try:
+        from urllib.parse import urlparse
+        p = urlparse(url)
+    except ValueError:
+        return False
+    if p.hostname not in ("localhost", "127.0.0.1", "::1"):
+        return False
+    parcalar = [s for s in p.path.split("/") if s]
+    return len(parcalar) >= 2 and parcalar[0] == "mcp"
+
+
+def _oturum_yeniden_kurma_gerekceleri(mevcut, *, model, effort, workspace, mcp_servers) -> List[str]:
+    """Cache'li oturumun CONNECT-TIME kimliği istenenden farklı mı? Farkların listesi.
+
+    Modül düzeyinde ve saf, çünkü asıl çağrı yeri yüzlerce satırlık bir async
+    metodun içinde ve oradan sınanamıyordu — bu depoda `_remove_project_mcp_json`
+    de aynı gerekçeyle dışarı alınmıştı. Ölçülmüş bedeli var: karar gövdenin
+    içindeyken testi kaynak taramasına düşüyordu ve bir mutasyon turu o testin
+    KÖR olduğunu gösterdi (koşul `if False:` yapıldı, test yeşil kaldı).
+
+    Karşılaştırılan dört şeyin dördü de connect-time kilitli:
+      · effort — SDK'da `set_effort` yok.
+      · model.
+      · workspace — CANONICAL karşılaştırma; `abspath` symlink alias'ında
+        yanlış "değişmedi"/"değişti" der. Ölçüldü (2026-07-28): workspace A ile
+        açılan oturum B istendiğinde aynen dönüyordu ve model sessizce düşüyordu.
+      · unityMCP kaydı — artık `.mcp.json` üzerinden değil doğrudan SDK
+        seçeneği olarak geçiyor. Karşılaştırılmazsa Unity MCP kapalıyken açılan
+        bir sohbet, MCP sonradan açılsa bile araçsız kalırdı ve kullanıcının
+        bunu düzeltmesinin yolu olmazdı (denetim bulgusu; egzotik değil, en
+        sıradan açılış sırası).
+    """
+    if mevcut is None:
+        return []
+    from providers.claude_sdk_session import _canonical as _canon
+
+    gerekceler: List[str] = []
+    if mevcut.effort != effort:
+        gerekceler.append(f"effort {mevcut.effort}→{effort}")
+    if mevcut.model != model:
+        gerekceler.append(f"model {mevcut.model}→{model}")
+    if _canon(mevcut.cwd or ".") != _canon(workspace):
+        gerekceler.append(f"workspace {mevcut.cwd}→{workspace}")
+    if (getattr(mevcut, "mcp_servers", None) or {}) != (mcp_servers or {}):
+        onceki = "var" if getattr(mevcut, "mcp_servers", None) else "yok"
+        simdi = "var" if mcp_servers else "yok"
+        gerekceler.append(f"unityMCP kaydı {onceki}→{simdi}")
+    return gerekceler
 
 
 def _remove_project_mcp_json(workspace_path: Optional[str]) -> None:
@@ -1669,28 +1738,12 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
         # dönüyordu (etkin cwd = A) ve model sessizce düşüyordu. Codex yolundaki
         # desenin aynısı (`_run_codex_session`), farkı: karşılaştırma CANONICAL —
         # `abspath` symlink alias'ında yanlış "değişmedi"/"değişti" der.
-        from providers.claude_sdk_session import _canonical as _canon
         _workspace = self.workspace_path or "."
         _existing = _SESSIONS.get(self.conversation_id)
-        _reasons = []
-        if _existing is not None:
-            if _existing.effort != desired_effort:
-                _reasons.append(f"effort {_existing.effort}→{desired_effort}")
-            if _existing.model != model:
-                _reasons.append(f"model {_existing.model}→{model}")
-            if _canon(_existing.cwd or ".") != _canon(_workspace):
-                _reasons.append(f"workspace {_existing.cwd}→{_workspace}")
-            # unityMCP kaydı da CONNECT-TIME kilitli (artık `.mcp.json` üzerinden
-            # değil, doğrudan SDK seçeneği olarak geçiyor). Karşılaştırılmazsa:
-            # Unity MCP kapalıyken açılan bir sohbet, MCP sonradan açılsa bile
-            # araçsız kalırdı — ve kullanıcı model/workspace/effort'tan birini
-            # değiştirene kadar bunu düzeltmenin yolu olmazdı. Denetim bulgusu
-            # (`stale-mcp-session-cache`); en olası tetikleyicisi de bu sıradan
-            # akış, egzotik bir durum değil.
-            if (_existing.mcp_servers or {}) != (mcp_servers_cfg or {}):
-                _onceki = "var" if _existing.mcp_servers else "yok"
-                _simdi = "var" if mcp_servers_cfg else "yok"
-                _reasons.append(f"unityMCP kaydı {_onceki}→{_simdi}")
+        _reasons = _oturum_yeniden_kurma_gerekceleri(
+            _existing, model=model, effort=desired_effort,
+            workspace=_workspace, mcp_servers=mcp_servers_cfg,
+        )
         if _reasons:
             logger.info(f"[ClaudeSession] {', '.join(_reasons)}; session yeniden kuruluyor "
                         f"(canlı bağlam sıfırlanır, DB özeti korunur)")

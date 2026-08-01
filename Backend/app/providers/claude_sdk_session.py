@@ -783,7 +783,15 @@ class ClaudeSDKSession:
             if self._usage_event:
                 await q.put(self._usage_event)
             if error:
-                await q.put({"type": "error", "message": error})
+                # ⚠️ Maskeleme BURADA, çağrı yerinde değil: oturumdan çıkan her
+                # hata olayı bu boğazdan geçiyor ve buradan doğrudan SSE'ye,
+                # yani tarayıcıya gidiyor. Oturum yapılandırması artık unityMCP
+                # `X-API-Key`'ini taşıdığı için istisna metni sırrı taşıyabilir.
+                # Denetim bulgusu: dış döngüde yapılan maskeleme reader
+                # döngüsünden gelen hataları KAPSAMIYORDU — bir korumayı
+                # çağrı yerine koymak, unutulan çağrı kadar koruma demek.
+                from secret_redaction import redact_secrets as _redact
+                await q.put({"type": "error", "message": _redact(str(error))})
             await q.put({"type": "response", "content": final})
             await q.put({"type": "done", "session_id": self.session_id})
             await q.put(None)  # sentinel → stream() biter

@@ -215,50 +215,110 @@ def test_temizlik_sirri_alir_kullanici_verisini_birakir(
 
 
 def test_cok_buyuk_dosya_bellege_alinmiyor(tmp_path):
-    """Güvensiz projeden gelen dev bir dosya turu bloke etmemeli."""
+    """Güvensiz projeden gelen dev bir dosya turu bloke etmemeli.
+
+    ⚠️ Yük BİLEREK "sınır olmasa DEĞİŞECEK" bir dosya: içinde ürünün kaydı var,
+    yani sınır kalkarsa dosya yeniden yazılır ve dolgu kaybolur. İlk yazımda
+    yük `{"mcpServers": {}}` idi — sınır olsa da olmasa da dosya aynen kalıyordu
+    ve test mutasyonu GÖREMİYORDU (mutasyon turunda ölçüldü).
+    """
     from agentic.agent_runner import _MCP_JSON_AZAMI_BAYT, _remove_project_mcp_json
 
     hedef = tmp_path / ".mcp.json"
     dolgu = "x" * (_MCP_JSON_AZAMI_BAYT + 1024)
-    hedef.write_text(json.dumps({"mcpServers": {}, "dolgu": dolgu}), encoding="utf-8")
+    hedef.write_text(
+        json.dumps({"mcpServers": {"unityMCP": _SIR_KAYDI}, "dolgu": dolgu}),
+        encoding="utf-8",
+    )
+    onceki = hedef.read_text(encoding="utf-8")
 
     _remove_project_mcp_json(str(tmp_path))
 
-    assert hedef.exists(), "boyut sınırı aşılmışken dosyaya dokunulmamalıydı"
+    assert hedef.exists(), "boyut sınırı aşılmışken dosya silinmemeliydi"
+    assert hedef.read_text(encoding="utf-8") == onceki, (
+        "boyut sınırı aşılmışken dosya OKUNMUŞ ve yeniden yazılmış"
+    )
 
 
-def test_unityMCP_kaydi_degisince_oturum_yeniden_kuruluyor():
+class _SahteOturum:
+    """`_oturum_yeniden_kurma_gerekceleri`'nin okuduğu asgari yüzey."""
+
+    def __init__(self, *, model="claude-x", effort="high", cwd=".", mcp_servers=None):
+        self.model = model
+        self.effort = effort
+        self.cwd = cwd
+        self.mcp_servers = mcp_servers or {}
+
+
+_UNITY_KAYDI = {"unityMCP": {"type": "http", "url": "http://localhost:8080/mcp"}}
+
+
+def test_unityMCP_kaydi_degisince_oturum_yeniden_kuruluyor(tmp_path):
     """Unity MCP sonradan açılınca araçlar gelmeli — bayat oturum kilitlenmemeli.
 
     `mcp_servers` connect-time kilitli olduğu için karşılaştırma listesinde
     olmazsa, MCP kapalıyken açılan bir sohbet MCP açıldıktan sonra da araçsız
     kalırdı. Egzotik değil, en sıradan akış: kullanıcı önce uygulamayı, sonra
-    Unity'yi açıyor.
+    Unity'yi açıyor. DAVRANIŞ testi — ilk yazımı kaynak taramasıydı ve bir
+    mutasyon turunda KÖR olduğu ölçüldü.
     """
-    import inspect
+    from agentic.agent_runner import _oturum_yeniden_kurma_gerekceleri as gerekce
 
-    from agentic import agent_runner
+    ws = str(tmp_path)
+    mcpsiz = _SahteOturum(cwd=ws, mcp_servers={})
 
-    kaynak = inspect.getsource(agent_runner.AgentRunner._run_claude_session)
-    assert "_existing.mcp_servers" in kaynak, (
-        "oturum yeniden kurma ölçütü unityMCP kaydını görmüyor"
-    )
+    # MCP kapalıyken açılmış oturum + MCP artık açık → yeniden kurulmalı.
+    r = gerekce(mcpsiz, model="claude-x", effort="high", workspace=ws, mcp_servers=_UNITY_KAYDI)
+    assert r, "unityMCP açıldığı hâlde oturum bayat kalıyor — Unity araçları hiç gelmez"
+    assert any("unityMCP" in g for g in r)
+
+    # Hiçbir şey değişmediyse boşuna yeniden kurulmamalı (canlı bağlam sıfırlanır).
+    mcpli = _SahteOturum(cwd=ws, mcp_servers=_UNITY_KAYDI)
+    assert gerekce(mcpli, model="claude-x", effort="high", workspace=ws,
+                   mcp_servers=dict(_UNITY_KAYDI)) == []
 
 
-def test_sse_hata_metni_redaksiyondan_geciyor():
-    """Tarayıcıya giden hata metni sırrı taşımamalı.
+def test_mcp_kaydi_ayni_kalinca_oturum_KORUNUYOR(tmp_path):
+    """Ters yön de kilitli: fazla yeniden kurma sohbet bağlamını çöpe atar."""
+    from agentic.agent_runner import _oturum_yeniden_kurma_gerekceleri as gerekce
 
-    Log tarafı global filtreyle korunuyor ama o filtre bu olay nesnesine
-    uğramıyordu — koruma sanılan yerde yoktu.
+    ws = str(tmp_path)
+    o = _SahteOturum(cwd=ws, mcp_servers={})
+    assert gerekce(o, model="claude-x", effort="high", workspace=ws, mcp_servers={}) == []
+    assert gerekce(o, model="claude-x", effort="high", workspace=ws, mcp_servers=None) == []
+
+
+def test_yok_olan_oturum_gerekce_uretmiyor():
+    from agentic.agent_runner import _oturum_yeniden_kurma_gerekceleri as gerekce
+
+    assert gerekce(None, model="m", effort="e", workspace=".", mcp_servers={}) == []
+
+
+def test_oturum_bogazindaki_hata_olayi_maskeleniyor():
+    """Oturumdan çıkan HER hata olayı SSE'ye gidiyor; sır taşımamalı.
+
+    Dış döngüdeki maskeleme reader döngüsünden gelen hataları kapsamıyordu —
+    koruma çağrı yerine konduğunda, unutulan çağrı kadar koruma demek.
+    DAVRANIŞ testi: `_finish_turn` gerçekten çağrılıp kuyruğa bakılıyor.
     """
-    import inspect
+    import asyncio
 
-    from agentic import agent_runner
+    from providers.claude_sdk_session import ClaudeSDKSession
 
-    kaynak = inspect.getsource(agent_runner.AgentRunner._run_claude_session)
-    assert "Claude session hatası: {_redact(str(e))}" in kaynak, (
-        "SSE hata metni ham istisna taşıyor; redact_secrets uygulanmalı"
-    )
+    async def kosu():
+        s = ClaudeSDKSession(conversation_id=1)
+        s._turn_active = True
+        s._out_q = asyncio.Queue()
+        await s._finish_turn(error=f"baglanti koptu: X-API-Key: {_SAHTE_SIR}")
+        olaylar = []
+        while not s._out_q.empty():
+            olaylar.append(await s._out_q.get())
+        return olaylar
+
+    olaylar = asyncio.run(kosu())
+    hatalar = [o for o in olaylar if isinstance(o, dict) and o.get("type") == "error"]
+    assert hatalar, "hata olayı hiç üretilmedi — test ölçtüğünü sanıyor ama ölçmüyor"
+    assert _SAHTE_SIR not in hatalar[0]["message"], "sır tarayıcıya giden olayda"
 
 
 def test_ad_tek_basina_sahiplik_kaniti_degil():
@@ -270,6 +330,73 @@ def test_ad_tek_basina_sahiplik_kaniti_degil():
     assert not _urunun_kaydi_mi("unityMCP", {"command": "kullanicinin-kendi-seyi"})
     assert not _urunun_kaydi_mi("baskaSunucu", _SIR_KAYDI)
     assert not _urunun_kaydi_mi("unityMCP", "dize-bile-degil")
+
+
+def test_sirri_URL_YOLUNDA_tasiyan_eski_bicim_de_taniniyor():
+    """Ürün bir dönem sırrı başlıkta değil URL yolunda taşıyordu (git'te doğrulandı).
+
+    O aralıkta kurulmuş bir workspace'te `X-API-Key` başlığı YOK. Yalnız başlığa
+    bakan bir imza kontrolü, sırrın gerçekten diskte kaldığı vakayı atlıyordu —
+    yani temizlik tam da gerektiği yerde çalışmıyordu.
+    """
+    from agentic.agent_runner import _urunun_kaydi_mi
+
+    assert _urunun_kaydi_mi(
+        "unityMCP", {"type": "http", "url": "http://localhost:8080/mcp/SIR-BURADA"}
+    )
+    # Bugünkü biçim: ek segment yok → URL imzası tetiklenmemeli (başlık yakalar).
+    assert not _urunun_kaydi_mi("unityMCP", {"type": "http", "url": "http://localhost:8080/mcp"})
+    # Uzak bir adres ürünün yerel sunucusu değildir.
+    assert not _urunun_kaydi_mi("unityMCP", {"url": "https://baska-yer.example/mcp/x"})
+
+
+def test_eski_bicim_sir_dosyadan_gercekten_cikiyor(tmp_path):
+    """Davranış testi: imza tanınıyor demek, sır diskten gidiyor demek olmalı."""
+    from agentic.agent_runner import _remove_project_mcp_json
+
+    hedef = tmp_path / ".mcp.json"
+    hedef.write_text(json.dumps({"mcpServers": {
+        "unityMCP": {"type": "http", "url": "http://localhost:8080/mcp/SIR-BURADA"},
+        "kullanicinin": {"command": "x"},
+    }}), encoding="utf-8")
+
+    _remove_project_mcp_json(str(tmp_path))
+
+    kalan = hedef.read_text(encoding="utf-8")
+    assert "SIR-BURADA" not in kalan, "eski biçimdeki sır diskte kaldı"
+    assert "kullanicinin" in kalan, "kullanıcının kaydı yok edildi"
+
+
+# ⚠️ Gerçekçi uzunlukta olmalı: ürünün sırrı `token_urlsafe(32)` ≈ 43 karakter
+# ve URL deseninin bilerek konmuş 12 karakter alt sınırı var (altı, "messages"
+# gibi gerçek rota adlarını maskeleyip log'u okunmaz yapardı). İlk yazımda 10
+# karakterlik uydurma bir sır kullanıldı ve test, OLMAYAN bir hatayı bildirdi.
+_SAHTE_SIR = "Xk7pQ2mZ9wL4vB8nR3tY6uH1jC5sD0fA-gE"
+
+
+@pytest.mark.parametrize("kalip", [
+    "X-API-Key: {s}",
+    "{{'X-API-Key': '{s}'}}",
+    '{{"X-API-Key": "{s}"}}',
+    "headers={{'X-API-Key': '{s}'}}",
+    "http://localhost:8080/mcp/{s}",
+])
+def test_redaksiyon_serilestirilmis_bicimleri_de_kapatiyor(kalip):
+    """Bir istisnadaki sözlük `{'X-API-Key': '...'}` gibi görünür — desen onu kaçırıyordu.
+
+    Koruma tam da sırrın tarayıcıya ulaşabildiği biçimde yoktu; düz `ad: değer`
+    biçimi maskeleniyor, tırnaklı biçim sızıyordu.
+    """
+    from secret_redaction import redact_secrets
+
+    assert _SAHTE_SIR not in redact_secrets(kalip.format(s=_SAHTE_SIR))
+
+
+def test_redaksiyon_masum_metni_bozmuyor():
+    """Yanlış pozitif log'u okunmaz yapar; okunmayan log teşhis değeri taşımaz."""
+    from secret_redaction import redact_secrets
+
+    assert redact_secrets("monkey: banana") == "monkey: banana"
 
 
 def test_gitignore_girdisine_DOKUNULMUYOR(tmp_path):

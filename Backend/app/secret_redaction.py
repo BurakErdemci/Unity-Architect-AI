@@ -54,9 +54,21 @@ _ENV_ASSIGNMENT = re.compile(r"((?:TOKEN|KEY|SECRET)[A-Z_]*=)\S+")
 #    maskelememekten tehlikeli çünkü bakan kişi korunduğunu sanıyor.
 #    Değer artık satırın kalanı; tırnak/virgül/süslü parantezde duruyor ki
 #    argv ya da JSON içine gömülü başlıklarda komşu alanları yutmasın.
+#  • Ad ile `:` ARASINA TIRNAK girebilir ve girdiğinde desen kaçıyordu
+#    (denetim bulgusu, ölçüldü 2026-08-01). Serileştirilmiş biçim tam olarak
+#    böyle görünüyor ve bir istisna metnindeki sözlük de öyle:
+#
+#        X-API-Key: sir            → maskeleniyordu
+#        {'X-API-Key': 'sir'}      → SIZIYORDU
+#        {"X-API-Key": "sir"}      → SIZIYORDU
+#
+#    Yani koruma tam da sırrın tarayıcıya ulaşabildiği biçimde yoktu. Tırnaklar
+#    1. gruba alınıyor ki çıktı geçerli JSON/repr olarak okunabilir kalsın;
+#    değerin kendisi zaten tırnakta durduğu için kapanış tırnağı sağ kalıyor.
 _HEADER_SECRET = re.compile(
     r"((?<![A-Za-z0-9])(?:[A-Za-z0-9]+[-_])*"
-    r"(?:TOKEN|KEY|SECRET|AUTH|APIKEY)[A-Za-z0-9_-]*\s*:\s*)"
+    r"(?:TOKEN|KEY|SECRET|AUTH|APIKEY)[A-Za-z0-9_-]*"
+    r"[\"']?\s*:\s*[\"']?)"
     r"[^\"',}\n\r]+",
     re.IGNORECASE,
 )
