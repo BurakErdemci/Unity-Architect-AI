@@ -65,8 +65,16 @@ export const CommandApproval: React.FC<CommandApprovalProps> = ({ command, onCon
             <p className="text-[13px] text-white font-medium leading-tight mb-2">
               {t(m.confirm)}
             </p>
-            <div className="bg-black/50 rounded-lg px-3 py-2 border border-white/5">
-              <code className="text-[11px] text-emerald-400 font-mono break-all leading-relaxed">
+            {/* Gövde KENDİ İÇİNDE kaydırılıyor ve satır sonları korunuyor.
+              *
+              * İkisi de K9'un gereği: kart artık yalnız bir yol değil, yazılacak
+              * dosyanın içeriğini de gösteriyor. `whitespace-pre-wrap` olmadan
+              * çok satırlı gövde tek satıra çöküyordu (kod okunamaz hale gelir),
+              * `max-h` olmadan ise uzun bir içerik ONAY/RET düğmelerini ekranın
+              * altına itiyordu — kullanıcının kararını göstermeyen bir onay
+              * kartı, kartın var olma sebebini ortadan kaldırır. */}
+            <div className="bg-black/50 rounded-lg px-3 py-2 border border-white/5 max-h-[320px] overflow-y-auto custom-scrollbar">
+              <code className="block text-[11px] text-emerald-400 font-mono break-all whitespace-pre-wrap leading-relaxed">
                 {!unity && <span className="text-slate-600 mr-1.5 select-none">$</span>}
                 {command}
               </code>

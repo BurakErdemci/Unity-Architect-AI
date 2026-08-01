@@ -393,11 +393,75 @@ def _read_target_outside_workspace(tool_name: str, inp: dict, workspace: str) ->
     return not _path_in_workspace(target, workspace)
 
 
-def _describe_tool(tool_name: str, inp: dict) -> str:
-    """Onay kartında / chip başlığında gösterilecek kısa, insan-okunur açıklama."""
+# Onay kartında bir yaprağın gösterileceği üst sınır.
+#
+# Sayı frontend'deki `OZET_DEGER_SINIRI` ile BİLEREK aynı ve aynı gerekçeyle:
+# 200 karakterlik eski sınır, uzun bir gövdenin yıkıcı kısmı sonda olduğunda onu
+# kartta hiç göstermiyordu — kullanıcı zararsız görünen bir başlangıcı onaylıyordu
+# (31 Tem 2026 denetim bulgusu). Aşıldığında GİZLENEN KARAKTER SAYISI yazılıyor;
+# sessiz kırpma, sayılı kırpmadan tehlikeli.
+_KART_DEGER_SINIRI = 4000
+
+
+def _kirp(metin: str, sinir: int = _KART_DEGER_SINIRI) -> str:
+    metin = metin if isinstance(metin, str) else str(metin)
+    if len(metin) <= sinir:
+        return metin
+    return f"{metin[:sinir]}… [+{len(metin) - sinir} karakter gizlendi]"
+
+
+def _yazma_govdesi(tool_name: str, inp: dict) -> str:
+    """Bir yazma aracının kartta GÖSTERİLECEK gövdesi.
+
+    NEDEN VAR (K9): kart yalnız `Write → yol` yazıyordu, yani kullanıcı dosyaya
+    NE yazılacağını görmeden onaylıyordu. Aynı üründe kardeş yol bunu zaten
+    doğru yapıyor — unityMCP köprüsünün `write_file`'ı ya tam içeriği ya diff'i
+    çiziyor. Asimetri bilgilendirilmiş onayı zayıflatıyordu: onay kartının tek
+    işi kullanıcıya NE onayladığını göstermek.
+
+    Edit/MultiEdit'te diff metin olarak veriliyor (eski/yeni), çünkü kararı
+    değiştiren şey tam olarak o iki dize.
+    """
+    if tool_name == "Write":
+        return _kirp(inp.get("content", ""))
+    if tool_name == "NotebookEdit":
+        return _kirp(inp.get("new_source", ""))
+    if tool_name == "Edit":
+        return (f"- {_kirp(inp.get('old_string', ''))}\n"
+                f"+ {_kirp(inp.get('new_string', ''))}")
+    if tool_name == "MultiEdit":
+        duzenlemeler = inp.get("edits") or []
+        if not isinstance(duzenlemeler, list):
+            return _kirp(json.dumps(inp, ensure_ascii=False))
+        parcalar = []
+        for i, d in enumerate(duzenlemeler, 1):
+            d = d if isinstance(d, dict) else {}
+            parcalar.append(f"[{i}/{len(duzenlemeler)}]\n"
+                            f"- {_kirp(d.get('old_string', ''))}\n"
+                            f"+ {_kirp(d.get('new_string', ''))}")
+        return "\n\n".join(parcalar)
+    return ""
+
+
+def _describe_tool(tool_name: str, inp: dict, *, tam_govde: bool = False) -> str:
+    """Onay kartında / chip başlığında gösterilecek insan-okunur açıklama.
+
+    `tam_govde` İKİ ÇAĞIRANI ayırıyor ve varsayılanı KAPALI:
+      • ONAY KARTI (True) — kullanıcı burada karar veriyor, yazılacak içeriği
+        görmek zorunda (K9).
+      • SOHBET ÇİPİ (False) — burada karar yok, olan biteni özetleyen bir
+        etiket var. Çip zaten `truncate` ile ~200 piksele kısılıyor, yani
+        gövdeyi göndermek ekranda hiçbir şey kazandırmadan SSE akışını
+        şişirirdi. Aynı gerekçeyle `_trim_args` argümanları 1200'de kesiyor;
+        bu bayrak o kararı korumak için var.
+    """
     try:
         if tool_name in ("Write", "Edit", "MultiEdit", "NotebookEdit"):
-            return f"{tool_name} → {inp.get('file_path', inp.get('path', '?'))}"
+            yol = inp.get("file_path", inp.get("path", "?"))
+            govde = _yazma_govdesi(tool_name, inp) if tam_govde else ""
+            # Gövde gerçekten boşsa (ör. boş dosya yazımı) başlığın altına boş
+            # satır koyup kartı yanıltıcı biçimde "içerik yok gibi" göstermeyelim.
+            return f"{tool_name} → {yol}\n\n{govde}" if govde else f"{tool_name} → {yol}"
         if tool_name == "Bash":
             return inp.get("command", "")
         if tool_name == "Read":
@@ -657,7 +721,8 @@ class ClaudeSDKSession:
                 "gate_id": gate_id,
                 "tool": tool_name,
                 "title": getattr(context, "title", None) or getattr(context, "display_name", None),
-                "command": _describe_tool(tool_name, input_data),
+                # Kart = kullanıcının karar verdiği yer → gövde TAM gider.
+                "command": _describe_tool(tool_name, input_data, tam_govde=True),
             })
         res = await self._wait_gate(ev, APPROVAL_GATES, APPROVAL_RESULTS, gate_id, "onay")
         if bool(res):
