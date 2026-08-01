@@ -13,6 +13,7 @@ import uuid
 import logging
 import asyncio
 import re
+import secrets
 import subprocess
 import tempfile
 from typing import Any, AsyncGenerator, Callable, Dict, List, Optional
@@ -41,128 +42,84 @@ MAX_ITERATIONS = 15  # Güvenlik: Sonsuz döngü koruması
 # Onay bekleme süresi `command_gates`'ten gelir (tek kaynak, gerekçesi orada).
 
 
-# Ürünün `.mcp.json`'a yazdığı sunucu adları. **Ad tek başına sahiplik KANITI
-# DEĞİL** — kullanıcının kendi `unityMCP` kaydı olabilir (denetimde çıktı, canlı
-# doğrulandı: adla eşleşen bir kullanıcı kaydı siliniyordu). Ad yalnızca aday
-# listesi; kararı `_urunun_kaydi_mi` veriyor.
-_URUN_SUNUCU_ADLARI = {"unityMCP", "unityai"}
-
 # Güvensiz bir projeden gelen dosya belleğe alınmadan önceki üst sınır. 1 MB,
 # gerçek bir `.mcp.json`'ın binlerce katı; amaç doğruluk değil, kötü niyetli ya
 # da bozuk bir dosyanın tur başlangıcını bloke etmesini engellemek.
 _MCP_JSON_AZAMI_BAYT = 1024 * 1024
 
-# Eski biçimde sırrın durduğu yol segmenti.
-#
-# ⚠️ Eşik `secret_redaction`'daki 12 ile BİLEREK AYNI DEĞİL ve bu ayrım bir
-# bulgunun sonucu. İki kontrolün hata yönleri ZITTIR:
-#   · Redaksiyon LİBERAL olmalı — kaçırdığı şey sır sızıntısı, fazla
-#     maskelediği şey okunabilirlik kaybı. Orada 12 doğru.
-#   · Sahiplik MUHAFAZAKÂR olmalı — yanlış eşleşmesi KULLANICI VERİSİNİ SİLER.
-#     12'de `notifications` (13), `subscriptions` (13), `capabilities` (12)
-#     gibi sıradan rota adları sır sanılıyordu (ölçüldü, 4. denetim turu).
-#
-# Uzunluk TAM 43 — alt sınır değil. Ürünün eski üreteci `secrets.token_urlsafe(32)`
-# idi ve bu her zaman tam 43 karakter veriyor (200 örnekle ölçüldü). Alt sınır
-# olarak yazıldığında (`{32,}`) kanonik bir UUID (36 karakter) de geçiyordu ve
-# kullanıcının UUID yollu kendi sunucusu siliniyordu — 5. denetim turu bulgusu.
-#
-# ⚠️ Bu eşik BİLEREK "sırrı kaçırma" değil "kullanıcı verisini silme" yönünde
-# hata yapıyor. Ürün başka bir boyutta sır üretmiş olsaydı bu desen onu
-# kaçırırdı; sonucu, artık okunmayan bir dosyada bayat bir YEREL kimlik
-# bilgisinin kalmasıdır. Ters yöndeki hatanın sonucu kullanıcının
-# yapılandırmasının yok olmasıdır — ikisi kıyaslanabilir değil.
-_SIR_BENZERI_SEGMENT = re.compile(r"[A-Za-z0-9_\-]{43}")
+# Ürünün kalıcı yerel API anahtarının yeri. `unity_mcp_manager` bunu bir kez
+# üretip tekrar tekrar OKUYOR (`_load_or_create_local_api_token`), yani değer
+# oturumlar arası SABİT — sahipliğin kanıtlanabilir olmasının sebebi bu.
+_URUN_SIR_YOLU = os.path.join(os.path.expanduser("~"), ".unity-mcp", "local-api-token")
 
 
-def _urunun_kaydi_mi(ad: str, tanim: object) -> bool:
-    """Bu kayıt ürünün kendi yazdığı mı? Adı değil, İMZASINI arar.
+def _urunun_sirri() -> Optional[str]:
+    """Ürünün kalıcı yerel API anahtarı; okunamıyorsa ``None``.
 
-    Denetim bulgusu (`server-name-is-not-ownership`, canlı doğrulandı): yalnız
-    ada bakmak, kullanıcının kendi `unityMCP` kaydını ürünün malı sayıp siliyordu.
-    Ad yalnızca aday listesi; karar ÜÇ imzadan birine dayanıyor:
-
-      1. YEREL adres + `headers` içinde `X-API-Key` (bugünkü biçim).
-      2. `command` ürünün kurulum dizinini işaret ediyor (`unityai` stdio kaydı).
-      3. YEREL adres + `/mcp/<43 karakterlik sır>` (eski biçim, bkz.
-         `_eski_url_bicimi_mi`).
-
-    ⚠️ **`X-API-Key` TEK BAŞINA sahiplik kanıtı DEĞİL** — 6. denetim turu bulgusu
-    ve depo bunu zaten biliyordu (`unity_ai_mcp/mcp_identity.py` başlığın jenerik
-    olduğunu, ürün kimliği taşımadığını söylüyor). Kullanıcının UZAK bir MCP
-    sunucusu `unityMCP` adını taşıyıp kendi anahtarını kullanabiliyor ve o kayıt
-    siliniyordu. Ürünün kaydı ise her zaman yereldir (`unity_mcp_manager.mcp_url()`
-    yalnız localhost üretir), o yüzden başlık imzası artık yerelliğe bağlı.
-
-    Üçü de yoksa kayıt kullanıcınındır ve dokunulmaz. Hata yönü BİLEREK şu
-    tarafta: bırakılan bayat bir kayıt artık okunmuyor (SDK'ya doğrudan geçiş
-    yüzünden), silinen kullanıcı verisi ise geri gelmiyor.
+    ⚠️ Anahtarı YARATMAZ. Yaratan yol `unity_mcp_manager`'ın işi; temizlik bir
+    yan etki olarak sır dosyası oluşturmamalı. `None` dönerse temizlik hiçbir
+    kaydı ürünün malı sayamaz ve dosyaya dokunmaz — doğru hata yönü bu.
     """
-    if ad not in _URUN_SUNUCU_ADLARI or not isinstance(tanim, dict):
-        return False
-    yerel = _yerel_adres_mi(tanim.get("url"))
-    basliklar = tanim.get("headers")
-    if yerel and isinstance(basliklar, dict) and any(a.lower() == "x-api-key" for a in basliklar):
-        return True
-    komut = tanim.get("command")
-    if isinstance(komut, str) and "unity_architect_ai" in komut.replace("\\", "/").lower():
-        return True
-    if _eski_url_bicimi_mi(tanim.get("url")):
-        return True
-    return False
-
-
-def _cozumle(url: object):
-    """URL'i ayrıştır; ayrıştırılamıyorsa ``None``."""
-    if not isinstance(url, str):
-        return None
     try:
-        from urllib.parse import urlparse
-        return urlparse(url)
-    except ValueError:
+        from local_token_file import read_secret_file
+        return read_secret_file(_URUN_SIR_YOLU) or None
+    except Exception:
         return None
 
 
-def _yerel_adres_mi(url: object) -> bool:
-    """Ürünün MCP sunucusu YALNIZCA yerelde koşar; uzak bir adres bizim değildir."""
-    p = _cozumle(url)
-    return p is not None and p.hostname in ("localhost", "127.0.0.1", "::1")
+def _urunun_kaydi_mi(ad: str, tanim: object, sir: Optional[str]) -> bool:
+    """Bu kayıt ürünün mü? SEZGİSEL DEĞİL, ÜRÜNÜN GERÇEK SIRRIYLA eşleşme arar.
 
+    Bu fonksiyonun önceki altı hâli sahipliği TAHMİN ediyordu (sunucu adı, sonra
+    `X-API-Key` başlığının VARLIĞI, sonra yerellik, sonra 43 karakterlik yol
+    segmenti) ve yedi denetim turunun dördü tam da bu tahminlerin kenarlarında
+    bulgu yazdı — sonuncusu YÜKSEK: kullanıcının `localhost:7777`de koşan kendi
+    sunucusu, kendi anahtarıyla, ürünün malı sayılıp siliniyordu.
 
-def _eski_url_bicimi_mi(url: object) -> bool:
-    """Sırrın URL YOLUNDA taşındığı eski ürün biçimi mi?
+    Tahminin çürüdüğü yer şuydu: **ad da, başlığın varlığı da, yerellik de
+    ürüne özgü değil.** Kullanıcı yerel MCP sunucusu çalıştırabilir, ona
+    `unityMCP` diyebilir ve `X-API-Key` kullanabilir. Bu üç sinyalin hiçbiri
+    sahiplik kanıtı üretmiyor, sadece daha dar bir tahmin üretiyor.
 
-    Denetim bulgusu (`legacy-url-secret-missed`) ve git geçmişinde doğrulandı:
-    ürün bir dönem sırrı `headers` yerine yol segmentinde taşıyordu —
-    `e988258` ile geldi, `c69f3eb` ("sırrı URL'den başlığa taşı") ile bitti.
-    O aralıkta kurulmuş bir workspace'in `.mcp.json`'ında `X-API-Key` BAŞLIĞI
-    YOK, sır `/mcp/<sır>` yolunda. Yalnız başlığa bakan bir imza kontrolü onu
-    kaçırıyordu — yani temizlik, sırrın gerçekten diskte kaldığı vakayı
-    atlıyordu.
+    Ölçülen çıkış yolu: ürünün anahtarı KALICI (`~/.unity-mcp/local-api-token`,
+    varsa yeniden kullanılıyor). Yani "bu kayıt ürünün sırrını TAŞIYOR mu"
+    sorusu kesin olarak cevaplanabiliyor ve kullanıcının kendi anahtarı ona
+    eşit olmuyor. Sahiplik artık kanıt, tahmin değil.
 
-    ⚠️ Ölçüt SIR BENZERİ bir segment istiyor, "herhangi bir ek segment" değil.
-    İlk yazımda öyleydi ve bir sonraki denetim turu onu gerileme olarak yakaladı:
-    `http://localhost:3000/mcp/messages` gibi sıradan bir kullanıcı sunucusu
-    ürünün malı sayılıp siliniyordu — yani bir önceki turda kapatılan veri kaybı
-    sınıfı yeniden açılmıştı.
+    Üç kabul biçimi, üçü de değer eşleşmesine dayanıyor:
+      1. `headers` içinde `X-API-Key` == ürünün sırrı (bugünkü biçim).
+      2. URL yolunda ürünün sırrı (eski biçim; sır `headers` yerine
+         `/mcp/<sır>` segmentindeydi, `e988258`..`c69f3eb` arası).
+      3. `env` içinde `LOCAL_APP_TOKEN` — ürünün `39994dd` öncesi `unityai`
+         kaydı backend token'ını düz metin taşıyordu. Bu bir kimlik bilgisidir
+         ve değeri artık geçersiz olsa bile diskte bırakılmamalı; sunucu adına
+         ya da ürünün sırrına bakılmadan kabul ediliyor.
 
-    Ölçüt `_SIR_BENZERI_SEGMENT`'te ve uzunluk TAM 43 — gerekçesi orada.
-
-    ⚠️ Bu eşik `secret_redaction._MCP_PATH_SECRET`'inkiyle (12) BİLEREK aynı
-    değil; ikisinin hata yönü zıt olduğu için eşitlenmeleri yanlış olurdu.
-    (Bu paragrafın önceki hâli tam tersini söylüyordu ve karar değişince
-    güncellenmemişti — 5. denetim turu onu bayat belge olarak yakaladı.)
-
-    Bugünkü biçim (`/mcp`, ek segment yok) buraya DÜŞMEZ; onu başlık imzası
-    yakalıyor.
+    Sunucu ADINA hiç bakılmıyor: ürünün sırrını taşıyan bir kayıt, adı ne olursa
+    olsun ürünündür; taşımayan da değildir.
     """
-    p = _cozumle(url)
-    if p is None or not _yerel_adres_mi(url):
+    if not isinstance(tanim, dict):
         return False
-    parcalar = [s for s in p.path.split("/") if s]
-    if len(parcalar) != 2 or parcalar[0] != "mcp":
+
+    ortam = tanim.get("env")
+    if isinstance(ortam, dict) and any(a == "LOCAL_APP_TOKEN" for a in ortam):
+        return True
+
+    if not sir:
         return False
-    return _SIR_BENZERI_SEGMENT.fullmatch(parcalar[1]) is not None
+
+    basliklar = tanim.get("headers")
+    if isinstance(basliklar, dict):
+        for anahtar, deger in basliklar.items():
+            if anahtar.lower() == "x-api-key" and isinstance(deger, str):
+                if secrets.compare_digest(deger, sir):
+                    return True
+
+    url = tanim.get("url")
+    if isinstance(url, str) and sir in url:
+        return True
+
+    return False
 
 
 def _oturum_yeniden_kurma_gerekceleri(mevcut, *, model, effort, workspace, mcp_servers) -> List[str]:
@@ -271,7 +228,8 @@ def _remove_project_mcp_json(workspace_path: Optional[str]) -> None:
         return
 
     sunucular = icerik["mcpServers"]
-    bizimkiler = [ad for ad, tanim in sunucular.items() if _urunun_kaydi_mi(ad, tanim)]
+    sir = _urunun_sirri()
+    bizimkiler = [ad for ad, tanim in sunucular.items() if _urunun_kaydi_mi(ad, tanim, sir)]
     if not bizimkiler:
         return  # ürüne ait hiçbir şey yok; dosya bütünüyle kullanıcının
 

@@ -161,11 +161,116 @@ def test_oturum_mcp_servers_i_SDK_secenegine_koyuyor():
 # ── Bayat `.mcp.json` temizliği ───────────────────────────────────────────
 
 
-# ⚠️ URL dahil: ürünün gerçek kaydı her zaman YEREL bir adres taşıyor ve
-# sahiplik imzası buna bağlı (6. denetim turu — `X-API-Key` tek başına kanıt
-# değil, kullanıcının uzak sunucusu da o başlığı kullanabiliyor).
+# Ürünün KENDİ kalıcı anahtarı. Sahiplik artık tahmin değil bu değerle
+# eşleşme; testler de o yüzden gerçek anahtarı taklit ediyor (fixture aşağıda).
+# ⚠️ Uzunluk gerçekçi: ürünün anahtarı `secrets.token_urlsafe(32)`, yani her
+# zaman 43 karakter. Redaksiyon tarafındaki 12 karakterlik alt sınır bu yüzden
+# aşılıyor — kısa bir sahte sır bu dosyada İKİ KEZ olmayan hata bildirdi.
+_URUN_SIRRI = "Test-Urun-Sirri-0123456789abcdefGHIJKLMNOPQ"
+
+# Redaksiyon testlerinin kullandığı sır: ürünün anahtarıyla aynı şekilde.
+_SAHTE_SIR = _URUN_SIRRI
+
 _SIR_KAYDI = {"type": "http", "url": "http://localhost:8080/mcp",
-              "headers": {"X-API-Key": "SIR-BURADA"}}
+              "headers": {"X-API-Key": _URUN_SIRRI}}
+
+
+def _gercek_urun_sirri_fonksiyonu():
+    """Fixture ezmeden ÖNCEKİ gerçek gövde — onu da sınayabilmek için."""
+    from agentic.agent_runner import _urunun_sirri
+
+    return _urunun_sirri
+
+
+_GERCEK_URUNUN_SIRRI = _gercek_urun_sirri_fonksiyonu()
+
+
+@pytest.fixture(autouse=True)
+def _urun_sirrini_sabitle(monkeypatch):
+    """Temizlik ürünün gerçek anahtarını diskten okuyor; testte onu sabitliyoruz.
+
+    ⚠️ Bu fixture olmadan testler makinede gerçekten kurulu olan anahtara
+    bağlanırdı — yani başka bir makinede başka şey ölçerdi ve CI'da rastgele
+    davranırdı.
+    """
+    from agentic import agent_runner
+
+    monkeypatch.setattr(agent_runner, "_urunun_sirri", lambda: _URUN_SIRRI)
+
+_SAHIPLIK_VAKALARI = [
+    ("ÜRÜN: yerel + gerçek sır",
+     {"url": "http://localhost:8080/mcp", "headers": {"X-API-Key": _URUN_SIRRI}}, True),
+    # 7. denetim turu, YÜKSEK: kullanıcı da yerel MCP sunucusu çalıştırabilir,
+    # ona `unityMCP` diyebilir ve `X-API-Key` kullanabilir. Ne ad, ne başlığın
+    # varlığı, ne de yerellik ürüne özgü — hiçbiri sahiplik kanıtı değil.
+    ("KULLANICI: yerel ama KENDİ anahtarı",
+     {"url": "http://localhost:7777/mcp", "headers": {"X-API-Key": "kullanicinin"}}, False),
+    ("KULLANICI: uzak + kendi anahtarı",
+     {"url": "https://uzak.example/mcp", "headers": {"X-API-Key": "kullanicinin"}}, False),
+    ("KULLANICI: yalnız adı aynı", {"command": "kendi-seyim"}, False),
+    ("ÜRÜN: eski biçim, sır URL yolunda",
+     {"url": f"http://localhost:8080/mcp/{_URUN_SIRRI}"}, True),
+    # 7. denetim turu: `unityai` imzası `unity_architect_ai` alt dizesini
+    # arıyordu, oysa gerçek üretici `<backend_dir>/run_mcp_server.cmd` yazıyor —
+    # yani imza ürünün KENDİ kaydını hiç yakalamıyordu. Ölçüt artık taşıdığı
+    # kimlik bilgisi: `env.LOCAL_APP_TOKEN` (39994dd öncesi biçim).
+    ("ÜRÜN: eski unityai, env'de LOCAL_APP_TOKEN",
+     {"command": r"C:\x\Backend\run_mcp_server.cmd",
+      "env": {"UNITYAI_URL": "u", "LOCAL_APP_TOKEN": "t"}}, True),
+    ("KULLANICI: env var ama token yok",
+     {"command": "kendi", "env": {"UNITYAI_URL": "u"}}, False),
+]
+
+
+@pytest.mark.parametrize("ad,tanim,bizim_mi", _SAHIPLIK_VAKALARI,
+                         ids=[v[0] for v in _SAHIPLIK_VAKALARI])
+def test_sahiplik_TAHMIN_degil_KANIT(ad, tanim, bizim_mi):
+    """Sahiplik ürünün GERÇEK anahtar değeriyle eşleşmeye dayanmalı.
+
+    Bu fonksiyonun altı önceki hâli tahmin ediyordu (ad → başlığın varlığı →
+    yerellik → 43 karakterlik segment) ve yedi denetim turunun DÖRDÜ tam bu
+    tahminlerin kenarında bulgu yazdı. Çıkış yolu ölçümle geldi: ürünün anahtarı
+    kalıcı (`~/.unity-mcp/local-api-token`), yani soru kesin cevaplanabiliyor.
+    """
+    from agentic.agent_runner import _urunun_kaydi_mi
+
+    assert _urunun_kaydi_mi("unityMCP", tanim, _URUN_SIRRI) is bizim_mi, ad
+
+
+def test_sunucu_ADI_artik_olcut_degil():
+    """Ürünün sırrını taşıyan kayıt, adı ne olursa olsun ürünündür."""
+    from agentic.agent_runner import _urunun_kaydi_mi
+
+    assert _urunun_kaydi_mi("bambaska-ad", {"headers": {"X-API-Key": _URUN_SIRRI}}, _URUN_SIRRI)
+
+
+def test_sir_okunamazsa_HICBIR_SEY_urunun_sayilmaz():
+    """Fail-safe: anahtar okunamıyorsa sahiplik iddia edilemez, silme de olmaz."""
+    from agentic.agent_runner import _urunun_kaydi_mi
+
+    assert not _urunun_kaydi_mi("unityMCP", {"headers": {"X-API-Key": _URUN_SIRRI}}, None)
+    # Tek istisna: taşıdığı kimlik bilgisi kendi kendini ele veriyor.
+    assert _urunun_kaydi_mi("unityai", {"env": {"LOCAL_APP_TOKEN": "t"}}, None)
+
+
+def test_urunun_sirri_dosya_YARATMIYOR(tmp_path, monkeypatch):
+    """Temizlik bir yan etki olarak sır dosyası oluşturmamalı.
+
+    Anahtarı üretmek `unity_mcp_manager`'ın işi; temizlik yalnızca OKUR.
+    Üstelik yaratsaydı, ürünün sırrı hiç kurulmamış bir makinede boş bir
+    anahtar dosyası bırakırdı.
+    """
+    from agentic import agent_runner
+
+    # Fixture `_urunun_sirri`'yi ezdiği için GERÇEK gövdeyi modülden alıyoruz.
+    gercek = _GERCEK_URUNUN_SIRRI
+    yol = tmp_path / "yok-boyle-bir-dizin" / "local-api-token"
+    monkeypatch.setattr(agent_runner, "_URUN_SIR_YOLU", str(yol))
+
+    assert gercek() is None, "olmayan anahtar için None dönmeli"
+    assert not yol.exists(), "temizlik sır dosyası YARATMIŞ"
+    assert not yol.parent.exists(), "temizlik dizin YARATMIŞ"
+
 
 # Denetimden çıkan vaka tablosu, kalıcı teste terfi etti. İlk tasarım ikiliydi
 # ("tamamı bizimse sil, değilse dokunma") ve bu tablonun 8 satırının 6'sında
@@ -213,7 +318,7 @@ def test_temizlik_sirri_alir_kullanici_verisini_birakir(
         f"{ad}: dosyanın kaderi yanlış (sağ kalmalı={sag_kalmali})"
     )
     kalan = hedef.read_text(encoding="utf-8") if hedef.exists() else ""
-    assert "SIR-BURADA" not in kalan, f"{ad}: X-API-Key hâlâ diskte"
+    assert _URUN_SIRRI not in kalan, f"{ad}: X-API-Key hâlâ diskte"
     if korunacak:
         assert korunacak in kalan, f"{ad}: kullanıcının verisi ({korunacak}) yok edildi"
 
@@ -325,96 +430,6 @@ def test_oturum_bogazindaki_hata_olayi_maskeleniyor():
     assert _SAHTE_SIR not in hatalar[0]["message"], "sır tarayıcıya giden olayda"
 
 
-def test_ad_tek_basina_sahiplik_kaniti_degil():
-    """`unityMCP` adı ürünün malı olduğunu KANITLAMAZ; imza aranır."""
-    from agentic.agent_runner import _urunun_kaydi_mi
-
-    assert _urunun_kaydi_mi("unityMCP", _SIR_KAYDI)
-    assert _urunun_kaydi_mi("unityai", {"command": r"C:\Users\x\.unity_architect_ai\launcher"})
-    assert not _urunun_kaydi_mi("unityMCP", {"command": "kullanicinin-kendi-seyi"})
-    assert not _urunun_kaydi_mi("baskaSunucu", _SIR_KAYDI)
-    assert not _urunun_kaydi_mi("unityMCP", "dize-bile-degil")
-
-
-def test_X_API_Key_TEK_BASINA_sahiplik_kaniti_degil():
-    """Kullanıcının UZAK sunucusu da `X-API-Key` kullanabilir — ve kullanıyor.
-
-    6. denetim turu bulgusu. Depo bunu zaten biliyordu: `mcp_identity` başlığın
-    jenerik olduğunu, ürün kimliği taşımadığını söylüyor. Ürünün sunucusu ise
-    yalnızca yerelde koşuyor, o yüzden imza yerelliğe bağlandı.
-    """
-    from agentic.agent_runner import _urunun_kaydi_mi
-
-    kullanicinin = {"type": "http", "url": "https://my-mcp.example.com/mcp",
-                    "headers": {"X-API-Key": "kullanicinin-kendi-anahtari"}}
-    assert not _urunun_kaydi_mi("unityMCP", kullanicinin), (
-        "kullanıcının uzak sunucusu ürünün malı sanıldı — kaydı silinir"
-    )
-    # URL'i olmayan bir kayıt da bizim olduğunu kanıtlamıyor.
-    assert not _urunun_kaydi_mi("unityMCP", {"headers": {"X-API-Key": "x"}})
-    # Yerel olan ise bizim.
-    assert _urunun_kaydi_mi("unityMCP", {"url": "http://127.0.0.1:8080/mcp",
-                                         "headers": {"X-API-Key": "x"}})
-
-
-def test_uzak_sunuculu_dosya_SILINMIYOR(tmp_path):
-    """Davranış ucu: imza doğru olsa da temizlik yanlış davranmamalı."""
-    from agentic.agent_runner import _remove_project_mcp_json
-
-    hedef = tmp_path / ".mcp.json"
-    icerik = {"mcpServers": {"unityMCP": {
-        "type": "http", "url": "https://my-mcp.example.com/mcp",
-        "headers": {"X-API-Key": "kullanicinin"}}}}
-    hedef.write_text(json.dumps(icerik), encoding="utf-8")
-
-    _remove_project_mcp_json(str(tmp_path))
-
-    assert hedef.exists(), "kullanıcının uzak sunucu kaydı silindi"
-    assert "my-mcp.example.com" in hedef.read_text(encoding="utf-8")
-
-
-def test_sirri_URL_YOLUNDA_tasiyan_eski_bicim_de_taniniyor():
-    """Ürün bir dönem sırrı başlıkta değil URL yolunda taşıyordu (git'te doğrulandı).
-
-    O aralıkta kurulmuş bir workspace'te `X-API-Key` başlığı YOK. Yalnız başlığa
-    bakan bir imza kontrolü, sırrın gerçekten diskte kaldığı vakayı atlıyordu —
-    yani temizlik tam da gerektiği yerde çalışmıyordu.
-    """
-    from agentic.agent_runner import _urunun_kaydi_mi
-
-    assert _urunun_kaydi_mi(
-        "unityMCP", {"type": "http", "url": f"http://localhost:8080/mcp/{_SAHTE_SIR}"}
-    )
-    # Bugünkü biçim: ek segment yok → URL imzası tetiklenmemeli (başlık yakalar).
-    assert not _urunun_kaydi_mi("unityMCP", {"type": "http", "url": "http://localhost:8080/mcp"})
-    # Uzak bir adres ürünün yerel sunucusu değildir.
-    assert not _urunun_kaydi_mi("unityMCP", {"url": "https://baska-yer.example/mcp/x"})
-
-
-def test_eski_bicim_sir_dosyadan_gercekten_cikiyor(tmp_path):
-    """Davranış testi: imza tanınıyor demek, sır diskten gidiyor demek olmalı."""
-    from agentic.agent_runner import _remove_project_mcp_json
-
-    hedef = tmp_path / ".mcp.json"
-    hedef.write_text(json.dumps({"mcpServers": {
-        "unityMCP": {"type": "http", "url": f"http://localhost:8080/mcp/{_SAHTE_SIR}"},
-        "kullanicinin": {"command": "x"},
-    }}), encoding="utf-8")
-
-    _remove_project_mcp_json(str(tmp_path))
-
-    kalan = hedef.read_text(encoding="utf-8")
-    assert _SAHTE_SIR not in kalan, "eski biçimdeki sır diskte kaldı"
-    assert "kullanicinin" in kalan, "kullanıcının kaydı yok edildi"
-
-
-# ⚠️ Gerçekçi uzunlukta olmalı: ürünün sırrı `token_urlsafe(32)` ≈ 43 karakter
-# ve URL deseninin bilerek konmuş 12 karakter alt sınırı var (altı, "messages"
-# gibi gerçek rota adlarını maskeleyip log'u okunmaz yapardı). İlk yazımda 10
-# karakterlik uydurma bir sır kullanıldı ve test, OLMAYAN bir hatayı bildirdi.
-_SAHTE_SIR = "Xk7pQ2mZ9wL4vB8nR3tY6uH1jC5sD0fA-gE_7nWq2Tz"
-
-
 def test_sahte_sir_GERCEK_sirrin_seklini_tasiyor():
     """Fixture ürünün gerçek veri şeklinde olmalı; yoksa test ürünü değil kendini ölçer.
 
@@ -476,72 +491,6 @@ def test_redaksiyon_masum_metni_bozmuyor(metin):
     from secret_redaction import redact_secrets
 
     assert redact_secrets(metin) == metin
-
-
-def test_eski_URL_imzasi_siradan_rota_adlarini_KAPSAMAMALI():
-    """Gerileme testi: imza "herhangi bir ek segment" olduğunda veri kaybı geri geliyordu.
-
-    3. denetim turu bunu yakaladı: `http://localhost:3000/mcp/messages` gibi
-    sıradan bir kullanıcı sunucusu ürünün malı sayılıp siliniyordu — bir önceki
-    turda kapatılan sınıfın aynısı, yeni bir kapıdan.
-    """
-    from agentic.agent_runner import _urunun_kaydi_mi
-
-    import secrets
-
-    gercek_sir = secrets.token_urlsafe(32)
-    assert _urunun_kaydi_mi("unityMCP", {"url": f"http://localhost:8080/mcp/{gercek_sir}"})
-    # ⚠️ UZUN ama sıradan rota adları da elenmeli. İlk eşik (12) bunları sır
-    # sanıyordu ve kullanıcının sunucusunu siliyordu (4. denetim turu).
-    # Kanonik UUID 36 karakter — alt sınırlı bir eşik onu sır sanıyordu
-    # (5. denetim turu). Ürünün sırrı HER ZAMAN tam 43.
-    import uuid as _uuid
-
-    assert not _urunun_kaydi_mi(
-        "unityMCP", {"url": f"http://localhost:3000/mcp/{_uuid.uuid4()}"}
-    ), "kanonik UUID sır sanıldı — kullanıcının sunucusu silinir"
-
-    for rota in ("messages", "sse", "hub", "stream",
-                 "notifications", "subscriptions", "capabilities"):
-        assert not _urunun_kaydi_mi("unityMCP", {"url": f"http://localhost:3000/mcp/{rota}"}), (
-            f"sıradan rota adı '{rota}' sır sanıldı — kullanıcının sunucusu silinir"
-        )
-
-
-def test_sahiplik_esigi_redaksiyon_esiginden_DAHA_KATI_olmali():
-    """İki eşik BİLEREK farklı; hata yönleri zıt olduğu için eşit olmamalılar.
-
-    · Redaksiyon liberal: kaçırdığı sır sızıntısı, fazlası okunabilirlik kaybı.
-    · Sahiplik muhafazakâr: yanlış eşleşmesi KULLANICI VERİSİNİ SİLER.
-
-    Bu testin ilk hâli "ikisi de 12 olmalı" diyordu ve yanlış şeyi kilitliyordu;
-    4. denetim turu 12'nin sahiplik tarafında `notifications`/`capabilities`
-    gibi rota adlarını yuttuğunu gösterdi. Kilitlenen şey artık eşitlik değil
-    İLİŞKİ — biri sıkılaştırılırsa diğeri sessizce yanlış tarafta kalmasın.
-    """
-    import re as _re
-
-    from agentic.agent_runner import _SIR_BENZERI_SEGMENT
-    from secret_redaction import _MCP_PATH_SECRET
-
-    def _sayi(desen: str) -> int:
-        m = _re.search(r"\{(\d+)", desen)
-        assert m, f"desende sayısal ölçüt bulunamadı: {desen}"
-        return int(m.group(1))
-
-    sahiplik = _sayi(_SIR_BENZERI_SEGMENT.pattern)
-    redaksiyon = _sayi(_MCP_PATH_SECRET.pattern)
-    assert sahiplik > redaksiyon, (
-        f"sahiplik ölçütü ({sahiplik}) redaksiyon eşiğinden ({redaksiyon}) katı değil — "
-        "silme kararı maskeleme kadar gevşek olamaz"
-    )
-    # Sahiplik TAM uzunluk istemeli, alt sınır değil: alt sınır kanonik bir
-    # UUID'yi (36) de yutuyordu ve kullanıcının sunucusu siliniyordu.
-    assert "," not in _SIR_BENZERI_SEGMENT.pattern.split("{")[1], (
-        "sahiplik ölçütü alt sınır olmuş; TAM uzunluk olmalı"
-    )
-    # Gerçek sır her zaman 43 karakter (ölçüldü, 200 örnek).
-    assert sahiplik == 43
 
 
 def test_gitignore_girdisine_DOKUNULMUYOR(tmp_path):
