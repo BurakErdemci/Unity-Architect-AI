@@ -14,6 +14,7 @@ import logging
 import asyncio
 import re
 import subprocess
+import tempfile
 from typing import Any, AsyncGenerator, Callable, Dict, List, Optional
 
 from agentic.command_gates import APPROVAL_GATES as _APPROVAL_GATES, APPROVAL_RESULTS as _APPROVAL_RESULTS
@@ -40,8 +41,46 @@ MAX_ITERATIONS = 15  # Güvenlik: Sonsuz döngü koruması
 # Onay bekleme süresi `command_gates`'ten gelir (tek kaynak, gerekçesi orada).
 
 
+# Ürünün `.mcp.json`'a yazdığı sunucu adları. **Ad tek başına sahiplik KANITI
+# DEĞİL** — kullanıcının kendi `unityMCP` kaydı olabilir (denetimde çıktı, canlı
+# doğrulandı: adla eşleşen bir kullanıcı kaydı siliniyordu). Ad yalnızca aday
+# listesi; kararı `_urunun_kaydi_mi` veriyor.
+_URUN_SUNUCU_ADLARI = {"unityMCP", "unityai"}
+
+# Güvensiz bir projeden gelen dosya belleğe alınmadan önceki üst sınır. 1 MB,
+# gerçek bir `.mcp.json`'ın binlerce katı; amaç doğruluk değil, kötü niyetli ya
+# da bozuk bir dosyanın tur başlangıcını bloke etmesini engellemek.
+_MCP_JSON_AZAMI_BAYT = 1024 * 1024
+
+
+def _urunun_kaydi_mi(ad: str, tanim: object) -> bool:
+    """Bu kayıt ürünün kendi yazdığı mı? Adı değil, İMZASINI arar.
+
+    Denetim bulgusu (`server-name-is-not-ownership`, canlı doğrulandı): yalnız
+    ada bakmak, kullanıcının kendi `unityMCP` kaydını ürünün malı sayıp siliyordu.
+    İmza iki biçimden biri:
+
+      · `headers` içinde `X-API-Key` — temizliğin asıl sebebi olan sır; onu
+        taşıyan bir kaydı ürün yazmış olabilir ancak.
+      · `command` ürünün kurulum dizinini işaret ediyor (`unityai` stdio kaydı).
+
+    İkisi de yoksa kayıt kullanıcınındır ve dokunulmaz. Yanlış tarafta hata
+    yapmak burada ucuz: bırakılan bayat bir kayıt artık okunmuyor (SDK'ya
+    doğrudan geçiş yüzünden), silinen kullanıcı verisi ise geri gelmiyor.
+    """
+    if ad not in _URUN_SUNUCU_ADLARI or not isinstance(tanim, dict):
+        return False
+    basliklar = tanim.get("headers")
+    if isinstance(basliklar, dict) and any(a.lower() == "x-api-key" for a in basliklar):
+        return True
+    komut = tanim.get("command")
+    if isinstance(komut, str) and "unity_architect_ai" in komut.replace("\\", "/").lower():
+        return True
+    return False
+
+
 def _remove_project_mcp_json(workspace_path: Optional[str]) -> None:
-    """Önceki sürümlerin kullanıcının projesine yazdığı `.mcp.json`'ı kaldırır.
+    """Ürünün kendi `.mcp.json` kayıtlarını kullanıcının projesinden ÇIKARIR.
 
     ⚠️ BURAYA `.mcp.json` YAZAN KOD GERİ EKLENMEYECEK. Claude yolunda unityMCP
     artık SDK'ya doğrudan `mcp_servers` ile geçiliyor (bkz.
@@ -54,6 +93,23 @@ def _remove_project_mcp_json(workspace_path: Optional[str]) -> None:
     Temizlik ucu zorunlu — yaratan adım kaldırıldıysa silen adım kalmalı,
     yoksa daha önce kurulmuş her projede sır diskte kalır.
 
+    ⚠️ İŞLEM CERRAHİ: dosya silinmez, ürünün kayıtları ÇIKARILIR. İlk yazımda
+    ikili bir tasarım vardı ("ya tamamı bizimse sil, ya hiç dokunma") ve denetim
+    onu iki yönden birden çürüttü — üçü de canlı doğrulandı:
+
+      · `mcpServers` anahtarı olmayan saf kullanıcı verisi (`{"notlar": ...}`)
+        boş kümeye indirgeniyor, alt küme testini geçiyor ve SİLİNİYORDU.
+        `{}`, `[]`, `null` de aynı yoldan siliniyordu.
+      · Kullanıcının kendi `unityMCP` adlı kaydı ürünün malı sayılıp siliniyordu.
+      · Ve asıl ironi: KARIŞIK dosyada (bizim sır + kullanıcının kaydı) dosya
+        olduğu gibi bırakılıyordu — yani `X-API-Key` tam da temizliğin var olma
+        sebebi olan durumda diskte kalıyordu.
+
+    Cerrahi biçim üçünü birden kapatıyor: yalnız imzası ürüne ait kayıtlar
+    çıkarılır, geri kalan her şey (yabancı sunucular, üst düzey kullanıcı
+    anahtarları) korunur, ve dosya ancak geriye ürüne ait olmayan HİÇBİR ŞEY
+    kalmadığında silinir.
+
     ⚠️ `.gitignore` girdisine DOKUNULMAZ. `.mcp.json`'ı CLI tabanlı sağlayıcılar
     (`cli_base._write_mcp_config`) hâlâ meşru olarak yazıyor; girdiyi kaldırmak
     kullanıcı Kimi'ye ya da Claude CLI'ına geçtiği an sırrı depoya açardı.
@@ -65,6 +121,15 @@ def _remove_project_mcp_json(workspace_path: Optional[str]) -> None:
         return
     hedef = os.path.join(workspace_path, ".mcp.json")
     try:
+        # Boyut ÖNCE: güvensiz bir projeden gelen dosya belleğe alınmadan
+        # sınırlanıyor. Aksi hâlde çok büyük ama geçerli bir JSON, turu daha
+        # başlamadan bloke edebilirdi (denetim bulgusu).
+        if os.path.getsize(hedef) > _MCP_JSON_AZAMI_BAYT:
+            logger.warning(
+                "[ClaudeSession] .mcp.json beklenenden çok büyük (%d bayt), dokunulmuyor",
+                os.path.getsize(hedef),
+            )
+            return
         with open(hedef, "r", encoding="utf-8") as f:
             icerik = json.load(f)
     except FileNotFoundError:
@@ -74,32 +139,73 @@ def _remove_project_mcp_json(workspace_path: Optional[str]) -> None:
         logger.warning(f"[ClaudeSession] .mcp.json okunamadı, dokunulmuyor: {e}")
         return
 
-    # ⚠️ SİLMEDEN ÖNCE DOSYAYA BAK. Kullanıcı bu projeye kendi MCP sunucularını
-    # yazmış olabilir; ürünün onları sessizce silme hakkı yok. (Eski kod bu
-    # dosyayı koşulsuz EZİYORDU — yani veri kaybı yeni değil, ama devralınacak
-    # bir davranış da değil.) Yalnız içeriğinin tamamı ürünün kendi kayıtlarıysa
-    # siliniyor; tek bir yabancı anahtar dosyayı dokunulmaz yapar.
-    URUNUN_KAYITLARI = {"unityMCP", "unityai"}
-    try:
-        sunucular = set((icerik or {}).get("mcpServers", {}).keys())
-    except AttributeError:
-        logger.warning("[ClaudeSession] .mcp.json beklenen biçimde değil, dokunulmuyor")
-        return
-    yabanci = sunucular - URUNUN_KAYITLARI
-    if yabanci:
-        logger.info(
-            "[ClaudeSession] .mcp.json kullanıcının kendi kayıtlarını taşıyor (%s); "
-            "silinmedi. Ürünün kayıtları artık okunmuyor, zararsız duruyorlar.",
-            ", ".join(sorted(yabanci)),
-        )
+    # Beklenen biçimde değilse hiçbir şey iddia edilemez → dokunulmaz.
+    # (`{}`/`[]`/`null` da buraya düşüyor: eskiden bunlar "boş sunucu kümesi"
+    # sayılıp dosyayı SİLDİRİYORDU.)
+    if not isinstance(icerik, dict) or not isinstance(icerik.get("mcpServers"), dict):
         return
 
-    try:
-        os.remove(hedef)
-    except OSError as e:
-        logger.warning(f"[ClaudeSession] bayat .mcp.json silinemedi: {e}")
+    sunucular = icerik["mcpServers"]
+    bizimkiler = [ad for ad, tanim in sunucular.items() if _urunun_kaydi_mi(ad, tanim)]
+    if not bizimkiler:
+        return  # ürüne ait hiçbir şey yok; dosya bütünüyle kullanıcının
+
+    for ad in bizimkiler:
+        sunucular.pop(ad, None)
+
+    # Geriye ürünün yazmadığı hiçbir şey kalmadıysa dosyanın kendisi bizimdi.
+    if not sunucular and set(icerik.keys()) == {"mcpServers"}:
+        try:
+            os.remove(hedef)
+        except OSError as e:
+            logger.warning(f"[ClaudeSession] bayat .mcp.json silinemedi: {e}")
+            return
+        logger.info("[ClaudeSession] bayat .mcp.json kaldırıldı (unityMCP artık SDK'ya doğrudan geçiliyor)")
         return
-    logger.info("[ClaudeSession] bayat .mcp.json kaldırıldı (unityMCP artık SDK'ya doğrudan geçiliyor)")
+
+    # Karışık dosya: sır çıkarılır, kullanıcının her şeyi yerinde kalır.
+    try:
+        _mcp_json_geri_yaz(hedef, icerik)
+    except OSError as e:
+        logger.warning(f"[ClaudeSession] .mcp.json güncellenemedi, sır diskte kalmış olabilir: {e}")
+        return
+    logger.info(
+        "[ClaudeSession] .mcp.json'dan ürünün kayıtları çıkarıldı (%s); "
+        "kullanıcının kayıtları korundu",
+        ", ".join(sorted(bizimkiler)),
+    )
+
+
+def _mcp_json_geri_yaz(hedef: str, icerik: dict) -> None:
+    """Geçici dosya + `os.replace`: yarı yazılmış bir `.mcp.json` bırakmaz.
+
+    İzinler KORUNUYOR: `mkstemp` 0600 veriyor, oysa geriye kalan içerik artık
+    kullanıcının kendi yapılandırması. Ürünün, sırrını çıkardığı bir dosyanın
+    erişim haklarını sessizce değiştirme hakkı yok.
+
+    ⚠️ Bu yol şu an sembolik bağ/junction'a karşı sertleştirilmiş DEĞİL; aynı
+    sınıf K4'ün konusu ve çözümü `local_token_file._dogrula_kimlik`'te ölçülmüş
+    hâliyle duruyor (açtıktan SONRA tanıtıcının gerçek yolunu sorar, junction'ı
+    ve sabit bağı da yakalar). K4 bu noktayı da o ortak yardımcıya bağlayacak.
+    """
+    dizin = os.path.dirname(hedef) or "."
+    try:
+        onceki_kip = os.stat(hedef).st_mode & 0o777
+    except OSError:
+        onceki_kip = None
+    fd, gecici = tempfile.mkstemp(dir=dizin, prefix=".mcp.json.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(icerik, f, indent=2)
+        if onceki_kip is not None:
+            os.chmod(gecici, onceki_kip)
+        os.replace(gecici, hedef)
+    except BaseException:
+        try:
+            os.unlink(gecici)
+        except OSError:
+            pass
+        raise
 
 
 class AgentEvent:
@@ -1574,6 +1680,17 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                 _reasons.append(f"model {_existing.model}→{model}")
             if _canon(_existing.cwd or ".") != _canon(_workspace):
                 _reasons.append(f"workspace {_existing.cwd}→{_workspace}")
+            # unityMCP kaydı da CONNECT-TIME kilitli (artık `.mcp.json` üzerinden
+            # değil, doğrudan SDK seçeneği olarak geçiyor). Karşılaştırılmazsa:
+            # Unity MCP kapalıyken açılan bir sohbet, MCP sonradan açılsa bile
+            # araçsız kalırdı — ve kullanıcı model/workspace/effort'tan birini
+            # değiştirene kadar bunu düzeltmenin yolu olmazdı. Denetim bulgusu
+            # (`stale-mcp-session-cache`); en olası tetikleyicisi de bu sıradan
+            # akış, egzotik bir durum değil.
+            if (_existing.mcp_servers or {}) != (mcp_servers_cfg or {}):
+                _onceki = "var" if _existing.mcp_servers else "yok"
+                _simdi = "var" if mcp_servers_cfg else "yok"
+                _reasons.append(f"unityMCP kaydı {_onceki}→{_simdi}")
         if _reasons:
             logger.info(f"[ClaudeSession] {', '.join(_reasons)}; session yeniden kuruluyor "
                         f"(canlı bağlam sıfırlanır, DB özeti korunur)")
@@ -1655,7 +1772,13 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                     continue
                 logger.exception("[ClaudeSession] stream hatası")
                 cleanup_dir(_att_dir)
-                yield AgentEvent("error", {"message": f"Claude session hatası: {e}"})
+                # ⚠️ `redact_secrets` ŞART: bu metin SSE ile tarayıcıya gidiyor ve
+                # oturum yapılandırması artık unityMCP `X-API-Key`'ini taşıyor.
+                # Log tarafı global bir filtreyle korunuyor (`install_log_redaction`),
+                # ama o filtre bu olay nesnesine uğramıyor — koruma sanılan yerde
+                # yoktu (denetim bulgusu, `raw-secret-exception-to-client`).
+                from secret_redaction import redact_secrets as _redact
+                yield AgentEvent("error", {"message": f"Claude session hatası: {_redact(str(e))}"})
                 return
 
     # ═══════════════════════════════════════════════
