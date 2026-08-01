@@ -16,6 +16,7 @@ import stat
 import pytest
 
 import local_token_file
+import safe_paths  # noqa: E402  (yol kimliği artık burada)
 
 
 @pytest.fixture
@@ -272,7 +273,7 @@ def test_POSIX_ara_dizin_sembolik_bagi_reddediliyor(tmp_path, monkeypatch):
 @pytest.fixture
 def harf_duyarsiz_kip(monkeypatch):
     """Windows'un harf-duyarsız karşılaştırma kipini her makinede kurar."""
-    monkeypatch.setattr(local_token_file, "_harf_duyarsiz_kip", lambda: True)
+    monkeypatch.setattr(safe_paths, "_harf_duyarsiz_kip", lambda: True)
 
 
 @pytest.fixture
@@ -314,7 +315,7 @@ def test_harf_farki_iki_AYRI_giris_ise_gercek_sayiliyor(case_sensitive_dizin):
     (case_sensitive_dizin / "TOKEN").write_text("saldirgan", encoding="utf-8")
     assert {"token", "TOKEN"} <= set(os.listdir(case_sensitive_dizin))
 
-    assert local_token_file._harf_farki_GERCEK_mi(
+    assert safe_paths._harf_farki_GERCEK_mi(
         str(case_sensitive_dizin / "TOKEN"), str(case_sensitive_dizin / "token")
     ) is True
 
@@ -329,7 +330,7 @@ def test_harf_farki_tek_giris_ise_ayni_adin_yazimi_sayiliyor(tmp_path):
     (tmp_path / "token").write_text("mesru", encoding="utf-8")
     assert "TOKEN" not in os.listdir(tmp_path)
 
-    assert local_token_file._harf_farki_GERCEK_mi(
+    assert safe_paths._harf_farki_GERCEK_mi(
         str(tmp_path / "TOKEN"), str(tmp_path / "token")
     ) is False
 
@@ -342,13 +343,13 @@ def test_bilesen_ayristirmasi_kok_bicimlerini_dogru_cozuyor():
     listeliyor. Yani kontrol YANLIŞ dizine bakıp "iki giriş yok" diyebilirdi.
     """
     if os.name == "nt":
-        ust, ad = local_token_file._bilesenler(r"C:\a\b")[0]
+        ust, ad = safe_paths._bilesenler(r"C:\a\b")[0]
         assert ust == "C:\\" and ad == "a"
-        assert local_token_file._bilesenler(r"\\server\share\d\t")[0][0] == (
+        assert safe_paths._bilesenler(r"\\server\share\d\t")[0][0] == (
             "\\\\server\\share\\"
         )
     else:
-        assert local_token_file._bilesenler("/a/b")[0] == ("/", "a")
+        assert safe_paths._bilesenler("/a/b")[0] == ("/", "a")
 
 
 def test_iki_bilesen_ayrisiyorsa_GERCEK_olani_yakalaniyor(case_sensitive_dizin):
@@ -362,7 +363,7 @@ def test_iki_bilesen_ayrisiyorsa_GERCEK_olani_yakalaniyor(case_sensitive_dizin):
     (case_sensitive_dizin / "ara" / "token").write_text("mesru", encoding="utf-8")
     (case_sensitive_dizin / "ARA" / "token").write_text("saldirgan", encoding="utf-8")
 
-    assert local_token_file._harf_farki_GERCEK_mi(
+    assert safe_paths._harf_farki_GERCEK_mi(
         str(case_sensitive_dizin / "ARA" / "token"),
         str(case_sensitive_dizin / "ara" / "token"),
     ) is True
@@ -371,7 +372,7 @@ def test_iki_bilesen_ayrisiyorsa_GERCEK_olani_yakalaniyor(case_sensitive_dizin):
 def test_harf_farki_OLCULEMEZSE_gercek_sayiliyor():
     """Listeleyemediğimiz bir dizin hakkında iddia üretmiyoruz — fail-CLOSED."""
     yok = os.path.join(os.sep, "olmayan-dizin-xyz", "alt", "token")
-    assert local_token_file._harf_farki_GERCEK_mi(
+    assert safe_paths._harf_farki_GERCEK_mi(
         yok.replace("token", "TOKEN"), yok
     ) is True
 
@@ -412,12 +413,12 @@ def test_harf_DUYARLI_kipte_yol_karsilastirmasi_zaten_yakaliyor(
     Bu iddia yazılı, çünkü guard'ın POSIX'te sessiz kalması bir eksiklik değil:
     orada `_yol_esitle` harfi korumakla zaten farklı iki yol görüyor.
     """
-    monkeypatch.setattr(local_token_file, "_harf_duyarsiz_kip", lambda: False)
+    monkeypatch.setattr(safe_paths, "_harf_duyarsiz_kip", lambda: False)
     mesru = tmp_path / "mesru.txt"
     mesru.write_text("MESRU", encoding="utf-8")
 
     monkeypatch.setattr(
-        local_token_file, "_fd_gercek_yol", lambda fd: str(mesru).upper()
+        safe_paths, "_fd_gercek_yol", lambda fd: str(mesru).upper()
     )
     fd = os.open(str(mesru), os.O_RDONLY)
     try:
