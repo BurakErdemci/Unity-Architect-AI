@@ -90,15 +90,25 @@ class OpenCodeProvider(BaseCLIProvider):
                     "enabled": True,
                 }
             }
-            # ⚠️ DOĞRULANMADI: opencode bu makinede kurulu değil, `headers`
-            # desteği ÖLÇÜLEMEDİ. Yok sayarsa bağlantı 401 alır (gürültülü arıza,
-            # sessiz sızıntı değil). Kurulunca ölçülmeli.
+            # K3: unityMCP artık `headers` taşıyan bir `remote` kayıt DEĞİL,
+            # stdio köprüsü. Sebep ölçülmüş bir sızıntıydı: `X-API-Key` bu
+            # dosyaya düz metin yazılıyordu, dosya MODELİN kendi okuyabildiği
+            # yerde duruyor ve 29 Tem'de gerçek bir projede git tarafından
+            # İZLENİYOR bulundu. ACL sertleştirmek bunu çözmez — model zaten
+            # aynı kullanıcı olarak koşuyor.
+            #
+            # Köprü sırrı kendi okuyor (`~/.unity-mcp/local-api-token`), yani
+            # sır ne config'e ne argv'ye giriyor. URL sır TAŞIMIYOR ama yine de
+            # `environment` ile veriliyor; `unityai` da aynı dosyada aynı
+            # `type: "local"` şeklinde kayıtlı, yani desen bu dosyada zaten
+            # kanıtlı.
             unity_mcp_url = unity_mcp_manager.mcp_url()
             if unity_mcp_url:
+                from .codex_unitymcp_bridge import bridge_argv
                 mcp["unityMCP"] = {
-                    "type": "remote",
-                    "url": unity_mcp_url,
-                    "headers": unity_mcp_manager.api_headers(),
+                    "type": "local",
+                    "command": bridge_argv(),
+                    "environment": {"UNITY_MCP_URL": unity_mcp_url},
                     "enabled": True,
                 }
 
@@ -138,22 +148,22 @@ class OpenCodeProvider(BaseCLIProvider):
             except Exception:
                 pass
 
-            # Bu dosya da `X-API-Key`'i düz metin taşıyor ve workspace'in
-            # ACL'ini miras alıyordu. Sıkılaştırma `cli_base` ile aynı desende:
-            # ⚠️ Düz `open` DEĞİL ve "boş yarat + kilitle" adımı da GİTTİ:
-            # o ilk yaratma da yönlendirmeye açıktı (K4). Sıra artık
-            # `guvenli_config_yaz`'ın içinde, tek yerde: aç → kimliği doğrula →
-            # sıkılaştır → yaz.
+            # ⚠️ Düz `open` DEĞİL: yol yönlendirmesine kapalı yazım (K4).
+            # `sir_tasiyor` artık FALSE — K3'ten sonra bu dosya BİZİM sırrımızı
+            # taşımıyor (unityMCP stdio köprüsüyle kayıtlı). Bayrağı True
+            # bırakmak, sertleştirme başarısız olduğunda unityMCP'yi gereksiz
+            # yere düşürürdü: korunacak bir sır yokken işlev kaybı.
+            #
+            # Sertleştirme yine de HER ZAMAN deneniyor (bkz. `guvenli_config_yaz`):
+            # dosya kullanıcının KENDİ üçüncü-parti MCP kayıtlarını da taşıyor
+            # ve `os.replace` kaynağın ACL'ini taşıdığı için, koşullu bir
+            # sertleştirme önceki bir sertleştirmeyi geri alabiliyordu.
             if not guvenli_config_yaz(workspace, "opencode.json",
-                                      json.dumps(merged, indent=2), sir_tasiyor=True):
-                if isinstance(merged.get("mcp"), dict) and \
-                        merged["mcp"].pop("unityMCP", None) is not None:
-                    logger.error(
-                        "[OpenCodeProvider] %s güvenli yazılamadı; unityMCP "
-                        "kaydı X-API-Key ile YAZILMADI.", cfg_path,
-                    )
-                guvenli_config_yaz(workspace, "opencode.json", json.dumps(merged, indent=2))
-            logger.info("[OpenCodeProvider] opencode.json yazıldı.")
+                                      json.dumps(merged, indent=2)):
+                logger.error("[OpenCodeProvider] %s güvenli yazılamadı; "
+                             "MCP kaydı UYGULANMADI.", cfg_path)
+                return
+            logger.info("[OpenCodeProvider] opencode.json yazıldı (unityMCP stdio köprüsü).")
             # Dosyayı yazan nokta girdisini de yazar (bkz. workspace_config).
             ensure_gitignored(workspace, ["opencode.json"])
         except Exception as e:

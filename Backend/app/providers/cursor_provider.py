@@ -106,16 +106,24 @@ class CursorProvider(BaseCLIProvider):
                     }
                 }
             }
-            # ⚠️ DOĞRULANMADI: cursor bu makinede kurulu değil, `headers` alanını
-            # gerçekten gönderip göndermediği ÖLÇÜLEMEDİ. claude/kimi şemasıyla
-            # aynı yazılıyor çünkü ikisi de bu adı kullanıyor; cursor sessizce
-            # yok sayarsa bağlantı 401 alır — sessiz sızıntı değil, gürültülü
-            # arıza. Kurulunca ölçülmeli.
+            # K3: `headers` içinde düz metin `X-API-Key` yerine stdio köprüsü —
+            # sır bu dosyaya HİÇ girmiyor.
+            #
+            # ⚠️ CURSOR'DA ÖLÇÜLMEDİ: `cursor-agent` bu makinede kurulu değil
+            # (ölçüldü 1 Ağu 2026, `command -v`). Şema yine de sağlam bir
+            # temele dayanıyor: HEMEN YUKARIDAKİ `unityai` kaydı aynı
+            # `command`/`args`/`env` biçiminde ve cursor onu okuyor. Aynı biçim
+            # opencode ve copilot'ta canlı doğrulandı. Cursor bu kaydı yine de
+            # yok sayarsa sonuç, unityMCP'nin görünmemesi olur — sessiz bir
+            # sızıntı değil, görülebilir bir eksik. Kurulunca ölçülmeli.
             unity_mcp_url = unity_mcp_manager.mcp_url()
             if unity_mcp_url:
+                from .codex_unitymcp_bridge import bridge_argv
+                _argv = bridge_argv()
                 config["mcpServers"]["unityMCP"] = {
-                    "url": unity_mcp_url,
-                    "headers": unity_mcp_manager.api_headers(),
+                    "command": _argv[0],
+                    "args": _argv[1:],
+                    "env": {"UNITY_MCP_URL": unity_mcp_url},
                 }
 
             # Kullanıcının kendi .cursor/mcp.json'ı varsa bizim server'ları üstüne
@@ -135,25 +143,20 @@ class CursorProvider(BaseCLIProvider):
 
             # ⚠️ Düz `open` DEĞİL: bu dosya kullanıcının projesinde ve yolu
             # yönlendirilmiş olabilir (K4, iki vektör de ayrıcalıksız ölçüldü).
+            # `sir_tasiyor` artık FALSE: K3'ten sonra dosya BİZİM sırrımızı
+            # taşımıyor, dolayısıyla sertleştirme başarısızlığının unityMCP'yi
+            # düşürmesi sebepsiz işlev kaybı olurdu. Sertleştirme yine de her
+            # zaman deneniyor — dosya kullanıcının KENDİ üçüncü-parti MCP
+            # kayıtlarını (kendi başlıklarıyla) koruyor.
             if not guvenli_config_yaz(workspace, ".cursor/mcp.json",
-                                      json.dumps(merged, indent=2), sir_tasiyor=True):
-                # ⚠️ SIRSIZ YEDEK YAZIM ŞART — yalnız loglayıp dönmek yetmiyor.
-                # Denetim bulgusu: bu dal önceki turdan kalmış bir dosyayı
-                # OLDUĞU GİBİ bırakıyordu, yani ACL kısıtlanamadığı anda eski
-                # `X-API-Key` diskte kalıyordu. Tam da "sır diske yazılmasın"
-                # denilen durumda sır diskte kalıyor demekti. cli_base ve
-                # opencode bu yedeği zaten yapıyordu; burası sapmıştı.
-                merged["mcpServers"].pop("unityMCP", None)
-                logger.error("[CursorProvider] .cursor/mcp.json güvenli yazılamadı; "
-                             "unityMCP kaydı X-API-Key ile YAZILMADI. Unity MCP bu "
-                             "oturumda bağlanmayacak.")
-                if not guvenli_config_yaz(workspace, ".cursor/mcp.json",
-                                          json.dumps(merged, indent=2)):
-                    return
-            logger.info("[CursorProvider] .cursor/mcp.json yazıldı.")
-            # Dosyayı yazan nokta girdisini de yazar. Bu dosya unityMCP
-            # `X-API-Key`'ini düz metin taşıyor ve kullanıcının deposunda duruyor;
-            # 29 Tem ölçümünde gerçek bir projede İZLENİYORDU.
+                                      json.dumps(merged, indent=2)):
+                logger.error("[CursorProvider] .cursor/mcp.json güvenli "
+                             "yazılamadı; MCP kaydı UYGULANMADI.")
+                return
+            logger.info("[CursorProvider] .cursor/mcp.json yazıldı (unityMCP stdio köprüsü).")
+            # Dosyayı yazan nokta girdisini de yazar: sır taşımasa da
+            # kullanıcının deposunda duruyor ve 29 Tem ölçümünde gerçek bir
+            # projede İZLENİYORDU.
             ensure_gitignored(workspace, [".cursor/mcp.json"])
 
             # İzin politikası: --force ile birlikte native Write/Shell'i deny-list'le

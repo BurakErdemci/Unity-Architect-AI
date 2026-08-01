@@ -112,14 +112,19 @@ class CopilotProvider(BaseCLIProvider):
                     "tools": ["*"],
                 }
             }
-            # ⚠️ DOĞRULANMADI: copilot CLI bu makinede kurulu değil, `headers`
-            # desteği ÖLÇÜLEMEDİ. Yok sayarsa 401 (gürültülü arıza). Kurulunca ölç.
+            # K3: `headers` taşıyan `http` kayıt yerine stdio köprüsü — sır
+            # config dosyasına HİÇ girmiyor, köprü onu token dosyasından kendi
+            # okuyor. `unityai` zaten aynı sözlükte `type: "local"` şeklinde,
+            # yani şema bu dosyada kanıtlı.
             unity_mcp_url = unity_mcp_manager.mcp_url()
             if unity_mcp_url:
+                from .codex_unitymcp_bridge import bridge_argv
+                _argv = bridge_argv()
                 servers["unityMCP"] = {
-                    "type": "http",
-                    "url": unity_mcp_url,
-                    "headers": unity_mcp_manager.api_headers(),
+                    "type": "local",
+                    "command": _argv[0],
+                    "args": _argv[1:],
+                    "env": {"UNITY_MCP_URL": unity_mcp_url},
                     "tools": ["*"],
                 }
 
@@ -129,12 +134,18 @@ class CopilotProvider(BaseCLIProvider):
             # bitleri etkisiz (ölçüldü: `local_token_file` docstring'i), o yüzden
             # ACL burada da açıkça kısıtlanıyor. Doğrulama turu bulgusu: bu
             # yazıcı hardener'ı hiç çağırmıyordu.
+            #
+            # K3 sonrası: dosya artık `X-API-Key` TAŞIMIYOR, o yüzden
+            # sertleştirememek unityMCP'yi DÜŞÜRMÜYOR — korunacak sır yokken
+            # kaydı atmak sebepsiz işlev kaybı olurdu. Sertleştirme yine de
+            # deneniyor (dosya workspace yollarını ve `unityai` ortamını
+            # taşıyor) ve başarısızlık sessiz değil.
             from .workspace_config import harden_config_file
 
-            if not harden_config_file(path) and servers.pop("unityMCP", None) is not None:
-                logger.error(
-                    "[CopilotProvider] %s izinleri kısıtlanamadı; unityMCP kaydı "
-                    "X-API-Key ile YAZILMADI.", path,
+            if not harden_config_file(path):
+                logger.warning(
+                    "[CopilotProvider] %s izinleri kısıtlanamadı; dosya dizin "
+                    "izinlerini miras alıyor.", path,
                 )
             with open(path, "w", encoding="utf-8") as f:
                 json.dump({"mcpServers": servers}, f, indent=2)

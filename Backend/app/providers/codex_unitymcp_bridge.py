@@ -25,6 +25,24 @@ import urllib.error
 DEFAULT_URL = "http://127.0.0.1:8080/mcp"
 
 
+def bridge_argv() -> list:
+    """Bu köprüyü başlatan argv'yi döndürür (dev ve donmuş build için ayrı).
+
+    Neden ortak fonksiyon: aynı iki satır önce yalnız `codex_provider`'daydı,
+    şimdi K3 için başka sağlayıcılar da köprüye geçiyor. Bu argv bir güvenlik
+    kararı taşıyor — sır köprünün İÇİNDE, token dosyasından okunuyor; komut
+    satırında ya da config'de görünmüyor. Kopyalanırsa biri güncellenip diğeri
+    geride kalır, ve geride kalan sırrı diske geri yazan sürüm olur.
+    """
+    if getattr(sys, "frozen", False):
+        # Paketlenmiş app: backend.exe codex-mcp-bridge
+        return [sys.executable, "codex-mcp-bridge"]
+    # Dev: python main.py codex-mcp-bridge
+    main_py = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "main.py")
+    return [sys.executable, main_py, "codex-mcp-bridge"]
+
+
 def _read_shared_secret():
     """Paylaşımlı sırrı doğrudan token dosyasından okur.
 

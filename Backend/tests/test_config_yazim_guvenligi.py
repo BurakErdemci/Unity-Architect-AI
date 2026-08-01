@@ -351,3 +351,120 @@ def test_sertlestirme_basarisiz_ama_SIRSIZ_ise_yazim_SURUYOR(tmp_path, monkeypat
         str(tmp_path), "sirsiz2.json", '{"b":2}', sir_tasiyor=False), \
         "sertleştirme başarısız diye SIRSIZ yazım da iptal edildi"
     assert (tmp_path / "sirsiz2.json").read_text(encoding="utf-8") == '{"b":2}'
+
+
+# ── K3: paylaşımlı sır hiçbir CLI config dosyasına girmemeli ───────────────
+
+def test_K3_hicbir_config_yazicisi_sirri_DISKE_yazmiyor(tmp_path, monkeypatch):
+    """Sınıfı kapatmak giriş noktalarını SAYMAYI gerektirir — hepsini say.
+
+    Ölçülmüş açık: unityMCP `X-API-Key`'i beş ayrı CLI config dosyasına düz
+    metin yazılıyordu. Bu dosyalar MODELİN okuyabildiği yerde duruyor ve
+    29 Tem'de gerçek bir projede git tarafından İZLENİYOR bulundu; ACL
+    sertleştirmek çözmüyor çünkü model aynı kullanıcı olarak koşuyor.
+
+    Çözüm stdio köprüsü: sır config'e değil, köprünün kendi okuduğu token
+    dosyasına dayanıyor. Bu test tek tek yazıcıları değil, YAZICI KÜMESİNİ
+    savunuyor — yeni bir sağlayıcı eklenip listeye girmezse burada değil,
+    aşağıdaki sayım testinde yakalanır.
+    """
+    import json as _json
+    from providers.cli_base import BaseCLIProvider
+    from providers.cursor_provider import CursorProvider
+    from providers.opencode_provider import OpenCodeProvider
+
+    KANARYA = "KANARYA-K3-PAYLASIMLI-SIR"
+
+    class _SahteYonetici:
+        @staticmethod
+        def mcp_url(host="localhost"):
+            return "http://127.0.0.1:8080/mcp"
+
+        @staticmethod
+        def api_headers():
+            return {"X-API-Key": KANARYA}
+
+        @staticmethod
+        def is_running():
+            return True
+
+    import unity_ai_mcp.unity_mcp_manager as umm
+    monkeypatch.setattr(umm, "unity_mcp_manager", _SahteYonetici())
+    monkeypatch.setenv("LOCAL_APP_TOKEN", "x")
+
+    def _ws(ad):
+        d = tmp_path / ad
+        d.mkdir()
+        return str(d)
+
+    yazilanlar = []
+
+    # 1) cli_base → workspace/.mcp.json
+    ws1 = _ws("clibase")
+    p1 = BaseCLIProvider.__new__(BaseCLIProvider)
+    monkeypatch.setattr(p1, "_launcher_path", lambda n: "/bin/true", raising=False)
+    monkeypatch.setattr(p1, "_ensure_exec", lambda p: None, raising=False)
+    monkeypatch.setattr(p1, "_register_mcp", lambda *a, **k: None, raising=False)
+    p1._write_mcp_config(ws1)
+    yazilanlar.append(os.path.join(ws1, ".mcp.json"))
+
+    # 2) cursor → .cursor/mcp.json
+    ws2 = _ws("cursor")
+    p2 = CursorProvider.__new__(CursorProvider)
+    p2._register_mcp("/bin/true", ws2, "http://127.0.0.1:8000")
+    yazilanlar.append(os.path.join(ws2, ".cursor", "mcp.json"))
+
+    # 3) opencode → opencode.json
+    ws3 = _ws("opencode")
+    p3 = OpenCodeProvider.__new__(OpenCodeProvider)
+    p3.binary_name = "opencode:opencode/grok-code"
+    p3._effort_level = "auto"
+    p3._approval_turn_token = ""
+    p3._register_mcp("/bin/true", ws3, "http://127.0.0.1:8000")
+    yazilanlar.append(os.path.join(ws3, "opencode.json"))
+
+    bulunanlar = []
+    for yol in yazilanlar:
+        assert os.path.exists(yol), f"yazıcı dosyayı hiç üretmedi: {yol}"
+        ham = open(yol, encoding="utf-8").read()
+        if KANARYA in ham or "X-API-Key" in ham:
+            bulunanlar.append(yol)
+        # unityMCP kaydı DÜŞMEMELİ: sır gitti, özellik kalmalı
+        d = _json.loads(ham)
+        sunucular = d.get("mcpServers") or d.get("mcp") or {}
+        assert "unityMCP" in sunucular, f"unityMCP kaydı düştü: {yol}"
+
+    assert not bulunanlar, f"paylaşımlı sır diske yazıldı: {bulunanlar}"
+
+
+def test_K3_unityMCP_yazan_her_saglayici_KOPRUYU_kullaniyor():
+    """Sayım testi: `api_headers()`'ı config'e gömen bir sağlayıcı kalmamalı.
+
+    Kaynak taraması BİLEREK — davranış testi yeni eklenen bir sağlayıcıyı
+    göremez, çünkü onu çağırmayı bilmiyor. Burada savunulan şey bir davranış
+    değil, bir DEĞİŞMEZ: `providers/` altında hiçbir yer unityMCP kaydına
+    `headers` gömmüyor.
+
+    ⛔ TEK İSTİSNA `claude_provider`: `claude mcp add --header` ile kayıt
+    yapıyor ve köprüye GEÇEMİYOR — ölçüldü, Claude CLI'da stdio kaydı
+    `pending`de kalıyor, HTTP `connected` oluyor. Sır argv'de görünüyor ama
+    kalıcı config'e girmiyor (1 Ağu 2026'da `~/.claude.json` okunarak
+    doğrulandı). İstisna burada ADLANDIRILMIŞ olsun ki sessizce büyümesin.
+    """
+    kok = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                       "app", "providers")
+    ihlaller = []
+    for ad in os.listdir(kok):
+        if not ad.endswith(".py") or ad == "claude_provider.py":
+            continue
+        metin = open(os.path.join(kok, ad), encoding="utf-8").read()
+        # yorum satırlarını ele — gerekçeler `api_headers`'tan söz ediyor
+        kod = "\n".join(s for s in metin.splitlines()
+                        if not s.lstrip().startswith("#"))
+        if "api_headers()" in kod:
+            ihlaller.append(ad)
+
+    assert not ihlaller, (
+        f"bu sağlayıcılar unityMCP kaydına hâlâ başlık gömüyor: {ihlaller}. "
+        "Köprüye geçir ya da istisnayı gerekçesiyle bu testte adlandır."
+    )

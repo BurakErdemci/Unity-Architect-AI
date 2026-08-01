@@ -506,7 +506,19 @@ def test_ACL_kisitlanamazsa_sir_YAZILMIYOR(tmp_path, monkeypatch):
     yol = provider._write_mcp_config(str(ws))
     ham = open(yol, encoding="utf-8").read()
 
-    assert "KANARYA-ACL" not in ham, "ACL kısıtlanamadığı hâlde sır yazıldı"
-    # Ürün çalışmaya devam etmeli: unityai kaydı duruyor, yalnız unityMCP düştü.
-    assert json.loads(ham)["mcpServers"]["unityai"]
-    assert "unityMCP" not in json.loads(ham)["mcpServers"]
+    # K3 sonrası iddia DAHA GÜÇLÜ: sır artık "ACL kısıtlanamazsa yazılmaz"
+    # değil, HİÇBİR KOŞULDA yazılmaz. unityMCP stdio köprüsüyle kaydediliyor
+    # ve köprü sırrı token dosyasından kendi okuyor.
+    assert "KANARYA-ACL" not in ham, "sır .mcp.json'a yazıldı"
+    assert "X-API-Key" not in ham, "başlık alanı hâlâ yazılıyor"
+
+    sunucular = json.loads(ham)["mcpServers"]
+    assert sunucular["unityai"]
+    # ⚠️ unityMCP artık DÜŞMÜYOR. Eskiden düşerdi çünkü kayıt sır taşıyordu ve
+    # doğru taraf özelliği kaybetmekti. Sır gidince o takas ortadan kalktı;
+    # kaydı yine de atmak sebepsiz işlev kaybı olurdu.
+    unity = sunucular["unityMCP"]
+    assert "headers" not in unity and "url" not in unity, \
+        f"unityMCP hâlâ HTTP kaydı: {unity}"
+    assert unity["args"][-1] == "codex-mcp-bridge", \
+        f"unityMCP stdio köprüsüyle kaydedilmedi: {unity}"

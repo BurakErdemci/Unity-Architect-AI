@@ -127,14 +127,8 @@ class CodexProvider(BaseCLIProvider):
                 # argv ile DEĞİL --env ile veriliyor: argv `ps` üzerinden makinedeki her
                 # sürece görünür — yani tam olarak bu sırrın savunduğu saldırgana.
                 # (unity_mcp_manager sırrı aynı sebeple ortam değişkeniyle geçiriyor.)
-                if getattr(sys, "frozen", False):
-                    # Paketlenmiş app: backend.exe codex-mcp-bridge
-                    bridge_argv = [sys.executable, "codex-mcp-bridge"]
-                else:
-                    # Dev: python main.py codex-mcp-bridge
-                    _main_py = os.path.join(
-                        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "main.py")
-                    bridge_argv = [sys.executable, _main_py, "codex-mcp-bridge"]
+                from .codex_unitymcp_bridge import bridge_argv as _bridge_argv
+                bridge_argv = _bridge_argv()
                 sp.run(
                     self._resolve_exec([
                         "codex", "mcp", "add", "unityMCP",

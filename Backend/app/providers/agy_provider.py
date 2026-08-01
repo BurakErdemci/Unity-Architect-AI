@@ -163,17 +163,23 @@ class AgyProvider(BaseCLIProvider):
         config.pop("disabledTools", None)
 
         from unity_ai_mcp.unity_mcp_manager import unity_mcp_manager
-        # ⚠️ DOĞRULANMADI: agy'nin `headers` alanını gönderdiği ölçülemedi — bu
-        # config `~/.gemini/settings.json`'ı paylaşıyor (başka bir asistan da onu
-        # kullanıyor) ve izole bir kopyayla ölçmek mümkün olmadı. Alan yine de
-        # yazılıyor: yok sayılırsa bağlantı 401 alır, yani sessiz sızıntı değil
-        # gürültülü arıza olur. None → kayıt silinir.
+        # K3: `serverUrl` + `headers` (düz metin `X-API-Key`) yerine stdio
+        # köprüsü. Bu dosya `~/.gemini`'de duruyor ve başka bir asistanla
+        # PAYLAŞILIYOR (bkz. [[jarvan-asistan]]) — yani sırrın buraya
+        # yazılması, ürünün kendi izole etmediği bir yüzeye sır koymaktı.
+        # Köprü sırrı token dosyasından kendi okuyor.
+        #
+        # Şekil `unityai_entry` ile AYNI (`command`/`args`/`env`/`trust`) ve o
+        # kayıt bu dosyada çalışıyor. Aynı biçim opencode ve copilot'ta canlı
+        # doğrulandı (1 Ağu 2026). None → kayıt silinir.
         unity_mcp_url = unity_mcp_manager.mcp_url(host="127.0.0.1")
         if unity_mcp_url:
+            from .codex_unitymcp_bridge import bridge_argv
+            _argv = bridge_argv()
             config["mcpServers"]["unityMCP"] = {
-                "serverUrl": unity_mcp_url,
-                "headers": unity_mcp_manager.api_headers(),
-                "type": "http", "trust": True,
+                "command": _argv[0], "args": _argv[1:],
+                "env": {"UNITY_MCP_URL": unity_mcp_url},
+                "trust": True,
             }
         else:
             config["mcpServers"].pop("unityMCP", None)

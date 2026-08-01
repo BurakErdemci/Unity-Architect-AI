@@ -119,8 +119,18 @@ class ClaudeCodeProvider(BaseCLIProvider):
                         # --header ÖLÇÜLDÜ: claude başlığı her MCP isteğinde
                         # gönderiyor. Sır argv'de görünüyor ama bu komut yalnız
                         # kayıt anında koşuyor; kalıcı config'e sır girmiyor.
-                        # (Tam kaçınmak için config.toml'a elle yazmak gerekirdi;
-                        # claude'un böyle bir env-var seçeneği yok.)
+                        # ⚠️ Bu iddia 1 Ağu 2026'da DOĞRULANDI: kayıttan sonra
+                        # `~/.claude.json`'daki girdi `{"type":"http","url":...}`
+                        # — başlık YOK, sır dosyada YOK.
+                        #
+                        # ⛔ K3'ün TEK bilinçli istisnası burası. Diğer beş
+                        # yazıcı stdio köprüsüne geçti ve sır config'lerden
+                        # tamamen çıktı; burası GEÇEMEZ, çünkü ölçüldü: Claude
+                        # CLI'da stdio kaydı `pending`de kalıyor, HTTP kaydı
+                        # `connected` oluyor (bkz. [[codex-unitymcp-stdio-bridge]]).
+                        # Köprüye çevirmek Unity araçlarını SESSİZCE kaybettirirdi
+                        # — bu takas kabul edilebilir değil. Kalan maruziyet
+                        # kayıt anıyla sınırlı ve kalıcı değil.
                         *sum([["--header", f"{k}: {v}"]
                               for k, v in unity_mcp_manager.api_headers().items()], []),
                         unity_mcp_url,

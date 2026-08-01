@@ -272,17 +272,28 @@ class BaseCLIProvider(AIProvider):
         }
         # Unity MCP: sadece aktifse ekle, kapalıysa kesinlikle ekleme
         # (Codex/Claude CLI başlarken bağlanamadığı MCP'de crash yapar)
-        # Sır artık URL'de DEĞİL, `headers` alanında. Bu dosyayı claude ve kimi
-        # okuyor; ikisinin de `headers` alanını gönderdiği 2026-07-27'de canlı
-        # ölçüldü. Sır yoksa mcp_url() None döner → kayıt hiç yazılmaz.
+        # K3: sır bu dosyaya ARTIK HİÇ girmiyor. Önceden `headers` içinde düz
+        # metin `X-API-Key` taşınıyordu; dosya modelin okuyabildiği yerde
+        # duruyor ve 29 Tem'de gerçek bir projede git tarafından İZLENİYOR
+        # bulundu. ACL sertleştirmek bunu çözmüyor — model aynı kullanıcı.
+        # Köprü sırrı token dosyasından kendi okuyor.
+        #
+        # Şema riski düşük ve gerekçesi ölçülü: HEMEN YUKARIDAKİ `unityai`
+        # kaydı zaten `command`/`args`/`env` stdio biçiminde ve bu dosyanın
+        # okuyucularıyla çalıştığı biliniyor. Aynı biçim canlı doğrulandı:
+        # opencode `connected`, copilot 40+ unityMCP aracını listeledi
+        # (1 Ağu 2026). ⚠️ kimi ile ÖLÇÜLMEDİ — abonelik yok, CLI kurulu değil
+        # (bkz. [[kimi-provider-dogrulanmadi]]).
         unity_mcp_url = unity_mcp_manager.mcp_url()
         if unity_mcp_url:
+            from .codex_unitymcp_bridge import bridge_argv
+            _argv = bridge_argv()
             config["mcpServers"]["unityMCP"] = {
-                "type": "http",
-                "url": unity_mcp_url,
-                "headers": unity_mcp_manager.api_headers(),
+                "command": _argv[0],
+                "args": _argv[1:],
+                "env": {"UNITY_MCP_URL": unity_mcp_url},
             }
-            logger.info("[CLIProvider] Unity MCP aktif, .mcp.json'a eklendi.")
+            logger.info("[CLIProvider] Unity MCP aktif, .mcp.json'a stdio köprüsüyle eklendi.")
 
         config_path = os.path.join(workspace, ".mcp.json")
         from .workspace_config import ensure_gitignored, guvenli_config_yaz
@@ -292,29 +303,18 @@ class BaseCLIProvider(AIProvider):
         # bağla, ya da ana dizini junction'la). Ölçüldü, ikisi de ayrıcalıksız
         # ve ikisi de workspace DIŞINDAKİ kurbanı eziyordu.
         #
-        # `sir_tasiyor=True`: sıkılaştırma içerikten ÖNCE koşuyor. Eskiden bu
-        # sıra burada elle kuruluyordu ("boş yarat → icacls → yaz") ve o ilk
-        # yaratma da yönlendirmeye açıktı.
-        #
-        # ⚠️ Dönüş değeri YUTULAMAZ (doğrulama turu bulgusu, 30 Tem 2026):
-        # sessizce başarısız olan bir sıkılaştırma, hiç olmayandan kötüdür.
-        # Başarısızlıkta sır YAZILMIYOR — kayıttan `headers` düşürülüp dosya
-        # sırsız yazılıyor. Ürünün geri kalanı çalışır, yalnız unityMCP
-        # bağlanmaz; sırrı korumasız diske yazmaktansa özelliği kaybetmek
-        # doğru taraf.
+        # `sir_tasiyor` artık FALSE: K3'ten sonra bu dosya sır TAŞIMIYOR
+        # (unityMCP stdio köprüsüyle kayıtlı). True bırakmak, sertleştirme
+        # başarısız olduğunda unityMCP'yi sebepsiz düşürürdü — korunacak bir
+        # sır yokken işlev kaybı. Sertleştirme yine de HER ZAMAN deneniyor
+        # (bkz. `guvenli_config_yaz`); yazım başarısızsa dosya hiç yazılmıyor.
         if not guvenli_config_yaz(workspace, ".mcp.json",
-                                  json.dumps(config, indent=2), sir_tasiyor=True):
-            unity = config["mcpServers"].pop("unityMCP", None)
-            if unity is not None:
-                logger.error(
-                    "[CLIProvider] %s güvenli yazılamadı; unityMCP kaydı "
-                    "X-API-Key ile YAZILMADI. Unity MCP bu oturumda bağlanmayacak.",
-                    config_path,
-                )
-            guvenli_config_yaz(workspace, ".mcp.json", json.dumps(config, indent=2))
-        # Dosyayı yazan nokta girdisini de yazar. Bu dosya `headers` içinde
-        # unityMCP `X-API-Key`'ini düz metin taşıyor ve kullanıcının deposunda
-        # duruyor (bkz. workspace_config).
+                                  json.dumps(config, indent=2)):
+            logger.error("[CLIProvider] %s güvenli yazılamadı; MCP kaydı "
+                         "UYGULANMADI.", config_path)
+            return config_path
+        # Dosyayı yazan nokta girdisini de yazar: sır taşımasa da kullanıcının
+        # deposunda duruyor ve mutlak yollar içeriyor.
         ensure_gitignored(workspace, [".mcp.json"])
 
         # Subclass'a MCP kayıt yaptır (claude, codex, agy için farklı davranış)
