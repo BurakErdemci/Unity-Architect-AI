@@ -72,7 +72,10 @@ _HEADER_SECRET = re.compile(
 #    (JSON içine gömülü JSON) tanılama nesnesi `\"X-API-Key\": \"<sır>\"`
 #    biçiminde görünüyor ve tırnak isteğe bağlı olsa bile ters bölü deseni
 #    kırıyordu. Ters bölüler de 1. gruba alınıyor.
-    r"\\?[\"']?\s*:\s*\\?[\"']?)"
+#    `\\*` (bir değil, KAÇ TANE olursa) — art arda serileştirme her turda ters
+#    bölü sayısını katlıyor (1 → 3 → 7). Tek bir `\\?` yalnız ilk katmanı
+#    kapatıyordu (4. denetim turu).
+    r"\\*[\"']?\s*:\s*\\*[\"']?)"
     r"[^\"',}\n\r\\]+",
     re.IGNORECASE,
 )
@@ -93,8 +96,14 @@ _MASUM_ADLAR = frozenset({"author", "authors", "authority", "keyboard", "secreta
 
 def _header_maskele(m: "re.Match") -> str:
     ad = m.group(1)
-    # Grup 1 adı + tırnak + `:` taşıyor; yalnız harf/rakam kısmını sınıyoruz.
-    cekirdek = re.sub(r"[^A-Za-z0-9]", "", ad).lower()
+    # ⚠️ Yalnız SARMALAYICI karakterler (tırnak, iki nokta, boşluk) atılıyor;
+    # adın İÇİNDEKİ tire/alt çizgi KORUNUYOR. İlk yazımda bütün alfanümerik
+    # olmayanlar siliniyordu ve bu bir KAÇIŞ YOLU açıyordu (4. denetim turu,
+    # ölçüldü): `auth-or:` → `author` → masum listesine takla atıp
+    # maskelenmiyordu. `key-board`, `secret-ary` de aynı yoldan geçiyordu.
+    # Yorum "kelimenin tamamına bakıyor" diyordu ama kod bakmıyordu — bu
+    # depoda adı konmuş sınıf: belge ile davranışın ayrışması.
+    cekirdek = ad.strip(" \t\"':").lower()
     if cekirdek in _MASUM_ADLAR:
         return m.group(0)  # dokunma
     return ad + "<REDACTED>"

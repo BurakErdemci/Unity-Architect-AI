@@ -387,6 +387,13 @@ _SAHTE_SIR = "Xk7pQ2mZ9wL4vB8nR3tY6uH1jC5sD0fA-gE"
     # KAPSAMAMALI, yoksa gerçek bir sır başlığı açıkta kalır.
     "Authorization: Bearer {s}",
     "authorization: {s}",
+    # İKİ KEZ serileştirilmiş: ters bölü sayısı her turda katlanıyor (1→3→7).
+    '{{\\\\\\"X-API-Key\\\\\\": \\\\\\"{s}\\\\\\"}}',
+    # ⚠️ Ayırıcı silinerek masum listesine takla atma yolu (4. denetim turu):
+    # `auth-or` → `author` sanılıp maskelenmiyordu.
+    "auth-or: {s}",
+    "key-board: {s}",
+    "secret-ary: {s}",
 ])
 def test_redaksiyon_serilestirilmis_bicimleri_de_kapatiyor(kalip):
     """Bir istisnadaki sözlük `{'X-API-Key': '...'}` gibi görünür — desen onu kaçırıyordu.
@@ -423,24 +430,48 @@ def test_eski_URL_imzasi_siradan_rota_adlarini_KAPSAMAMALI():
     """
     from agentic.agent_runner import _urunun_kaydi_mi
 
-    assert _urunun_kaydi_mi("unityMCP", {"url": f"http://localhost:8080/mcp/{_SAHTE_SIR}"})
-    for rota in ("messages", "sse", "hub", "stream"):
+    import secrets
+
+    gercek_sir = secrets.token_urlsafe(32)
+    assert _urunun_kaydi_mi("unityMCP", {"url": f"http://localhost:8080/mcp/{gercek_sir}"})
+    # ⚠️ UZUN ama sıradan rota adları da elenmeli. İlk eşik (12) bunları sır
+    # sanıyordu ve kullanıcının sunucusunu siliyordu (4. denetim turu).
+    for rota in ("messages", "sse", "hub", "stream",
+                 "notifications", "subscriptions", "capabilities"):
         assert not _urunun_kaydi_mi("unityMCP", {"url": f"http://localhost:3000/mcp/{rota}"}), (
             f"sıradan rota adı '{rota}' sır sanıldı — kullanıcının sunucusu silinir"
         )
 
 
-def test_iki_yerdeki_sir_esigi_ayrismamali():
-    """Aynı ölçüt iki dosyada tekrar ediyor; ayrışırsa biri sessizce yanlış olur.
+def test_sahiplik_esigi_redaksiyon_esiginden_DAHA_KATI_olmali():
+    """İki eşik BİLEREK farklı; hata yönleri zıt olduğu için eşit olmamalılar.
 
-    Bu depoda tekrarlayan arıza şekli tam olarak bu: uyuşması gereken iki yer
-    uyuşmuyor. Eşiğin gerekçesi `secret_redaction`'da ölçülü.
+    · Redaksiyon liberal: kaçırdığı sır sızıntısı, fazlası okunabilirlik kaybı.
+    · Sahiplik muhafazakâr: yanlış eşleşmesi KULLANICI VERİSİNİ SİLER.
+
+    Bu testin ilk hâli "ikisi de 12 olmalı" diyordu ve yanlış şeyi kilitliyordu;
+    4. denetim turu 12'nin sahiplik tarafında `notifications`/`capabilities`
+    gibi rota adlarını yuttuğunu gösterdi. Kilitlenen şey artık eşitlik değil
+    İLİŞKİ — biri sıkılaştırılırsa diğeri sessizce yanlış tarafta kalmasın.
     """
+    import re as _re
+
     from agentic.agent_runner import _SIR_BENZERI_SEGMENT
     from secret_redaction import _MCP_PATH_SECRET
 
-    assert "{12,}" in _SIR_BENZERI_SEGMENT.pattern
-    assert "{12,}" in _MCP_PATH_SECRET.pattern
+    def _alt_sinir(desen: str) -> int:
+        m = _re.search(r"\{(\d+),\}", desen)
+        assert m, f"desende sayısal alt sınır bulunamadı: {desen}"
+        return int(m.group(1))
+
+    sahiplik = _alt_sinir(_SIR_BENZERI_SEGMENT.pattern)
+    redaksiyon = _alt_sinir(_MCP_PATH_SECRET.pattern)
+    assert sahiplik > redaksiyon, (
+        f"sahiplik eşiği ({sahiplik}) redaksiyon eşiğinden ({redaksiyon}) katı değil — "
+        "silme kararı maskeleme kadar gevşek olamaz"
+    )
+    # Gerçek sır her zaman 43 karakter (ölçüldü); eşik onu kesmemeli.
+    assert sahiplik <= 43
 
 
 def test_gitignore_girdisine_DOKUNULMUYOR(tmp_path):

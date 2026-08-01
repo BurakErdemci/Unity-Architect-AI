@@ -52,12 +52,20 @@ _URUN_SUNUCU_ADLARI = {"unityMCP", "unityai"}
 # da bozuk bir dosyanın tur başlangıcını bloke etmesini engellemek.
 _MCP_JSON_AZAMI_BAYT = 1024 * 1024
 
-# Eski biçimde sırrın durduğu yol segmenti. Eşik `secret_redaction`'daki ile
-# BİRE BİR aynı ve gerekçesi orada ölçülü: gerçek sır `token_urlsafe(32)`
-# (~43 karakter), gerçek rota adları ("hub", "sse", "messages", "stream")
-# 12'nin altında. Tek kaynak olmadığı için eşik burada tekrar ediyor; iki
-# yerin ayrışmaması bir testle bağlandı.
-_SIR_BENZERI_SEGMENT = re.compile(r"[A-Za-z0-9_\-]{12,}")
+# Eski biçimde sırrın durduğu yol segmenti.
+#
+# ⚠️ Eşik `secret_redaction`'daki 12 ile BİLEREK AYNI DEĞİL ve bu ayrım bir
+# bulgunun sonucu. İki kontrolün hata yönleri ZITTIR:
+#   · Redaksiyon LİBERAL olmalı — kaçırdığı şey sır sızıntısı, fazla
+#     maskelediği şey okunabilirlik kaybı. Orada 12 doğru.
+#   · Sahiplik MUHAFAZAKÂR olmalı — yanlış eşleşmesi KULLANICI VERİSİNİ SİLER.
+#     12'de `notifications` (13), `subscriptions` (13), `capabilities` (12)
+#     gibi sıradan rota adları sır sanılıyordu (ölçüldü, 4. denetim turu).
+#
+# 32 ölçüme dayanıyor: ürünün eski üreteci `secrets.token_urlsafe(32)` idi ve
+# bu HER ZAMAN tam 43 karakter veriyor (200 örnekle ölçüldü). 32, gerçek sırrı
+# rahatça kapsayan ama hiçbir makul rota adının ulaşamayacağı bir alt sınır.
+_SIR_BENZERI_SEGMENT = re.compile(r"[A-Za-z0-9_\-]{32,}")
 
 
 def _urunun_kaydi_mi(ad: str, tanim: object) -> bool:
