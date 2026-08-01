@@ -354,8 +354,13 @@ def test_call_site_agent_runner_project_mcp_json_ARTIK_YOK(tmp_path):
     # ⚠️ İçerik ürünün İMZASINI taşımalı — boş bir `{}` bilerek dokunulmaz
     # bırakılıyor, çünkü bizim olduğunu kanıtlamıyor (denetim bulgusu:
     # `vacuous-server-subset`, kullanıcı verisi siliniyordu).
+    # ⚠️ URL dahil: ürünün gerçek kaydı YEREL bir adres taşıyor ve sahiplik
+    # imzası buna bağlı (`X-API-Key` tek başına kanıt değil — kullanıcının uzak
+    # sunucusu da onu kullanabiliyor).
     (tmp_path / ".mcp.json").write_text(
-        '{"mcpServers": {"unityMCP": {"headers": {"X-API-Key": "sir"}}}}', encoding="utf-8"
+        '{"mcpServers": {"unityMCP": {"url": "http://localhost:8080/mcp",'
+        ' "headers": {"X-API-Key": "sir"}}}}',
+        encoding="utf-8",
     )
     agent_runner._remove_project_mcp_json(str(tmp_path))
     assert not (tmp_path / ".mcp.json").exists()

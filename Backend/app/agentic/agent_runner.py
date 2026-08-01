@@ -80,20 +80,29 @@ def _urunun_kaydi_mi(ad: str, tanim: object) -> bool:
 
     Denetim bulgusu (`server-name-is-not-ownership`, canlı doğrulandı): yalnız
     ada bakmak, kullanıcının kendi `unityMCP` kaydını ürünün malı sayıp siliyordu.
-    İmza iki biçimden biri:
+    Ad yalnızca aday listesi; karar ÜÇ imzadan birine dayanıyor:
 
-      · `headers` içinde `X-API-Key` — temizliğin asıl sebebi olan sır; onu
-        taşıyan bir kaydı ürün yazmış olabilir ancak.
-      · `command` ürünün kurulum dizinini işaret ediyor (`unityai` stdio kaydı).
+      1. YEREL adres + `headers` içinde `X-API-Key` (bugünkü biçim).
+      2. `command` ürünün kurulum dizinini işaret ediyor (`unityai` stdio kaydı).
+      3. YEREL adres + `/mcp/<43 karakterlik sır>` (eski biçim, bkz.
+         `_eski_url_bicimi_mi`).
 
-    İkisi de yoksa kayıt kullanıcınındır ve dokunulmaz. Yanlış tarafta hata
-    yapmak burada ucuz: bırakılan bayat bir kayıt artık okunmuyor (SDK'ya
-    doğrudan geçiş yüzünden), silinen kullanıcı verisi ise geri gelmiyor.
+    ⚠️ **`X-API-Key` TEK BAŞINA sahiplik kanıtı DEĞİL** — 6. denetim turu bulgusu
+    ve depo bunu zaten biliyordu (`unity_ai_mcp/mcp_identity.py` başlığın jenerik
+    olduğunu, ürün kimliği taşımadığını söylüyor). Kullanıcının UZAK bir MCP
+    sunucusu `unityMCP` adını taşıyıp kendi anahtarını kullanabiliyor ve o kayıt
+    siliniyordu. Ürünün kaydı ise her zaman yereldir (`unity_mcp_manager.mcp_url()`
+    yalnız localhost üretir), o yüzden başlık imzası artık yerelliğe bağlı.
+
+    Üçü de yoksa kayıt kullanıcınındır ve dokunulmaz. Hata yönü BİLEREK şu
+    tarafta: bırakılan bayat bir kayıt artık okunmuyor (SDK'ya doğrudan geçiş
+    yüzünden), silinen kullanıcı verisi ise geri gelmiyor.
     """
     if ad not in _URUN_SUNUCU_ADLARI or not isinstance(tanim, dict):
         return False
+    yerel = _yerel_adres_mi(tanim.get("url"))
     basliklar = tanim.get("headers")
-    if isinstance(basliklar, dict) and any(a.lower() == "x-api-key" for a in basliklar):
+    if yerel and isinstance(basliklar, dict) and any(a.lower() == "x-api-key" for a in basliklar):
         return True
     komut = tanim.get("command")
     if isinstance(komut, str) and "unity_architect_ai" in komut.replace("\\", "/").lower():
@@ -101,6 +110,23 @@ def _urunun_kaydi_mi(ad: str, tanim: object) -> bool:
     if _eski_url_bicimi_mi(tanim.get("url")):
         return True
     return False
+
+
+def _cozumle(url: object):
+    """URL'i ayrıştır; ayrıştırılamıyorsa ``None``."""
+    if not isinstance(url, str):
+        return None
+    try:
+        from urllib.parse import urlparse
+        return urlparse(url)
+    except ValueError:
+        return None
+
+
+def _yerel_adres_mi(url: object) -> bool:
+    """Ürünün MCP sunucusu YALNIZCA yerelde koşar; uzak bir adres bizim değildir."""
+    p = _cozumle(url)
+    return p is not None and p.hostname in ("localhost", "127.0.0.1", "::1")
 
 
 def _eski_url_bicimi_mi(url: object) -> bool:
@@ -130,14 +156,8 @@ def _eski_url_bicimi_mi(url: object) -> bool:
     Bugünkü biçim (`/mcp`, ek segment yok) buraya DÜŞMEZ; onu başlık imzası
     yakalıyor.
     """
-    if not isinstance(url, str):
-        return False
-    try:
-        from urllib.parse import urlparse
-        p = urlparse(url)
-    except ValueError:
-        return False
-    if p.hostname not in ("localhost", "127.0.0.1", "::1"):
+    p = _cozumle(url)
+    if p is None or not _yerel_adres_mi(url):
         return False
     parcalar = [s for s in p.path.split("/") if s]
     if len(parcalar) != 2 or parcalar[0] != "mcp":

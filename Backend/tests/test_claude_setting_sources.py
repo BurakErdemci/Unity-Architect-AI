@@ -161,7 +161,11 @@ def test_oturum_mcp_servers_i_SDK_secenegine_koyuyor():
 # ── Bayat `.mcp.json` temizliği ───────────────────────────────────────────
 
 
-_SIR_KAYDI = {"type": "http", "headers": {"X-API-Key": "SIR-BURADA"}}
+# ⚠️ URL dahil: ürünün gerçek kaydı her zaman YEREL bir adres taşıyor ve
+# sahiplik imzası buna bağlı (6. denetim turu — `X-API-Key` tek başına kanıt
+# değil, kullanıcının uzak sunucusu da o başlığı kullanabiliyor).
+_SIR_KAYDI = {"type": "http", "url": "http://localhost:8080/mcp",
+              "headers": {"X-API-Key": "SIR-BURADA"}}
 
 # Denetimden çıkan vaka tablosu, kalıcı teste terfi etti. İlk tasarım ikiliydi
 # ("tamamı bizimse sil, değilse dokunma") ve bu tablonun 8 satırının 6'sında
@@ -330,6 +334,43 @@ def test_ad_tek_basina_sahiplik_kaniti_degil():
     assert not _urunun_kaydi_mi("unityMCP", {"command": "kullanicinin-kendi-seyi"})
     assert not _urunun_kaydi_mi("baskaSunucu", _SIR_KAYDI)
     assert not _urunun_kaydi_mi("unityMCP", "dize-bile-degil")
+
+
+def test_X_API_Key_TEK_BASINA_sahiplik_kaniti_degil():
+    """Kullanıcının UZAK sunucusu da `X-API-Key` kullanabilir — ve kullanıyor.
+
+    6. denetim turu bulgusu. Depo bunu zaten biliyordu: `mcp_identity` başlığın
+    jenerik olduğunu, ürün kimliği taşımadığını söylüyor. Ürünün sunucusu ise
+    yalnızca yerelde koşuyor, o yüzden imza yerelliğe bağlandı.
+    """
+    from agentic.agent_runner import _urunun_kaydi_mi
+
+    kullanicinin = {"type": "http", "url": "https://my-mcp.example.com/mcp",
+                    "headers": {"X-API-Key": "kullanicinin-kendi-anahtari"}}
+    assert not _urunun_kaydi_mi("unityMCP", kullanicinin), (
+        "kullanıcının uzak sunucusu ürünün malı sanıldı — kaydı silinir"
+    )
+    # URL'i olmayan bir kayıt da bizim olduğunu kanıtlamıyor.
+    assert not _urunun_kaydi_mi("unityMCP", {"headers": {"X-API-Key": "x"}})
+    # Yerel olan ise bizim.
+    assert _urunun_kaydi_mi("unityMCP", {"url": "http://127.0.0.1:8080/mcp",
+                                         "headers": {"X-API-Key": "x"}})
+
+
+def test_uzak_sunuculu_dosya_SILINMIYOR(tmp_path):
+    """Davranış ucu: imza doğru olsa da temizlik yanlış davranmamalı."""
+    from agentic.agent_runner import _remove_project_mcp_json
+
+    hedef = tmp_path / ".mcp.json"
+    icerik = {"mcpServers": {"unityMCP": {
+        "type": "http", "url": "https://my-mcp.example.com/mcp",
+        "headers": {"X-API-Key": "kullanicinin"}}}}
+    hedef.write_text(json.dumps(icerik), encoding="utf-8")
+
+    _remove_project_mcp_json(str(tmp_path))
+
+    assert hedef.exists(), "kullanıcının uzak sunucu kaydı silindi"
+    assert "my-mcp.example.com" in hedef.read_text(encoding="utf-8")
 
 
 def test_sirri_URL_YOLUNDA_tasiyan_eski_bicim_de_taniniyor():
