@@ -126,8 +126,12 @@ class TestBuildCmd(unittest.TestCase):
         # Yazma/shell reddedilir, unityai'ye izin verilir:
         self.assertIn("write", cmd1[cmd1.index("--deny-tool") + 1])
         self.assertIn("unityai", cmd1)
-        # prompt -p'nin değeri:
-        self.assertEqual(cmd1[cmd1.index("-p") + 1][-7:], "ilk tur")
+        # K5(b): prompt ARTIK argv'de değil — `-p` bayrağıyla birlikte düştü ve
+        # metin stdin'e taşındı (`-p -` stdin anlamına gelmiyor; copilot onu düz
+        # metin sanıyor, 2026-08-01 canlı ölçüldü). Prompt'un kaybolmadığını
+        # stdin yükünden doğrula.
+        self.assertNotIn("-p", cmd1)
+        self.assertTrue(p._stdin_payload.endswith("ikinci tur"))
 
     def test_opencode_cmd(self):
         from providers.opencode_provider import OpenCodeProvider

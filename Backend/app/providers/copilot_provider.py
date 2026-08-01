@@ -23,6 +23,10 @@ class CopilotProvider(BaseCLIProvider):
     """
 
     resume_session_id = None   # önceki turların uuid'i (--resume)
+    # CANLI ÖLÇÜLDÜ 2026-08-01: bayraksız çağrıda borulanmış stdin prompt olarak
+    # okunuyor. `-p -` YOLU ÇÜRÜDÜ — aşağıdaki gerekçeye bak.
+    prompt_via_stdin = True
+
     fresh_session_id = None    # ilk tur için bizim ürettiğimiz uuid (--session-id)
     _mcp_cfg_path = None       # bu tur için yazılan geçici MCP config dosyası
 
@@ -91,7 +95,14 @@ class CopilotProvider(BaseCLIProvider):
                 cmd += _flags
         except Exception:
             pass
-        cmd += ["-p", prompt]
+        if self.prompt_via_stdin:
+            # ⚠️ `-p` BAYRAĞI DA DÜŞÜYOR — diğer üçünden farkı bu. Ölçüldü
+            # 2026-08-01: `-p -` stdin anlamına GELMİYOR, copilot "-" dizesini
+            # düz metin prompt sanıp ona cevap verdi (kredi de harcadı).
+            # Bayraksız + borulanmış stdin ise tek seferlik koşup cevabı bastı.
+            self._stdin_payload = prompt
+        else:
+            cmd += ["-p", prompt]
         return cmd
 
     def _register_mcp(self, launcher: str, workspace: str, backend_url: str):

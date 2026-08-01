@@ -11,6 +11,10 @@ logger = logging.getLogger(__name__)
 
 class CodexProvider(BaseCLIProvider):
 
+    # `codex exec --help` yazıyor: PROMPT verilmezse yönergeler stdin'den
+    # okunur. Dokümana güvenilmedi, CANLI ölçüldü 2026-08-01 (cevap döndü).
+    prompt_via_stdin = True
+
     def _build_cmd(self, prompt: str, thinking_level: str = "medium", workspace: str = None) -> list:
         full_id = self.binary_name
         from unity_ai_mcp.unity_mcp_manager import unity_mcp_manager
@@ -62,7 +66,14 @@ class CodexProvider(BaseCLIProvider):
             cmd.extend(["-c", 'mcp_servers.unityMCP.default_tools_approval_mode="approve"'])
         if thinking_level != "off":
             cmd.extend(["-c", f"reasoning.effort={thinking_level}"])
-        cmd.append(mcp_hint + "\n" + prompt)
+        yuk = mcp_hint + "\n" + prompt
+        if self.prompt_via_stdin:
+            # ⚠️ Pozisyonel PROMPT hiç verilmiyor. Verilseydi codex stdin'i
+            # ayrıca bir `<stdin>` bloğu olarak EKLERDİ (kendi yardımında yazıyor)
+            # — yani kullanıcının mesajı sarmalanmış ikinci bir blok olurdu.
+            self._stdin_payload = yuk
+        else:
+            cmd.append(yuk)
         return cmd
 
     def _register_mcp(self, launcher: str, workspace: str, backend_url: str):

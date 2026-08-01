@@ -23,6 +23,10 @@ class OpenCodeProvider(BaseCLIProvider):
 
     resume_session_id = None   # önceki turun sessionID'si (-s)
 
+    # CANLI ÖLÇÜLDÜ 2026-08-01 (yardım metninde YOK): mesaj argümanı boşken
+    # `opencode run` prompt'u stdin'den okuyor.
+    prompt_via_stdin = True
+
     def _build_cmd(self, prompt: str, thinking_level: str = "medium", workspace: str = None) -> list:
         base = resolve_opencode_cmd()
         if not base:
@@ -64,7 +68,15 @@ class OpenCodeProvider(BaseCLIProvider):
         if self.resume_session_id:
             cmd += ["-s", self.resume_session_id]
         # Mesaj son pozisyonel arg (opencode.exe native → çok satırlı argv güvenli)
-        cmd.append(mcp_hint + prompt)
+        yuk = mcp_hint + prompt
+        if self.prompt_via_stdin:
+            # `[message..]` pozisyoneli hiç verilmiyor; opencode boş kalınca
+            # mesajı stdin'den okuyor. Bu yardım metninde YAZMIYOR — canlı
+            # ölçüldü 2026-08-01 (`echo ... | opencode run` cevap döndürdü),
+            # o yüzden opencode sürümü yükseltilirken bu tur tekrarlanmalı.
+            self._stdin_payload = yuk
+        else:
+            cmd.append(yuk)
         return cmd
 
     def _register_mcp(self, launcher: str, workspace: str, backend_url: str):

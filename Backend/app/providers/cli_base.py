@@ -110,6 +110,19 @@ class BaseCLIProvider(AIProvider):
     # Race condition önlemi: settings.json yazma + subprocess spawn atomik olmalı
     _AGY_LOCK = asyncio.Lock()
 
+    # K5(b) — prompt argv'de mi, stdin'de mi?
+    #
+    # Varsayılan argv, çünkü bir CLI'ın stdin'i okuduğu ÖLÇÜLMEDEN varsayılamaz:
+    # 2026-08-01 canlı turlarında agy `--print`'in argümanı ZORUNLU çıktı ve
+    # copilot `-p -`'yi düz metin prompt sanıp "-" diye cevap verdi. Yani yanlış
+    # varsayım sessizce bozuk bir tur üretiyor, hata değil.
+    #
+    # True yapan sağlayıcı, prompt metnini argv'ye koymak yerine
+    # `self._stdin_payload`'a yazar. Sebep: argv makinedeki HER sürece görünür
+    # (`ps`/`Get-CimInstance Win32_Process`), yani kullanıcının sohbete
+    # yazdığı her şey aynı kullanıcının çalıştırdığı her programa açıktı.
+    prompt_via_stdin = False
+
     # Cursor/Copilot/OpenCode gibi one-shot CLI'larda uzun MCP çağrıları dakikalarca
     # stdout üretmeyebilir. Yalnız GERÇEK hareketsizliği sınırla; toplam çalışma
     # süresini ayrıca geniş bir güvenlik tavanıyla koru.
@@ -387,6 +400,9 @@ class BaseCLIProvider(AIProvider):
                     f"{prompt}"
                 )
 
+            # Her turda SIFIRLA: bu alanı `_build_cmd` dolduruyor ve önceki turdan
+            # kalan bir yük yanlış prompt'u stdin'e yazardı.
+            self._stdin_payload = None
             cmd = self._build_cmd(enriched_prompt, thinking_level, workspace)
             _is_agy = self.binary_name.startswith("gemini") or self.binary_name.startswith("agy-")
             # İZİN LİSTESİ — `{**os.environ}` DEĞİL. Eskiden ebeveynin ortamının
@@ -499,11 +515,17 @@ class BaseCLIProvider(AIProvider):
                         limit=self._CLI_STREAM_LIMIT_BYTES,
                     )
             else:
-                # Windows .cmd shim (cmd /c): cmd.exe komut satırındaki çok satırlı arg'ı
-                # ilk newline'da keser → claude/codex prompt'u (son arg) bozulur. Bu durumda
-                # prompt'u argv yerine stdin'den ver (claude --print ve codex exec stdin'i okur).
-                _stdin_prompt = None
-                if spawn_cmd[:2] == ["cmd", "/c"] and len(spawn_cmd) > 3:
+                # Prompt stdin'den mi gidiyor? İki ayrı sebep, tek mekanizma:
+                #
+                # 1) K5(b) GÜVENLİK (asıl sebep): argv makinedeki her sürece
+                #    görünür. `prompt_via_stdin` diyen sağlayıcı yükü zaten
+                #    `_stdin_payload`'a koydu; argv'de prompt HİÇ yok.
+                # 2) Windows .cmd shim (eski sebep, KALIYOR): cmd.exe komut
+                #    satırındaki çok satırlı arg'ı ilk newline'da kesiyor →
+                #    prompt bozuluyordu. Henüz taşınmamış sağlayıcılar (cursor,
+                #    kimi) bu yoldan korunmaya devam ediyor.
+                _stdin_prompt = getattr(self, "_stdin_payload", None)
+                if _stdin_prompt is None and spawn_cmd[:2] == ["cmd", "/c"] and len(spawn_cmd) > 3:
                     _stdin_prompt = spawn_cmd.pop()  # son eleman = prompt metni
                 process = await asyncio.create_subprocess_exec(
                     *spawn_cmd,

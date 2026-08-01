@@ -10,6 +10,10 @@ logger = logging.getLogger(__name__)
 
 class ClaudeCodeProvider(BaseCLIProvider):
 
+    # CANLI ÖLÇÜLDÜ 2026-08-01: `echo <prompt> | claude -p --model ...` cevabı
+    # döndürdü, yani prompt metni argv'de olmadan okunuyor.
+    prompt_via_stdin = True
+
     def _build_cmd(self, prompt: str, thinking_level: str = "medium", workspace: str = None) -> list:
         full_id = self.binary_name
         # Built-in tehlikeli araçları blokla → Claude MCP'lerimizi kullanmak ZORUNDA kalır
@@ -49,15 +53,23 @@ class ClaudeCodeProvider(BaseCLIProvider):
             "Respond in Turkish (Türkçe).\n"
             + unity_section + "\n"
         )
-        return [
+        cmd = [
             "claude", "--model", full_id,
             "--permission-mode", "bypassPermissions",
             "--disallowedTools", disallowed,
             "--output-format", "stream-json",
             "--include-partial-messages",
             "--verbose",
-            "-p", subagent_prefix + prompt,
         ]
+        yuk = subagent_prefix + prompt
+        if self.prompt_via_stdin:
+            # `-p` KALIYOR, yalnız DEĞERİ düşüyor: claude'u etkileşimsiz kipe
+            # sokan bayrak bu ve metni stdin'den okuyor (canlı ölçüldü).
+            cmd.append("-p")
+            self._stdin_payload = yuk
+        else:
+            cmd += ["-p", yuk]
+        return cmd
 
     def _register_mcp(self, launcher: str, workspace: str, backend_url: str):
         """
