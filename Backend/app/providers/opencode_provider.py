@@ -3,7 +3,7 @@ import json
 import logging
 from .cli_base import BaseCLIProvider
 from .oneshot_cli import resolve_opencode_cmd, split_model_id
-from .workspace_config import ensure_gitignored
+from .workspace_config import ensure_gitignored, guvenli_config_yaz
 
 logger = logging.getLogger(__name__)
 
@@ -140,19 +140,19 @@ class OpenCodeProvider(BaseCLIProvider):
 
             # Bu dosya da `X-API-Key`'i düz metin taşıyor ve workspace'in
             # ACL'ini miras alıyordu. Sıkılaştırma `cli_base` ile aynı desende:
-            # önce boş yarat + kilitle, sonra sırrı yaz (doğrulama turu bulgusu,
-            # 30 Tem: bu yazıcı hardener'ı HİÇ çağırmıyordu).
-            from .workspace_config import harden_config_file
-
-            open(cfg_path, "w", encoding="utf-8").close()
-            if not harden_config_file(cfg_path) and isinstance(merged.get("mcp"), dict):
-                if merged["mcp"].pop("unityMCP", None) is not None:
+            # ⚠️ Düz `open` DEĞİL ve "boş yarat + kilitle" adımı da GİTTİ:
+            # o ilk yaratma da yönlendirmeye açıktı (K4). Sıra artık
+            # `guvenli_config_yaz`'ın içinde, tek yerde: aç → kimliği doğrula →
+            # sıkılaştır → yaz.
+            if not guvenli_config_yaz(workspace, "opencode.json",
+                                      json.dumps(merged, indent=2), sir_tasiyor=True):
+                if isinstance(merged.get("mcp"), dict) and \
+                        merged["mcp"].pop("unityMCP", None) is not None:
                     logger.error(
-                        "[OpenCodeProvider] %s izinleri kısıtlanamadı; unityMCP "
+                        "[OpenCodeProvider] %s güvenli yazılamadı; unityMCP "
                         "kaydı X-API-Key ile YAZILMADI.", cfg_path,
                     )
-            with open(cfg_path, "w", encoding="utf-8") as f:
-                json.dump(merged, f, indent=2)
+                guvenli_config_yaz(workspace, "opencode.json", json.dumps(merged, indent=2))
             logger.info("[OpenCodeProvider] opencode.json yazıldı.")
             # Dosyayı yazan nokta girdisini de yazar (bkz. workspace_config).
             ensure_gitignored(workspace, ["opencode.json"])

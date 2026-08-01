@@ -4,7 +4,7 @@ import json
 import logging
 from .cli_base import BaseCLIProvider
 from .oneshot_cli import resolve_cursor_cmd, split_model_id
-from .workspace_config import ensure_gitignored
+from .workspace_config import ensure_gitignored, guvenli_config_yaz
 
 logger = logging.getLogger(__name__)
 
@@ -133,8 +133,13 @@ class CursorProvider(BaseCLIProvider):
             if not unity_mcp_url:
                 merged["mcpServers"].pop("unityMCP", None)
 
-            with open(cfg_path, "w", encoding="utf-8") as f:
-                json.dump(merged, f, indent=2)
+            # ⚠️ Düz `open` DEĞİL: bu dosya kullanıcının projesinde ve yolu
+            # yönlendirilmiş olabilir (K4, iki vektör de ayrıcalıksız ölçüldü).
+            if not guvenli_config_yaz(workspace, ".cursor/mcp.json",
+                                      json.dumps(merged, indent=2), sir_tasiyor=True):
+                logger.error("[CursorProvider] .cursor/mcp.json güvenli yazılamadı; "
+                             "unityMCP bu oturumda bağlanmayacak.")
+                return
             logger.info("[CursorProvider] .cursor/mcp.json yazıldı.")
             # Dosyayı yazan nokta girdisini de yazar. Bu dosya unityMCP
             # `X-API-Key`'ini düz metin taşıyor ve kullanıcının deposunda duruyor;
@@ -157,8 +162,15 @@ class CursorProvider(BaseCLIProvider):
                 if rule not in deny:
                     deny.append(rule)
             cli_existing["permissions"] = {"allow": list(perms.get("allow") or []), "deny": deny}
-            with open(cli_cfg_path, "w", encoding="utf-8") as f:
-                json.dump(cli_existing, f, indent=2)
+            # ⚠️ Bu dosya K4'ün EN SİNSİ vakası: Cursor'un `Write`/`Shell`
+            # deny-list'ini taşıyor. Yönlendirilirse görünen sonuç bir dosyanın
+            # ezilmesi DEĞİL, politikanın sessizce kaybı olur — kısıt hedef
+            # workspace'e hiç uygulanmaz ve kimse fark etmez.
+            if not guvenli_config_yaz(workspace, ".cursor/cli.json",
+                                      json.dumps(cli_existing, indent=2)):
+                logger.error("[CursorProvider] .cursor/cli.json güvenli yazılamadı; "
+                             "izin politikası UYGULANMADI.")
+                return
             logger.info("[CursorProvider] .cursor/cli.json izin politikası yazıldı.")
             ensure_gitignored(workspace, [".cursor/cli.json"])
         except Exception as e:

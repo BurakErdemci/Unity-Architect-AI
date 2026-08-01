@@ -285,31 +285,33 @@ class BaseCLIProvider(AIProvider):
             logger.info("[CLIProvider] Unity MCP aktif, .mcp.json'a eklendi.")
 
         config_path = os.path.join(workspace, ".mcp.json")
-        from .workspace_config import ensure_gitignored, harden_config_file
+        from .workspace_config import ensure_gitignored, guvenli_config_yaz
 
-        # Sıra önemli: dosya önce BOŞ yaratılıp kilitleniyor, sır ondan sonra
-        # yazılıyor. Ters sırada (yaz → kilitle) sır, ACL düzeltilene kadar
-        # miras alınmış izinlerle diskte durur — `local_token_file`'da aynı
-        # pencere 2026-07-27'de bulgu olarak kaydedilmişti.
-        open(config_path, "w").close()
-        # ⚠️ Dönüş değeri YUTULAMAZ (doğrulama turu bulgusu, 30 Tem 2026).
-        # Eskiden çağrı yapılıp sonucu atılıyordu: ACL kısıtlanamasa bile sır
-        # yine de yazılıyordu ve kimse bilmiyordu — `harden_config_file`'ın
-        # kendi docstring'i "çağıran bunu yutmuyor" diyordu, oysa yutuyordu.
+        # ⚠️ Düz `open(path, "w")` KULLANMA. K4: bu dosya kullanıcının Unity
+        # projesinde ve o yol yönlendirilmiş olabilir (dosyanın kendisi sabit
+        # bağla, ya da ana dizini junction'la). Ölçüldü, ikisi de ayrıcalıksız
+        # ve ikisi de workspace DIŞINDAKİ kurbanı eziyordu.
         #
-        # Başarısızlıkta sır YAZILMIYOR: kayıttan `headers` düşürülüyor. Ürünün
-        # geri kalanı çalışmaya devam eder, yalnız unityMCP bağlanmaz — sırrı
-        # korumasız diske yazmaktansa özelliği kaybetmek doğru taraf.
-        if not harden_config_file(config_path):
+        # `sir_tasiyor=True`: sıkılaştırma içerikten ÖNCE koşuyor. Eskiden bu
+        # sıra burada elle kuruluyordu ("boş yarat → icacls → yaz") ve o ilk
+        # yaratma da yönlendirmeye açıktı.
+        #
+        # ⚠️ Dönüş değeri YUTULAMAZ (doğrulama turu bulgusu, 30 Tem 2026):
+        # sessizce başarısız olan bir sıkılaştırma, hiç olmayandan kötüdür.
+        # Başarısızlıkta sır YAZILMIYOR — kayıttan `headers` düşürülüp dosya
+        # sırsız yazılıyor. Ürünün geri kalanı çalışır, yalnız unityMCP
+        # bağlanmaz; sırrı korumasız diske yazmaktansa özelliği kaybetmek
+        # doğru taraf.
+        if not guvenli_config_yaz(workspace, ".mcp.json",
+                                  json.dumps(config, indent=2), sir_tasiyor=True):
             unity = config["mcpServers"].pop("unityMCP", None)
             if unity is not None:
                 logger.error(
-                    "[CLIProvider] %s izinleri kısıtlanamadı; unityMCP kaydı "
+                    "[CLIProvider] %s güvenli yazılamadı; unityMCP kaydı "
                     "X-API-Key ile YAZILMADI. Unity MCP bu oturumda bağlanmayacak.",
                     config_path,
                 )
-        with open(config_path, "w") as f:
-            json.dump(config, f, indent=2)
+            guvenli_config_yaz(workspace, ".mcp.json", json.dumps(config, indent=2))
         # Dosyayı yazan nokta girdisini de yazar. Bu dosya `headers` içinde
         # unityMCP `X-API-Key`'ini düz metin taşıyor ve kullanıcının deposunda
         # duruyor (bkz. workspace_config).

@@ -306,7 +306,8 @@ def _compose(existing: str, missing: List[str]) -> str:
 # ───────────────────────────── genel arayüz ───────────────────────────────
 
 
-def guvenli_config_yaz(workspace: str, goreli_yol: str, icerik: str) -> bool:
+def guvenli_config_yaz(workspace: str, goreli_yol: str, icerik: str,
+                       *, sir_tasiyor: bool = False) -> bool:
     """Config dosyasını workspace İÇİNE, yönlendirilmeye kapalı şekilde yazar.
 
     Ölçülmüş açık (K4, bu makinede 2026-08-01'de yeniden üretildi, İKİ vektör de
@@ -366,6 +367,15 @@ def guvenli_config_yaz(workspace: str, goreli_yol: str, icerik: str) -> bool:
         fd = os.open(hedef, os.O_WRONLY | os.O_CREAT | O_NOFOLLOW, 0o600)
         try:
             dogrula_kimlik(fd, hedef)
+            # ⚠️ SIKILAŞTIRMA İÇERİKTEN ÖNCE. Çağrı yerlerinde bu sıra elle
+            # kuruluyordu ("boş yarat → icacls → yaz") ve o ilk yaratma da
+            # yönlendirmeye AÇIKTI — K4'ün kapattığı şeyin ta kendisi. Sıra
+            # artık burada, tek yerde: aç → kimliği doğrula → sıkılaştır →
+            # kısalt → yaz. Sır hiçbir an gevşek izinle diskte bulunmuyor.
+            if sir_tasiyor and not harden_config_file(hedef):
+                logger.error(
+                    "[config-yaz] %s izinleri kısıtlanamadı; sır YAZILMADI", hedef)
+                return False
             os.ftruncate(fd, 0)
             with os.fdopen(os.dup(fd), "w", encoding="utf-8") as f:
                 f.write(icerik)
