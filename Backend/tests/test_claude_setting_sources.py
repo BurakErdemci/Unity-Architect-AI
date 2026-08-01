@@ -371,7 +371,21 @@ def test_eski_bicim_sir_dosyadan_gercekten_cikiyor(tmp_path):
 # ve URL deseninin bilerek konmuş 12 karakter alt sınırı var (altı, "messages"
 # gibi gerçek rota adlarını maskeleyip log'u okunmaz yapardı). İlk yazımda 10
 # karakterlik uydurma bir sır kullanıldı ve test, OLMAYAN bir hatayı bildirdi.
-_SAHTE_SIR = "Xk7pQ2mZ9wL4vB8nR3tY6uH1jC5sD0fA-gE"
+_SAHTE_SIR = "Xk7pQ2mZ9wL4vB8nR3tY6uH1jC5sD0fA-gE_7nWq2Tz"
+
+
+def test_sahte_sir_GERCEK_sirrin_seklini_tasiyor():
+    """Fixture ürünün gerçek veri şeklinde olmalı; yoksa test ürünü değil kendini ölçer.
+
+    Bu, bu dosyada İKİ KEZ yaşandı: önce 10 karakterlik sahte sır redaksiyonun
+    12 karakterlik alt sınırının altında kalıp OLMAYAN bir ürün hatası bildirdi,
+    sonra 35 karakterlik hâli sahiplik ölçütünün tam-43 kuralına takıldı.
+    Ölçüt artık kodda: gerçek sır `secrets.token_urlsafe(32)` ve her zaman 43.
+    """
+    import secrets
+
+    assert len(_SAHTE_SIR) == 43
+    assert len(secrets.token_urlsafe(32)) == 43, "üretecin boyutu değişmiş — fixture da değişmeli"
 
 
 @pytest.mark.parametrize("kalip", [
@@ -410,6 +424,8 @@ def test_redaksiyon_serilestirilmis_bicimleri_de_kapatiyor(kalip):
     "monkey: banana",
     # `author:` git çıktısında her commit'te geçiyor ve bu ürün git loglu­yor.
     "author: Ahmet Yilmaz",
+    # Serileştirilmiş hâli de masum: sarmalayıcı ters bölü ad'ın parçası değil.
+    '{\\"author\\": \\"Burak\\"}',
     "Author: burak",
     "authors: a, b",
     "keyboard: mekanik",
@@ -436,6 +452,14 @@ def test_eski_URL_imzasi_siradan_rota_adlarini_KAPSAMAMALI():
     assert _urunun_kaydi_mi("unityMCP", {"url": f"http://localhost:8080/mcp/{gercek_sir}"})
     # ⚠️ UZUN ama sıradan rota adları da elenmeli. İlk eşik (12) bunları sır
     # sanıyordu ve kullanıcının sunucusunu siliyordu (4. denetim turu).
+    # Kanonik UUID 36 karakter — alt sınırlı bir eşik onu sır sanıyordu
+    # (5. denetim turu). Ürünün sırrı HER ZAMAN tam 43.
+    import uuid as _uuid
+
+    assert not _urunun_kaydi_mi(
+        "unityMCP", {"url": f"http://localhost:3000/mcp/{_uuid.uuid4()}"}
+    ), "kanonik UUID sır sanıldı — kullanıcının sunucusu silinir"
+
     for rota in ("messages", "sse", "hub", "stream",
                  "notifications", "subscriptions", "capabilities"):
         assert not _urunun_kaydi_mi("unityMCP", {"url": f"http://localhost:3000/mcp/{rota}"}), (
@@ -459,19 +483,24 @@ def test_sahiplik_esigi_redaksiyon_esiginden_DAHA_KATI_olmali():
     from agentic.agent_runner import _SIR_BENZERI_SEGMENT
     from secret_redaction import _MCP_PATH_SECRET
 
-    def _alt_sinir(desen: str) -> int:
-        m = _re.search(r"\{(\d+),\}", desen)
-        assert m, f"desende sayısal alt sınır bulunamadı: {desen}"
+    def _sayi(desen: str) -> int:
+        m = _re.search(r"\{(\d+)", desen)
+        assert m, f"desende sayısal ölçüt bulunamadı: {desen}"
         return int(m.group(1))
 
-    sahiplik = _alt_sinir(_SIR_BENZERI_SEGMENT.pattern)
-    redaksiyon = _alt_sinir(_MCP_PATH_SECRET.pattern)
+    sahiplik = _sayi(_SIR_BENZERI_SEGMENT.pattern)
+    redaksiyon = _sayi(_MCP_PATH_SECRET.pattern)
     assert sahiplik > redaksiyon, (
-        f"sahiplik eşiği ({sahiplik}) redaksiyon eşiğinden ({redaksiyon}) katı değil — "
+        f"sahiplik ölçütü ({sahiplik}) redaksiyon eşiğinden ({redaksiyon}) katı değil — "
         "silme kararı maskeleme kadar gevşek olamaz"
     )
-    # Gerçek sır her zaman 43 karakter (ölçüldü); eşik onu kesmemeli.
-    assert sahiplik <= 43
+    # Sahiplik TAM uzunluk istemeli, alt sınır değil: alt sınır kanonik bir
+    # UUID'yi (36) de yutuyordu ve kullanıcının sunucusu siliniyordu.
+    assert "," not in _SIR_BENZERI_SEGMENT.pattern.split("{")[1], (
+        "sahiplik ölçütü alt sınır olmuş; TAM uzunluk olmalı"
+    )
+    # Gerçek sır her zaman 43 karakter (ölçüldü, 200 örnek).
+    assert sahiplik == 43
 
 
 def test_gitignore_girdisine_DOKUNULMUYOR(tmp_path):

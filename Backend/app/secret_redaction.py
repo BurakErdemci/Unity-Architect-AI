@@ -103,7 +103,11 @@ def _header_maskele(m: "re.Match") -> str:
     # maskelenmiyordu. `key-board`, `secret-ary` de aynı yoldan geçiyordu.
     # Yorum "kelimenin tamamına bakıyor" diyordu ama kod bakmıyordu — bu
     # depoda adı konmuş sınıf: belge ile davranışın ayrışması.
-    cekirdek = ad.strip(" \t\"':").lower()
+    # Ters bölü de SARMALAYICI sayılıyor: serileştirilmiş `{\"author\": ...}`
+    # biçiminde ad `\"author\"` olarak geliyordu ve masum listesine uymayıp
+    # gereksiz maskeleniyordu. İç ayırıcılar yine korunuyor, yani `auth-or`
+    # kaçış yolu KAPALI kalıyor (ikisi de testte).
+    cekirdek = ad.strip(" \t\"':\\").lower()
     if cekirdek in _MASUM_ADLAR:
         return m.group(0)  # dokunma
     return ad + "<REDACTED>"

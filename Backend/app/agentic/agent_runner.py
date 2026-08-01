@@ -62,10 +62,17 @@ _MCP_JSON_AZAMI_BAYT = 1024 * 1024
 #     12'de `notifications` (13), `subscriptions` (13), `capabilities` (12)
 #     gibi sıradan rota adları sır sanılıyordu (ölçüldü, 4. denetim turu).
 #
-# 32 ölçüme dayanıyor: ürünün eski üreteci `secrets.token_urlsafe(32)` idi ve
-# bu HER ZAMAN tam 43 karakter veriyor (200 örnekle ölçüldü). 32, gerçek sırrı
-# rahatça kapsayan ama hiçbir makul rota adının ulaşamayacağı bir alt sınır.
-_SIR_BENZERI_SEGMENT = re.compile(r"[A-Za-z0-9_\-]{32,}")
+# Uzunluk TAM 43 — alt sınır değil. Ürünün eski üreteci `secrets.token_urlsafe(32)`
+# idi ve bu her zaman tam 43 karakter veriyor (200 örnekle ölçüldü). Alt sınır
+# olarak yazıldığında (`{32,}`) kanonik bir UUID (36 karakter) de geçiyordu ve
+# kullanıcının UUID yollu kendi sunucusu siliniyordu — 5. denetim turu bulgusu.
+#
+# ⚠️ Bu eşik BİLEREK "sırrı kaçırma" değil "kullanıcı verisini silme" yönünde
+# hata yapıyor. Ürün başka bir boyutta sır üretmiş olsaydı bu desen onu
+# kaçırırdı; sonucu, artık okunmayan bir dosyada bayat bir YEREL kimlik
+# bilgisinin kalmasıdır. Ters yöndeki hatanın sonucu kullanıcının
+# yapılandırmasının yok olmasıdır — ikisi kıyaslanabilir değil.
+_SIR_BENZERI_SEGMENT = re.compile(r"[A-Za-z0-9_\-]{43}")
 
 
 def _urunun_kaydi_mi(ad: str, tanim: object) -> bool:
@@ -113,12 +120,12 @@ def _eski_url_bicimi_mi(url: object) -> bool:
     ürünün malı sayılıp siliniyordu — yani bir önceki turda kapatılan veri kaybı
     sınıfı yeniden açılmıştı.
 
-    Eşik uydurulmadı, depoda zaten ölçülmüş olanı kullanıyor
-    (`secret_redaction._MCP_PATH_SECRET`): gerçek sır `token_urlsafe(32)`, yani
-    `[A-Za-z0-9_-]` alfabesinde ~43 karakter; gerçek rota adları ("hub", "sse",
-    "messages", "stream") hepsi 12'nin altında. İki yerde iki farklı eşik
-    olmaması ayrıca bilinçli — bu depoda tekrarlayan arıza şekli "uyuşması
-    gereken iki yer uyuşmuyor".
+    Ölçüt `_SIR_BENZERI_SEGMENT`'te ve uzunluk TAM 43 — gerekçesi orada.
+
+    ⚠️ Bu eşik `secret_redaction._MCP_PATH_SECRET`'inkiyle (12) BİLEREK aynı
+    değil; ikisinin hata yönü zıt olduğu için eşitlenmeleri yanlış olurdu.
+    (Bu paragrafın önceki hâli tam tersini söylüyordu ve karar değişince
+    güncellenmemişti — 5. denetim turu onu bayat belge olarak yakaladı.)
 
     Bugünkü biçim (`/mcp`, ek segment yok) buraya DÜŞMEZ; onu başlık imzası
     yakalıyor.
