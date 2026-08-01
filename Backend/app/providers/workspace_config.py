@@ -386,10 +386,35 @@ def guvenli_config_yaz(workspace: str, goreli_yol: str, icerik: str,
             # bu sıra elle kuruluyordu ("boş yarat → icacls → yaz") ve o ilk
             # yaratma da yönlendirmeye açıktı. Ayrıca izni yola değil, birazdan
             # hedef olacak NESNENİN kendisine uyguluyoruz.
-            if sir_tasiyor and not harden_config_file(gecici):
+            # ⚠️ SERTLEŞTİRME `sir_tasiyor`'DAN BAĞIMSIZ OLARAK HER ZAMAN
+            # DENENİR. Bayrak yalnız BAŞARISIZLIĞIN ölümcül olup olmadığını
+            # söyler; "sertleştirilsin mi" sorusunu değil.
+            #
+            # Sebep ölçüldü (2026-08-01, bu makinede): `os.replace` KAYNAK
+            # dosyanın ACL'ini taşır, hedefinkini değil. Bayrak sertleştirmeyi
+            # de kapattığı sürece, önceki turda sertleştirilmiş bir config'in
+            # üzerine sertleştirilmemiş bir geçici dosya takılıyor ve izin
+            # DÜŞÜYORDU:
+            #
+            #     sir_tasiyor=True  → BURAK\\burcu:(F)
+            #     sir_tasiyor=False → SYSTEM:(I)(F), Administrators:(I)(F), ...
+            #
+            # `(I)` = miras geri gelmiş. Ölçülmüş gerçek dizinde geri gelen ACE
+            # `CodexSandboxUsers:(OI)(CI)(M)` idi (bkz. `local_token_file`).
+            # Üstelik sırsız sanılan yedek yazım, kullanıcının KENDİ üçüncü-parti
+            # MCP kayıtlarını (kendi `authorization` başlıklarıyla) taşıyor —
+            # yani "sır yok" varsayımı çağrı yerinde de doğru değildi.
+            sertlesti = harden_config_file(gecici)
+            if sir_tasiyor and not sertlesti:
                 logger.error(
                     "[config-yaz] %s izinleri kısıtlanamadı; sır YAZILMADI", hedef)
                 return False
+            if not sertlesti:
+                # Ölümcül değil ama sessiz de değil: dosya dizin ACL'ini miras
+                # alacak ve bu, önceki bir sertleştirmeyi geri alabilir.
+                logger.warning(
+                    "[config-yaz] %s sertleştirilemedi; dizin izinlerini miras "
+                    "alıyor.", hedef)
             with os.fdopen(gecici_fd, "w", encoding="utf-8") as f:
                 gecici_fd = -1  # fdopen sahipliği aldı; finally iki kez kapatmasın
                 f.write(icerik)

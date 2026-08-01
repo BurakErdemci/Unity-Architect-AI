@@ -308,3 +308,46 @@ def test_sertlestirme_basarisizsa_SIR_YAZILMIYOR(tmp_path, monkeypatch):
         "sıkılaştırma başarısızken sır diske yazıldı"
     artik = [p.name for p in tmp_path.iterdir() if p.name.startswith(".config-")]
     assert artik == [], f"sır taşıyan geçici dosya artığı kaldı: {artik}"
+
+
+def test_sertlestirme_SIRSIZ_yazimda_da_deneniyor(tmp_path, monkeypatch):
+    """`os.replace` KAYNAK dosyanın ACL'ini taşır — sertleştirme koşullu olamaz.
+
+    Ölçülmüş gerileme (2026-08-01, Windows): sertleştirme yalnız
+    `sir_tasiyor=True` iken uygulanınca, sırsız yedek yazım önceki turda
+    sertleştirilmiş bir config'in üzerine dizin ACL'ini miras alan bir geçici
+    dosya takıyordu. Ölçüm `BURAK\burcu:(F)` → `SYSTEM:(I)(F)` + iki miras ACE
+    daha. Bayrak yalnız başarısızlığın ölümcül olup olmadığını söylemeli.
+    """
+    from providers import workspace_config
+
+    cagrilanlar = []
+
+    def _kaydet(p):
+        cagrilanlar.append(p)
+        return True
+
+    monkeypatch.setattr(workspace_config, "harden_config_file", _kaydet)
+    assert workspace_config.guvenli_config_yaz(
+        str(tmp_path), "sirsiz.json", '{"a":1}', sir_tasiyor=False)
+
+    assert cagrilanlar, "sırsız yazımda sertleştirme HİÇ denenmedi"
+    assert all(os.path.basename(p).startswith(".config-") for p in cagrilanlar), \
+        f"sertleştirme hedefe uygulandı, geçici dosyaya değil: {cagrilanlar}"
+
+
+def test_sertlestirme_basarisiz_ama_SIRSIZ_ise_yazim_SURUYOR(tmp_path, monkeypatch):
+    """Sertleştirememek sırsız içerikte ölümcül DEĞİL — yoksa config hiç yazılmaz.
+
+    Bu, yukarıdaki testin karşı ağırlığı: "her zaman sertleştir" kuralı
+    yanlışlıkla "sertleştiremezsen hiç yazma"ya dönüşürse `.cursor/cli.json`
+    gibi sır taşımayan ama GEREKLİ dosyalar sessizce kaybolur — K4'ün
+    kapatmaya çalıştığı sınıfın aynısı.
+    """
+    from providers import workspace_config
+
+    monkeypatch.setattr(workspace_config, "harden_config_file", lambda p: False)
+    assert workspace_config.guvenli_config_yaz(
+        str(tmp_path), "sirsiz2.json", '{"b":2}', sir_tasiyor=False), \
+        "sertleştirme başarısız diye SIRSIZ yazım da iptal edildi"
+    assert (tmp_path / "sirsiz2.json").read_text(encoding="utf-8") == '{"b":2}'
