@@ -329,15 +329,32 @@ def test_call_site_cli_base_mcp_json(tmp_path, _no_unity_mcp, monkeypatch):
         "cli_base .mcp.json yazım noktası bağlanmamış"
 
 
-def test_call_site_agent_runner_project_mcp_json(tmp_path):
-    from agentic.agent_runner import _write_project_mcp_json
+def test_call_site_agent_runner_project_mcp_json_ARTIK_YOK(tmp_path):
+    """Claude SDK yolu 5. yazım noktasıydı; K8 ile KALDIRILDI (yerine temizlik geldi).
 
-    _write_project_mcp_json(str(tmp_path), {"unityMCP": {"type": "http"}})
+    Envanterde yerini koruyor, çünkü bu dosyanın işi yazım noktalarını saymak ve
+    "beşincisi nereye gitti" sorusunun cevabı burada durmalı. Kaldırılma sebebi:
+    o dosyanın okunabilmesi `setting_sources` içinde `"project"` gerektiriyordu
+    ve `"project"` onay kapısını dört ayrı yoldan düşürüyordu
+    (bkz. tests/test_claude_setting_sources.py). unityMCP artık SDK'ya doğrudan
+    `mcp_servers` ile geçiliyor; workspace'e hiç dosya yazılmıyor.
 
-    written = json.loads(_read(tmp_path / ".mcp.json"))
-    assert "unityMCP" in written["mcpServers"]
-    assert ".mcp.json" in _read(tmp_path / ".gitignore"), \
-        "Claude SDK yolundaki .mcp.json yazım noktası bağlanmamış"
+    Yazım noktası geri gelirse burası kırmızı verir — ve o zaman gitignore
+    bağının da yeniden kurulması gerektiği hatırlanır.
+    """
+    import inspect
+
+    from agentic import agent_runner
+
+    assert not hasattr(agent_runner, "_write_project_mcp_json"), (
+        "Claude SDK yolunda .mcp.json yazan kod geri gelmiş — gitignore bağı ve "
+        "setting_sources gerekçesi yeniden değerlendirilmeli"
+    )
+    # Temizlik ucu duruyor mu: yaratan adım kaldırıldıysa silen adım kalmalı.
+    (tmp_path / ".mcp.json").write_text("{}", encoding="utf-8")
+    agent_runner._remove_project_mcp_json(str(tmp_path))
+    assert not (tmp_path / ".mcp.json").exists()
+    assert "_remove_project_mcp_json" in inspect.getsource(agent_runner)
 
 
 # ── 30 Tem 2026 denetimi: E-a regresyonu, E-b fail-open, S4b ACL ────────────

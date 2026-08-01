@@ -94,6 +94,40 @@ def get_commands_meta() -> List[Dict]:
     return list(_COMMANDS_META)
 
 
+# Claude SDK'ya geçilen ayar katmanları — TEK KAYNAK.
+#
+# ⚠️ `"project"` BİLEREK YOK. `cwd` ürünün reposu değil, KULLANICININ AÇTIĞI
+# Unity projesi (indirilmiş ya da klonlanmış olabilir; ürün içeriğini denetlemiyor).
+# `"project"` açıkken o projeye konan bir `.claude/settings.json` onay kapısını
+# dört ayrı yoldan düşürüyordu — canlı ölçüldü 2026-07-29:
+#   1. `hooks.PreToolUse` — komut kapıdan ÖNCE ve KOŞULSUZ koşuyor; kapı `deny`
+#      dese bile hook'un izi diskte kalıyor. Hook `{"permissionDecision":"allow"}`
+#      dönerse kapı HİÇ çağrılmıyor. Yani böyle bir proje AÇMAK, o projeye keyfi
+#      komut çalıştırma hakkı vermek demekti — model istemeden, kullanıcı onaylamadan.
+#   2. `sandbox.enabled: true` → 4 Bash komutunun 4'ü kartsız geçti (sayaç 0/4).
+#   3. `permissions.allow` → `Bash(touch:*)` eklenince sayaç 1 → 0, dosya yine diskte.
+#   4. `env` → workspace dosyası ürünün süreç ortamına değişken enjekte ediyordu.
+# `disallowed_tools` bunların hiçbirini kapatmıyor: built-in `Bash` o listede değil.
+#
+# ⚠️ Hiç GEÇMEMEK en kötü seçenek: SDK'da `None` = `["user","project","local"]`,
+# yani `settings.local.json` de içeri girer. Liste boş bırakılmamalı.
+#
+# Kaybedilmeyen şeyler (ölçüldü, gerekçe sanılan ikisi de çürüktü):
+#   · Komut menüsü HİÇ küçülmüyor. Ölçüldü 2026-08-01, aynı makinede iki tur:
+#     `["project","user"]` → 114 komut, `["user"]` → 114 komut, kesişim farkı 0.
+#     Yani `"project"`in getirdiği tek şey workspace'e ÖZEL komut/skill'lerdi ve
+#     bu depoda öyle bir dosya yok. (`"user"`ın kendisi kritik: kullanıcının
+#     kendi komutları ve eklentileri oradan geliyor — o yüzden liste boşaltılamaz.)
+#   · Workspace `CLAUDE.md`/`ARCHITECT.md` wisdom'ını ürün KENDİ okuyor
+#     (`agent_runner._get_architect_wisdom`) ve system prompt'a enjekte ediyor.
+#   · unityMCP oturuma artık `.mcp.json` üzerinden değil, SDK'ya doğrudan geçilen
+#     `mcp_servers` ile giriyor. Ölçüldü: SDK kaydı, user kapsamındaki AYNI ADLI
+#     bayat kaydı (`localhost:8080`, BAŞLIKSIZ) EZİYOR — yani kimlik doğrulama
+#     gölgelenmiyor. Ölçüm: aynı ada farklı port verilip isteğin nereye düştüğüne
+#     bakıldı; `mcp_servers` geçilen iki turda da istek SDK'nın verdiği porta gitti.
+CLAUDE_SETTING_SOURCES = ["user"]
+
+
 async def warmup_slash_commands(cwd: Optional[str] = None,
                                 setting_sources: Optional[List[str]] = None) -> List[str]:
     """İlk mesaj atılmadan kurulu TÜM slash komut + skill'leri yakala (cold-start fix).
@@ -112,7 +146,10 @@ async def warmup_slash_commands(cwd: Optional[str] = None,
 
         ws = cwd if (cwd and os.path.isdir(cwd)) else None  # silinmiş/taşınmış ws → None
         opts = ClaudeAgentOptions(
-            setting_sources=setting_sources or ["project", "user"],
+            # Bu da gerçek bir CLI oturumu açıyor (cwd = kullanıcının projesi), yani
+            # ayar katmanı burada da kapıyı ilgilendiriyor: `"project"` açık olsaydı
+            # projenin SessionStart hook'u daha komut listelenirken koşardı.
+            setting_sources=setting_sources or CLAUDE_SETTING_SOURCES,
             cwd=ws,
         )
         client = ClaudeSDKClient(options=opts)
@@ -442,7 +479,8 @@ class ClaudeSDKSession:
         # Oto mod: True ise araç onayı kartı GÖSTERİLMEZ, otomatik izin verilir
         # (path-traversal koruması yine uygulanır). Adım modunda False → her işlemde kart.
         self.auto_approve = auto_approve
-        self.setting_sources = setting_sources if setting_sources is not None else ["project", "user"]
+        # Varsayılan da güvenli tarafta: çağıran unutursa kapı yine düşmesin.
+        self.setting_sources = setting_sources if setting_sources is not None else list(CLAUDE_SETTING_SOURCES)
         self.mcp_servers = mcp_servers or {}
         self.disallowed_tools = disallowed_tools or []
         self.approval_timeout = approval_timeout

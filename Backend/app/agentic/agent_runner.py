@@ -40,23 +40,66 @@ MAX_ITERATIONS = 15  # Güvenlik: Sonsuz döngü koruması
 # Onay bekleme süresi `command_gates`'ten gelir (tek kaynak, gerekçesi orada).
 
 
-def _write_project_mcp_json(workspace_path: Optional[str], mcp_servers_cfg: dict) -> None:
-    """Claude SDK yolunun proje-kapsamlı `.mcp.json`'ını yazar ve gitignore'lar.
+def _remove_project_mcp_json(workspace_path: Optional[str]) -> None:
+    """Önceki sürümlerin kullanıcının projesine yazdığı `.mcp.json`'ı kaldırır.
 
-    Modül düzeyinde, çünkü asıl çağrı yeri yüzlerce satırlık bir async metodun
-    içinde ve oradan sınanamıyordu. Bu depoda tekrarlayan arıza şekli
-    "birbiriyle uyuşması gereken iki yer uyuşmuyor"; dosyayı yazan kod ile
-    gitignore girdisini yazan kodun aynı fonksiyonda olması o ayrışmayı
-    baştan imkânsız kılıyor.
+    ⚠️ BURAYA `.mcp.json` YAZAN KOD GERİ EKLENMEYECEK. Claude yolunda unityMCP
+    artık SDK'ya doğrudan `mcp_servers` ile geçiliyor (bkz.
+    `claude_sdk_session.CLAUDE_SETTING_SOURCES`), çünkü o dosyanın okunabilmesi
+    `setting_sources` içinde `"project"` olmasını gerektiriyordu ve `"project"`
+    onay kapısını dört ayrı yoldan düşürüyordu.
+
+    Dosyanın kendisi ayrıca bir sır sızıntısıydı: `headers` içinde unityMCP
+    `X-API-Key`'ini DÜZ METİN taşıyor ve kullanıcının deposunda duruyordu.
+    Temizlik ucu zorunlu — yaratan adım kaldırıldıysa silen adım kalmalı,
+    yoksa daha önce kurulmuş her projede sır diskte kalır.
+
+    ⚠️ `.gitignore` girdisine DOKUNULMAZ. `.mcp.json`'ı CLI tabanlı sağlayıcılar
+    (`cli_base._write_mcp_config`) hâlâ meşru olarak yazıyor; girdiyi kaldırmak
+    kullanıcı Kimi'ye ya da Claude CLI'ına geçtiği an sırrı depoya açardı.
+    `remove_gitignore_block` ayrıca ürünün BÜTÜN bloğunu siler — içinde
+    `.cursor/mcp.json` ve `opencode.json` girdileri de var; buradan çağrılması
+    başka sağlayıcıların sırlarını sessizce yok sayılmaz hâle getirirdi.
     """
     if not workspace_path or not os.path.isdir(workspace_path):
         return
-    with open(os.path.join(workspace_path, ".mcp.json"), "w", encoding="utf-8") as f:
-        json.dump({"mcpServers": mcp_servers_cfg}, f, indent=2)
-    # Bu dosya `headers` içinde unityMCP `X-API-Key`'ini düz metin taşıyor ve
-    # kullanıcının deposunda duruyor (bkz. providers/workspace_config).
-    from providers.workspace_config import ensure_gitignored
-    ensure_gitignored(workspace_path, [".mcp.json"])
+    hedef = os.path.join(workspace_path, ".mcp.json")
+    try:
+        with open(hedef, "r", encoding="utf-8") as f:
+            icerik = json.load(f)
+    except FileNotFoundError:
+        return  # hiç yazılmamış, kullanıcı silmiş ya da bu tur zaten temizlendi
+    except (OSError, ValueError) as e:
+        # Okunamayan/bozuk dosya BİZİM olduğunu kanıtlayamaz → dokunulmaz.
+        logger.warning(f"[ClaudeSession] .mcp.json okunamadı, dokunulmuyor: {e}")
+        return
+
+    # ⚠️ SİLMEDEN ÖNCE DOSYAYA BAK. Kullanıcı bu projeye kendi MCP sunucularını
+    # yazmış olabilir; ürünün onları sessizce silme hakkı yok. (Eski kod bu
+    # dosyayı koşulsuz EZİYORDU — yani veri kaybı yeni değil, ama devralınacak
+    # bir davranış da değil.) Yalnız içeriğinin tamamı ürünün kendi kayıtlarıysa
+    # siliniyor; tek bir yabancı anahtar dosyayı dokunulmaz yapar.
+    URUNUN_KAYITLARI = {"unityMCP", "unityai"}
+    try:
+        sunucular = set((icerik or {}).get("mcpServers", {}).keys())
+    except AttributeError:
+        logger.warning("[ClaudeSession] .mcp.json beklenen biçimde değil, dokunulmuyor")
+        return
+    yabanci = sunucular - URUNUN_KAYITLARI
+    if yabanci:
+        logger.info(
+            "[ClaudeSession] .mcp.json kullanıcının kendi kayıtlarını taşıyor (%s); "
+            "silinmedi. Ürünün kayıtları artık okunmuyor, zararsız duruyorlar.",
+            ", ".join(sorted(yabanci)),
+        )
+        return
+
+    try:
+        os.remove(hedef)
+    except OSError as e:
+        logger.warning(f"[ClaudeSession] bayat .mcp.json silinemedi: {e}")
+        return
+    logger.info("[ClaudeSession] bayat .mcp.json kaldırıldı (unityMCP artık SDK'ya doğrudan geçiliyor)")
 
 
 class AgentEvent:
@@ -1458,15 +1501,24 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
         from providers.cli_base import BaseCLIProvider, build_spawn_env, env_family
         from providers.claude_sdk_session import (
             get_session, close_session, _SESSIONS, SessionBusyError,
+            CLAUDE_SETTING_SOURCES as _CLAUDE_SETTING_SOURCES,
         )
 
         # MCP: SADECE unityMCP (Unity sahne kontrolü) session'a girsin. Eski 'unityai'
         # (mcp__unityai__bash/save_file + kendi onay köprüsü) ARTIK GİRMESİN — terminal/yazma
         # built-in Bash/Write üzerinden native can_use_tool onayına gitsin (Seçenek 1).
-        # NOT: setting_sources=["project","user"] KORUNUR (skill + slash komutları için şart).
+        #
+        # Kayıt SDK'ya DOĞRUDAN geçiliyor (aşağıda `mcp_servers=`), workspace'e
+        # `.mcp.json` yazılarak DEĞİL. Sebep: o dosyanın okunması `setting_sources`
+        # içinde `"project"` gerektiriyordu ve `"project"` onay kapısını dört ayrı
+        # yoldan düşürüyordu — gerekçe `claude_sdk_session.CLAUDE_SETTING_SOURCES`.
+        #
+        # try'ın DIŞINDA: aşağıdaki `_session_kwargs` bu değişkeni okuyor. İçeride
+        # kalsaydı bir istisna onu tanımsız bırakır ve tur NameError ile ölürdü —
+        # üstelik tam da unityMCP kurulamadığı anda.
+        mcp_servers_cfg: dict = {}
         try:
             from unity_ai_mcp.unity_mcp_manager import unity_mcp_manager
-            mcp_servers_cfg = {}
             # URL'i ELLE KURMA: mcp_url() tek kaynak. Sunucu bizim değilse ya da
             # ayakta değilse None döner. Sır URL'de DEĞİL — api_headers()'tan gelir.
             unity_mcp_url = unity_mcp_manager.mcp_url()
@@ -1479,8 +1531,9 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                     "url": unity_mcp_url,
                     "headers": unity_mcp_manager.api_headers(),
                 }
-            # Temiz .mcp.json yaz (unityai YOK) — eski/bayat kayıtların üstüne yaz
-            _write_project_mcp_json(self.workspace_path, mcp_servers_cfg)
+            # Önceki sürümlerin bu projeye yazdığı `.mcp.json` artık okunmuyor;
+            # düz metin `X-API-Key` taşıdığı için diskte de bırakılmıyor.
+            _remove_project_mcp_json(self.workspace_path)
             # Önceki sürümlerin user-scope'a yazdığı unityai kaydını temizle
             # (_resolve_exec @staticmethod — provider örneği yaratmaya gerek yok)
             # env= ZORUNLU: bu da bir üçüncü taraf CLI spawn'ı ve Claude SDK yolu
@@ -1530,7 +1583,12 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
             model=model,
             cwd=_workspace,
             permission_mode="default",
-            setting_sources=["project", "user"],  # skill + slash komutları için ZORUNLU
+            # ⚠️ `"project"`i buraya geri EKLEME — gerekçe ve canlı ölçüm
+            # `claude_sdk_session.CLAUDE_SETTING_SOURCES`'ta. Kullanıcının açtığı
+            # Unity projesine konan bir `.claude/settings.json` kapıyı düşürüyordu.
+            setting_sources=list(_CLAUDE_SETTING_SOURCES),
+            # unityMCP artık workspace dosyası üzerinden değil buradan giriyor.
+            mcp_servers=mcp_servers_cfg,
             effort=desired_effort,                 # Claude-only; None ise CLI varsayılanı
             # Savunma: eski unityai araçları bir şekilde yüklenirse bile kapalı kalsın;
             # .cs yazan onaysız unityMCP aracı da kapalı (built-in Write native onaydan geçer).
