@@ -52,6 +52,13 @@ _URUN_SUNUCU_ADLARI = {"unityMCP", "unityai"}
 # da bozuk bir dosyanın tur başlangıcını bloke etmesini engellemek.
 _MCP_JSON_AZAMI_BAYT = 1024 * 1024
 
+# Eski biçimde sırrın durduğu yol segmenti. Eşik `secret_redaction`'daki ile
+# BİRE BİR aynı ve gerekçesi orada ölçülü: gerçek sır `token_urlsafe(32)`
+# (~43 karakter), gerçek rota adları ("hub", "sse", "messages", "stream")
+# 12'nin altında. Tek kaynak olmadığı için eşik burada tekrar ediyor; iki
+# yerin ayrışmaması bir testle bağlandı.
+_SIR_BENZERI_SEGMENT = re.compile(r"[A-Za-z0-9_\-]{12,}")
+
 
 def _urunun_kaydi_mi(ad: str, tanim: object) -> bool:
     """Bu kayıt ürünün kendi yazdığı mı? Adı değil, İMZASINI arar.
@@ -92,9 +99,21 @@ def _eski_url_bicimi_mi(url: object) -> bool:
     kaçırıyordu — yani temizlik, sırrın gerçekten diskte kaldığı vakayı
     atlıyordu.
 
-    Ölçüt dar tutuldu: yerel bir adres VE `/mcp/` altında boş olmayan bir ek
-    segment. Bugünkü biçim (`/mcp`, ek segment yok) buraya DÜŞMEZ; onu zaten
-    başlık imzası yakalıyor.
+    ⚠️ Ölçüt SIR BENZERİ bir segment istiyor, "herhangi bir ek segment" değil.
+    İlk yazımda öyleydi ve bir sonraki denetim turu onu gerileme olarak yakaladı:
+    `http://localhost:3000/mcp/messages` gibi sıradan bir kullanıcı sunucusu
+    ürünün malı sayılıp siliniyordu — yani bir önceki turda kapatılan veri kaybı
+    sınıfı yeniden açılmıştı.
+
+    Eşik uydurulmadı, depoda zaten ölçülmüş olanı kullanıyor
+    (`secret_redaction._MCP_PATH_SECRET`): gerçek sır `token_urlsafe(32)`, yani
+    `[A-Za-z0-9_-]` alfabesinde ~43 karakter; gerçek rota adları ("hub", "sse",
+    "messages", "stream") hepsi 12'nin altında. İki yerde iki farklı eşik
+    olmaması ayrıca bilinçli — bu depoda tekrarlayan arıza şekli "uyuşması
+    gereken iki yer uyuşmuyor".
+
+    Bugünkü biçim (`/mcp`, ek segment yok) buraya DÜŞMEZ; onu başlık imzası
+    yakalıyor.
     """
     if not isinstance(url, str):
         return False
@@ -106,7 +125,9 @@ def _eski_url_bicimi_mi(url: object) -> bool:
     if p.hostname not in ("localhost", "127.0.0.1", "::1"):
         return False
     parcalar = [s for s in p.path.split("/") if s]
-    return len(parcalar) >= 2 and parcalar[0] == "mcp"
+    if len(parcalar) != 2 or parcalar[0] != "mcp":
+        return False
+    return _SIR_BENZERI_SEGMENT.fullmatch(parcalar[1]) is not None
 
 
 def _oturum_yeniden_kurma_gerekceleri(mevcut, *, model, effort, workspace, mcp_servers) -> List[str]:

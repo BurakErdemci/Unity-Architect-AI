@@ -68,10 +68,36 @@ _ENV_ASSIGNMENT = re.compile(r"((?:TOKEN|KEY|SECRET)[A-Z_]*=)\S+")
 _HEADER_SECRET = re.compile(
     r"((?<![A-Za-z0-9])(?:[A-Za-z0-9]+[-_])*"
     r"(?:TOKEN|KEY|SECRET|AUTH|APIKEY)[A-Za-z0-9_-]*"
-    r"[\"']?\s*:\s*[\"']?)"
-    r"[^\"',}\n\r]+",
+#  • Tırnağın ÖNÜNDE ters bölü olabilir: bir kez daha serileştirilmiş
+#    (JSON içine gömülü JSON) tanılama nesnesi `\"X-API-Key\": \"<sır>\"`
+#    biçiminde görünüyor ve tırnak isteğe bağlı olsa bile ters bölü deseni
+#    kırıyordu. Ters bölüler de 1. gruba alınıyor.
+    r"\\?[\"']?\s*:\s*\\?[\"']?)"
+    r"[^\"',}\n\r\\]+",
     re.IGNORECASE,
 )
+
+
+# `AUTH`/`KEY`/`SECRET` ÖNEK olarak eşleştiği için masum kelimeler de yakalanıyor.
+# Öneki kaldırmak seçenek değil: `Authorization` gerçek bir sır başlığı ve o da
+# `AUTH` önekiyle geliyor. Bu yüzden istisna listesi DAR ve kelimenin TAMAMINA
+# bakıyor — `authorization` buraya girmediği için maskelenmeye devam ediyor.
+#
+# Neden dert edildi: bu ürün git komutlarının çıktısını logluyor ve `author:`
+# orada her commit'te geçiyor. Modülün kendi gerekçesi zaten "yanlış pozitif
+# log'u okunmaz yapar, okunmayan log da teşhis değeri taşımaz" diyor.
+# ⚠️ Şüphede kalınırsa MASKELE: fazla maskeleme okunabilirlik kaybı, eksik
+# maskeleme sır sızıntısı. Bu listeye ekleme yaparken ölçüt bu.
+_MASUM_ADLAR = frozenset({"author", "authors", "authority", "keyboard", "secretary", "keywords"})
+
+
+def _header_maskele(m: "re.Match") -> str:
+    ad = m.group(1)
+    # Grup 1 adı + tırnak + `:` taşıyor; yalnız harf/rakam kısmını sınıyoruz.
+    cekirdek = re.sub(r"[^A-Za-z0-9]", "", ad).lower()
+    if cekirdek in _MASUM_ADLAR:
+        return m.group(0)  # dokunma
+    return ad + "<REDACTED>"
 
 
 def redact_secrets(text: str) -> str:
@@ -79,7 +105,7 @@ def redact_secrets(text: str) -> str:
         return text
     text = _MCP_PATH_SECRET.sub(r"\1<REDACTED>", text)
     text = _ENV_ASSIGNMENT.sub(r"\1<REDACTED>", text)
-    return _HEADER_SECRET.sub(r"\1<REDACTED>", text)
+    return _HEADER_SECRET.sub(_header_maskele, text)
 
 
 class _RedactingFilter(logging.Filter):

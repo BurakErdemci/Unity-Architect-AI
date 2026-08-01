@@ -342,7 +342,7 @@ def test_sirri_URL_YOLUNDA_tasiyan_eski_bicim_de_taniniyor():
     from agentic.agent_runner import _urunun_kaydi_mi
 
     assert _urunun_kaydi_mi(
-        "unityMCP", {"type": "http", "url": "http://localhost:8080/mcp/SIR-BURADA"}
+        "unityMCP", {"type": "http", "url": f"http://localhost:8080/mcp/{_SAHTE_SIR}"}
     )
     # Bugünkü biçim: ek segment yok → URL imzası tetiklenmemeli (başlık yakalar).
     assert not _urunun_kaydi_mi("unityMCP", {"type": "http", "url": "http://localhost:8080/mcp"})
@@ -356,14 +356,14 @@ def test_eski_bicim_sir_dosyadan_gercekten_cikiyor(tmp_path):
 
     hedef = tmp_path / ".mcp.json"
     hedef.write_text(json.dumps({"mcpServers": {
-        "unityMCP": {"type": "http", "url": "http://localhost:8080/mcp/SIR-BURADA"},
+        "unityMCP": {"type": "http", "url": f"http://localhost:8080/mcp/{_SAHTE_SIR}"},
         "kullanicinin": {"command": "x"},
     }}), encoding="utf-8")
 
     _remove_project_mcp_json(str(tmp_path))
 
     kalan = hedef.read_text(encoding="utf-8")
-    assert "SIR-BURADA" not in kalan, "eski biçimdeki sır diskte kaldı"
+    assert _SAHTE_SIR not in kalan, "eski biçimdeki sır diskte kaldı"
     assert "kullanicinin" in kalan, "kullanıcının kaydı yok edildi"
 
 
@@ -380,6 +380,13 @@ _SAHTE_SIR = "Xk7pQ2mZ9wL4vB8nR3tY6uH1jC5sD0fA-gE"
     '{{"X-API-Key": "{s}"}}',
     "headers={{'X-API-Key': '{s}'}}",
     "http://localhost:8080/mcp/{s}",
+    # JSON içine gömülü JSON: tanılama nesneleri bir kez daha serileştiriliyor
+    # ve tırnağın önüne ters bölü giriyordu (3. denetim turu bulgusu).
+    '{{\\"X-API-Key\\": \\"{s}\\"}}',
+    # `Authorization` da `AUTH` önekiyle geliyor; masum-kelime istisnası onu
+    # KAPSAMAMALI, yoksa gerçek bir sır başlığı açıkta kalır.
+    "Authorization: Bearer {s}",
+    "authorization: {s}",
 ])
 def test_redaksiyon_serilestirilmis_bicimleri_de_kapatiyor(kalip):
     """Bir istisnadaki sözlük `{'X-API-Key': '...'}` gibi görünür — desen onu kaçırıyordu.
@@ -392,11 +399,48 @@ def test_redaksiyon_serilestirilmis_bicimleri_de_kapatiyor(kalip):
     assert _SAHTE_SIR not in redact_secrets(kalip.format(s=_SAHTE_SIR))
 
 
-def test_redaksiyon_masum_metni_bozmuyor():
+@pytest.mark.parametrize("metin", [
+    "monkey: banana",
+    # `author:` git çıktısında her commit'te geçiyor ve bu ürün git loglu­yor.
+    "author: Ahmet Yilmaz",
+    "Author: burak",
+    "authors: a, b",
+    "keyboard: mekanik",
+])
+def test_redaksiyon_masum_metni_bozmuyor(metin):
     """Yanlış pozitif log'u okunmaz yapar; okunmayan log teşhis değeri taşımaz."""
     from secret_redaction import redact_secrets
 
-    assert redact_secrets("monkey: banana") == "monkey: banana"
+    assert redact_secrets(metin) == metin
+
+
+def test_eski_URL_imzasi_siradan_rota_adlarini_KAPSAMAMALI():
+    """Gerileme testi: imza "herhangi bir ek segment" olduğunda veri kaybı geri geliyordu.
+
+    3. denetim turu bunu yakaladı: `http://localhost:3000/mcp/messages` gibi
+    sıradan bir kullanıcı sunucusu ürünün malı sayılıp siliniyordu — bir önceki
+    turda kapatılan sınıfın aynısı, yeni bir kapıdan.
+    """
+    from agentic.agent_runner import _urunun_kaydi_mi
+
+    assert _urunun_kaydi_mi("unityMCP", {"url": f"http://localhost:8080/mcp/{_SAHTE_SIR}"})
+    for rota in ("messages", "sse", "hub", "stream"):
+        assert not _urunun_kaydi_mi("unityMCP", {"url": f"http://localhost:3000/mcp/{rota}"}), (
+            f"sıradan rota adı '{rota}' sır sanıldı — kullanıcının sunucusu silinir"
+        )
+
+
+def test_iki_yerdeki_sir_esigi_ayrismamali():
+    """Aynı ölçüt iki dosyada tekrar ediyor; ayrışırsa biri sessizce yanlış olur.
+
+    Bu depoda tekrarlayan arıza şekli tam olarak bu: uyuşması gereken iki yer
+    uyuşmuyor. Eşiğin gerekçesi `secret_redaction`'da ölçülü.
+    """
+    from agentic.agent_runner import _SIR_BENZERI_SEGMENT
+    from secret_redaction import _MCP_PATH_SECRET
+
+    assert "{12,}" in _SIR_BENZERI_SEGMENT.pattern
+    assert "{12,}" in _MCP_PATH_SECRET.pattern
 
 
 def test_gitignore_girdisine_DOKUNULMUYOR(tmp_path):
