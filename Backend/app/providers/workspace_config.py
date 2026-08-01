@@ -306,6 +306,89 @@ def _compose(existing: str, missing: List[str]) -> str:
 # ───────────────────────────── genel arayüz ───────────────────────────────
 
 
+def guvenli_config_yaz(workspace: str, goreli_yol: str, icerik: str) -> bool:
+    """Config dosyasını workspace İÇİNE, yönlendirilmeye kapalı şekilde yazar.
+
+    Ölçülmüş açık (K4, bu makinede 2026-08-01'de yeniden üretildi, İKİ vektör de
+    ayrıcalıksız): ürünün altı config yazım noktasının altısı da hedefi düz
+    `open(path, "w")` ile açıyordu. Sonuç, workspace DIŞINDAKİ bir kurbanın
+    ezilmesi:
+
+        dosyanın KENDİSİ kurbana sabit bağla bağlı   → kurban EZİLDİ
+        ANA DİZİN kurbanın dizinine junction'lı      → kurban EZİLDİ
+
+    En sinsisi `.cursor/cli.json` idi: Cursor'un `Write`/`Shell` deny-list'ini
+    taşıyor, dışarı yönlendirilirse dosya ezilmesi değil **politikanın sessizce
+    kaybı** oluyordu — hedef workspace'e hiç uygulanmıyordu.
+
+    Üç katmanlı savunma, üçü de gerekli:
+
+      1. **Kapsama**: hedefin ve her ara dizinin `realpath`'i workspace'in
+         İÇİNDE olmalı. Bu, ana dizin yönlendirmesini yakalar.
+      2. **`O_NOFOLLOW`** (varsa): son bileşenin sembolik bağ olmasını reddeder.
+      3. **Açıştan SONRA kimlik doğrulaması** (`safe_paths.dogrula_kimlik`):
+         asıl koruma bu. `os.path.islink` junction'ı GÖRMÜYOR ve `O_NOFOLLOW`
+         sabit bağı reddetmiyor; ayrıca kontrol-sonra-aç sırası TOCTOU yarışını
+         kaybediyor. Tanıtıcının kimliğini açtıktan sonra sormak üçünü de kapatır.
+
+    `.gitignore` yazımı bu yoldan GEÇMİYOR: onun kendi `_resolve_gitignore`
+    kapsama kontrolü var ve dosya sır taşımıyor.
+
+    Dönüş: yazıldıysa `True`. `False` dönerse sır DİSKE YAZILMAMIŞTIR — çağıran
+    bunu yutmamalı, çünkü sessizce başarısız olan bir koruma hiç olmayandan
+    kötüdür (bu depoda ölçülmüş bir sınıf: `harden_config_file`'ın dönüşü bir
+    dönem yutuluyordu).
+    """
+    from safe_paths import O_NOFOLLOW, dogrula_kimlik
+
+    try:
+        ws_real = os.path.realpath(workspace)
+        if not os.path.isdir(ws_real):
+            logger.warning("[config-yaz] workspace yok: %s", workspace)
+            return False
+
+        hedef = os.path.join(ws_real, goreli_yol)
+        ust = os.path.dirname(hedef)
+
+        # (1) Ara dizinleri yaratırken de kapsama kontrolü: `os.makedirs`
+        # `exist_ok=True` ile bir junction'ın üzerinden GEÇİYOR ve hata vermiyor
+        # (ölçüldü) — yani dizin yaratmak tek başına güvenli değil.
+        os.makedirs(ust, exist_ok=True)
+        if not _icinde_mi(os.path.realpath(ust), ws_real):
+            logger.error("[config-yaz] %s workspace dışına yönlendirilmiş; yazılmadı", ust)
+            return False
+
+        # (2) + (3): aç, sonra kimliği doğrula, sonra kısalt ve yaz.
+        # ⚠️ `O_TRUNC` açılışta YOK — yönlendirme varsa hedef dosyaya hiç
+        # dokunulmamalı. `local_token_file` bu sırayı aynı gerekçeyle kullanıyor:
+        # açılışta kısaltmak, saldırganın seçtiği dosyayı kimlik doğrulanmadan
+        # KESMEK demekti.
+        fd = os.open(hedef, os.O_WRONLY | os.O_CREAT | O_NOFOLLOW, 0o600)
+        try:
+            dogrula_kimlik(fd, hedef)
+            os.ftruncate(fd, 0)
+            with os.fdopen(os.dup(fd), "w", encoding="utf-8") as f:
+                f.write(icerik)
+        finally:
+            os.close(fd)
+        return True
+    except OSError as e:
+        logger.error("[config-yaz] %s yazılamadı: %s", goreli_yol, e)
+        return False
+
+
+def _icinde_mi(yol: str, kok: str) -> bool:
+    """`yol` gerçekten `kok`un altında mı? Ön ek karşılaştırması YETMEZ.
+
+    `/a/bc` düz dize olarak `/a/b` ile başlıyor ama onun altında değil;
+    `os.path.commonpath` bunu bileşen bazında doğru cevaplıyor.
+    """
+    try:
+        return os.path.commonpath([os.path.normcase(yol), os.path.normcase(kok)]) == os.path.normcase(kok)
+    except ValueError:
+        return False  # farklı sürücüler → ortak yol yok
+
+
 def ensure_gitignored(workspace: str, entries: Iterable[str]) -> None:
     """`entries`'i workspace'in `.gitignore`'ına idempotent şekilde ekler.
 

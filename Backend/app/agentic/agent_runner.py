@@ -90,10 +90,19 @@ def _urunun_kaydi_mi(ad: str, tanim: object, sir: Optional[str]) -> bool:
       1. `headers` içinde `X-API-Key` == ürünün sırrı (bugünkü biçim).
       2. URL yolunda ürünün sırrı (eski biçim; sır `headers` yerine
          `/mcp/<sır>` segmentindeydi, `e988258`..`c69f3eb` arası).
-      3. `env` içinde `LOCAL_APP_TOKEN` — ürünün `39994dd` öncesi `unityai`
-         kaydı backend token'ını düz metin taşıyordu. Bu bir kimlik bilgisidir
-         ve değeri artık geçersiz olsa bile diskte bırakılmamalı; sunucu adına
-         ya da ürünün sırrına bakılmadan kabul ediliyor.
+      3. `env["LOCAL_APP_TOKEN"]` == ürünün backend token'ı — `39994dd` öncesi
+         `unityai` kaydı onu düz metin taşıyordu.
+
+    ⚠️ ÜÇÜNCÜ BİÇİM DE **DEĞER** EŞLEŞMESİ. İlk yazımında yalnız ANAHTAR ADINA
+    bakıyordu ve bu, aynı commit'te tasfiye edildiği iddia edilen sınıfın ta
+    kendisiydi: kullanıcının `env: {"LOCAL_APP_TOKEN": "${LOCAL_APP_TOKEN}"}`
+    yazan kaydı ürünün malı sayılıp siliniyordu — tek kayıtsa dosyanın tamamı.
+    Denetim bunu YÜKSEK olarak yakaladı; üstelik bu docstring o sırada bile
+    "üçü de değer eşleşmesi" diyordu, yani belge davranıştan ayrışmıştı.
+
+    Token oturumlar arası dönebilir; dönmüşse eski bir kayıt eşleşmez ve
+    temizlenmez. Bu doğru hata yönü: eşleşmeyen değer zaten GEÇERSİZ bir
+    token'dır, kullanıcının silinen kaydı ise geri gelmez.
 
     Sunucu ADINA hiç bakılmıyor: ürünün sırrını taşıyan bir kayıt, adı ne olursa
     olsun ürünündür; taşımayan da değildir.
@@ -102,8 +111,16 @@ def _urunun_kaydi_mi(ad: str, tanim: object, sir: Optional[str]) -> bool:
         return False
 
     ortam = tanim.get("env")
-    if isinstance(ortam, dict) and any(a == "LOCAL_APP_TOKEN" for a in ortam):
-        return True
+    if isinstance(ortam, dict):
+        deger = ortam.get("LOCAL_APP_TOKEN")
+        if isinstance(deger, str) and deger:
+            try:
+                from local_token_file import read_local_app_token
+                backend_token = read_local_app_token()
+            except Exception:
+                backend_token = ""
+            if backend_token and secrets.compare_digest(deger, backend_token):
+                return True
 
     if not sir:
         return False

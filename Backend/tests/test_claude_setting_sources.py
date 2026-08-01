@@ -171,6 +171,9 @@ _URUN_SIRRI = "Test-Urun-Sirri-0123456789abcdefGHIJKLMNOPQ"
 # Redaksiyon testlerinin kullandığı sır: ürünün anahtarıyla aynı şekilde.
 _SAHTE_SIR = _URUN_SIRRI
 
+# Backend token AYRI bir sır — `env.LOCAL_APP_TOKEN` onunla eşleşmeli.
+_BACKEND_TOKEN = "Test-Backend-Token-9876543210zyxwvuTSRQPO"
+
 _SIR_KAYDI = {"type": "http", "url": "http://localhost:8080/mcp",
               "headers": {"X-API-Key": _URUN_SIRRI}}
 
@@ -196,6 +199,7 @@ def _urun_sirrini_sabitle(monkeypatch):
     from agentic import agent_runner
 
     monkeypatch.setattr(agent_runner, "_urunun_sirri", lambda: _URUN_SIRRI)
+    monkeypatch.setenv("LOCAL_APP_TOKEN", _BACKEND_TOKEN)
 
 _SAHIPLIK_VAKALARI = [
     ("ÜRÜN: yerel + gerçek sır",
@@ -214,9 +218,18 @@ _SAHIPLIK_VAKALARI = [
     # arıyordu, oysa gerçek üretici `<backend_dir>/run_mcp_server.cmd` yazıyor —
     # yani imza ürünün KENDİ kaydını hiç yakalamıyordu. Ölçüt artık taşıdığı
     # kimlik bilgisi: `env.LOCAL_APP_TOKEN` (39994dd öncesi biçim).
-    ("ÜRÜN: eski unityai, env'de LOCAL_APP_TOKEN",
+    ("ÜRÜN: eski unityai, env'de GERÇEK backend token",
      {"command": r"C:\x\Backend\run_mcp_server.cmd",
-      "env": {"UNITYAI_URL": "u", "LOCAL_APP_TOKEN": "t"}}, True),
+      "env": {"UNITYAI_URL": "u", "LOCAL_APP_TOKEN": _BACKEND_TOKEN}}, True),
+    # Denetim (8. tur, YÜKSEK): bu kural ilk yazımında ANAHTAR ADINA bakıyordu,
+    # yani kullanıcının değişken referansı yazan kaydı siliniyordu — üstelik
+    # docstring o sırada bile "üçü de değer eşleşmesi" diyordu.
+    ("KULLANICI: env'de değişken REFERANSI",
+     {"command": "kendi", "env": {"LOCAL_APP_TOKEN": "${LOCAL_APP_TOKEN}"}}, False),
+    ("KULLANICI: env'de boş değer",
+     {"command": "kendi", "env": {"LOCAL_APP_TOKEN": ""}}, False),
+    ("KULLANICI: env'de başka bir sır",
+     {"command": "kendi", "env": {"LOCAL_APP_TOKEN": "benim-kendi-degerim"}}, False),
     ("KULLANICI: env var ama token yok",
      {"command": "kendi", "env": {"UNITYAI_URL": "u"}}, False),
 ]
@@ -249,8 +262,10 @@ def test_sir_okunamazsa_HICBIR_SEY_urunun_sayilmaz():
     from agentic.agent_runner import _urunun_kaydi_mi
 
     assert not _urunun_kaydi_mi("unityMCP", {"headers": {"X-API-Key": _URUN_SIRRI}}, None)
-    # Tek istisna: taşıdığı kimlik bilgisi kendi kendini ele veriyor.
-    assert _urunun_kaydi_mi("unityai", {"env": {"LOCAL_APP_TOKEN": "t"}}, None)
+    # `env` yolu ürünün MCP sırrına değil BACKEND TOKEN'ına bağlı, o yüzden
+    # `sir=None` iken de çalışır — ama yine DEĞER eşleşmesiyle.
+    assert _urunun_kaydi_mi("unityai", {"env": {"LOCAL_APP_TOKEN": _BACKEND_TOKEN}}, None)
+    assert not _urunun_kaydi_mi("unityai", {"env": {"LOCAL_APP_TOKEN": "baska"}}, None)
 
 
 def test_urunun_sirri_dosya_YARATMIYOR(tmp_path, monkeypatch):
