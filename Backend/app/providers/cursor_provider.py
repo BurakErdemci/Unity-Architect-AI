@@ -137,9 +137,19 @@ class CursorProvider(BaseCLIProvider):
             # yönlendirilmiş olabilir (K4, iki vektör de ayrıcalıksız ölçüldü).
             if not guvenli_config_yaz(workspace, ".cursor/mcp.json",
                                       json.dumps(merged, indent=2), sir_tasiyor=True):
+                # ⚠️ SIRSIZ YEDEK YAZIM ŞART — yalnız loglayıp dönmek yetmiyor.
+                # Denetim bulgusu: bu dal önceki turdan kalmış bir dosyayı
+                # OLDUĞU GİBİ bırakıyordu, yani ACL kısıtlanamadığı anda eski
+                # `X-API-Key` diskte kalıyordu. Tam da "sır diske yazılmasın"
+                # denilen durumda sır diskte kalıyor demekti. cli_base ve
+                # opencode bu yedeği zaten yapıyordu; burası sapmıştı.
+                merged["mcpServers"].pop("unityMCP", None)
                 logger.error("[CursorProvider] .cursor/mcp.json güvenli yazılamadı; "
-                             "unityMCP bu oturumda bağlanmayacak.")
-                return
+                             "unityMCP kaydı X-API-Key ile YAZILMADI. Unity MCP bu "
+                             "oturumda bağlanmayacak.")
+                if not guvenli_config_yaz(workspace, ".cursor/mcp.json",
+                                          json.dumps(merged, indent=2)):
+                    return
             logger.info("[CursorProvider] .cursor/mcp.json yazıldı.")
             # Dosyayı yazan nokta girdisini de yazar. Bu dosya unityMCP
             # `X-API-Key`'ini düz metin taşıyor ve kullanıcının deposunda duruyor;

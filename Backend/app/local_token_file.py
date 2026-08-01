@@ -101,11 +101,53 @@ def _open_secret_for_write(path: str) -> int:
         _dogrula_kimlik(fd, path)
         if _POSIX_MODE_BITS:
             os.fchmod(fd, 0o600)
+        else:
+            _windows_acl_sertlestir(path)
         os.ftruncate(fd, 0)
     except OSError:
         os.close(fd)
         raise
     return fd
+
+
+# Okuma yolundaki ACL onarımı süreç başına bir kez koşsun diye (gerekçe orada).
+_ACL_ONARILDI: set = set()
+
+
+def _windows_acl_sertlestir(path: str) -> None:
+    """Windows'ta izin sıkılaştırması — `0o600` burada HİÇBİR ŞEY yapmıyor.
+
+    ⚠️ Bu, ÖLÇÜLMÜŞ bir açığın kapatılması (2026-08-01, bu makinede):
+    `_POSIX_MODE_BITS` Windows'ta `False` olduğu için yazma yolu izinlere hiç
+    dokunmuyordu ve dosya ana dizinin ACL'ini MİRAS ALIYORDU. Ölçüm:
+
+        ~/.unity_architect_ai            → CodexSandboxUsers:(OI)(CI)(M)
+        ~/.unity_architect_ai/local-app-token → CodexSandboxUsers:(I)(M)
+
+    Yani bu dizinde açık bir miras ACE'si vardı ve içinde doğan HER dosya, Codex
+    sandbox kullanıcı grubuna DEĞİŞTİRME yetkisiyle geliyordu. Etkilenen dosya
+    da bu modülün korumak için var olduğu şeydi: backend'in tek yetki kanıtı.
+
+    Mekanizma yeniden yazılmıyor; `harden_config_file` bu depoda zaten var,
+    mirası kırıyor ve SONUCU DOĞRULUYOR (ölçüldü: sertleştirilen dosyada yalnız
+    `BURAK\\burcu:(F)` kalıyor). Kopyalamak yerine çağırmak kasıtlı — güvenlik
+    kararını kopyalamak burada adı konmuş bir arıza sınıfı.
+
+    İçe aktarma FONKSİYON İÇİNDE: `providers` bu modülü import ediyor, ters yön
+    modül düzeyinde yazılırsa döngü riski doğar.
+
+    Başarısızlık sessiz DEĞİL ama fırlatmıyor: sıkılaştıramamak, token'ı hiç
+    yazamamaktan iyidir (uygulama açılmazdı). Uyarı loglanıyor.
+    """
+    try:
+        from providers.workspace_config import harden_config_file
+        if not harden_config_file(path):
+            logger.warning(
+                "[local-token] %s ACL'i kısıtlanamadı; dosya ana dizinin "
+                "izinlerini miras alıyor olabilir.", path,
+            )
+    except Exception as e:  # import ya da icacls tarafı — token yazımını kırma
+        logger.warning("[local-token] %s ACL sıkılaştırması atlandı: %s", path, e)
 
 
 def read_secret_file(path: str) -> str:
@@ -143,6 +185,19 @@ def read_secret_file(path: str) -> str:
                 )
             except OSError as e:
                 logger.error(f"[local-token] {path} sıkılaştırılamadı: {e}")
+        elif not _POSIX_MODE_BITS:
+            # Windows onarım ucu, POSIX dalıyla AYNI gerekçe: yalnız yazma
+            # yolunu düzeltmek mevcut kurulumları kapsamıyor — dosya çoktan
+            # ana dizinin ACL'iyle yaratılmış durumda (ölçüldü: bu makinede
+            # backend token'ı `CodexSandboxUsers:(I)(M)` taşıyordu).
+            #
+            # ⚠️ SÜREÇ BAŞINA BİR KEZ. Windows'ta ACL'i okumanın ucuz bir yolu
+            # yok; `icacls` iki alt süreç demek ve bu fonksiyon her onay
+            # isteğinde çağrılıyor. Her okumada koşturmak, düzeltmeyi bir
+            # performans sorununa çevirirdi.
+            if path not in _ACL_ONARILDI:
+                _ACL_ONARILDI.add(path)
+                _windows_acl_sertlestir(path)
         with os.fdopen(os.dup(fd), "r", encoding="utf-8") as f:
             return f.read().strip()
     finally:

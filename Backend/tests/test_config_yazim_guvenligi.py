@@ -97,9 +97,11 @@ def test_normal_yazim_ve_uzerine_yazim_CALISIYOR(tmp_path):
         "ara dizin yaratılamadı"
     assert guvenli_config_yaz(ws, ".mcp.json", '{"a":2}') is True
 
-    # Üzerine yazım ESKİ İÇERİĞİ BIRAKMAMALI: `O_TRUNC` açılışta yok, kısaltma
-    # kimlik doğrulamasından sonra yapılıyor; sıra bozulursa kalıntı kalır.
+    # Üzerine yazım ESKİ İÇERİĞİ BIRAKMAMALI. Yazım geçici dosya + `os.replace`
+    # ile yapılıyor, yani kalıntı ancak takas yanlış kurulursa olur.
     assert json.loads((tmp_path / ".mcp.json").read_text(encoding="utf-8")) == {"a": 2}
+    # Geçici dosya artığı da kalmamalı — kullanıcının `git status`'una çöp düşmesin.
+    assert [p.name for p in tmp_path.iterdir() if p.name.startswith(".config-")] == []
 
 
 def test_kardes_dizin_ON_EK_olarak_eslesmemeli(tmp_path):
@@ -259,3 +261,50 @@ def test_hicbir_yazim_noktasi_duz_open_kullanmiyor():
         assert "guvenli_config_yaz" in kaynak, (
             f"{modul.__name__} config yazımı güvenli yola bağlı değil ({dosyalar})"
         )
+
+
+def test_yazim_ATOMIK_yarim_dosya_birakmiyor(tmp_path, monkeypatch):
+    """Yazma ortasındaki bir hata, config'i BOŞ ya da yarım bırakmamalı.
+
+    Denetim bulgusu: eski biçim hedefi `ftruncate` ile boşaltıp üzerine
+    yazıyordu, yani disk hatası `.cursor/cli.json`'ı boş bırakabiliyordu — ve
+    onun boşalması Cursor'un Write/Shell deny-list'inin SESSİZCE KAYBI demek,
+    yani K4'ün kapatmaya çalıştığı sınıfın aynısı.
+    """
+    ws = str(tmp_path)
+    assert guvenli_config_yaz(ws, "cfg.json", '{"eski":true}') is True
+    hedef = tmp_path / "cfg.json"
+
+    gercek_replace = os.replace
+
+    def patlayan_replace(src, dst):
+        raise OSError("disk doldu")
+
+    monkeypatch.setattr(os, "replace", patlayan_replace)
+    sonuc = guvenli_config_yaz(ws, "cfg.json", '{"yeni":true}')
+    monkeypatch.setattr(os, "replace", gercek_replace)
+
+    assert sonuc is False
+    assert json.loads(hedef.read_text(encoding="utf-8")) == {"eski": True}, \
+        "yazma yarıda kalınca ESKİ içerik korunmalıydı"
+    # Geçici dosya artık kalmamalı — kullanıcının `git status`'unda çöp bırakma.
+    artik = [p.name for p in tmp_path.iterdir() if p.name.startswith(".config-")]
+    assert artik == [], f"geçici dosya artığı kaldı: {artik}"
+
+
+def test_sertlestirme_basarisizsa_SIR_YAZILMIYOR(tmp_path, monkeypatch):
+    """`sir_tasiyor=True` sözü: ACL kısıtlanamazsa sır diske hiç inmemeli."""
+    from providers import workspace_config
+
+    monkeypatch.setattr(workspace_config, "harden_config_file", lambda p: False)
+
+    ws = str(tmp_path)
+    sonuc = guvenli_config_yaz(ws, "sirli.json", '{"X-API-Key":"KANARYA"}',
+                               sir_tasiyor=True)
+
+    assert sonuc is False
+    hedef = tmp_path / "sirli.json"
+    assert not hedef.exists() or "KANARYA" not in hedef.read_text(encoding="utf-8"), \
+        "sıkılaştırma başarısızken sır diske yazıldı"
+    artik = [p.name for p in tmp_path.iterdir() if p.name.startswith(".config-")]
+    assert artik == [], f"sır taşıyan geçici dosya artığı kaldı: {artik}"

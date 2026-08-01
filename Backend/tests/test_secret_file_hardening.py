@@ -15,11 +15,13 @@ alınırsa bu testler kırmızıya döner — probe'ları kimse yeniden koşturm
 import logging
 import os
 import stat
+import subprocess
 import tempfile
 
 import pytest
 
 import local_token_file
+import safe_paths  # noqa: E402  (yol kimliği artık burada)
 from secret_redaction import redact_secrets
 
 @pytest.fixture
@@ -104,6 +106,11 @@ def test_write_survives_missing_o_nofollow(token_path, monkeypatch):
     backend Windows'ta hiç ayağa kalkmıyordu.
     """
     monkeypatch.setattr(local_token_file, "_O_NOFOLLOW", 0)
+    # ⚠️ İKİ modül birden: `os.open` çağrısı `local_token_file`'da ama ikinci
+    # hat (`_refuse_symlink`) `safe_paths`'te ve KENDİ modülündeki adı okuyor.
+    # Yalnız birini yamalamak platformu taklit etmiyor — yama ıskalıyor ve
+    # test sessizce başka bir şey ölçüyor (denetim bulgusu, K4 turu).
+    monkeypatch.setattr(safe_paths, "_O_NOFOLLOW", 0)
     monkeypatch.setattr(local_token_file, "_POSIX_MODE_BITS", False)
 
     assert local_token_file.write_local_app_token("s3cret") is True
@@ -119,6 +126,11 @@ def test_symlink_still_refused_without_o_nofollow(token_path, monkeypatch):
     yazmanın REDDEDİLMESİ.
     """
     monkeypatch.setattr(local_token_file, "_O_NOFOLLOW", 0)
+    # ⚠️ İKİ modül birden: `os.open` çağrısı `local_token_file`'da ama ikinci
+    # hat (`_refuse_symlink`) `safe_paths`'te ve KENDİ modülündeki adı okuyor.
+    # Yalnız birini yamalamak platformu taklit etmiyor — yama ıskalıyor ve
+    # test sessizce başka bir şey ölçüyor (denetim bulgusu, K4 turu).
+    monkeypatch.setattr(safe_paths, "_O_NOFOLLOW", 0)
     monkeypatch.setattr(local_token_file, "_POSIX_MODE_BITS", False)
     monkeypatch.setattr(
         os.path, "islink", lambda p: str(p) == str(token_path)
@@ -212,3 +224,132 @@ def test_ordinary_text_is_left_alone():
     plain = "connection refused: http://127.0.0.1:8080/health"
     assert redact_secrets(plain) == plain
     assert redact_secrets("/mcp/hub/plugin") == "/mcp/hub/plugin"
+
+
+# ── Windows ACL: `0o600` orada HİÇBİR ŞEY yapmıyor ────────────────────────
+
+
+_WINDOWS_DEGIL = pytest.mark.skipif(
+    os.name != "nt", reason="ACL sıkılaştırması yalnız Windows'ta anlamlı"
+)
+
+
+def _acl_satirlari(yol: str) -> list:
+    r = subprocess.run(["icacls", yol], capture_output=True, text=True, timeout=30)
+    cikti = []
+    for i, s in enumerate((r.stdout or "").splitlines()):
+        p = s[len(yol):] if i == 0 and s.startswith(yol) else s
+        p = p.strip()
+        if p and ":" in p and "Successfully" not in p:
+            cikti.append(p)
+    return cikti
+
+
+def _yabanci_erisim(yol: str) -> list:
+    ben = (os.environ.get("USERNAME") or "").lower()
+    return [s for s in _acl_satirlari(yol) if ben not in s.lower()]
+
+
+def _gevsek_dizin(tmp_path):
+    """Gerçek kurulumun taklidi: miras yayan MODIFY ACE'si olan bir dizin."""
+    d = tmp_path / "sirlar"
+    d.mkdir()
+    r = subprocess.run(["icacls", str(d), "/grant", "Users:(OI)(CI)(M)"],
+                       capture_output=True, text=True, timeout=30)
+    if r.returncode != 0:
+        pytest.skip("bu makinede ACE eklenemedi")
+    return d
+
+
+@_WINDOWS_DEGIL
+def test_yazilan_token_ana_dizinin_gevsek_ACL_ini_miras_ALMIYOR(tmp_path):
+    """Ölçülmüş açık (2026-08-01, bu makinede) — sentetik bir senaryo DEĞİL.
+
+        ~/.unity_architect_ai                 → CodexSandboxUsers:(OI)(CI)(M)
+        ~/.unity_architect_ai/local-app-token → CodexSandboxUsers:(I)(M)
+
+    Yani ürünün sır dizininde miras yayan açık bir ACE vardı ve backend'in tek
+    yetki kanıtı, Codex sandbox kullanıcı grubuna DEĞİŞTİRME yetkisiyle
+    doğuyordu. Sebep: `_POSIX_MODE_BITS` Windows'ta `False`, dolayısıyla yazma
+    yolu izinlere hiç dokunmuyordu ve `0o600` sessizce etkisizdi.
+    """
+    d = _gevsek_dizin(tmp_path)
+    hedef = str(d / "local-app-token")
+
+    fd = local_token_file._open_secret_for_write(hedef)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write("KANARYA-TOKEN")
+
+    assert _yabanci_erisim(hedef) == [], \
+        "token dosyası kullanıcı dışında erişime açık kaldı"
+
+
+@_WINDOWS_DEGIL
+def test_okuma_yolu_MEVCUT_kurulumu_da_onariyor(tmp_path):
+    """Yalnız yazma yolunu düzeltmek yetmez — dosya çoktan yaratılmış olabilir.
+
+    POSIX dalında bu ders zaten alınmıştı ((2) numaralı bulgu); Windows dalı
+    o onarımı hiç yapmıyordu.
+    """
+    d = _gevsek_dizin(tmp_path)
+    bozuk = d / "eski-token"
+    bozuk.write_text("ESKI-KANARYA", encoding="utf-8")
+    assert _yabanci_erisim(str(bozuk)), "fixture ölü: dosya zaten kısıtlıymış"
+
+    deger = local_token_file.read_secret_file(str(bozuk))
+
+    assert deger == "ESKI-KANARYA", "onarım okunan değeri bozdu"
+    assert _yabanci_erisim(str(bozuk)) == [], "mevcut dosyanın ACL'i onarılmadı"
+
+
+@_WINDOWS_DEGIL
+def test_onarim_surec_basina_BIR_KEZ_kosuyor(tmp_path, monkeypatch):
+    """`icacls` iki alt süreç; bu fonksiyon her onay isteğinde çağrılıyor.
+
+    Her okumada koşturmak düzeltmeyi bir performans sorununa çevirirdi.
+    """
+    d = _gevsek_dizin(tmp_path)
+    hedef = d / "tekrar-token"
+    hedef.write_text("X", encoding="utf-8")
+
+    sayac = {"n": 0}
+    gercek = local_token_file._windows_acl_sertlestir
+
+    def sayan(path):
+        sayac["n"] += 1
+        return gercek(path)
+
+    monkeypatch.setattr(local_token_file, "_windows_acl_sertlestir", sayan)
+    monkeypatch.setattr(local_token_file, "_ACL_ONARILDI", set())
+
+    for _ in range(3):
+        local_token_file.read_secret_file(str(hedef))
+
+    assert sayac["n"] == 1, f"onarım {sayac['n']} kez koştu, 1 olmalıydı"
+
+
+@_WINDOWS_DEGIL
+def test_sertlestirme_BASARISIZ_olursa_sessiz_kalinmiyor(tmp_path, monkeypatch, caplog):
+    """Sessizce başarısız olan bir sıkılaştırma, hiç olmayandan KÖTÜDÜR.
+
+    Bu depoda kapatılmış bir sınıf: `harden_config_file`'ın dönüş değeri bir
+    dönem yutuluyordu ve ACL kısıtlanamasa bile sır yazılıyordu, kimse
+    bilmiyordu. Mutasyon turunda bu test yoktu ve dönüşü yutmak kırmızı
+    VERMİYORDU — yani korumanın kendisi ölçülmemişti.
+
+    Token yazımı yine de sürmeli: sıkılaştıramamak, uygulamanın hiç açılmaması
+    demek olmamalı. Ama iz LOGA düşmeli.
+    """
+    from providers import workspace_config
+
+    monkeypatch.setattr(workspace_config, "harden_config_file", lambda p: False)
+
+    hedef = str(tmp_path / "token")
+    with caplog.at_level(logging.WARNING):
+        fd = local_token_file._open_secret_for_write(hedef)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write("KANARYA")
+
+    assert os.path.exists(hedef), "sıkılaştırma başarısızlığı token yazımını kırmamalı"
+    birlesik = " ".join(r.message for r in caplog.records).lower()
+    assert "acl" in birlesik, "sıkılaştırma başarısızlığı sessizce yutuldu"

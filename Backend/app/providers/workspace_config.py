@@ -359,28 +359,50 @@ def guvenli_config_yaz(workspace: str, goreli_yol: str, icerik: str,
             logger.error("[config-yaz] %s workspace dışına yönlendirilmiş; yazılmadı", ust)
             return False
 
-        # (2) + (3): aç, sonra kimliği doğrula, sonra kısalt ve yaz.
-        # ⚠️ `O_TRUNC` açılışta YOK — yönlendirme varsa hedef dosyaya hiç
-        # dokunulmamalı. `local_token_file` bu sırayı aynı gerekçeyle kullanıyor:
-        # açılışta kısaltmak, saldırganın seçtiği dosyayı kimlik doğrulanmadan
-        # KESMEK demekti.
-        fd = os.open(hedef, os.O_WRONLY | os.O_CREAT | O_NOFOLLOW, 0o600)
+        # (2) + (3) Kimlik doğrulaması — hedef VARSA, ve SALT OKUNUR açılarak.
+        # Yazmaya açmıyoruz: amaç "bu ad yönlendirilmiş mi" sorusunu cevaplamak,
+        # ve yönlendirilmişse dosyaya hiç dokunmadan reddetmek. Salt okunur
+        # açılış, yanlışlıkla kısaltma ihtimalini de sıfırlıyor.
+        if os.path.exists(hedef):
+            fd = os.open(hedef, os.O_RDONLY | O_NOFOLLOW)
+            try:
+                dogrula_kimlik(fd, hedef)
+            finally:
+                os.close(fd)
+
+        # ⚠️ İÇERİK GEÇİCİ DOSYAYA YAZILIP `os.replace` İLE TAKILIYOR.
+        # Eskiden hedef kısaltılıp üzerine yazılıyordu ve denetim bunu haklı
+        # olarak bulgu yazdı: `ftruncate`'ten sonraki bir disk hatası config'i
+        # BOŞ bırakıyordu. `.cursor/cli.json` için bunun anlamı, K4'ün kapatmaya
+        # çalıştığı şeyin aynısıydı — Write/Shell deny-list'inin sessizce
+        # kaybolması. Geçici dosya + takas ile dosya ya eski hâlinde ya yeni
+        # hâlinde; arada bir hâl yok.
+        #
+        # Geçici dosya BİLEREK aynı dizinde: `os.replace` ancak aynı dosya
+        # sisteminde atomik.
+        gecici_fd, gecici = tempfile.mkstemp(dir=ust, prefix=".config-", suffix=".tmp")
         try:
-            dogrula_kimlik(fd, hedef)
-            # ⚠️ SIKILAŞTIRMA İÇERİKTEN ÖNCE. Çağrı yerlerinde bu sıra elle
-            # kuruluyordu ("boş yarat → icacls → yaz") ve o ilk yaratma da
-            # yönlendirmeye AÇIKTI — K4'ün kapattığı şeyin ta kendisi. Sıra
-            # artık burada, tek yerde: aç → kimliği doğrula → sıkılaştır →
-            # kısalt → yaz. Sır hiçbir an gevşek izinle diskte bulunmuyor.
-            if sir_tasiyor and not harden_config_file(hedef):
+            # ⚠️ SIKILAŞTIRMA İÇERİKTEN ÖNCE ve GEÇİCİ DOSYAYA. Çağrı yerlerinde
+            # bu sıra elle kuruluyordu ("boş yarat → icacls → yaz") ve o ilk
+            # yaratma da yönlendirmeye açıktı. Ayrıca izni yola değil, birazdan
+            # hedef olacak NESNENİN kendisine uyguluyoruz.
+            if sir_tasiyor and not harden_config_file(gecici):
                 logger.error(
                     "[config-yaz] %s izinleri kısıtlanamadı; sır YAZILMADI", hedef)
                 return False
-            os.ftruncate(fd, 0)
-            with os.fdopen(os.dup(fd), "w", encoding="utf-8") as f:
+            with os.fdopen(gecici_fd, "w", encoding="utf-8") as f:
+                gecici_fd = -1  # fdopen sahipliği aldı; finally iki kez kapatmasın
                 f.write(icerik)
+            os.replace(gecici, hedef)
+            gecici = ""  # takas başarılı, silinecek bir şey kalmadı
         finally:
-            os.close(fd)
+            if gecici_fd != -1:
+                os.close(gecici_fd)
+            if gecici and os.path.exists(gecici):
+                try:
+                    os.unlink(gecici)
+                except OSError:
+                    pass
         return True
     except OSError as e:
         logger.error("[config-yaz] %s yazılamadı: %s", goreli_yol, e)
