@@ -37,6 +37,36 @@ from spawn_env import (  # noqa: F401  (yeniden dışa verim — bkz. yukarı)
 )
 
 
+def maskeli_cmd(cmd: list, prompt: str) -> str:
+    """argv'yi log'a basılabilir hale getirir: prompt taşıyan her öğeyi maskeler.
+
+    NEDEN VAR: `[CMD]` satırı prompt'un TAMAMINI basıyordu ve o satır uçucu
+    değil — zincir 2026-08-01'de uçtan uca ölçüldü: backend stdout → Electron
+    `console.log` → `fileLog` → `%TEMP%/unity-architect-ai.log` (appendFileSync,
+    kalıcı). Yani kullanıcının sohbete yapıştırdığı her şey (kod, yol, sır)
+    diskte birikiyordu. Şablon iki satır aşağıdaki `[ENV]`: değeri değil
+    VARLIĞINI bas.
+
+    ÖLÇÜT KİMLİK, pozisyon ya da uzunluk DEĞİL. Prompt sağlayıcıya göre farklı
+    yerde duruyor (`-p`'den sonra, son pozisyonel, ya da bir hint'e yapışık),
+    dolayısıyla "son argümanı maskele" kuralı yeni bir sağlayıcı eklendiğinde
+    sessizce açılırdı. Uzunluk eşiği de aynı sınıf: eşik bir tahmindir.
+
+    Kısa bir prompt bir bayrağın içinde geçerse o bayrak da maskelenir — bu yön
+    bilinçli seçildi: fazla maskelemenin bedeli okunurluk, eksik maskelemenin
+    bedeli kalıcı diske yazılmış kullanıcı içeriği.
+    """
+    if not prompt:
+        # Boş prompt her metnin alt dizesi — maske her şeyi yerdi ve
+        # maskelenecek kullanıcı içeriği de yok.
+        return " ".join(str(p) for p in cmd)
+    n = len(prompt)
+    return " ".join(
+        f"<prompt:{n} karakter>" if prompt in str(parca) else str(parca)
+        for parca in cmd
+    )
+
+
 def _cli_value_to_text(value: Any) -> str:
     """CLI JSON event'lerindeki metin-benzeri değerleri güvenle string'e çevirir.
 
@@ -386,7 +416,7 @@ class BaseCLIProvider(AIProvider):
             # cmd[0]'i tam yola çöz + Windows .cmd/.bat ise cmd.exe ile sar (WinError 2 fix).
             spawn_cmd = self._resolve_exec(cmd)
 
-            logger.info(f"[CLIProvider:{self.binary_name}][CMD] {' '.join(cmd)}")
+            logger.info(f"[CLIProvider:{self.binary_name}][CMD] {maskeli_cmd(cmd, enriched_prompt)}")
             logger.info(f"[CLIProvider:{self.binary_name}][CWD] {workspace}")
             logger.info(f"[CLIProvider:{self.binary_name}][ENV] LOCAL_APP_TOKEN={'set' if _env.get('LOCAL_APP_TOKEN') else 'unset'} UNITYAI_URL={_env.get('UNITYAI_URL', _env.get('ANTIGRAVITY_URL', 'unset'))}")
 
