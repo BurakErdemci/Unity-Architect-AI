@@ -47,6 +47,24 @@ describe('vitest yapılandırması test kaybına kapalı', () => {
     expect(setup).toMatch(/beforeEach/)
   })
 
+  it('electron dikişi BAĞLI — CI ikiliyi indirmiyor', () => {
+    // ⚠️ Ölçülmüş arıza (2 Ağu 2026): CI `npm ci --ignore-scripts` kullanıyor,
+    // electron'un postinstall'ı koşmuyor ve `require('electron')` fırlatıyor.
+    // Ana süreç yardımcılarını import eden 3 test paketi toplanırken çöktü —
+    // YERELDE hepsi yeşildi, çünkü burada ikili kurulu. Alias düşerse aynı
+    // arıza sessizce geri gelir ve yine yalnız CI'da görünür.
+    expect(cfg).toMatch(/alias:\s*\{/)
+    expect(cfg).toMatch(/electron:\s*path\.resolve/)
+    expect(cfg).toMatch(/'electron-store':\s*path\.resolve/)
+  })
+
+  it('dikiş dosyaları DİSKTE var — kural boşa yazılmamış', () => {
+    // Yapılandırmanın yolu göstermesi yetmiyor; hedefin var olması da gerek.
+    const stublar = readdirSync(resolve(__dirname, 'stubs'))
+    expect(stublar).toContain('electron.ts')
+    expect(stublar).toContain('electron-store.ts')
+  })
+
   it('localStorage bu koşuda KULLANILABİLİR — kurulumun etkisi ölçülüyor', () => {
     // Yukarıdaki üç iddia metin okuyor; bu davranışı ölçüyor. Node'un
     // ham global'inde `getItem` bir fonksiyon DEĞİL, dolayısıyla bu iddia

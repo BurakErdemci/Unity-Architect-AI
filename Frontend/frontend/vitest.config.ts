@@ -1,8 +1,26 @@
+import path from 'node:path'
+
 import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
+  // ⚠️ ADLANDIRILMIŞ PLATFORM DİKİŞİ (ölçüldü 2 Ağu 2026). CI bağımlılıkları
+  // `npm ci --ignore-scripts` ile kuruyor — bilinçli bir karar, çünkü
+  // electron'un postinstall'ı 100MB+ ikili indiriyor ve testlerin o ikiliye
+  // ihtiyacı yok. Ama script koşmayınca `electron/index.js` "failed to install
+  // correctly" diye FIRLATIYOR ve ana süreç yardımcılarını import eden HER test
+  // paketi toplanırken çöküyor. Yerelde ikili kurulu olduğu için hepsi yeşildi:
+  // bu deponun kayıtlı "CI kırmızı, yerelde yeşil" sınıfı, üçüncü kez.
+  //
+  // Alias yalnız ÇALIŞMA ZAMANI çözümünü değiştiriyor; `tsc` hâlâ gerçek
+  // electron tiplerini okuduğu için tip güvenliği duruyor.
+  resolve: {
+    alias: {
+      electron: path.resolve(__dirname, '__tests__/stubs/electron.ts'),
+      'electron-store': path.resolve(__dirname, '__tests__/stubs/electron-store.ts'),
+    },
+  },
   test: {
     environment: 'jsdom',
     // Node'un kullanılamaz `localStorage` global'ini değiştiriyor; gerekçe ve
