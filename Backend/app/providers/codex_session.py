@@ -347,6 +347,26 @@ class CodexSession:
             "cwd": self.cwd or os.getcwd(),
             "approvalPolicy": "on-request",
             "sandbox": "read-only",
+            # ⚠️ ONAYI KİMİN VERECEĞİNİ SABİTLE — ölçülmüş açık, 2 Ağu 2026.
+            #
+            # Bu alan gönderilmediğinde Codex, reviewer'ı kullanıcının KENDİ
+            # `~/.codex/config.toml` dosyasından okuyor. O dosyada
+            # `approvals_reviewer = "auto_review"` yazıyorsa onay isteği ürünün
+            # kapısına HİÇ gelmiyor; bir LLM alt-ajanına ("guardian") gidiyor ve
+            # o `{"outcome":"allow"}` diyerek yazımı onaylıyor.
+            #
+            # Sahada üretildi: kullanıcı Adım Adım modunda dosya oluşturulduğunu
+            # gördü, hiçbir onay kartı çıkmadı. Tur kaydında guardian alt-ajanı
+            # `approval_policy: "never"` ile koşmuş durumda.
+            #
+            # ⭐ Sınıfın şekli: ürünün güvenlik vaadi, ürünün KONTROL ETMEDİĞİ
+            # bir dış ayara bağlıydı. Varsayılana güvenmek yetmiyor — varsayılan
+            # `user` ama config onu sessizce eziyor. Bu yüzden AÇIKÇA yazılıyor.
+            #
+            # Ölçüm (Codex 0.146.0, canlı 3 tur): alan yokken yanıt
+            # `auto_review` döndü; `"user"` ile `user` döndü. Şema:
+            # `ApprovalsReviewer = "user" | "auto_review" | "guardian_subagent"`.
+            "approvalsReviewer": "user",
             # Eski ``codex exec`` yolu bu iki override'ı CLI ``-c`` bayrağıyla
             # geçiriyordu. Kalıcı app-server yolu da aynı güven modelini thread
             # config'i üzerinden taşımalı; aksi halde salt-okunur MCP araçları
@@ -361,9 +381,38 @@ class CodexSession:
             raise RuntimeError(
                 f"Codex thread/start başarısız: {error.get('message') or error}"
             )
-        self.thread_id = (((resp or {}).get("result") or {}).get("thread") or {}).get("id")
+        _result = (resp or {}).get("result") or {}
+        self.thread_id = (_result.get("thread") or {}).get("id")
         if not self.thread_id:
             raise RuntimeError("Codex thread/start yanıtında thread id bulunamadı.")
+
+        # ⚠️ İSTEDİĞİMİZİ ALDIK MI? Yanıt AKTİF reviewer'ı geri veriyor, yani
+        # doğrulama bize ek bir tur ya da tek bir token'a mal olmuyor. Bunu
+        # istemekle almak arasındaki farkı ölçmeden geçmek, bu deponun tekrar
+        # tekrar ödediği bedel: bir bayrağı GÖNDERDİĞİNİ doğrulayan test,
+        # bayrağın IŞIRDIĞINI doğrulamıyor.
+        _reviewer = _result.get("approvalsReviewer")
+        if _reviewer is None:
+            _reviewer = (_result.get("thread") or {}).get("approvalsReviewer")
+        if _reviewer is not None and _reviewer != "user":
+            # Fail-closed: onayı kimin verdiğini bilmiyorsak tur başlamamalı.
+            # `auto_review` ve eski `guardian_subagent`'ın İKİSİ de reddediliyor
+            # — ikisi de kararı kullanıcıdan alıp bir modele veriyor.
+            raise RuntimeError(
+                "Codex onay hakemi 'user' değil: "
+                f"{_reviewer!r}. Onay isteği kullanıcıya değil bir modele "
+                "gidecekti; tur başlatılmadı. `~/.codex/config.toml` içindeki "
+                "`approvals_reviewer` ayarını kontrol edin."
+            )
+        if _reviewer is None:
+            # Alanı döndürmeyen bir Codex sürümü olabilir. Turu KIRMIYORUZ —
+            # doğrulayamamak, ürünün hiç çalışmaması için yeterli sebep değil ve
+            # bu sürümlerde açığın var olduğu da ölçülmedi. Ama sessiz de
+            # kalmıyoruz: bu satır, sabitlemenin doğrulanmadığı tek durum.
+            logger.warning(
+                f"[CodexSession:{self.conversation_id}] thread/start yanıtında "
+                "`approvalsReviewer` yok — onay hakeminin sabitlendiği DOĞRULANAMADI."
+            )
         self._started = True
         logger.info(f"[CodexSession:{self.conversation_id}] başlatıldı (model={self.model or 'default'}, thread={self.thread_id})")
 

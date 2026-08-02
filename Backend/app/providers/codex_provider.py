@@ -61,6 +61,18 @@ class CodexProvider(BaseCLIProvider):
             "--disable", "unified_exec",
             "--json",
             "-c", 'mcp_servers.unityai.default_tools_approval_mode="approve"',
+            # ⚠️ Onayı KİMİN vereceğini sabitle — `codex_session.py`'deki thread
+            # config'inin bu yoldaki karşılığı. Belirtilmezse Codex reviewer'ı
+            # kullanıcının `~/.codex/config.toml`'undan okuyor ve orada
+            # `approvals_reviewer = "auto_review"` varsa onay isteği ürünün
+            # kapısına hiç gelmiyor; bir LLM alt-ajanı karar veriyor (sahada
+            # üretildi, 2 Ağu 2026).
+            #
+            # ⭐ İKİ giriş noktası da kapatılıyor: yalnız app-server yolunu
+            # düzeltmek sınıfı kapatmazdı, çünkü bu yol hâlâ eski davranışı
+            # taşırdı. Bu depoda ölçülmüş kural — bir sınıfı kapatmak giriş
+            # noktalarını SAYMAYI gerektiriyor.
+            "-c", 'approvals_reviewer="user"',
         ]
         if unity_running:
             cmd.extend(["-c", 'mcp_servers.unityMCP.default_tools_approval_mode="approve"'])
