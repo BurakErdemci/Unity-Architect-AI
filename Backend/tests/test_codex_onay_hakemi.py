@@ -116,14 +116,20 @@ class TestAppServerYolu:
 
     def test_dongusel_govde_asmiyor(self):
         # Derinlik sınırı olmasa kötü biçimli bir yanıt aramayı kilitlerdi.
-        from providers.codex_session import bul_onay_hakemi
+        #
+        # ⚠️ SÖZLEŞME DEĞİŞTİ (doğrulama turu, 2 Ağu 2026). Bu test eskiden
+        # `is None` bekliyordu — yani sınırın ötesinde kalan bir `auto_review`
+        # "alan yok" sayılıyor ve geçirgen dala düşüyordu. Testin kendisi bir
+        # fail-open'ı SÖZLEŞME olarak kaydediyordu. Arama eksik kaldıysa yokluk
+        # iddia edilemez: artık `HAKEM_BELIRSIZ` dönüyor ve çağıran turu kesiyor.
+        from providers.codex_session import HAKEM_BELIRSIZ, bul_onay_hakemi
         derin = {"a": {}}
         d = derin["a"]
         for _ in range(20):
             d["a"] = {}
             d = d["a"]
         d["approvalsReviewer"] = "auto_review"
-        assert bul_onay_hakemi(derin) is None  # sınırın ötesi görülmüyor, ama asmıyor
+        assert bul_onay_hakemi(derin) == HAKEM_BELIRSIZ  # asmıyor, ve susmuyor
 
     # ⚠️ Aşağıdakiler ürünün GERÇEK doğrulama gövdesini çağırıyor. Öncesinde
     # testler yerel bir KOPYAYI çağırıyordu (dış denetim bulgusu
@@ -164,3 +170,50 @@ class TestAppServerYolu:
         src = Path(cs.__file__).read_text(encoding="utf-8")
         govde = src.split("async def start(")[1].split("\n    async def ")[0]
         assert "dogrula_onay_hakemi(" in govde
+
+
+class TestHakemBelirsiz:
+    """Doğrulama turu bulgusu `deep-reviewer-search-still-fail-open-on-non-string-values`.
+
+    Ölçüt "adres" yerine "anahtar adı" olduktan sonra bile arama iki kenardan
+    sessizce ``None`` dönüyordu: anahtar bulunup DEĞERİ dizge olmadığında ve
+    arama derinlik sınırında kesildiğinde. ``None`` dalı bilerek geçirgen olduğu
+    için ikisi de "alan yok" sayılıyor, oturum başlıyordu — yani kapatıldığı
+    söylenen fail-open sınıfı hâlâ açıktı.
+
+    Bu depoda kayıtlı ders: "bulamadım" ile "yok" aynı şey değildir.
+    """
+
+    def test_NESNE_degerli_hakem_BELIRSIZ_sayiliyor(self):
+        from providers.codex_session import HAKEM_BELIRSIZ, bul_onay_hakemi
+        govde = {"approvalsReviewer": {"name": "auto_review", "model": "gpt-5"}}
+        assert bul_onay_hakemi(govde) == HAKEM_BELIRSIZ
+
+    def test_NESNE_degerli_hakem_TURU_BASLATMIYOR(self):
+        from providers.codex_session import dogrula_onay_hakemi
+        with pytest.raises(RuntimeError, match="okunamadı"):
+            dogrula_onay_hakemi({"approvalsReviewer": {"name": "auto_review"}})
+
+    def test_derinlik_sinirinda_KESILEN_arama_BELIRSIZ(self):
+        # Arama tamamlanamadıysa YOKLUK iddia edilemez.
+        from providers.codex_session import HAKEM_BELIRSIZ, bul_onay_hakemi
+        govde = {}
+        dugum = govde
+        for _ in range(20):
+            dugum["a"] = {}
+            dugum = dugum["a"]
+        dugum["approvalsReviewer"] = "auto_review"
+        assert bul_onay_hakemi(govde) == HAKEM_BELIRSIZ
+
+    def test_kesilme_YOKSA_alan_yoklugu_hala_gecirgen(self):
+        # Ters yön: her belirsizliği reddeden bir mutant, alanı hiç döndürmeyen
+        # eski Codex sürümlerinde ürünü tamamen kullanılamaz yapardı. O dalın
+        # geçirgen kalması BİLİNÇLİ bir karar.
+        from providers.codex_session import bul_onay_hakemi
+        assert bul_onay_hakemi({"thread": {"id": "t1", "model": "gpt-5"}}) is None
+
+    def test_makul_derinlikte_hakem_HALA_bulunuyor(self):
+        # Ters yön: sınırı daraltan bir mutant burada düşer.
+        from providers.codex_session import bul_onay_hakemi
+        govde = {"result": {"thread": {"config": {"approvals_reviewer": "auto_review"}}}}
+        assert bul_onay_hakemi(govde) == "auto_review"

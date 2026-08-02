@@ -227,6 +227,12 @@ def _describe_approval(method: str, params: dict) -> str:
     return method
 
 
+# Hakem alanı VAR ama değeri okunamadı — "yok" ile karıştırılmaması gereken
+# üçüncü durum. Köşeli parantezler bilerek: Codex'in hiçbir meşru hakem değeri
+# bu biçimde olamaz, dolayısıyla gerçek bir değerle çakışamıyor.
+HAKEM_BELIRSIZ = "<belirsiz>"
+
+
 def bul_onay_hakemi(govde) -> "str | None":
     """`thread/start` yanıtında AKTİF onay hakemini arar; bulamazsa ``None``.
 
@@ -246,19 +252,42 @@ def bul_onay_hakemi(govde) -> "str | None":
     İlk bulunan değer dönüyor: aynı yanıtta iki farklı hakem taşınması
     beklenmiyor, ve taşınsaydı ikisinden biri zaten ``user`` olmayacağı için
     çağıran fail-closed dalına düşerdi.
+
+    ⚠️ ÜÇÜNCÜ bir durum var (doğrulama turu bulgusu
+    ``deep-reviewer-search-still-fail-open-on-non-string-values``): ölçüt
+    "adres" yerine "anahtar adı" olunca bile arama iki yerde sessizce ``None``
+    dönüyordu — anahtar bulunup DEĞERİ dizge olmadığında (ör.
+    ``{"approvalsReviewer": {"name": "auto_review"}}``) ve arama derinlik
+    sınırında kesildiğinde. ``None`` dalı bilerek geçirgen olduğu için ikisi de
+    "yok" sayılıyor ve oturum başlıyordu; yani kapatıldığı söylenen fail-open
+    sınıfı iki kenardan hâlâ açıktı.
+
+    Artık üç durum ayrı: **değer** (doğrula), ``None`` (alan gerçekten yok →
+    uyar ve geç), ``HAKEM_BELIRSIZ`` (alan var ama okunamadı, ya da arama
+    eksik kaldı → fail-closed). "Bulamadım" ile "yok" bir daha aynı şey değil.
     """
     hedef = {"approvalsreviewer", "approvals_reviewer"}
+    # Arama eksik kaldıysa YOKLUK iddia edilemez; bunu çağırana taşımak için.
+    kesildi = False
 
     def gez(dugum, derinlik: int = 0):
+        nonlocal kesildi
         # Derinlik sınırı: kötü biçimli ya da döngüsel bir yanıt bu aramayı
-        # sonsuza sürüklememeli. 6 seviye, ölçülen şekillerin hepsini kapsıyor.
-        if derinlik > 6:
+        # sonsuza sürüklememeli. Sınır cömert tutuldu (ölçülen yanıtlar 3-4
+        # seviye) çünkü buraya çarpmak artık turu KESİYOR — dar bir sınır,
+        # meşru bir yanıtta ürünü durdururdu.
+        if derinlik > 12:
+            kesildi = True
             return None
         if isinstance(dugum, dict):
             for k, v in dugum.items():
                 if isinstance(k, str) and k.replace("-", "_").lower() in hedef:
                     if isinstance(v, str):
                         return v
+                    # Anahtar VAR ama değeri okunamıyor: bu "yok" değil,
+                    # "doğrulanamadı". Geçirgen dala düşmesi tam olarak
+                    # kapatmaya çalıştığımız açıktı.
+                    return HAKEM_BELIRSIZ
                 bulunan = gez(v, derinlik + 1)
                 if bulunan is not None:
                     return bulunan
@@ -269,7 +298,11 @@ def bul_onay_hakemi(govde) -> "str | None":
                     return bulunan
         return None
 
-    return gez(govde)
+    bulunan = gez(govde)
+    if bulunan is None and kesildi:
+        # Aramayı tamamlayamadık; "yok" demek burada bir iddia olurdu.
+        return HAKEM_BELIRSIZ
+    return bulunan
 
 
 def dogrula_onay_hakemi(sonuc, conversation_id="?") -> "str | None":
@@ -286,6 +319,14 @@ def dogrula_onay_hakemi(sonuc, conversation_id="?") -> "str | None":
     için değil, testin ölçebilmesi için.
     """
     hakem = bul_onay_hakemi(sonuc)
+    if hakem == HAKEM_BELIRSIZ:
+        # Alan VAR ama okunamadı (dizge olmayan değer, ya da arama derinlik
+        # sınırında kesildi). Sabitlemenin tuttuğunu söyleyemiyoruz, dolayısıyla
+        # tur başlamıyor — "doğrulayamadım" burada "sorun yok" demek değil.
+        raise RuntimeError(
+            "Codex onay hakemi alanı okunamadı: yanıt beklenmedik bir biçimde "
+            "geldi, onayı kimin vereceği DOĞRULANAMADI; tur başlatılmadı."
+        )
     if hakem is not None and hakem != "user":
         # Fail-closed: onayı kimin verdiğini bilmiyorsak tur başlamamalı.
         # `auto_review` ve eski `guardian_subagent`'ın İKİSİ de reddediliyor —

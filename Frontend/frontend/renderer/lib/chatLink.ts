@@ -91,6 +91,13 @@ export function yerelYolaCevir(href: string): string {
       const u = new URL(ham);
       // `/C:/a/b.txt` → `C:/a/b.txt`; POSIX'te baştaki `/` korunuyor.
       const p = decodeURIComponent(u.pathname);
+      // ⚠️ Host ATILMIYOR (doğrulama turu bulgusu `file-url-host-silently-dropped`).
+      // `file://sunucu/pay/x.txt` bir UNC yolunu adlandırıyor; yalnız `pathname`
+      // alınırsa `/pay/x.txt` kalıyor ve bu Windows'ta BAŞKA bir dosyayı
+      // (`C:\pay\x.txt`) gösteriyor. Kapı onu zaten workspace dışı diye
+      // reddediyor, yani güvenlik sorunu değil — ama yine "destekleniyor görünüp
+      // hiç çalışmayan dal" biçimi, kapatmaya çalıştığımız sınıfın ta kendisi.
+      if (u.host) return `\\\\${u.host}${p.replace(/\//g, '\\')}`;
       ham = /^\/[a-zA-Z]:/.test(p) ? p.slice(1) : p;
       return ham;
     } catch {

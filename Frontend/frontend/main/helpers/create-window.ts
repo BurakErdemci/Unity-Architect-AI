@@ -42,12 +42,21 @@ const isExternallyOpenable = (rawUrl: string): boolean => {
  * kullanıyor, yani `/home` ile `/home/` aynı sayfanın iki yazımı.
  *
  * Ayrıştırılamayan bir adreste FIRLATIR; çağıran onu fail-closed yorumluyor.
+ *
+ * ⚠️ `u.origin` KULLANILMIYOR (doğrulama turu bulgusu
+ * `naive-origin-equality-reintroduced`). `origin`, kayıtlı olmayan her şema için
+ * — üründe ÜRETİMDE kullanılan `app:` dahil — sabit `"null"` dizgesini
+ * döndürüyor. Yani `origin`'e bakan bir karşılaştırma üretimde `app:///home` ile
+ * `app://./home`'u, dahası `app://evil/home`'u da "aynı belge" sayıyordu; o
+ * durumda navigasyonu durduran tek şey `isOwnOrigin` kalıyor ve ikincil savunma
+ * hiç savunma olmuyordu. `protocol` + `host` açıkça karşılaştırılıyor —
+ * `ipc-trust.ts` de aynı sebeple aynı şeyi yapıyor.
  */
 export const ayniBelgeMi = (a: string, b: string): boolean => {
   const kimlik = (ham: string): string => {
     const u = new URL(ham)
     const yol = u.pathname.endsWith('/') ? u.pathname.slice(0, -1) : u.pathname
-    return `${u.origin}${yol}${u.search}`
+    return `${u.protocol}//${u.host}${yol}${u.search}`
   }
   return kimlik(a) === kimlik(b)
 }

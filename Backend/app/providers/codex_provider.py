@@ -81,6 +81,20 @@ class CodexProvider(BaseCLIProvider):
             # doğrulama yapamıyoruz (app-server yolundaki gibi bir yanıt yok),
             # o yüzden güvence bu bayrağa dayanıyor: anahtar tanınmazsa çağrı
             # gürültüyle düşsün, sessizce izinsiz koşmasın.
+            #
+            # ⚠️ BEDELİ ÖLÇÜLDÜ ve BİLEREK kabul edildi (doğrulama turu bulgusu
+            # `strict-config-couples-product-to-a-file-it-does-not-own`):
+            # `--strict-config` yalnız bizim `-c` anahtarlarımızı değil,
+            # KULLANICININ `~/.codex/config.toml`'unu da doğruluyor. Orada
+            # tanınmayan tek bir anahtar (eski bir sürümden kalma, bir sürüm
+            # düşürme, bir yazım hatası) bu yoldaki HER turu modele hiç
+            # ulaşmadan düşürür — ürünün sahibi olmadığı bir dosya yüzünden.
+            # Bayrak yine de duruyor çünkü bu yolda `thread/start` gibi bir yanıt
+            # yok: bayrak kalkarsa sabitlemenin tuttuğunu doğrulayan HİÇBİR
+            # mekanizma kalmıyor, sessiz devretme geri geliyor.
+            # ⛔ Ürün bu arızayı şu an TANIMIYOR: kullanıcı sebebi anlaşılmayan
+            # bir hata görür. Belirtisi, `codex` stderr'inde
+            # "unknown configuration field" satırıdır.
             "--strict-config",
         ]
         if unity_running:

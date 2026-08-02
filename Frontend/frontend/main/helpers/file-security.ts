@@ -109,50 +109,74 @@ export function isAllowedWorkspacePath(targetPath: string, workspacePath: string
   }
 }
 
-/**
- * Dosya okuma izni workspace içindeki metin dosyaları (TEXT_FILE_EXTENSIONS) için verilir
- * — dosya ağacının listelediği her tür (md, json, shader…) editörde de açılabilir.
- * Symlink çözümü dahildir.
- */
-/**
- * Kapının ONAYLADIĞI yolu döndürür — açılacak olan bu olmalı, ham yol değil.
- *
- * ⚠️ Doğrulama turu bulgusu (`path-check-open-race`, probe ile üretildi):
- * kapı `safeResolve` ile çözülmüş yol üzerinde karar veriyor, ama çağıran ham
- * yolu açıyordu. Aradaki pencerede bir ARA BİLEŞEN (`pivot/note.txt`'teki
- * `pivot`) junction'a çevrilirse, açılan tanıtıcı workspace dışındaki dosyayı
- * gösteriyor ve tanıtıcı üzerindeki tüm kontrollerden (düzenli dosya, tek ad,
- * boyut) geçiyordu.
- *
- * Çözülmüş yolu açmak bu pencereyi kapatıyor: ara bileşenler zaten çözülmüş
- * durumda, dolayısıyla sonradan takılan bir junction o mutlak yolu artık
- * etkilemiyor.
- */
-export function resolvedReadPath(filePath: string): string {
-  return safeResolve(filePath)
+/** Çözülmüş iki yol arasında kapsama kontrolü — ikisi de ÇÖZÜLMÜŞ olmalı. */
+function icerideMi(cozulmusHedef: string, cozulmusWorkspace: string): boolean {
+  const rel = path.relative(cozulmusWorkspace, cozulmusHedef)
+  if (!rel) return true
+  return !rel.startsWith('..') && !path.isAbsolute(rel)
 }
 
-export function isAllowedWorkspaceReadFile(filePath: string, workspacePath: string): boolean {
+/**
+ * Yol bir NTFS alternatif veri akışını mı adlandırıyor?
+ *
+ * Windows `host.exe:notes.txt` yazımını `host.exe`'nin `notes.txt` akışı olarak
+ * okuyor, ama `path.extname` sondaki `.txt`'yi dosyanın uzantısı sanıyor.
+ * Sonuç: uzantı beyaz listesi, aslında `.exe` olan bir dosyanın baytlarını
+ * yetkilendiriyordu — ve o akış dizin listesinde hiç görünmüyor (dış denetim
+ * bulgusu, probe ile üretildi). Sürücü harfindeki iki nokta (`C:\`) meşru, o
+ * yüzden yalnız ondan SONRAKİ kısma bakılıyor.
+ *
+ * ⚠️ YALNIZ Windows (doğrulama turu bulgusu
+ * `ads-check-rejects-legitimate-posix-paths`): POSIX'te iki nokta sıradan bir
+ * dosya adı karakteri, üstelik macOS Finder'da `/` içeren bir klasör adı disk
+ * üzerinde `:` olarak saklanıyor. Platform koşulu olmadan bu kontrol orada
+ * meşru dosyaları sessizce açılamaz yapıyordu.
+ *
+ * `platform` parametre: `process.platform` test koşumunda değiştirilemiyor, ve
+ * platforma bağlı bir dalı sınayamamak bu depoda ölçülmüş bir arıza sınıfı.
+ */
+export function alternatifVeriAkisiMi(
+  cozulmusYol: string,
+  platform: string = process.platform,
+): boolean {
+  if (platform !== 'win32') return false
+  const surucusuz = cozulmusYol.length > 2 && cozulmusYol[1] === ':'
+    ? cozulmusYol.slice(2)
+    : cozulmusYol
+  return surucusuz.includes(':')
+}
+
+/** Okuma kapısının kararı ve o kararın DAYANDIĞI çözülmüş yol. */
+export type OkumaKarari = { izinli: boolean; cozulmusYol: string }
+
+/**
+ * Okuma kapısının tek karar noktası: yolu BİR KEZ çözer, kararı o çözülmüş yol
+ * üzerinde verir ve açılması gereken yolu da geri döndürür.
+ *
+ * ⚠️ Doğrulama turu bulgusu (`check-open-resolve-divergence`): bir önceki
+ * düzeltme "ham yol yerine çözülmüş yolu aç" diyordu, ama kapı kendi içinde bir
+ * kez, çağıran ikinci kez çözüyordu. İki çözüm arasında bir ara bileşen
+ * junction'a çevrilince kontrol edilen dosya ile açılan dosya yine ayrışıyordu —
+ * yani düzeltme, kapattığını SANDIĞI yarışı kapatmamıştı. Karar ile açış artık
+ * aynı dizgeye bakıyor.
+ *
+ * ⚠️ Tek çözüm yarışı DARALTIR, kapatmaz: bu yolun bir bileşeni açıştan hemen
+ * önce de değiştirilebilir. Sınıfı kapatan kontrol çağırandaki AÇILMIŞ TANITICI
+ * doğrulaması (`background.ts`) — o yola değil inode'a bakıyor, dolayısıyla
+ * açıştan sonra yapılan bir takas kararı geriye dönük bozamıyor.
+ */
+export function okumaKarariVer(filePath: string, workspacePath: string): OkumaKarari {
+  const reddet = (yol: string): OkumaKarari => ({ izinli: false, cozulmusYol: yol })
   try {
-    if (!isAllowedWorkspacePath(filePath, workspacePath)) {
-      return false
-    }
+    if (!filePath || !workspacePath) return reddet('')
 
-    const resolved = safeResolve(filePath)
+    const cozulmus = safeResolve(filePath)
+    const cozulmusWs = safeResolve(workspacePath)
 
-    // ⚠️ NTFS alternatif veri akışı (dış denetim bulgusu, probe ile üretildi).
-    // Windows `host.exe:notes.txt` yazımını `host.exe`'nin `notes.txt` akışı
-    // olarak okuyor, ama `path.extname` sondaki `.txt`'yi dosyanın uzantısı
-    // sanıyor. Sonuç: uzantı beyaz listesi, aslında `.exe` olan bir dosyanın
-    // baytlarını yetkilendiriyordu — ve o akış dizin listesinde hiç görünmüyor.
-    // Sürücü harfindeki iki nokta (`C:\`) meşru, o yüzden yalnız ondan SONRAKİ
-    // kısma bakılıyor.
-    const surucusuz = resolved.length > 2 && resolved[1] === ':'
-      ? resolved.slice(2)
-      : resolved
-    if (surucusuz.includes(':')) {
-      return false
-    }
+    if (!icerideMi(cozulmus, cozulmusWs)) return reddet(cozulmus)
+
+    // Gerekçesi `alternatifVeriAkisiMi`'nin başında.
+    if (alternatifVeriAkisiMi(cozulmus)) return reddet(cozulmus)
 
     // ⚠️ SABİT BAĞ (dış denetim bulgusu, probe ile üretildi). `realpathSync`
     // sembolik bağı ve junction'ı çözüyor, ama sabit bağ bir bağ DEĞİL — ikinci
@@ -174,15 +198,66 @@ export function isAllowedWorkspaceReadFile(filePath: string, workspacePath: stri
     // koşuyor — yola değil inode'a bakıyor, yani kontrol/kullanım yarışına da
     // kapalı. Buradaki erken eleme onu tamamlıyor, yerine geçmiyor.
     try {
-      const st = fs.lstatSync(resolved)
+      const st = fs.lstatSync(cozulmus)
       if (st.isFile() && st.nlink > 1) {
-        return false
+        return reddet(cozulmus)
       }
     } catch {
       /* yol henüz yok ya da okunamıyor — kararı fd üzerindeki kontrol verecek */
     }
 
-    return TEXT_FILE_EXTENSIONS.includes(path.extname(resolved).toLowerCase())
+    return {
+      izinli: TEXT_FILE_EXTENSIONS.includes(path.extname(cozulmus).toLowerCase()),
+      cozulmusYol: cozulmus,
+    }
+  } catch {
+    return reddet('')
+  }
+}
+
+/**
+ * Saf yol politikası — çağıranın açacağı yolu ÖĞRENMESİ gerekmiyorsa bu yeter.
+ * Okuyup açacak olan `okumaKarariVer`'i çağırmalı: yalnız o, kararın hangi
+ * çözülmüş yola dayandığını söylüyor.
+ */
+export function isAllowedWorkspaceReadFile(filePath: string, workspacePath: string): boolean {
+  return okumaKarariVer(filePath, workspacePath).izinli
+}
+
+/**
+ * AÇILMIŞ bir tanıtıcının hâlâ workspace içindeki bir dosyayı gösterdiğini
+ * doğrular. Okuma kapısında sınıfı asıl kapatan kontrol budur.
+ *
+ * Yolu bir kez çözmek yarışı DARALTIR ama kapatmaz — açılacak yolun bir bileşeni
+ * `openSync` çağrısından hemen önce de takas edilebilir. Bu yüzden açıştan
+ * SONRA iki şey birlikte soruluyor:
+ *   (1) yol şu an hâlâ workspace içinde bir dosyayı adlandırıyor mu,
+ *   (2) elimizdeki tanıtıcı gerçekten O dosya mı (aygıt + inode).
+ * Yalnız (1) olsaydı saldırgan açıştan sonra geri takas edip kontrolü
+ * kandırırdı; yalnız (2) olsaydı dışarıdaki bir dosya kendisiyle eşleşip
+ * geçerdi. İkisi birlikte açılmış tanıtıcıyı kapsama kararına bağlıyor — ve bir
+ * tanıtıcının hangi dosyayı gösterdiği, açıldıktan sonra artık değiştirilemez.
+ *
+ * ⚠️ Bu mantık bilerek `background.ts` içinde SATIR İÇİ bırakılmadı: ana süreç
+ * test koşumunda yüklenmiyor, dolayısıyla orada kalan her kontrol sınanamaz
+ * oluyor. Aynı ders bu depoda aynı denetim turunda iki kez ödendi.
+ *
+ * @param acilanStat açılmış tanıtıcının `fstatSync` sonucu — yolun değil.
+ */
+export function taniticiKapsamdaMi(
+  acilanStat: fs.Stats,
+  acilanYol: string,
+  workspacePath: string,
+): boolean {
+  try {
+    // Ayrıca `realpathSync` ÇAĞRILMIYOR: aşağıdaki ikisi de yolu kendi içinde
+    // zaten çözüyor (`isAllowedWorkspacePath` → `safeResolve`, `statSync` →
+    // bağları takip eder). Fazladan bir çözüm adımı mutasyonla ölçüldüğünde
+    // hiçbir mutantı yakalamıyordu — yani davranışa katkısı yok, yalnız
+    // "burada bir şey yapılıyor" izlenimi veriyordu.
+    if (!isAllowedWorkspacePath(acilanYol, workspacePath)) return false
+    const kimlik = fs.statSync(acilanYol)
+    return kimlik.ino === acilanStat.ino && kimlik.dev === acilanStat.dev
   } catch {
     return false
   }

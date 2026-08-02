@@ -11,8 +11,8 @@ import axios from 'axios'
 import { autoUpdater } from 'electron-updater'
 import {
   isAllowedWorkspacePath,
-  isAllowedWorkspaceReadFile,
-  resolvedReadPath,
+  okumaKarariVer,
+  taniticiKapsamdaMi,
   isAllowedWorkspaceWriteFile,
 } from './helpers/file-security'
 import {
@@ -383,7 +383,12 @@ handleSecure('read-file', async (_event, filePath: string, workspacePath?: strin
     if (!workspacePath) return null;
     const _ws = untrustedWorkspace(workspacePath); if (_ws) return null;
     const fullPath = path.isAbsolute(filePath) ? filePath : path.join(workspacePath, filePath);
-    if (!isAllowedWorkspaceReadFile(fullPath, workspacePath)) {
+    // ⚠️ Kapı ve açış AYNI çözümü paylaşmak ZORUNDA (doğrulama turu bulgusu
+    // `check-open-resolve-divergence`). Eskiden kapı kendi içinde bir kez,
+    // çağıran ikinci kez çözüyordu; aradaki pencerede bir ara bileşen
+    // junction'a çevrilince kontrol edilen dosya ile açılan dosya ayrışıyordu.
+    const karar = okumaKarariVer(fullPath, workspacePath)
+    if (!karar.izinli) {
       return { error: 'unsupported' }
     }
     // ⚠️ KONTROL EDİLEN ile OKUNAN aynı dosya olmalı (dış denetim bulgusu
@@ -396,12 +401,8 @@ handleSecure('read-file', async (_event, filePath: string, workspacePath?: strin
     // gördüğü inode'a bağlı, yola değil. Aynı desen backend'de zaten var
     // (`local_token_file` fd üzerinden doğruluyor) — burada tekrar edilmesinin
     // sebebi iki ayrı süreç olması, kopyalama değil.
-    // ⚠️ KAPININ ONAYLADIĞI YOL açılıyor, ham yol DEĞİL (doğrulama turu bulgusu
-    // `path-check-open-race`). Ham yolu açmak, kapı ile açış arasında bir ARA
-    // BİLEŞENİN junction'a çevrilmesine açıktı: tanıtıcı workspace dışındaki
-    // dosyayı gösteriyor ve tanıtıcı üzerindeki kontrollerin hepsinden
-    // geçiyordu. Çözülmüş yolda ara bileşenler zaten çözülmüş durumda.
-    const okunacak = resolvedReadPath(fullPath)
+    // Kapının kararını verdiği yol açılıyor — ham yol DEĞİL.
+    const okunacak = karar.cozulmusYol
     let fd: number | null = null
     try {
       fd = fs.openSync(okunacak, 'r')
@@ -414,7 +415,17 @@ handleSecure('read-file', async (_event, filePath: string, workspacePath?: strin
       // Sabit bağ kapıda da reddediliyor; burada tekrar bakmak, açış ile kapı
       // arasında yaratılmış bir ikinci adı da yakalıyor.
       if (st.nlink > 1) return { error: 'unsupported' }
+
+      // Sınıfı kapatan kontrol; gerekçesi fonksiyonun başında.
+      if (!taniticiKapsamdaMi(st, okunacak, workspacePath)) {
+        return { error: 'unsupported' }
+      }
+
       const content = fs.readFileSync(fd, 'utf-8')
+      // `fullPath` döndürülüyor: kapsama kanıtlandıktan sonra o ad da aynı
+      // inode'u gösteriyor, ve dosya ağacı da bu adı kullanıyor — çözülmüş yolu
+      // döndürmek workspace'in kendisi bir junction olduğunda ağaçla editörün
+      // yolunu ayrıştırırdı.
       return { path: fullPath, name: path.basename(fullPath), content }
     } finally {
       if (fd !== null) { try { fs.closeSync(fd) } catch { /* kapatma hatası okumayı geçersizleştirmez */ } }
