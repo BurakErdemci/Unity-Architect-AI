@@ -217,3 +217,49 @@ class TestHakemBelirsiz:
         from providers.codex_session import bul_onay_hakemi
         govde = {"result": {"thread": {"config": {"approvals_reviewer": "auto_review"}}}}
         assert bul_onay_hakemi(govde) == "auto_review"
+
+
+class TestHakemAnahtarSozlugu:
+    """Dış denetim bulgusu `onay-hakemi-key-vocabulary` (DeepSeek, 2 Ağu 2026).
+
+    Normalizasyon yalnız `-` → `_` yapıyordu, yani AYIRICILARI SAYIYORDU.
+    Boşluk, çift alt çizgi ve nokta yazımları sessizce ``None``'a düşüyor,
+    ``None`` dalı bilerek geçirgen olduğu için muhafız hiç konuşmadan
+    açılıyordu. Canlı ölçüldü: dört yazımın dördü de kaçıyordu.
+
+    ⭐ Ölçüt bu sınıfta ÜÇÜNCÜ kez değişti (sabit adres → anahtar adı →
+    harf/rakam dışını at). Ayırıcı listesi bitmez; "alfanümerik olmayanı at"
+    sonlu bir kural ve yeni bir ayırıcıyı da kapsıyor.
+    """
+
+    @pytest.mark.parametrize("anahtar", [
+        "approvalsReviewer",
+        "approvals_reviewer",
+        "approvals-reviewer",
+        "approvals reviewer",
+        "approvals__reviewer",
+        "approvals.reviewer",
+        "Approvals Reviewer",
+        "approvals/reviewer",
+        "APPROVALS_REVIEWER",
+    ])
+    def test_yazim_kipi_ne_olursa_olsun_YAKALANIYOR(self, anahtar):
+        from providers.codex_session import bul_onay_hakemi
+        assert bul_onay_hakemi({anahtar: "auto_review"}) == "auto_review"
+
+    @pytest.mark.parametrize("anahtar", [
+        "approvals_reviewer_mode",
+        "approvalsReviewerId",
+        "reviewer",
+        "model",
+    ])
+    def test_ALAKASIZ_anahtar_eslesMIyor(self, anahtar):
+        # Ters yön: "içeriyor mu" gibi gevşek bir ölçüt, ilgisiz alanları
+        # hakem sanıp meşru oturumları keserdi.
+        from providers.codex_session import bul_onay_hakemi
+        assert bul_onay_hakemi({anahtar: "auto_review"}) is None
+
+    def test_bosluklu_yazim_TURU_BASLATMIYOR(self):
+        from providers.codex_session import dogrula_onay_hakemi
+        with pytest.raises(RuntimeError, match="'user' değil"):
+            dogrula_onay_hakemi({"approvals reviewer": "auto_review"})

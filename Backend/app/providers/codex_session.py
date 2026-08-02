@@ -266,7 +266,22 @@ def bul_onay_hakemi(govde) -> "str | None":
     uyar ve geç), ``HAKEM_BELIRSIZ`` (alan var ama okunamadı, ya da arama
     eksik kaldı → fail-closed). "Bulamadım" ile "yok" bir daha aynı şey değil.
     """
-    hedef = {"approvalsreviewer", "approvals_reviewer"}
+    # ⚠️ ÖLÇÜT ÜÇÜNCÜ KEZ DEĞİŞTİ (dış denetim, DeepSeek, 2 Ağu 2026 —
+    # `onay-hakemi-key-vocabulary`). Sıra şuydu: iki SABİT ADRES → anahtar ADI
+    # (`-` → `_` normalizasyonuyla) → ve orada da kaçış vardı, çünkü
+    # normalizasyon AYIRICILARI SAYIYORDU. `approvals reviewer`,
+    # `approvals__reviewer`, `approvals.reviewer` ve `Approvals Reviewer`
+    # yazımlarının dördü de sessizce `None`'a düşüyor, `None` dalı bilerek
+    # geçirgen olduğu için muhafız hiç konuşmadan açılıyordu (canlı ölçüldü).
+    #
+    # ⭐ Bu deponun kayıtlı dersi burada üçüncü kez ödendi: bir muhafız her
+    # turda yeni bir kenar veriyorsa eşiği/listeyi genişletme, ÖLÇÜTÜ değiştir.
+    # Ayırıcı saymak bitmeyen bir liste; "harf ve rakam DIŞINDAKİ her şeyi at"
+    # sonlu bir kural. Yeni bir ayırıcı icat edilse de bu kural onu kapsıyor.
+    def _sadelestir(ad: str) -> str:
+        return "".join(ch for ch in ad if ch.isalnum()).lower()
+
+    hedef = {"approvalsreviewer"}
     # Arama eksik kaldıysa YOKLUK iddia edilemez; bunu çağırana taşımak için.
     kesildi = False
 
@@ -281,7 +296,7 @@ def bul_onay_hakemi(govde) -> "str | None":
             return None
         if isinstance(dugum, dict):
             for k, v in dugum.items():
-                if isinstance(k, str) and k.replace("-", "_").lower() in hedef:
+                if isinstance(k, str) and _sadelestir(k) in hedef:
                     if isinstance(v, str):
                         return v
                     # Anahtar VAR ama değeri okunamıyor: bu "yok" değil,

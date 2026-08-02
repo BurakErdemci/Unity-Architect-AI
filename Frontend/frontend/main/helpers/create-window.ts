@@ -75,7 +75,20 @@ const openExternally = (rawUrl: string) => {
  * koşulsuz expose ettiği için uzak sayfa terminal-spawn/write-file uçlarını
  * devralıp kullanıcı yetkisiyle kod çalıştırabiliyordu. Kapı burada kapanıyor.
  */
-const applyNavigationPolicy = (win: BrowserWindow) => {
+/**
+ * Pencerenin gezinme politikasını kurar.
+ *
+ * ⚠️ Dışa aktarılmasının sebebi ölçülmüş (dış denetim, 2 Ağu 2026,
+ * `navigation-policy-wiring-mutation` + `isownorigin-behavior-mutation`):
+ * bu gövde `create-window.ts` içinde kapalıydı ve TAMAMEN silinebiliyordu —
+ * `applyNavigationPolicy(win)` çağrısı kaldırıldığında 377 testin hepsi yeşil
+ * kalıyordu. Aynı şekilde `isOwnOrigin` koşulsuz `true` yapıldığında da.
+ * Yani uygulamanın gezinme güvenliğinin TAMAMI test kapsamı dışındaydı.
+ *
+ * `win` olarak yalnız `webContents.{setWindowOpenHandler,on,getURL}` kullanan
+ * herhangi bir nesne yeterli; testler gerçek bir BrowserWindow'a muhtaç değil.
+ */
+export const applyNavigationPolicy = (win: BrowserWindow) => {
   // Yeni pencere/popup asla açılmaz: açılsaydı aynı preload'u ve dolayısıyla
   // window.ipc'yi miras alırdı. Dış linkler işletim sisteminin tarayıcısına gider.
   win.webContents.setWindowOpenHandler(({ url }) => {
