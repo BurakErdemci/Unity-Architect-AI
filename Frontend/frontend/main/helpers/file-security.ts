@@ -114,6 +114,24 @@ export function isAllowedWorkspacePath(targetPath: string, workspacePath: string
  * — dosya ağacının listelediği her tür (md, json, shader…) editörde de açılabilir.
  * Symlink çözümü dahildir.
  */
+/**
+ * Kapının ONAYLADIĞI yolu döndürür — açılacak olan bu olmalı, ham yol değil.
+ *
+ * ⚠️ Doğrulama turu bulgusu (`path-check-open-race`, probe ile üretildi):
+ * kapı `safeResolve` ile çözülmüş yol üzerinde karar veriyor, ama çağıran ham
+ * yolu açıyordu. Aradaki pencerede bir ARA BİLEŞEN (`pivot/note.txt`'teki
+ * `pivot`) junction'a çevrilirse, açılan tanıtıcı workspace dışındaki dosyayı
+ * gösteriyor ve tanıtıcı üzerindeki tüm kontrollerden (düzenli dosya, tek ad,
+ * boyut) geçiyordu.
+ *
+ * Çözülmüş yolu açmak bu pencereyi kapatıyor: ara bileşenler zaten çözülmüş
+ * durumda, dolayısıyla sonradan takılan bir junction o mutlak yolu artık
+ * etkilemiyor.
+ */
+export function resolvedReadPath(filePath: string): string {
+  return safeResolve(filePath)
+}
+
 export function isAllowedWorkspaceReadFile(filePath: string, workspacePath: string): boolean {
   try {
     if (!isAllowedWorkspacePath(filePath, workspacePath)) {

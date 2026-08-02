@@ -12,6 +12,7 @@ import { autoUpdater } from 'electron-updater'
 import {
   isAllowedWorkspacePath,
   isAllowedWorkspaceReadFile,
+  resolvedReadPath,
   isAllowedWorkspaceWriteFile,
 } from './helpers/file-security'
 import {
@@ -395,9 +396,15 @@ handleSecure('read-file', async (_event, filePath: string, workspacePath?: strin
     // gördüğü inode'a bağlı, yola değil. Aynı desen backend'de zaten var
     // (`local_token_file` fd üzerinden doğruluyor) — burada tekrar edilmesinin
     // sebebi iki ayrı süreç olması, kopyalama değil.
+    // ⚠️ KAPININ ONAYLADIĞI YOL açılıyor, ham yol DEĞİL (doğrulama turu bulgusu
+    // `path-check-open-race`). Ham yolu açmak, kapı ile açış arasında bir ARA
+    // BİLEŞENİN junction'a çevrilmesine açıktı: tanıtıcı workspace dışındaki
+    // dosyayı gösteriyor ve tanıtıcı üzerindeki kontrollerin hepsinden
+    // geçiyordu. Çözülmüş yolda ara bileşenler zaten çözülmüş durumda.
+    const okunacak = resolvedReadPath(fullPath)
     let fd: number | null = null
     try {
-      fd = fs.openSync(fullPath, 'r')
+      fd = fs.openSync(okunacak, 'r')
       const st = fs.fstatSync(fd)
       if (!st.isFile()) return { error: 'unsupported' }
       // Dev Unity sahne/prefab YAML'ları 100MB'ı bulabilir — Monaco'yu dondurur.

@@ -53,6 +53,40 @@ describe('navigasyon ölçütü — "aynı yol" değil "aynı belge"', () => {
   })
 })
 
+describe('will-redirect ürünün KENDİ açılışını kesmiyor', () => {
+  /**
+   * ⚠️ YAŞANMIŞ ARIZA (2 Ağu 2026): denetim bulgusunu kapatmak için eklediğim
+   * `will-redirect` kancası origin-İÇİ yönlendirmeleri de engelliyordu ve
+   * uygulama HİÇ AÇILMADI — `next.config.js` `trailingSlash: true` kullandığı
+   * için dev sunucusu `/home` → `/home/` kanonikleştirmesini 302 ile yapıyor,
+   * yani ürünün kendi açılışı bu olaydan geçiyor. Pencere beyaz kaldı.
+   *
+   * Bulgunun çekirdeği DIŞARI çıkan yönlendirmeydi; onu `isOwnOrigin` zaten
+   * kapatıyor.
+   *
+   * ⭐ Ders: fail-closed sertleştirmenin de bir kapsamı olmalı. "Daha çok
+   * engelle" güvenlik değil; çalışmayan bir ürünün güvenlik vaadi de yoktur.
+   *
+   * Ana süreç jsdom'da koşmuyor, ölçülebilir tek biçim kaynak metni — ama
+   * iddia dar ve mekanik: origin-içi dal `preventDefault` içermemeli.
+   */
+  const src = fs.readFileSync(
+    path.resolve(__dirname, '../main/helpers/create-window.ts'), 'utf8'
+  )
+  const handler = src.split("on('will-redirect'")[1].split('\n  })')[0]
+
+  it('origin-içi yönlendirme ENGELLENMİYOR', () => {
+    expect(handler).toMatch(/if\s*\(isOwnOrigin\(url\)\)\s*return/)
+  })
+
+  it('dışarı çıkan yönlendirme HÂLÂ engelleniyor', () => {
+    // Ters yön: kancayı tamamen silen bir mutant üstteki testi geçerdi ve
+    // denetim bulgusunu geri açardı.
+    expect(handler).toContain('preventDefault')
+    expect(handler).toContain('openExternally')
+  })
+})
+
 describe('okuma kapısı — sabit bağ ve alternatif veri akışı', () => {
   let ws = ''
 

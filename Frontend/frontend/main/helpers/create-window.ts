@@ -128,14 +128,27 @@ const applyNavigationPolicy = (win: BrowserWindow) => {
   // Sunucu tarafı yönlendirme AYRI bir olay: `will-navigate` yalnız ilk adresi
   // görüyor, 302 sonrası hedef denetlenmeden takip edilebiliyordu (dış denetim
   // bulgusu). İlk adrese verilen izin, görülmemiş bir son adrese izin değildir.
+  //
+  // ⚠️ KAPSAM DAR TUTULUYOR — ve bu bir arıza vakasından geliyor (2 Ağu 2026).
+  // İlk hâli origin-İÇİ yönlendirmeleri de engelliyordu ve uygulama HİÇ
+  // AÇILMADI: `next.config.js` `trailingSlash: true` kullandığı için dev
+  // sunucusu `/home` → `/home/` kanonikleştirmesini bir 302 ile yapıyor, yani
+  // ürünün kendi açılışı bu olaydan geçiyor. Beş deneme de engellendi, pencere
+  // beyaz kaldı.
+  //
+  // Bulgunun gerçek çekirdeği zaten dış hedefti ("izin verilen bir origin-içi
+  // navigasyon, dışarıya 302 ile çıkabiliyor") ve onu `isOwnOrigin` kapatıyor.
+  // Origin-içi yönlendirme sunucumuzun kendi kanonikleştirmesi; onu kesmek
+  // korumadan çok ürünü kırıyor.
+  //
+  // ⭐ Ders: fail-closed sertleştirmenin de bir kapsamı olmalı. "Daha çok
+  // engelle" güvenlik değil, çalışmayan bir ürün — ve çalışmayan bir ürünün
+  // güvenlik vaadi de yok.
   win.webContents.on('will-redirect', (event, url) => {
-    if (!isOwnOrigin(url)) {
-      event.preventDefault()
-      openExternally(url)
-      return
-    }
+    if (isOwnOrigin(url)) return
     event.preventDefault()
-    console.warn('[nav-policy] origin-içi yönlendirme engellendi:', url)
+    openExternally(url)
+    console.warn('[nav-policy] dışarı çıkan yönlendirme engellendi:', url)
   })
 
   // Uygulama hiç <webview> kullanmıyor; enjekte edilen bir webview politikayı
