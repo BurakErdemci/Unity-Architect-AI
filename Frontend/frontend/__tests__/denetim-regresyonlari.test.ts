@@ -124,13 +124,30 @@ describe('okuma kapısı — sabit bağ ve alternatif veri akışı', () => {
     }
   })
 
-  it('ALTERNATİF VERİ AKIŞI reddediliyor', () => {
+  it('ALTERNATİF VERİ AKIŞI — iki platformda İKİ DOĞRU cevap', () => {
     // ⚠️ Bulgu `alternate-data-stream-extension-bypass`: Windows
     // `host.exe:notes.txt`'yi `host.exe`'nin akışı olarak okuyor ama
     // `path.extname` sondaki `.txt`'yi dosyanın uzantısı sanıyordu — yani
     // uzantı beyaz listesi aslında `.exe` olan baytları yetkilendiriyordu.
-    // Sürücü harfindeki iki nokta meşru; ölçüt ondan SONRAKİ kısma bakıyor.
-    expect(isAllowedWorkspaceReadFile(path.join(ws, 'host.exe:notes.txt'), ws)).toBe(false)
+    //
+    // ⚠️ Bu iddia ÖNCE platform kipini koşulsuz iddia ediyordu ve CI'da
+    // (Linux) kırmızı verdi — üründe açık YOKTU (ölçüldü 2 Ağu 2026). Bu
+    // deponun kayıtlı sınıfı: bir davranış platforma bağlıysa testin de
+    // bağlı olması gerekir, ve doğru araç `skipif` değil — o, iddiayı bir
+    // ortamda sessizce yok ediyor. İki cevap da burada YAZILI duruyor.
+    //
+    // Ölçütün platformdan bağımsız hâli `alternatifVeriAkisiMi(yol, platform)`
+    // ile ayrıca sınanıyor (`dogrulama-turu.test.ts`).
+    const yol = path.join(ws, 'host.exe:notes.txt')
+    if (process.platform === 'win32') {
+      expect(isAllowedWorkspaceReadFile(yol, ws)).toBe(false)
+    } else {
+      // POSIX'te iki nokta sıradan bir dosya adı karakteri: bu bir AKIŞ değil,
+      // gerçekten `host.exe:notes.txt` adlı bir dosya. Reddetmek burada ürün
+      // hatası olurdu — macOS'ta Finder `/` içeren klasör adlarını diskte `:`
+      // olarak saklıyor, yani meşru dosyalar açılamaz hale gelirdi.
+      expect(isAllowedWorkspaceReadFile(yol, ws)).toBe(true)
+    }
   })
 })
 
