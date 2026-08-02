@@ -84,8 +84,28 @@ if _REQUIRE_LOCAL_APP_TOKEN and not os.environ.get("LOCAL_APP_TOKEN"):
 # Token'ı 0600 bir dosyaya bırak: MCP sunucusunu CLI'lar başlatıyor, bizim
 # ortamımızı miras almıyorlar ve sırrı config/argv üzerinden taşımak onu
 # okunabilir kılıyordu (bkz. local_token_file modül docstring'i).
-from local_token_file import write_local_app_token  # noqa: E402
-write_local_app_token(os.environ.get("LOCAL_APP_TOKEN", ""))
+from local_token_file import write_local_app_token, token_path  # noqa: E402
+
+# ⚠️ Dönüş DEĞERİ okunuyor (bulgu S2). Eskiden yutuluyordu ve bu, sessiz bir
+# yarım-çalışma bırakıyordu: backend'in KENDİ süreci token'ı ortamdan okuduğu
+# için sağlıklı görünüyor, ama dosyadan okuyan çocuklar (MCP sunucusu) sırrı
+# hiç bulamıyordu. Kullanıcıya görünen tek belirti "Unity araçları çalışmıyor".
+#
+# `False` artık masum bir G/Ç hatası da değil: yazma yolu sabit bağ ve
+# yönlendirme kontrolünden geçiyor (`safe_paths._dogrula_kimlik`), yani bu dönüş
+# "token yolunda BAŞKASININ yerleştirdiği bir şey var" anlamına da gelebiliyor.
+#
+# Şiddet ortama göre: kimlik doğrulama ZORUNLU kılınmışsa açılış reddediliyor —
+# vaat edilen kapıyı kuramadan açılmak, kapıyı hiç vaat etmemekten kötü.
+# Zorunlu değilse (dev) açılışı kırmıyoruz, ama sessiz de kalmıyoruz.
+if not write_local_app_token(os.environ.get("LOCAL_APP_TOKEN", "")):
+    _mesaj = (
+        f"Yerel uygulama token'ı {token_path()} dosyasına yazılamadı. "
+        "MCP sunucusu gibi ayrı başlatılan süreçler sırrı bulamayacak."
+    )
+    if _REQUIRE_LOCAL_APP_TOKEN:
+        raise RuntimeError(_mesaj)
+    logging.getLogger(__name__).error("%s Ayrıntı için önceki [local-token] satırına bakın.", _mesaj)
 
 import uvicorn
 from fastapi import FastAPI
