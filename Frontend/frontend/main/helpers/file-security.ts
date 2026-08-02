@@ -120,7 +120,51 @@ export function isAllowedWorkspaceReadFile(filePath: string, workspacePath: stri
       return false
     }
 
-    return TEXT_FILE_EXTENSIONS.includes(path.extname(safeResolve(filePath)).toLowerCase())
+    const resolved = safeResolve(filePath)
+
+    // ⚠️ NTFS alternatif veri akışı (dış denetim bulgusu, probe ile üretildi).
+    // Windows `host.exe:notes.txt` yazımını `host.exe`'nin `notes.txt` akışı
+    // olarak okuyor, ama `path.extname` sondaki `.txt`'yi dosyanın uzantısı
+    // sanıyor. Sonuç: uzantı beyaz listesi, aslında `.exe` olan bir dosyanın
+    // baytlarını yetkilendiriyordu — ve o akış dizin listesinde hiç görünmüyor.
+    // Sürücü harfindeki iki nokta (`C:\`) meşru, o yüzden yalnız ondan SONRAKİ
+    // kısma bakılıyor.
+    const surucusuz = resolved.length > 2 && resolved[1] === ':'
+      ? resolved.slice(2)
+      : resolved
+    if (surucusuz.includes(':')) {
+      return false
+    }
+
+    // ⚠️ SABİT BAĞ (dış denetim bulgusu, probe ile üretildi). `realpathSync`
+    // sembolik bağı ve junction'ı çözüyor, ama sabit bağ bir bağ DEĞİL — ikinci
+    // bir addır. Gerçek yolu workspace içinde kalır, baytları dışarıdaki
+    // dosyanındır, dolayısıyla kapsama kontrolü onu kabul ediyordu.
+    //
+    // ⭐ Aynı sınıf backend'de ZATEN kapalıydı (`safe_paths._dogrula_kimlik`,
+    // `st_nlink > 1`). Yani bu, güvenlik kararının iki kopyasının ayrışmasıydı —
+    // bu depoda adı konmuş bir arıza sınıfı. Karar burada tekrar ediliyor çünkü
+    // iki süreç ayrı: Python backend'in kontrolü Electron ana sürecini kapsamaz.
+    //
+    // Dizinler muaf: NTFS'te dizinlerin bağlantı sayısı alt dizin sayısıyla
+    // birlikte artıyor, yani onlarda `> 1` normaldir.
+    //
+    // ⚠️ EN İYİ ÇABA, varlık ŞARTI DEĞİL. Bu fonksiyon saf bir yol politikası
+    // olarak da çağrılıyor (var olmayan yollarla; testleri buna dayanıyor),
+    // dolayısıyla "dosya yok" burada bir RED sebebi olamaz. Sınıfı kapatan
+    // KESİN kontrol zaten `read-file` handler'ında, AÇILMIŞ TANITICI üzerinde
+    // koşuyor — yola değil inode'a bakıyor, yani kontrol/kullanım yarışına da
+    // kapalı. Buradaki erken eleme onu tamamlıyor, yerine geçmiyor.
+    try {
+      const st = fs.lstatSync(resolved)
+      if (st.isFile() && st.nlink > 1) {
+        return false
+      }
+    } catch {
+      /* yol henüz yok ya da okunamıyor — kararı fd üzerindeki kontrol verecek */
+    }
+
+    return TEXT_FILE_EXTENSIONS.includes(path.extname(resolved).toLowerCase())
   } catch {
     return false
   }

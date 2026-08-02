@@ -78,10 +78,30 @@ export function chatUrlTransform(url: string): string {
  * dönüyor — açılamazsa `openFile` zaten gerekçeli uyarı veriyor.
  */
 export function yerelYolaCevir(href: string): string {
+  let ham = href;
+
+  // ⚠️ `file:` URL'i bir YOL DEĞİL (dış denetim bulgusu,
+  // `renderer-gate-path-shape-mismatch`). `chatUrlTransform` onu bilerek
+  // geçiriyordu ama ana süreç yol dizgesi bekliyor: `path.isAbsolute('file:///C:/a')`
+  // Windows'ta `false`, dolayısıyla eski hâlde ürün onu workspace ALTINA
+  // ekleyip `C:\ws\file:\C:\a` gibi var olmayan bir yol kuruyordu. Yani
+  // "destekliyoruz" görünen bir dal hiç çalışmıyordu — sessiz bir yalan.
+  if (/^file:/i.test(ham)) {
+    try {
+      const u = new URL(ham);
+      // `/C:/a/b.txt` → `C:/a/b.txt`; POSIX'te baştaki `/` korunuyor.
+      const p = decodeURIComponent(u.pathname);
+      ham = /^\/[a-zA-Z]:/.test(p) ? p.slice(1) : p;
+      return ham;
+    } catch {
+      // Ayrıştırılamayan bir `file:` — aşağıdaki genel yola düşsün.
+    }
+  }
+
   try {
-    return decodeURIComponent(href);
+    return decodeURIComponent(ham);
   } catch {
-    return href;
+    return ham;
   }
 }
 

@@ -68,23 +68,49 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
     console.error('[ErrorBoundary] render hatası yakalandı:', error, info.componentStack);
   }
 
+  /**
+   * ⚠️ HER ERİŞİM AYRI `try` İÇİNDE — dış denetim bulgusu (`fallback-self-failure`).
+   *
+   * `error.message` ve `error.stack` sıradan veri alanları OLMAK ZORUNDA DEĞİL:
+   * fırlatılan değer bir Proxy ya da getter'ı patlayan bir nesne olabilir.
+   * Bu fonksiyon render yolunda çağrılıyor ve **bir sınır kendi render'ında
+   * fırlayan hatayı YAKALAYAMAZ** — üstünde ikinci bir sınır da yok. Yani
+   * korumasız tek bir özellik okuması, tam da bu bileşenin kapatmak için var
+   * olduğu beyaz ekranı geri getiriyordu. Probe ile üretildi.
+   */
+  private guvenliOku(al: () => string | null | undefined): string {
+    try {
+      const v = al();
+      return typeof v === 'string' ? v : '';
+    } catch (e) {
+      return `<okunamadı: ${(() => { try { return String(e); } catch { return 'bilinmeyen'; } })()}>`;
+    }
+  }
+
   private tamMetin(): string {
     const { error, stack } = this.state;
-    return [
-      error?.message ?? '',
-      error?.stack ?? '',
-      stack ? `\nBileşen yığını:${stack}` : '',
-    ].filter(Boolean).join('\n');
+    const mesaj = this.guvenliOku(() => error?.message);
+    const yigin = this.guvenliOku(() => error?.stack);
+    return [mesaj, yigin, stack ? `\nBileşen yığını:${stack}` : '']
+      .filter(Boolean)
+      .join('\n');
   }
 
   private kopyala = () => {
-    // Pano yoksa ya da izin verilmezse sessizce geç: kopyalayamamak kartı
-    // kullanılamaz yapmamalı, metin zaten ekranda seçilebilir durumda.
+    // ⚠️ `writeText` bir PROMISE döndürüyor; senkron `try/catch` onun reddini
+    // GÖREMİYOR. Eski hâli reddi beklemeden "Kopyalandı" yazıyordu, yani pano
+    // izni reddedildiğinde kullanıcıya olmamış bir işi olmuş gibi gösteriyordu
+    // (dış denetim bulgusu, probe ile üretildi). Yalancı başarı, başarısızlıktan
+    // kötü: kullanıcı panoda olmayan bir metni yapıştırmaya çalışır.
     try {
-      navigator.clipboard?.writeText(this.tamMetin());
-      this.setState({ kopyalandi: true });
+      const p = navigator.clipboard?.writeText(this.tamMetin());
+      if (!p) return;
+      p.then(
+        () => this.setState({ kopyalandi: true }),
+        () => this.setState({ kopyalandi: false }),
+      );
     } catch {
-      /* pano yok — metin ekranda okunabilir, kayıp yok */
+      /* pano API'si hiç yok — metin ekranda seçilebilir, kayıp yok */
     }
   };
 
@@ -121,6 +147,17 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
           <div className="mt-4">
             <div className="text-[10px] font-mono text-slate-400 mb-1 uppercase tracking-wider">
               {t('error.detailsLabel')}
+            </div>
+            {/* ⚠️ Bu uyarı bir dış denetim bulgusundan geliyor
+                (`diagnostic-data-exposure`): aşağıdaki metin ham yığın izi ve
+                bu üründe renderer tarafında MASKELEME YOK (`secret_redaction`
+                yalnız backend'de). Mutlak kullanıcı yolları kesin, ve bir
+                kütüphane hatası araya oturum belirteci ya da istek gövdesi
+                koyabilir. Metni gizlemiyoruz — teşhis değerinin tamamı orada ve
+                beyaz ekranın en pahalı yanı bu bilgiyi yok etmesiydi. Ama
+                paylaşmadan önce ne paylaştığını bilmek kullanıcının hakkı. */}
+            <div className="text-[10px] text-amber-400/80 mb-1.5 leading-relaxed">
+              {t('error.shareWarning')}
             </div>
             {/* Hata metni React'in text child'ı olarak giriyor — kaçış React'in
                 kendisinde, ayrıca sanitize etmeye gerek yok. `whitespace-pre-wrap`

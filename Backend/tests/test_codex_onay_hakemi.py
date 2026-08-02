@@ -78,47 +78,89 @@ class TestAppServerYolu:
         assert '"approvalsReviewer": "user"' in src
 
     @pytest.mark.parametrize("hakem", ["auto_review", "guardian_subagent"])
-    def test_yanit_user_degilse_tur_REDDEDILIYOR(self, hakem):
-        # İKİ değeri de reddetmek şart: ikisi de kararı kullanıcıdan alıp bir
-        # modele veriyor. Yalnız `auto_review`'u reddeden bir muhafız, eski
+    def test_hakem_user_DEGILSE_yakalaniyor(self, hakem):
+        # İKİ değeri de yakalamak şart: ikisi de kararı kullanıcıdan alıp bir
+        # modele veriyor. Yalnız `auto_review`'u tanıyan bir muhafız, eski
         # `guardian_subagent` adıyla sessizce atlatılırdı.
-        from providers.codex_session import CodexSession
-        oturum = CodexSession.__new__(CodexSession)
-        oturum.conversation_id = "test"
-        yanit = {"result": {"thread": {"id": "t1"}, "approvalsReviewer": hakem}}
+        from providers.codex_session import bul_onay_hakemi
+        assert bul_onay_hakemi({"thread": {"id": "t1"}, "approvalsReviewer": hakem}) == hakem
+
+    def test_user_bulunuyor(self):
+        # Ters yön: her şeyi `None` döndüren bir mutant yukarıdaki testi geçer
+        # ama ürünü kullanılamaz yapardı.
+        from providers.codex_session import bul_onay_hakemi
+        assert bul_onay_hakemi({"thread": {"id": "t1"}, "approvalsReviewer": "user"}) == "user"
+
+    @pytest.mark.parametrize("govde", [
+        {"thread": {"id": "t1", "approvals_reviewer": "auto_review"}},
+        {"thread": {"id": "t1", "config": {"approvalsReviewer": "auto_review"}}},
+        {"config": {"nested": {"approvals-reviewer": "auto_review"}}},
+        {"items": [{"approvalsReviewer": "auto_review"}]},
+    ])
+    def test_BASKA_SEKILLERDE_gelen_hakem_de_bulunuyor(self, govde):
+        # ⚠️ Bu testlerin sebebi doğrudan bir dış denetim bulgusu
+        # (`fail-open-validation`, probe ile üretildi): arama iki SABİT ADRESE
+        # bakıyordu, snake_case ya da bir düzey derin gelen `auto_review`
+        # bulunamıyordu ve "bulamadım" dalı bilerek geçirgen olduğu için oturum
+        # SESSİZCE başlıyordu. Yani gerçekte model onaylıyorken ürün hiçbir şey
+        # fark etmiyordu.
+        from providers.codex_session import bul_onay_hakemi
+        assert bul_onay_hakemi(govde) == "auto_review"
+
+    def test_alan_gercekten_YOKSA_None(self):
+        # "Bulamadım" ile "yok" ayrımı: yalnız bu durumda `start()` uyarı basıp
+        # devam ediyor. Derin arama bunu bir kaçış yolu olmaktan çıkardı.
+        from providers.codex_session import bul_onay_hakemi
+        assert bul_onay_hakemi({"thread": {"id": "t1"}}) is None
+        assert bul_onay_hakemi({}) is None
+
+    def test_dongusel_govde_asmiyor(self):
+        # Derinlik sınırı olmasa kötü biçimli bir yanıt aramayı kilitlerdi.
+        from providers.codex_session import bul_onay_hakemi
+        derin = {"a": {}}
+        d = derin["a"]
+        for _ in range(20):
+            d["a"] = {}
+            d = d["a"]
+        d["approvalsReviewer"] = "auto_review"
+        assert bul_onay_hakemi(derin) is None  # sınırın ötesi görülmüyor, ama asmıyor
+
+    # ⚠️ Aşağıdakiler ürünün GERÇEK doğrulama gövdesini çağırıyor. Öncesinde
+    # testler yerel bir KOPYAYI çağırıyordu (dış denetim bulgusu
+    # `test-double-divergence`): blok silinse ya da koşulu tersine dönse
+    # dosyadaki hiçbir test kırılmıyordu. Mantığın `start()` içinden ayrı bir
+    # gövdeye çıkarılmasının tek sebebi bu — kopyalanabilir bir mantık er ya da
+    # geç kopyasından ayrışıyor.
+
+    @pytest.mark.parametrize("hakem", ["auto_review", "guardian_subagent"])
+    def test_GERCEK_govde_user_olmayani_REDDEDIYOR(self, hakem):
+        from providers.codex_session import dogrula_onay_hakemi
         with pytest.raises(RuntimeError, match="onay hakemi"):
-            _dogrula(oturum, yanit)
+            dogrula_onay_hakemi({"thread": {"id": "t1"}, "approvalsReviewer": hakem})
 
-    def test_user_ise_tur_BASLIYOR(self):
-        # Ters yön: her şeyi reddeden bir muhafız ürünü kullanılamaz yapardı ve
-        # yukarıdaki testlerin ikisini de geçerdi.
-        from providers.codex_session import CodexSession
-        oturum = CodexSession.__new__(CodexSession)
-        oturum.conversation_id = "test"
-        yanit = {"result": {"thread": {"id": "t1"}, "approvalsReviewer": "user"}}
-        _dogrula(oturum, yanit)  # fırlatmamalı
+    def test_GERCEK_govde_snake_case_i_de_REDDEDIYOR(self):
+        # Derin aramanın fail-closed dalına bağlandığını ölçüyor: probe bu
+        # şeklin sessizce GEÇTİĞİNİ göstermişti.
+        from providers.codex_session import dogrula_onay_hakemi
+        with pytest.raises(RuntimeError, match="onay hakemi"):
+            dogrula_onay_hakemi({"thread": {"id": "t1", "approvals_reviewer": "auto_review"}})
 
-    def test_alan_YOKSA_tur_kirilmiyor(self):
-        # Alanı döndürmeyen bir Codex sürümünde doğrulayamamak, ürünün hiç
-        # çalışmaması için yeterli sebep değil — ve o sürümlerde açığın var
-        # olduğu ÖLÇÜLMEDİ. Kayıt `start()` içinde uyarı olarak bırakılıyor.
-        from providers.codex_session import CodexSession
-        oturum = CodexSession.__new__(CodexSession)
-        oturum.conversation_id = "test"
-        _dogrula(oturum, {"result": {"thread": {"id": "t1"}}})  # fırlatmamalı
+    def test_GERCEK_govde_user_a_izin_veriyor(self):
+        # Ters yön: her şeyi reddeden bir mutant ürünü kullanılamaz yapardı.
+        from providers.codex_session import dogrula_onay_hakemi
+        assert dogrula_onay_hakemi({"approvalsReviewer": "user"}) == "user"
 
+    def test_GERCEK_govde_alan_yokken_kirmiyor_ama_UYARIYOR(self, caplog):
+        import logging
+        from providers.codex_session import dogrula_onay_hakemi
+        with caplog.at_level(logging.WARNING):
+            assert dogrula_onay_hakemi({"thread": {"id": "t1"}}) is None
+        assert any("DOĞRULANAMADI" in r.message for r in caplog.records)
 
-def _dogrula(oturum, resp):
-    """`start()` içindeki hakem doğrulamasının aynısı.
-
-    ⚠️ KOPYA OLDUĞU İÇİN ZAYIF: `start()`'ın gövdesi değişirse bu sessizce
-    ayrışır. Gerçek gövdeyi çağıramamanın sebebi `start()`'ın canlı bir Codex
-    süreci istemesi. Bu yüzden yukarıdaki `test_thread_start_params_hakemi_iceriyor`
-    kaynak nöbetçisi TAMAMLAYICI, süs değil — kopyanın ayrışmasını o yakalar.
-    """
-    _result = (resp or {}).get("result") or {}
-    _reviewer = _result.get("approvalsReviewer")
-    if _reviewer is None:
-        _reviewer = (_result.get("thread") or {}).get("approvalsReviewer")
-    if _reviewer is not None and _reviewer != "user":
-        raise RuntimeError(f"Codex onay hakemi 'user' değil: {_reviewer!r}")
+    def test_start_bu_govdeyi_CAGIRIYOR(self):
+        # Gövde doğru olsa bile `start()` onu çağırmazsa muhafız yoktur.
+        from pathlib import Path
+        import providers.codex_session as cs
+        src = Path(cs.__file__).read_text(encoding="utf-8")
+        govde = src.split("async def start(")[1].split("\n    async def ")[0]
+        assert "dogrula_onay_hakemi(" in govde

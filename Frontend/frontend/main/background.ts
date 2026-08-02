@@ -385,12 +385,33 @@ handleSecure('read-file', async (_event, filePath: string, workspacePath?: strin
     if (!isAllowedWorkspaceReadFile(fullPath, workspacePath)) {
       return { error: 'unsupported' }
     }
-    // Dev Unity sahne/prefab YAML'ları 100MB'ı bulabilir — Monaco'yu dondurur.
-    if (fs.statSync(fullPath).size > 8 * 1024 * 1024) {
-      return { error: 'too-large' }
+    // ⚠️ KONTROL EDİLEN ile OKUNAN aynı dosya olmalı (dış denetim bulgusu
+    // `path-check-use-race`, probe ile üretildi). Eskiden kapı çözülmüş yol
+    // üzerinde karar veriyor, `statSync`/`readFileSync` ise HAM yolu okuyordu;
+    // aradaki pencerede bir junction hedefini değiştirirse ürün workspace
+    // dışındaki dosyayı döndürüyordu.
+    //
+    // Çözüm bir kez AÇIP tanıtıcıdan ilerlemek: `fstat` ve okuma artık kapının
+    // gördüğü inode'a bağlı, yola değil. Aynı desen backend'de zaten var
+    // (`local_token_file` fd üzerinden doğruluyor) — burada tekrar edilmesinin
+    // sebebi iki ayrı süreç olması, kopyalama değil.
+    let fd: number | null = null
+    try {
+      fd = fs.openSync(fullPath, 'r')
+      const st = fs.fstatSync(fd)
+      if (!st.isFile()) return { error: 'unsupported' }
+      // Dev Unity sahne/prefab YAML'ları 100MB'ı bulabilir — Monaco'yu dondurur.
+      if (st.size > 8 * 1024 * 1024) {
+        return { error: 'too-large' }
+      }
+      // Sabit bağ kapıda da reddediliyor; burada tekrar bakmak, açış ile kapı
+      // arasında yaratılmış bir ikinci adı da yakalıyor.
+      if (st.nlink > 1) return { error: 'unsupported' }
+      const content = fs.readFileSync(fd, 'utf-8')
+      return { path: fullPath, name: path.basename(fullPath), content }
+    } finally {
+      if (fd !== null) { try { fs.closeSync(fd) } catch { /* kapatma hatası okumayı geçersizleştirmez */ } }
     }
-    const content = fs.readFileSync(fullPath, 'utf-8')
-    return { path: fullPath, name: path.basename(fullPath), content }
   } catch { return null }
 })
 

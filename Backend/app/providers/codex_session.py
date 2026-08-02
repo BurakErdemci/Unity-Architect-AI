@@ -227,6 +227,86 @@ def _describe_approval(method: str, params: dict) -> str:
     return method
 
 
+def bul_onay_hakemi(govde) -> "str | None":
+    """`thread/start` yanıtında AKTİF onay hakemini arar; bulamazsa ``None``.
+
+    ⚠️ Neden derin ve biçimden bağımsız arama (dış denetim bulgusu,
+    ``fail-open-validation``): ilk sürüm yalnız ``result.approvalsReviewer`` ve
+    ``result.thread.approvalsReviewer`` adreslerine bakıyordu. Probe ile
+    üretildi: değer ``approvals_reviewer`` (snake_case) ya da bir düzey daha
+    derinde geldiğinde arama BOŞ dönüyordu, ``None`` dalı da bilerek geçirgen
+    olduğu için oturum **sessizce başlıyordu** — yani gerçekte ``auto_review``
+    koşarken ürün hiçbir şey fark etmiyordu. "Bulamadım" ile "yok" aynı sonuca
+    çıkıyordu ve bu, muhafızı olmadığı hâle döndürüyordu.
+
+    Ölçüt ADRES değil ANAHTAR ADI: ``approvals_reviewer`` / ``approvalsReviewer``
+    hangi derinlikte olursa olsun yakalanıyor. Bu deponun kayıtlı dersi — bir
+    muhafız her turda yeni bir kenar veriyorsa eşiği daraltma, ölçütü değiştir.
+
+    İlk bulunan değer dönüyor: aynı yanıtta iki farklı hakem taşınması
+    beklenmiyor, ve taşınsaydı ikisinden biri zaten ``user`` olmayacağı için
+    çağıran fail-closed dalına düşerdi.
+    """
+    hedef = {"approvalsreviewer", "approvals_reviewer"}
+
+    def gez(dugum, derinlik: int = 0):
+        # Derinlik sınırı: kötü biçimli ya da döngüsel bir yanıt bu aramayı
+        # sonsuza sürüklememeli. 6 seviye, ölçülen şekillerin hepsini kapsıyor.
+        if derinlik > 6:
+            return None
+        if isinstance(dugum, dict):
+            for k, v in dugum.items():
+                if isinstance(k, str) and k.replace("-", "_").lower() in hedef:
+                    if isinstance(v, str):
+                        return v
+                bulunan = gez(v, derinlik + 1)
+                if bulunan is not None:
+                    return bulunan
+        elif isinstance(dugum, (list, tuple)):
+            for v in dugum:
+                bulunan = gez(v, derinlik + 1)
+                if bulunan is not None:
+                    return bulunan
+        return None
+
+    return gez(govde)
+
+
+def dogrula_onay_hakemi(sonuc, conversation_id="?") -> "str | None":
+    """`thread/start` sonucundaki hakem `user` değilse FIRLATIR.
+
+    ⚠️ Bu gövde `start()`'ın içinde satır içiydi ve tam olarak bu yüzden
+    testlerden kaçmıştı (dış denetim bulgusu `test-double-divergence`): testler
+    yerel bir KOPYAYI çağırıyordu, dolayısıyla bu blok silinse ya da koşulu
+    tersine dönse hiçbir test kırılmıyordu. Ayrı bir gövde olması, testin
+    ürünün kendisini çalıştırabilmesi için — kopyalanabilir bir mantık er ya da
+    geç kopyasından ayrışıyor.
+
+    Dönüş, bulunan hakem (ya da bulunamadıysa ``None``) — çağıranın loglaması
+    için değil, testin ölçebilmesi için.
+    """
+    hakem = bul_onay_hakemi(sonuc)
+    if hakem is not None and hakem != "user":
+        # Fail-closed: onayı kimin verdiğini bilmiyorsak tur başlamamalı.
+        # `auto_review` ve eski `guardian_subagent`'ın İKİSİ de reddediliyor —
+        # ikisi de kararı kullanıcıdan alıp bir modele veriyor.
+        raise RuntimeError(
+            "Codex onay hakemi 'user' değil: "
+            f"{hakem!r}. Onay isteği kullanıcıya değil bir modele "
+            "gidecekti; tur başlatılmadı. `~/.codex/config.toml` içindeki "
+            "`approvals_reviewer` ayarını kontrol edin."
+        )
+    if hakem is None:
+        # Alanı HİÇBİR YERDE bulamadık. Turu kırmıyoruz (alanı döndürmeyen bir
+        # Codex sürümü olabilir ve orada açığın var olduğu ölçülmedi), ama
+        # sessiz de kalmıyoruz: sabitlemenin doğrulanamadığı tek durum bu.
+        logger.warning(
+            f"[CodexSession:{conversation_id}] thread/start yanıtında onay "
+            "hakemi alanı YOK — sabitlendiği DOĞRULANAMADI."
+        )
+    return hakem
+
+
 def _trusted_mcp_config() -> dict:
     """IDE'nin kendi MCP'leri için Codex-katmanı onay politikasını üret.
 
@@ -391,28 +471,7 @@ class CodexSession:
         # istemekle almak arasındaki farkı ölçmeden geçmek, bu deponun tekrar
         # tekrar ödediği bedel: bir bayrağı GÖNDERDİĞİNİ doğrulayan test,
         # bayrağın IŞIRDIĞINI doğrulamıyor.
-        _reviewer = _result.get("approvalsReviewer")
-        if _reviewer is None:
-            _reviewer = (_result.get("thread") or {}).get("approvalsReviewer")
-        if _reviewer is not None and _reviewer != "user":
-            # Fail-closed: onayı kimin verdiğini bilmiyorsak tur başlamamalı.
-            # `auto_review` ve eski `guardian_subagent`'ın İKİSİ de reddediliyor
-            # — ikisi de kararı kullanıcıdan alıp bir modele veriyor.
-            raise RuntimeError(
-                "Codex onay hakemi 'user' değil: "
-                f"{_reviewer!r}. Onay isteği kullanıcıya değil bir modele "
-                "gidecekti; tur başlatılmadı. `~/.codex/config.toml` içindeki "
-                "`approvals_reviewer` ayarını kontrol edin."
-            )
-        if _reviewer is None:
-            # Alanı döndürmeyen bir Codex sürümü olabilir. Turu KIRMIYORUZ —
-            # doğrulayamamak, ürünün hiç çalışmaması için yeterli sebep değil ve
-            # bu sürümlerde açığın var olduğu da ölçülmedi. Ama sessiz de
-            # kalmıyoruz: bu satır, sabitlemenin doğrulanmadığı tek durum.
-            logger.warning(
-                f"[CodexSession:{self.conversation_id}] thread/start yanıtında "
-                "`approvalsReviewer` yok — onay hakeminin sabitlendiği DOĞRULANAMADI."
-            )
+        dogrula_onay_hakemi(_result, self.conversation_id)
         self._started = True
         logger.info(f"[CodexSession:{self.conversation_id}] başlatıldı (model={self.model or 'default'}, thread={self.thread_id})")
 

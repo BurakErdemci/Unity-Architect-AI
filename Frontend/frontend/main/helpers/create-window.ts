@@ -24,6 +24,34 @@ const isExternallyOpenable = (rawUrl: string): boolean => {
   }
 }
 
+/**
+ * İki adres AYNI BELGEYİ mi gösteriyor — yani navigasyon sayfayı boşaltır mı?
+ *
+ * ⚠️ Dışa aktarılmasının sebebi ölçülmüş: bu karşılaştırma `will-navigate`
+ * handler'ının içinde satır içiydi ve ana süreç jsdom'da koşmadığı için hiçbir
+ * test onu çalıştıramıyordu — doğrulama yalnız kaynak metnine regex atmaktan
+ * ibaretti. Aynı arıza sınıfı bu turda backend'de de çıktı
+ * (`test-double-divergence`). Satır içi mantık testten kaçıyor.
+ *
+ * Ölçüt "aynı yol" DEĞİL "aynı belge": sorgu dizesi değişen bir tam navigasyon
+ * belgeyi yine boşaltıyor ve ilk sürüm buna izin veriyordu (dış denetim
+ * bulgusu, probe ile üretildi).
+ *
+ * Hash BİLEREK dışarıda — `#bolum` belgeyi boşaltmıyor.
+ * Sondaki eğik çizgi normalleştiriliyor: `next.config.js` `trailingSlash: true`
+ * kullanıyor, yani `/home` ile `/home/` aynı sayfanın iki yazımı.
+ *
+ * Ayrıştırılamayan bir adreste FIRLATIR; çağıran onu fail-closed yorumluyor.
+ */
+export const ayniBelgeMi = (a: string, b: string): boolean => {
+  const kimlik = (ham: string): string => {
+    const u = new URL(ham)
+    const yol = u.pathname.endsWith('/') ? u.pathname.slice(0, -1) : u.pathname
+    return `${u.origin}${yol}${u.search}`
+  }
+  return kimlik(a) === kimlik(b)
+}
+
 const openExternally = (rawUrl: string) => {
   if (!isExternallyOpenable(rawUrl)) return
   shell.openExternal(rawUrl).catch((err) => {
@@ -68,19 +96,46 @@ const applyNavigationPolicy = (win: BrowserWindow) => {
     //
     // Bu İKİNCİL savunma: asıl düzeltme `MarkdownRenderer`'ın `a` override'ı.
     // Buranın işi, gözden kaçan başka bir `<a>`nın pencereyi boşaltamaması.
+    //
+    // ⚠️ ÖLÇÜT İKİ KEZ DEĞİŞTİ, ikisi de dış denetimin bulgusu:
+    //
+    //   1. İlk sürüm yalnız `pathname` karşılaştırıyordu. Ölçüldü: `?x=1` aynı
+    //      pathname'e sahip, yani GEÇİYORDU — ve sorgu dizesi değişen bir tam
+    //      navigasyon belgeyi yine boşaltıyor. Muhafız, var olma sebebi olan
+    //      sınıfa açık kalmıştı. Doğru ölçüt "aynı yol" değil, **"aynı belge"**.
+    //   2. `catch` dalı `preventDefault` ÇAĞIRMIYORDU, yani ayrıştırılamayan
+    //      bir durumu izne çeviriyordu — fail-OPEN. Gerekçesi de yanlıştı:
+    //      "ilk yükleme" diyordu, oysa açılış `loadURL` ile oluyor ve `loadURL`
+    //      bu olayı hiç tetiklemiyor.
+    //
+    // Hash BİLEREK dışarıda: `#bolum` belgeyi boşaltmıyor ve zaten çoğu durumda
+    // `will-navigate` değil sayfa-içi navigasyon üretiyor.
+    // Sondaki eğik çizgi normalleştiriliyor: `next.config.js` `trailingSlash:
+    // true` kullanıyor, yani `/home` ile `/home/` aynı sayfanın iki yazımı.
     try {
-      const hedef = new URL(url)
-      const mevcut = new URL(win.webContents.getURL())
-      if (hedef.pathname === mevcut.pathname) return
+      if (ayniBelgeMi(url, win.webContents.getURL())) return
+    } catch (err) {
+      // ⚠️ FAIL-CLOSED. Karşılaştıramıyorsak izin VERMİYORUZ. Bilinmeyen bir
+      // durumu izne çevirmek, muhafızı olmadığı hâle döndürür.
       event.preventDefault()
-      console.warn(
-        '[nav-policy] origin-içi ama BAŞKA yola gitmeye çalışan navigasyon engellendi:',
-        hedef.pathname,
-      )
-    } catch {
-      // Mevcut URL henüz yoksa (ilk yükleme) karşılaştıracak bir şey yok;
-      // engellemek açılışı kırardı.
+      console.warn('[nav-policy] navigasyon adresi karşılaştırılamadı, engellendi:', err)
+      return
     }
+    event.preventDefault()
+    console.warn('[nav-policy] belgeyi boşaltacak navigasyon engellendi:', url)
+  })
+
+  // Sunucu tarafı yönlendirme AYRI bir olay: `will-navigate` yalnız ilk adresi
+  // görüyor, 302 sonrası hedef denetlenmeden takip edilebiliyordu (dış denetim
+  // bulgusu). İlk adrese verilen izin, görülmemiş bir son adrese izin değildir.
+  win.webContents.on('will-redirect', (event, url) => {
+    if (!isOwnOrigin(url)) {
+      event.preventDefault()
+      openExternally(url)
+      return
+    }
+    event.preventDefault()
+    console.warn('[nav-policy] origin-içi yönlendirme engellendi:', url)
   })
 
   // Uygulama hiç <webview> kullanmıyor; enjekte edilen bir webview politikayı

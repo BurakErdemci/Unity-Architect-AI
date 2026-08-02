@@ -73,6 +73,15 @@ class CodexProvider(BaseCLIProvider):
             # taşırdı. Bu depoda ölçülmüş kural — bir sınıfı kapatmak giriş
             # noktalarını SAYMAYI gerektiriyor.
             "-c", 'approvals_reviewer="user"',
+            # ⚠️ `--strict-config` OLMADAN bu satır bir dilekten ibaret (dış
+            # denetim bulgusu, `unenforced-security-setting`). Ölçüldü: Codex
+            # 0.146.0 bilmediği bir `-c` anahtarını sessizce yutuyor ve `rc=0`
+            # dönüyor. Yani anahtar bir gün yeniden adlandırılırsa ürün onay
+            # hakemini sabitlediğini SANMAYA devam ederdi. Bu yolda yanıttan
+            # doğrulama yapamıyoruz (app-server yolundaki gibi bir yanıt yok),
+            # o yüzden güvence bu bayrağa dayanıyor: anahtar tanınmazsa çağrı
+            # gürültüyle düşsün, sessizce izinsiz koşmasın.
+            "--strict-config",
         ]
         if unity_running:
             cmd.extend(["-c", 'mcp_servers.unityMCP.default_tools_approval_mode="approve"'])

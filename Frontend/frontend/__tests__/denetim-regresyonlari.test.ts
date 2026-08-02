@@ -1,0 +1,119 @@
+/**
+ * 2 Ağu 2026 dış-göz denetiminden terfi eden regresyon testleri.
+ *
+ * Her blok, bir kırmızı takım probe'unun kalıcı karşılığı. Probe'ların kendisi
+ * repoya girmiyor; iddiaları giriyor. Hepsi ÜRÜNÜN gövdesini çağırıyor —
+ * bu turun en pahalı dersi, kopyalanan bir mantığın kopyasından ayrışmasıydı.
+ */
+import fs from 'fs'
+import os from 'os'
+import path from 'path'
+
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+
+import { ayniBelgeMi } from '../main/helpers/create-window'
+import { isAllowedWorkspaceReadFile } from '../main/helpers/file-security'
+import { yerelYolaCevir, linkTuru } from '../renderer/lib/chatLink'
+
+describe('navigasyon ölçütü — "aynı yol" değil "aynı belge"', () => {
+  const SAYFA = 'app://./home/'
+
+  it('aynı belge: izin (yeniden yükleme)', () => {
+    expect(ayniBelgeMi(SAYFA, SAYFA)).toBe(true)
+  })
+
+  it('SORGU DİZESİ farklıysa AYNI BELGE DEĞİL', () => {
+    // ⚠️ Bulgu `incomplete-navigation-guard`: ilk sürüm yalnız `pathname`
+    // karşılaştırıyordu, `?x=1` geçiyordu ve o navigasyon SPA'yı yine
+    // boşaltıyordu — muhafız, var olma sebebi olan sınıfa açık kalmıştı.
+    expect(ayniBelgeMi('app://./home/?conversation=63', SAYFA)).toBe(false)
+  })
+
+  it('sondaki eğik çizgi farkı AYNI belge sayılıyor', () => {
+    // `next.config.js` `trailingSlash: true`; `/home` ile `/home/` aynı sayfa.
+    // Normalleştirmezsek meşru bir bağlantı sessizce ölürdü (bulgu
+    // `silent-navigation-rejection`).
+    expect(ayniBelgeMi('app://./home', SAYFA)).toBe(true)
+  })
+
+  it('hash farkı AYNI belge sayılıyor — çapa boşaltmıyor', () => {
+    expect(ayniBelgeMi('app://./home/#bolum', SAYFA)).toBe(true)
+  })
+
+  it('başka yol AYNI belge değil', () => {
+    expect(ayniBelgeMi('app://./settings/', SAYFA)).toBe(false)
+  })
+
+  it('ayrıştırılamayan adres FIRLATIYOR — çağıran fail-closed yorumluyor', () => {
+    // ⚠️ Bulgu `fail-open-navigation`: boş/bozuk mevcut adres `catch`'e
+    // düşüyordu ve `catch` `preventDefault` çağırmadığı için navigasyon
+    // GEÇİYORDU. Fırlatmanın kendisi sözleşmenin parçası.
+    expect(() => ayniBelgeMi(SAYFA, '')).toThrow()
+    expect(() => ayniBelgeMi(SAYFA, 'not a url')).toThrow()
+  })
+})
+
+describe('okuma kapısı — sabit bağ ve alternatif veri akışı', () => {
+  let ws = ''
+
+  beforeEach(() => {
+    ws = fs.mkdtempSync(path.join(os.tmpdir(), 'denetim-regresyon-'))
+  })
+  afterEach(() => {
+    try { fs.rmSync(ws, { recursive: true, force: true }) } catch { /* yok */ }
+  })
+
+  it('sıradan bir metin dosyası kabul ediliyor', () => {
+    // Ters yön: her şeyi reddeden bir mutant aşağıdaki iki testi de geçerdi.
+    const p = path.join(ws, 'notes.txt')
+    fs.writeFileSync(p, 'merhaba')
+    expect(isAllowedWorkspaceReadFile(p, ws)).toBe(true)
+  })
+
+  it('SABİT BAĞ reddediliyor', () => {
+    // ⚠️ Bulgu `hardlink-containment-bypass`: `realpathSync` sembolik bağı ve
+    // junction'ı çözüyor ama sabit bağ bir bağ DEĞİL, ikinci bir addır —
+    // gerçek yolu workspace içinde kalır, baytları dışarıdakinin.
+    // ⭐ Aynı sınıf backend'de zaten kapalıydı; ayrışan iki kopyaydı.
+    const disarisi = path.join(os.tmpdir(), `denetim-sir-${process.pid}.json`)
+    fs.writeFileSync(disarisi, '{"token":"disaridaki-sir"}')
+    const yem = path.join(ws, 'notes.json')
+    try {
+      fs.linkSync(disarisi, yem)
+    } catch {
+      return // bu platformda sabit bağ kurulamıyor — iddia ölçülemez
+    }
+    try {
+      expect(isAllowedWorkspaceReadFile(yem, ws)).toBe(false)
+    } finally {
+      try { fs.rmSync(disarisi, { force: true }) } catch { /* yok */ }
+    }
+  })
+
+  it('ALTERNATİF VERİ AKIŞI reddediliyor', () => {
+    // ⚠️ Bulgu `alternate-data-stream-extension-bypass`: Windows
+    // `host.exe:notes.txt`'yi `host.exe`'nin akışı olarak okuyor ama
+    // `path.extname` sondaki `.txt`'yi dosyanın uzantısı sanıyordu — yani
+    // uzantı beyaz listesi aslında `.exe` olan baytları yetkilendiriyordu.
+    // Sürücü harfindeki iki nokta meşru; ölçüt ondan SONRAKİ kısma bakıyor.
+    expect(isAllowedWorkspaceReadFile(path.join(ws, 'host.exe:notes.txt'), ws)).toBe(false)
+  })
+})
+
+describe('file: URL yola çevriliyor', () => {
+  it('Windows file: URL sürücü yoluna dönüşüyor', () => {
+    // ⚠️ Bulgu `renderer-gate-path-shape-mismatch`: `file:` bilerek
+    // geçiriliyordu ama ana süreç yol dizgesi bekliyor
+    // (`path.isAbsolute('file:///C:/a')` Windows'ta false), yani o dal hiç
+    // çalışmıyordu — "destekliyoruz" görünen sessiz bir yalan.
+    expect(yerelYolaCevir('file:///C:/ws/notes.txt')).toBe('C:/ws/notes.txt')
+  })
+
+  it('yüzde-kodlama file: içinde de çözülüyor', () => {
+    expect(yerelYolaCevir('file:///C:/Unity%20Projeler/a.txt')).toBe('C:/Unity Projeler/a.txt')
+  })
+
+  it('file: hâlâ yerel dosya sayılıyor — sınıflandırma ile çevirim uyumlu', () => {
+    expect(linkTuru('file:///C:/ws/a.txt')).toBe('yerel-dosya')
+  })
+})
