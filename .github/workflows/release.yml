@@ -88,7 +88,18 @@ jobs:
 
       - name: Frontend build (installer + updater feed)
         working-directory: Frontend/frontend
-        run: npm run build
+        # ⚠️ `--publish never` ZORUNLU (ölçüldü 2 Ağu 2026, v2.3.0 tag'inde).
+        # electron-builder CI'da bir tag görünce KENDİLİĞİNDEN yayınlama moduna
+        # geçiyor ve `electron-builder.yml`'deki `publish: github` bloğunu
+        # kullanmaya çalışıyor; `GH_TOKEN` verilmediği için "GitHub Personal
+        # Access Token is not set" ile HER İKİ platform da düşüyordu. Derleme
+        # aslında bitmişti — Windows exe'si ve macOS'un iki dmg'si üretildikten
+        # SONRA, yalnız yayınlama adımında.
+        #
+        # `publish` bloğu silinemez: electron-updater'ın okuduğu `app-update.yml`
+        # ondan üretiliyor, yani kaldırmak güncelleme bildirimini öldürürdü.
+        # Doğru yer burası — yayınlamayı ayrı bir job yapıyor.
+        run: npm run build -- --publish never
 
       - name: Artifact'ları yükle
         uses: actions/upload-artifact@v4
@@ -116,6 +127,11 @@ jobs:
           path: dist-artifacts
           merge-multiple: true
 
+      # ⚠️ `RELEASE_NOTES.md` ELLE güncellenen bir dosya ve bayatlayabiliyor —
+      # 2 Ağu 2026'da içeriği hâlâ v2.2.0'ındı. Bu adım koşsaydı v2.3.0 release'ine
+      # bir önceki sürümün notlarını basacaktı. Notlar artık `CHANGELOG.md`'de
+      # sürüm başlıklarıyla tutuluyor; bu dosya onun en üst bölümünden
+      # güncellenmeli. Hatırlamaya bağlı bir adım er ya da geç atlanıyor.
       - name: Taslak release oluştur + dosyaları yükle
         uses: softprops/action-gh-release@v2
         with:
