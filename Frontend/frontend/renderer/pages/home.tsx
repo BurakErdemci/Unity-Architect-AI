@@ -377,8 +377,15 @@ export default function Home() {
   if (!fs.workspacePath) {
     return (
       <LangContext.Provider value={langCtxValue}>
+        {/* `auth.user` NULL OLABİLİR ve bu dosyanın geri kalanı bunu zaten
+            biliyor: 20 satır aşağıda `auth.user?.sessionToken ?? ''`, başlıkta
+            `auth.user?.name || 'Giriş'`. Korumasız kalan tek okuma buydu ve
+            `home.tsx`'te oturum için bir erken dönüş YOK — yani kullanıcı henüz
+            yüklenmemişken bu dal çizilirse TypeError fırlar ve (hata sınırı
+            olmadan) pencere komple boşalırdı. Ad yerine boş metin: yanlış bir
+            ad göstermektense selamlamayı adsız bırakmak dürüst olan. */}
         <WorkspaceScreen
-          userName={auth.user.name} lastWorkspacePath={fs.lastWorkspacePath}
+          userName={auth.user?.name ?? ''} lastWorkspacePath={fs.lastWorkspacePath}
           onOpenWorkspaceDialog={fs.openFolder} onSelectLastWorkspace={() => fs.selectWorkspace(fs.lastWorkspacePath!)}
           onLogout={handleLogout}
         />

@@ -159,6 +159,13 @@ const tr = {
   'hint.low': 'Low',
   'hint.lite': 'Lite',
   'hint.reasoning': 'Reasoning',
+  // ErrorBoundary — beyaz ekranın yerini alan kart
+  'error.title': 'Bir şey ters gitti',
+  'error.body': 'Arayüzün bir parçası çizilirken beklenmeyen bir hata oluştu. Uygulamayı kapatmana gerek yok — aşağıdaki düğmeyle yeniden yükleyebilirsin.',
+  'error.detailsLabel': 'Teknik ayrıntı',
+  'error.copy': 'Ayrıntıyı kopyala',
+  'error.copied': 'Kopyalandı',
+  'error.reload': 'Yeniden Yükle',
 } as const;
 
 const en: Record<keyof typeof tr, string> = {
@@ -312,6 +319,13 @@ const en: Record<keyof typeof tr, string> = {
   'hint.low': 'Low',
   'hint.lite': 'Lite',
   'hint.reasoning': 'Reasoning',
+  // ErrorBoundary
+  'error.title': 'Something went wrong',
+  'error.body': 'An unexpected error occurred while rendering part of the interface. You do not need to close the app — use the button below to reload.',
+  'error.detailsLabel': 'Technical details',
+  'error.copy': 'Copy details',
+  'error.copied': 'Copied',
+  'error.reload': 'Reload',
 };
 
 export const translations: Record<Lang, Record<string, string>> = { tr, en };

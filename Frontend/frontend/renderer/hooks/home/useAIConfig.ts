@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import axios from 'axios';
 import { AIConfig, AvailableModels, UserData } from '../../components/home/types';
+import { apiHataMesaji } from '../../lib/apiError';
 
 /**
  * Backend'in `GET /mcp/unity/status` sözleşmesi (`unity_mcp_manager.get_status`).
@@ -23,7 +24,50 @@ import { AIConfig, AvailableModels, UserData } from '../../components/home/types
  *     `off` yapmıyordu ve o kısım HAKLIYDI; eksik olan üçüncü seçenekti.
  *   • `blocked` DEĞİL — o, kimlik testinin YABANCI dediği ölçülmüş bir sonuç.
  */
-export type UnityMCPStatus = 'off' | 'blocked' | 'starting' | 'running' | 'connected' | 'unknown';
+/**
+ * Tek kaynak: tip bu DİZİDEN türüyor, tersi değil.
+ *
+ * Sebebi bulgu I-1: durum listesi yalnız bir TİP olarak yazılmıştı ve tipler
+ * çalışma anında yok oluyor. Aşağıdaki `unityMcpStatusOku` çalışma anında
+ * doğrulama yapabilsin diye listenin bir DEĞER olarak da var olması gerekiyor;
+ * ikisini elle ayrı tutmak, aynı bilginin iki kopyası demekti ve bu depoda
+ * "birbiriyle uyuşması gereken iki yer" ölçülmüş bir arıza sınıfı.
+ */
+export const UNITY_MCP_DURUMLARI = [
+  'off', 'blocked', 'starting', 'running', 'connected', 'unknown',
+] as const;
+
+export type UnityMCPStatus = typeof UNITY_MCP_DURUMLARI[number];
+
+/**
+ * Backend'den gelen ham `status` alanını birliğin İÇİNE zorlar.
+ *
+ * ⚠️ Bu bir tip cast'inin yerini alıyor (bulgu I-1). Eski satır
+ * `res.data.status as UnityMCPStatus` idi ve `as` çalışma anında HİÇBİR ŞEY
+ * yapmıyor: birlik dışı bir değer (backend'in eklediği yeni bir durum, bozuk
+ * bir yanıt, araya giren bir vekil) doğrudan state'e giriyordu. İki tüketici de
+ * durumu `Record<UnityMCPStatus, …>` sözlüğünde arıyor (`TONE[status]`,
+ * `UNITY_STATUS_CONFIG[status]`) → `undefined` → `.btn`/`.border` okuması →
+ * render sırasında TypeError → ErrorBoundary yoksa tüm ağaç unmount, BEYAZ EKRAN.
+ *
+ * `Record<...>` koruması yeterli sanılmıştı ve bu ölçülerek yanlışlandı:
+ * `Record` yalnız tip DOĞRUYSA koruyor, cast'in altından geçen değer için
+ * hiçbir şey yapmıyor (aynı tespit `UnityMcpToggle.tsx` başlığında da yazılı).
+ *
+ * Bilinmeyen değer `unknown`'a düşüyor, `off`a DEĞİL: `off` bir "aç" davetidir
+ * ve tanımadığımız bir yanıtı davete çevirmek, ölçmediğimiz bir şeyi iddia
+ * etmek olurdu — I-2'nin dersi.
+ */
+export function unityMcpStatusOku(ham: unknown): UnityMCPStatus {
+  if (typeof ham === 'string' && (UNITY_MCP_DURUMLARI as readonly string[]).includes(ham)) {
+    return ham as UnityMCPStatus;
+  }
+  // Sessiz düşmek, backend'in sözleşmeyi bozduğunu gizlerdi. Kullanıcıya toast
+  // atmıyoruz (yoklama 8 saniyede bir koşuyor, ekranı doldururdu); geliştirici
+  // konsolu bu bilginin doğru yeri.
+  console.warn('[unityMCP] tanınmayan durum değeri, `unknown` sayıldı:', ham);
+  return 'unknown';
+}
 
 export const useAIConfig = (API: string, user: UserData | null, showToast: (msg: string, type: any) => void, workspacePath?: string) => {
   const [aiConfig, setAiConfig] = useState<AIConfig>({
@@ -76,7 +120,7 @@ export const useAIConfig = (API: string, user: UserData | null, showToast: (msg:
     try {
       const res = await axios.get(`${API}/mcp/unity/status`);
       if (!guncelMi()) return;
-      const status = res.data.status as UnityMCPStatus;
+      const status = unityMcpStatusOku(res.data?.status);
       const reason = typeof res.data?.reason === 'string' ? res.data.reason : null;
 
       // Toggle ON sonrası 30s içinde 'off' gelirse yoksay — sunucu henüz başlıyor olabilir.
@@ -159,15 +203,15 @@ export const useAIConfig = (API: string, user: UserData | null, showToast: (msg:
       // sürecin ADINI taşıyor (`unity_mcp_manager._blocked_reason`) ve eskiden
       // sabit bir "toggle başarısız" metniyle eziliyordu: sebep üretiliyor ama
       // kullanıcıya hiç ulaşmıyordu.
-      const detail = err?.response?.data?.detail;
-      // Tip kontrolü kozmetik değil, çökme kapısı: FastAPI doğrulama hatası
-      // `detail`'i bir DİZİ döndürüyor ve dizi doğrudan render edilirse React
-      // "Objects are not valid as a React child" ile düşüyor.
-      const msg = typeof detail === 'string' && detail.trim()
-        ? detail
-        : err?.response?.status === 409
+      // Tip kontrolü kozmetik değil, çökme kapısı — gerekçesi ve korunan
+      // çökme `apiHataMesaji`'nin gövdesinde. Buradan çıkarılmasının sebebi
+      // bulgu I-3: aynı koruma `ModelSelector`'da YOKTU, çünkü kopyalanmıştı.
+      const msg = apiHataMesaji(
+        err,
+        err?.response?.status === 409
           ? "Unity Editor açık değil. Lütfen önce Unity'yi açın."
-          : 'Unity MCP toggle başarısız.';
+          : 'Unity MCP toggle başarısız.',
+      );
       showToast(msg, 'error');
       setUnityMcpError(msg);
       // 6 saniye sonra uyarıyı temizle

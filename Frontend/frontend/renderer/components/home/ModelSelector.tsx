@@ -17,6 +17,7 @@ import {
 import { ModelAvatar } from './ModelAvatar';
 import { AIConfig, AvailableModels, UserData } from './types';
 import { useLang } from '../../lib/i18n';
+import { apiHataMesaji } from '../../lib/apiError';
 
 interface ModelSelectorProps {
   aiConfig: AIConfig;
@@ -170,7 +171,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
       await axios.post(`${API}/cli-install/${g.availKey}`, null, { headers: { 'X-Session-Token': user?.sessionToken ?? '' } });
       showToast('Kurulum penceresi açıldı — bittiğinde buradaki ↻ Yenile ile kontrol et.', 'info');
     } catch (e: any) {
-      showToast(e?.response?.data?.detail || 'Kurulum başlatılamadı.', 'error');
+      showToast(apiHataMesaji(e, 'Kurulum başlatılamadı.'), 'error');
     } finally { setBusyCli(null); }
   };
   const loginCli = async (g: CliGroupDef) => {
@@ -179,7 +180,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
       await axios.post(`${API}/cli-login/${g.availKey}`, null, { headers: { 'X-Session-Token': user?.sessionToken ?? '' } });
       showToast('Giriş penceresi açıldı — tarayıcıda hesabınla giriş yap, sonra ↻ Yenile.', 'info');
     } catch (e: any) {
-      showToast(e?.response?.data?.detail || 'Giriş başlatılamadı.', 'error');
+      showToast(apiHataMesaji(e, 'Giriş başlatılamadı.'), 'error');
     } finally { setBusyCli(null); }
   };
 
