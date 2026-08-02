@@ -47,9 +47,40 @@ const applyNavigationPolicy = (win: BrowserWindow) => {
   })
 
   win.webContents.on('will-navigate', (event, url) => {
-    if (isOwnOrigin(url)) return
-    event.preventDefault()
-    openExternally(url)
+    if (!isOwnOrigin(url)) {
+      event.preventDefault()
+      openExternally(url)
+      return
+    }
+
+    // ⚠️ Origin-içi olmak YETMİYOR (ölçülmüş arıza, 2 Ağu 2026). Sohbetteki
+    // `[test.txt](test-dosyasi.txt)` gibi GÖRELİ bir link tarayıcı tarafından
+    // uygulamanın kendi origin'ine çözülüyor (`app://./test-dosyasi.txt`), yani
+    // `isOwnOrigin` true dönüyordu ve koşulsuz `return` navigasyonu geçiriyordu.
+    // Sonuç: tek BrowserWindow o adrese gidiyor, SPA unload oluyor, kullanıcı
+    // "uygulama resetlendi" diyor. Çökme olmadığı için hata sınırı da
+    // yakalayamıyordu — bu yüzden arıza uzun süre yanlış sınıfta arandı.
+    //
+    // Ölçüm: ürün açılışta YALNIZ `/home` yüklüyor (background.ts) ve oradan
+    // başka bir sayfaya giden tam navigasyon YOK (`next.tsx` erişilemez
+    // boilerplate). Dolayısıyla meşru origin-içi navigasyon = AYNI sayfanın
+    // yeniden yüklenmesi. Farklı bir yol istenmişse bu bir bağ/link kazasıdır.
+    //
+    // Bu İKİNCİL savunma: asıl düzeltme `MarkdownRenderer`'ın `a` override'ı.
+    // Buranın işi, gözden kaçan başka bir `<a>`nın pencereyi boşaltamaması.
+    try {
+      const hedef = new URL(url)
+      const mevcut = new URL(win.webContents.getURL())
+      if (hedef.pathname === mevcut.pathname) return
+      event.preventDefault()
+      console.warn(
+        '[nav-policy] origin-içi ama BAŞKA yola gitmeye çalışan navigasyon engellendi:',
+        hedef.pathname,
+      )
+    } catch {
+      // Mevcut URL henüz yoksa (ilk yükleme) karşılaştıracak bir şey yok;
+      // engellemek açılışı kırardı.
+    }
   })
 
   // Uygulama hiç <webview> kullanmıyor; enjekte edilen bir webview politikayı

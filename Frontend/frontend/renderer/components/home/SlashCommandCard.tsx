@@ -19,7 +19,11 @@ function barColor(p: number): string {
 }
 
 // ── /context: markdown özeti → headline bar + tam markdown ────────────────
-const ContextCard: React.FC<{ text: string; workspacePath?: string | null }> = ({ text, workspacePath }) => {
+const ContextCard: React.FC<{
+  text: string;
+  workspacePath?: string | null;
+  onOpenFile?: (path: string) => void;
+}> = ({ text, workspacePath, onOpenFile }) => {
   const [open, setOpen] = useState(false);
   const head = useMemo(() => {
     const m = text.match(/\*\*Tokens:\*\*\s*([\d.]+\s*[kKmMbB]?)\s*\/\s*([\d.]+\s*[kKmMbB]?)\s*\((\d+(?:\.\d+)?)%\)/);
@@ -32,7 +36,7 @@ const ContextCard: React.FC<{ text: string; workspacePath?: string | null }> = (
   if (!head) {
     return (
       <div className="prose prose-invert max-w-none text-[13px] leading-relaxed prose-table:text-[11px]">
-        <MarkdownRenderer content={text} workspacePath={workspacePath} />
+        <MarkdownRenderer content={text} workspacePath={workspacePath} onOpenFile={onOpenFile} />
       </div>
     );
   }
@@ -61,7 +65,7 @@ const ContextCard: React.FC<{ text: string; workspacePath?: string | null }> = (
         </button>
         {open && (
           <div className="prose prose-invert max-w-none text-[11px] leading-relaxed prose-table:text-[10.5px] prose-th:py-1 prose-td:py-0.5 border-t border-slate-800 pt-2">
-            <MarkdownRenderer content={text} workspacePath={workspacePath} />
+            <MarkdownRenderer content={text} workspacePath={workspacePath} onOpenFile={onOpenFile} />
           </div>
         )}
       </div>
@@ -109,10 +113,13 @@ interface Props {
   command: 'usage' | 'context' | string;
   text: string;
   workspacePath?: string | null;
+  /** Ham markdown dallarındaki dosya linkleri için — verilmezse link tıklanınca
+      hiçbir şey olmaz (navigasyon yine engellenir, bkz. MarkdownRenderer). */
+  onOpenFile?: (path: string) => void;
 }
 
-export const SlashCommandCard: React.FC<Props> = ({ command, text, workspacePath }) => {
-  if (command === 'context') return <ContextCard text={text} workspacePath={workspacePath} />;
+export const SlashCommandCard: React.FC<Props> = ({ command, text, workspacePath, onOpenFile }) => {
+  if (command === 'context') return <ContextCard text={text} workspacePath={workspacePath} onOpenFile={onOpenFile} />;
 
   const { subtitle, bars, stats, notes } = useMemo(() => parseSlashOutput(text), [text]);
   const [notesOpen, setNotesOpen] = useState(false);
@@ -121,7 +128,7 @@ export const SlashCommandCard: React.FC<Props> = ({ command, text, workspacePath
   if (bars.length === 0 && stats.length === 0 && !subtitle) {
     return (
       <div className="prose prose-invert max-w-none text-[13px] leading-relaxed">
-        <MarkdownRenderer content={text} workspacePath={workspacePath} />
+        <MarkdownRenderer content={text} workspacePath={workspacePath} onOpenFile={onOpenFile} />
       </div>
     );
   }

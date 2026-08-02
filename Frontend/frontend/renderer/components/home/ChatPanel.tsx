@@ -342,13 +342,14 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                       <span className="text-[11px] text-slate-600 tabular-nums shrink-0">· {fmtElapsed(elapsedSec)}</span>
                     </div>
                   ) : slashCmd ? (
-                    <SlashCommandCard command={slashCmd} text={msg.content} workspacePath={workspacePath} />
+                    <SlashCommandCard command={slashCmd} text={msg.content} workspacePath={workspacePath} onOpenFile={openFile} />
                   ) : (
                     <div className="chat-prose max-w-none">
                       <MarkdownRenderer
                         content={msg.content.replace('<!-- SCOPE_WARNING_ACTIVE -->', '')}
                         workspacePath={workspacePath}
                         onExportToUnity={handleExportToUnity}
+                        onOpenFile={openFile}
                       />
                     </div>
                   )}
@@ -479,7 +480,12 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                     </div>
                   )}
                   <div className="text-[13px] text-slate-200 whitespace-pre-wrap break-words">
-                    <MarkdownRenderer content={msg.content} />
+                    {/* Kullanıcının KENDİ mesajı da markdown'dan geçiyor, yani
+                        oraya yazdığı bir yol da link olabiliyor. `onOpenFile`
+                        burada da geçiliyor: aksi halde link ölü kalırdı ve
+                        "bazı linkler açılıyor, bazıları hiçbir şey yapmıyor"
+                        diye açıklaması olmayan bir davranış doğardı. */}
+                    <MarkdownRenderer content={msg.content} onOpenFile={openFile} />
                   </div>
                 </div>
               </div>

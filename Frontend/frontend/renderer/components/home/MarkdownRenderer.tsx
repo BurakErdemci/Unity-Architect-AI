@@ -5,6 +5,8 @@ import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/cjs/styles/prism";
 
+import { linkTuru, chatUrlTransform, yerelYolaCevir } from "../../lib/chatLink";
+
 const CodeBlock = ({ match, codeString, workspacePath, onExportToUnity, handleCopy, copiedBlock }: any) => {
   const isAgentFile = codeString.trim().startsWith("// path:");
   const [isCollapsed, setIsCollapsed] = useState(isAgentFile); // Ajan dosyaları varsayılan kapalı
@@ -98,10 +100,15 @@ const MarkdownRendererInner = ({
   content,
   workspacePath,
   onExportToUnity,
+  onOpenFile,
 }: {
   content: string;
   workspacePath?: string | null;
   onExportToUnity?: (code: string) => void;
+  /** Yerel bir dosya linkine tıklanınca çağrılır; verilmezse link ÖLÜ kalır
+      (yönlendirme yapmaz). Opsiyonel, çünkü `SlashCommandCard` gibi editörü
+      olmayan bağlamlar da bu bileşeni kullanıyor. */
+  onOpenFile?: (path: string) => void;
 }) => {
   const [copiedBlock, setCopiedBlock] = useState<string | null>(null);
 
@@ -114,7 +121,56 @@ const MarkdownRendererInner = ({
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
+      // ⚠️ Bu prop OLMADAN aşağıdaki override'a BOŞ DİZGE ulaşıyordu.
+      // `defaultUrlTransform` mutlak Windows yolunu (`C:\...`) güvensiz bir
+      // protokol sanıp siliyor; gerekçesi `chatLink.ts`'te ölçümüyle yazılı.
+      urlTransform={chatUrlTransform}
       components={{
+        /**
+         * ⚠️ Bu override OLMADAN sohbetteki her yerel link uygulamayı
+         * boşaltıyordu (ölçüldü 2 Ağu 2026): `href` uygulamanın kendi
+         * origin'ine çözülüyor, Electron'un `will-navigate` politikası
+         * origin-içi adresleri bilerek geçiriyor ve tek pencere o adrese
+         * gidiyor. Çökme değil, NAVİGASYON — bu yüzden hata sınırı da
+         * yakalayamıyordu.
+         *
+         * Dış linkler (`http(s)`, `mailto`) BİLEREK dokunulmadan geçiyor:
+         * onları `will-navigate` zaten `preventDefault` + `shell.openExternal`
+         * ile doğru yere gönderiyor. Buraya ikinci bir mekanizma koymak,
+         * çalışan bir yolu kopyalamak olurdu.
+         */
+        // `node` BİLEREK ayıklanıyor: react-markdown v10 onu her bileşene
+        // geçiriyor ve DOM elemanına yayılırsa React "unrecognized prop"
+        // uyarısı basıyor. Uyarı gürültüsü, gerçek uyarıları görünmez yapar.
+        a({ href, children, node: _node, ...props }: any) {
+          const tur = linkTuru(href);
+          // Dış link ve sayfa-içi çapa: dokunulmuyor, ikisi de meşru.
+          if (tur === 'dis' || tur === 'capa') {
+            return <a href={href} {...props}>{children}</a>;
+          }
+          return (
+            <a
+              href={href}
+              onClick={(e) => {
+                // `preventDefault` KOŞULSUZ — üç ayrı sebeple:
+                //   1. `onOpenFile` verilmemiş olabilir (editörsüz bağlamlar,
+                //      örn. `SlashCommandCard`); iptali ona bağlamak
+                //      düzeltmenin kendisinde bir kenar bırakırdı.
+                //   2. `tur === 'bos'` olabilir: boş `href` MEVCUT dokümana
+                //      çözülür, yani tıklama sayfayı yeniden yükler. Arızanın
+                //      ölçülen son hâli tam olarak buydu.
+                //   3. Açılacak dosya bulunamasa bile pencere boşalmamalı.
+                e.preventDefault();
+                // `yerelYolaCevir`: href yüzde-kodlu geliyor (ölçüldü), ham
+                // hâliyle gönderilse dosya diskte bulunamazdı.
+                if (tur === 'yerel-dosya') onOpenFile?.(yerelYolaCevir(String(href)));
+              }}
+              {...props}
+            >
+              {children}
+            </a>
+          );
+        },
         // Tablo panelden taşmasın: kendi kartında yatay scroll (bkz. globals.css .chat-table)
         table({ children, ...props }: any) {
           return (

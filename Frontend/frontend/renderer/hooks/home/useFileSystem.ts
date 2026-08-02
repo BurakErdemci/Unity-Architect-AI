@@ -168,7 +168,21 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
       setCode(result.content);
       setOriginalCode(result.content);
       setOpenedFilePath(result.path);
+      return;
     }
+    // ⚠️ Bu dal eskiden SESSİZDİ ve bu bir arıza sınıfıydı: ana süreçteki
+    // handler her hatada `null` dönüyor (dosya yok, workspace dışı, okuma
+    // hatası, workspace hiç seçilmemiş — hepsi aynı `null`). Dosya ağacından
+    // tıklandığında bu nadirdi, ama sohbetteki bir dosya LİNKİ artık buraya
+    // düşebiliyor: model olmayan ya da workspace dışında bir yol yazabilir.
+    // Sessiz dönmek, kullanıcıya tıkladığı şeyin bozuk olduğunu değil
+    // uygulamanın bozuk olduğunu düşündürür.
+    //
+    // Sebebi ayırt edemiyoruz (handler tek bir `null` döndürüyor, bunu
+    // değiştirmek onay/güvenlik yüzeyine dokunan ayrı bir iş), o yüzden mesaj
+    // TAHMİN ETMİYOR — ne bilmediğimizi söylüyor ve yolu gösteriyor ki
+    // kullanıcı kendisi karar verebilsin.
+    showToast(`Dosya açılamadı: ${filePath}`, 'warning');
   }, [workspacePath, showToast]);
 
   const toggleDir = useCallback(async (dirPath: string) => {
