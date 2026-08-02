@@ -2,7 +2,7 @@
   "private": true,
   "name": "unity-architect-ai",
   "description": "AI-powered Unity script generation and analysis tool",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "author": "Burak Emre Erdemci",
   "license": "SEE LICENSE IN LICENSE",
   "main": "app/background.js",
