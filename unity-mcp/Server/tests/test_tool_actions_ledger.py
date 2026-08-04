@@ -103,6 +103,7 @@ PINNED_READ_SURFACE: frozenset[str] = frozenset({
     "manage_graphics:stats_list_counters",
     "manage_graphics:volume_get_info",
     "manage_graphics:volume_list_effects",
+    "manage_input:describe",
     "manage_material:get_material_info",
     "manage_material:ping",
     "manage_packages:get_package_info",

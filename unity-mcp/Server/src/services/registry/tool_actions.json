@@ -338,6 +338,26 @@
       "evidence": "unity-mcp/Server/src/services/tools/manage_graphics.py:83",
       "note": "bake_cancel leaves partial lightmap data and bake_clear deletes baked lightmaps -- both writes despite reading like control verbs."
     },
+    "manage_input": {
+      "action_param": "action",
+      "tool_level": null,
+      "read_actions": [
+        "describe"
+      ],
+      "write_actions": [
+        "key",
+        "mouse_move",
+        "mouse_button",
+        "scroll",
+        "gamepad",
+        "ui_click",
+        "sequence",
+        "reset"
+      ],
+      "param_dependent": [],
+      "evidence": "unity-mcp/Server/src/services/tools/manage_input.py:43",
+      "note": "Sends synthesized input into a running play mode session. Every acting verb is a write: it mutates live game state, and ui_click invokes arbitrary onClick handlers, so its blast radius is whatever the game's UI does. reset is a write because it removes virtual devices and clears held keys. describe is the only read -- it reports resolution status, held keys and the project's Active Input Handling setting, and is the diagnostic the model is told to call first, so carding it would tax the recovery path."
+    },
     "manage_material": {
       "action_param": "action",
       "tool_level": null,

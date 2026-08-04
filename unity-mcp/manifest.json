@@ -106,6 +106,10 @@
       "description": "Manage cameras (Unity Camera + Cinemachine) with presets, pipelines, and blending"
     },
     {
+      "name": "manage_input",
+      "description": "Send simulated keyboard, mouse, gamepad and UI input into a running play mode session"
+    },
+    {
       "name": "manage_graphics",
       "description": "Manage rendering graphics: volumes, post-processing, light baking, rendering stats, pipeline settings, and URP renderer features"
     },
