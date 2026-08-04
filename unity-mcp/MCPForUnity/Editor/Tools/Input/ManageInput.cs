@@ -517,6 +517,30 @@ namespace MCPForUnity.Editor.Tools.Input
                 }
             }
 
+            // ⚠️ Tavan SON adımdan sonra da kontrol ediliyor — 3. doğrulama turunda
+            // bulundu (4 Ağu 2026). Gözcü yalnız adım BAŞLARKEN bakıyordu, yani
+            // tavanı aşan tek adımlık bir dizi "tamamlandı" diye dönüyordu. Süreyi
+            // aşmış bir işi sessizce başarılı saymak, gözcünün var olma sebebini
+            // ortadan kaldırıyor.
+            // ⚠️ Koşan bir adım KESİLEMİYOR ve kesilemez: ui_click oyunun kendi
+            // kodunu Editor'ün tek iş parçacığında senkron çalıştırıyor, Unity'de
+            // bunu önalmanın bir yolu yok. Gözcünün sözü "hiçbir adım tavanı aşmaz"
+            // değil, "aşıldığında öğrenirsin ve sıradaki başlamaz".
+            double overrunSeconds = EditorApplication.timeSinceStartup - deadline;
+            if (overrunSeconds > 0)
+            {
+                return new SuccessResponse(
+                    $"{steps.Count} adım tamamlandı, ANCAK dizi {MaxSequenceSeconds}s tavanını "
+                    + $"{overrunSeconds:0.#}s aştı — bir adım (büyük olasılıkla ui_click'in "
+                    + "tetiklediği oyun kodu) beklenenden uzun sürdü. Çağıran taraf zaman "
+                    + "aşımına uğramış olabilir.", new
+                    {
+                        log,
+                        overrunSeconds,
+                        held = InputSystemBridge.CurrentlyHeldKeys().ToArray(),
+                    });
+            }
+
             return new SuccessResponse($"{steps.Count} adım tamamlandı.", new
             {
                 log,

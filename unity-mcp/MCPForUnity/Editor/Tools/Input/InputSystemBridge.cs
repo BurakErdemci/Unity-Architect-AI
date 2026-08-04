@@ -357,9 +357,18 @@ namespace MCPForUnity.Editor.Tools.Input
             }
             catch (Exception ex)
             {
-                return "Olay kuyruğa alındı ve UYGULANACAK, ancak hemen işlenemedi: "
-                       + (ex.InnerException?.Message ?? ex.Message)
-                       + " — girdi bir sonraki Unity güncellemesinde etkili olur.";
+                // ⚠️ BAŞARI dönüyoruz, hata değil — 3. doğrulama turunda bulundu
+                // (4 Ağu 2026). 2. tur bu dalı bir "uyarı" olarak tasarlamıştı ama
+                // çağıranların hepsi `err != null` diye bakıyor, yani uyarı yine
+                // başarısızlık olarak raporlanıyordu. Oysa olay kuyrukta ve Unity'nin
+                // bir sonraki güncellemesinde uygulanacak: kullanıcıya "olmadı"
+                // demek, olan bir şey için yanlış cevaptır. Geciken bir başarının
+                // doğru kanalı konsol; read_console ile görülebilir.
+                Debug.LogWarning(
+                    "[manage_input] Girdi olayı kuyruğa alındı ve uygulanacak, ancak hemen "
+                    + "işlenemedi: " + (ex.InnerException?.Message ?? ex.Message)
+                    + " — bir sonraki Unity güncellemesinde etkili olur.");
+                return null;
             }
         }
 
