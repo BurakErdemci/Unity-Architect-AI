@@ -160,26 +160,38 @@ def test_properties_accepts_json_string(mock_unity):
 # tutuyor, "olabilir" diye yazılmış değil.
 # ---------------------------------------------------------------------------
 
-def test_sequence_asks_for_a_transport_window_wider_than_its_own_ceiling():
-    """Dizi tavanı, taşımanın yanıt penceresinden BÜYÜK olamaz.
+def test_forwarded_window_actually_covers_the_ceiling(mock_unity):
+    """Nöbetçi, SABİTLERİ değil GÖNDERİLEN değeri ölçmeli.
 
-    Ölçülen arıza: taşıma 30s'de zaman aşımına uğrarken C# tavanı 60s'ti. Çağıran
-    hatayı alıyor, ama C# işi yaşamaya ve girdi göndermeye devam ediyordu; kullanıcı
-    hatanın üzerine yeni komut verdiğinde eski dizi onun üstüne yazıyordu.
+    ⚠️ Doğrulama turunda ölçüldü (4 Ağu 2026): bu dosyadaki ilk hâliyle iki test,
+    `timeout_seconds` iletimi TAMAMEN silindiğinde bile yeşil kalıyordu — çünkü
+    biri manage_input'u hiç çağırmıyor, diğeri yalnız bir `key` çağrısında alanın
+    yokluğuna bakıyordu. Bir mutasyon probe'u bunu koşturarak kanıtladı.
+    Kendi kuralımı ihlal etmişim: işaretlemek ölçmek değildir.
 
-    Bu, kaynak metni değil iki katman arasındaki SÖZLEŞMEYİ ölçüyor: Python'un
-    ilan ettiği tavan ile taşımanın gerçek sabiti. Davranışsal bir yolu yok,
-    çünkü arıza tam olarak iki sabitin ayrışmasıdır.
+    Bu test gerçekten çağırıyor, gönderileni okuyor ve taşımanın sabitiyle
+    karşılaştırıyor — üçü birden olmadan nöbetçinin dişi olmuyor.
     """
     from transport.plugin_hub import PluginHub
 
-    assert MAX_SEQUENCE_SECONDS < float(PluginHub.COMMAND_TIMEOUT), (
-        f"Dizi tavanı {MAX_SEQUENCE_SECONDS}s, taşıma penceresi "
-        f"{PluginHub.COMMAND_TIMEOUT}s. Tavan pencereden büyükse zaman aşımından "
-        "sonra çalışmaya devam eden yetim bir Unity işi kalır."
+    asyncio.run(
+        manage_input(SimpleNamespace(), action="sequence",
+                     properties={"steps": [{"type": "wait", "ms": 1000}]})
     )
-    assert SEQUENCE_TIMEOUT_SECONDS > MAX_SEQUENCE_SECONDS, (
-        "İstenen taşıma penceresi tavandan büyük olmalı, yoksa pay kalmaz."
+
+    forwarded = mock_unity["params"].get("timeout_seconds")
+    assert forwarded is not None, (
+        "sequence çağrısı taşımaya süre talebi İLETMEDİ; varsayılan "
+        f"{PluginHub.COMMAND_TIMEOUT}s sessizce uygulanır."
+    )
+    assert forwarded > MAX_SEQUENCE_SECONDS, (
+        f"İletilen pencere {forwarded}s, tavan {MAX_SEQUENCE_SECONDS}s. "
+        "Pencere tavandan büyük olmalı."
+    )
+    assert MAX_SEQUENCE_SECONDS < float(PluginHub.COMMAND_TIMEOUT), (
+        f"Tavan {MAX_SEQUENCE_SECONDS}s, taşımanın varsayılanı "
+        f"{PluginHub.COMMAND_TIMEOUT}s. Tavan varsayılanın altında kalmalı ki "
+        "iletim başarısız olsa bile yetim bir Unity işi kalmasın."
     )
 
 
@@ -196,9 +208,15 @@ def test_sequence_forwards_a_timeout_request(mock_unity):
     assert mock_unity["params"]["timeout_seconds"] == SEQUENCE_TIMEOUT_SECONDS
 
 
-def test_only_sequence_asks_for_a_longer_window(mock_unity):
+def test_a_single_key_call_does_not_ask_for_the_long_window(mock_unity):
     """Tek tuşluk bir çağrı uzun pencere istememeli — istese, gerçekten asılı
-    kalan bir çağrı 40 saniye boyunca fark edilmezdi."""
+    kalan bir çağrı 40 saniye boyunca fark edilmezdi.
+
+    ⚠️ Adı bilerek daraltıldı. Önceki adı (`test_only_sequence_...`) iletimin
+    KENDİSİNİ koruduğunu ima ediyordu, oysa yalnız bu tek dalı ölçüyor; iletim
+    tamamen silinse bu test yine yeşil kalır. İletimi koruyan nöbetçi
+    `test_forwarded_window_actually_covers_the_ceiling`.
+    """
     asyncio.run(manage_input(SimpleNamespace(), action="key",
                              properties={"key": "W", "state": "down"}))
     assert "timeout_seconds" not in mock_unity["params"]

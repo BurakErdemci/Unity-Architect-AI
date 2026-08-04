@@ -34,8 +34,17 @@ namespace MCPForUnity.Editor.Tools.Input
         {
             EditorApplication.playModeStateChanged += state =>
             {
-                if (state == PlayModeStateChange.ExitingPlayMode)
-                    InputSystemBridge.ResetCachedState();
+                if (state != PlayModeStateChange.ExitingPlayMode) return;
+
+                // ⚠️ Yalnız önbelleği temizlemek YETMİYOR — doğrulama turunda
+                // bulundu (4 Ağu 2026). Sanal cihazlar Editor'de yaşamaya devam
+                // ediyor ve son kuyruğa alınan durumlarını taşıyorlar; önbelleği
+                // unutup cihazı bırakmak, "describe hiçbir şey basılı değil derken
+                // cihazda W basılı" ayrışmasını üretebilirdi. Cihazları da
+                // kaldırıyoruz: bir sonraki çağrı zaten temizini yaratır.
+                var error = InputSystemBridge.RemoveAllVirtualDevices();
+                if (error != null)
+                    Debug.LogWarning($"[manage_input] Play mode çıkışında temizlik eksik kaldı: {error}");
             };
         }
 
@@ -53,6 +62,11 @@ namespace MCPForUnity.Editor.Tools.Input
         // Süre verilmeyen tap adımlarının gerçek maliyeti. Tavan hesabı bunu 0
         // sayıyordu; 5000 adımlık bir dizi "0 ms" diye geçip ~250 saniye koşuyordu.
         private const int DefaultTapMs = 50;
+
+        // Süresi olmayan adımlar da iş yapıyor (reflection + kuyruk + flush, ya da
+        // ui_click'te keyfi oyun kodu). Süre tavanı onları göremediği için ayrı bir
+        // sayı tavanı gerekiyor.
+        private const int MaxSequenceSteps = 200;
 
         public static async Task<object> HandleCommand(JObject @params)
         {
@@ -116,7 +130,12 @@ namespace MCPForUnity.Editor.Tools.Input
             if (action == "ui_click")
                 return HandleUiClick(p, properties);
 
-            if (!InputSystemBridge.Available)
+            // ⚠️ Doğrulama turunda bulundu (4 Ağu 2026): ilk düzeltme yalnız ÜST
+            // DÜZEY ui_click'i kapının önüne almıştı. Oysa sequence de ui_click
+            // adımını destekliyor, yani "Input System gerekmez" denen eylem bir dizi
+            // içine konduğu anda yine engelleniyordu. Kapatma iddiası bir yolu
+            // kapatmış, sınıfı kapatmamıştı.
+            if (!InputSystemBridge.Available && !OnlyNeedsUgui(action, properties))
                 return new ErrorResponse(InputSystemBridge.UnavailableReason);
 
             try
@@ -340,10 +359,29 @@ namespace MCPForUnity.Editor.Tools.Input
             // maskeliyordu — `[{wait -3540000},{wait 3600000}]` toplamda 60s görünüp
             // gerçekte bir saat koşuyordu. Artık her adım kendi gerçek maliyetiyle
             // ve NEGATİF DEĞER REDDEDİLEREK toplanıyor.
+            // ⚠️ Adım sayısı tavanı, doğrulama turunda eklendi (4 Ağu 2026). Süre
+            // tavanı tek başına yetmiyordu: mouse_move/scroll/gamepad/ui_click
+            // adımlarının süresi yok, yani yüz binlercesi "0 ms" diye geçip her biri
+            // için reflection + kuyruk + flush koşturuyordu. Süresi olmayan iş, işsiz
+            // demek değil.
+            if (steps.Count > MaxSequenceSteps)
+                return new ErrorResponse(
+                    $"Dizide {steps.Count} adım var, tavan {MaxSequenceSteps}. " +
+                    "Süresiz adımlar da (mouse_move, scroll, gamepad, ui_click) iş yapıyor.");
+
             double totalMs = 0;
             for (int i = 0; i < steps.Count; i++)
             {
-                if (steps[i] is not JObject step) continue;
+                // ⚠️ Bozuk adım artık burada REDDEDİLİYOR. Doğrulama turunda bulundu:
+                // ön tarama `continue` ediyordu ama yürütme reddediyordu, yani
+                // [{key W down}, 0] dizisi W'yi BASIP sonra duruyor ve hata cevabı
+                // stillHeld/log taşımıyordu. Yamadan önceki LINQ hâli böyle bir
+                // diziyi hiç çalıştırmadan reddediyordu; düzeltme bir gerileme
+                // getirmişti.
+                if (steps[i] is not JObject step)
+                    return new ErrorResponse(
+                        $"Adım {i} bir nesne değil; dizi çalıştırılmadı.");
+
                 string stepType = step["type"]?.ToString()?.ToLowerInvariant();
 
                 double stepMs;
@@ -518,6 +556,23 @@ namespace MCPForUnity.Editor.Tools.Input
 
         // ---------- Yardımcılar ----------
 
+        /// <summary>
+        /// Bu istek Input System olmadan da karşılanabilir mi? Yalnızca uGUI'ye
+        /// dokunan bir dizi (her adımı ui_click) paket olmadan da çalışmalı.
+        /// </summary>
+        private static bool OnlyNeedsUgui(string action, JObject props)
+        {
+            if (action != "sequence") return false;
+            if (props?["steps"] is not JArray steps || steps.Count == 0) return false;
+
+            foreach (var s in steps)
+            {
+                if (s is not JObject step) return false;
+                if (step["type"]?.ToString()?.ToLowerInvariant() != "ui_click") return false;
+            }
+            return true;
+        }
+
         private static SuccessResponse Held(string message)
         {
             return new SuccessResponse(message, new
@@ -600,8 +655,13 @@ namespace MCPForUnity.Editor.Tools.Input
         }
 
         /// <summary>
-        /// Project Settings > Player > Active Input Handling. Bu değer, sanal cihaz
-        /// olaylarının oyun tarafından görülüp görülemeyeceğini belirleyen tek ayar.
+        /// Project Settings > Player > Active Input Handling.
+        /// ⚠️ Bu, sanal cihaz olaylarının görülüp görülmeyeceğini belirleyen tek
+        /// şey DEĞİL — doğrulama turunda düzeltildi (4 Ağu 2026), bu yorum önce
+        /// "belirleyen tek ayar" diyordu. Ayar yalnız hangi arka uçların AÇIK
+        /// olduğunu söylüyor; olayı görecek olan şey oyun kodunun hangi API'yi
+        /// çağırdığı ve onu buradan okumuyoruz. "Both" ayarında bu rapor, girdisi
+        /// çalışan bir projeyle çalışmayan bir projede AYNI çıkar.
         /// </summary>
         private static object DescribeActiveInputHandling()
         {
