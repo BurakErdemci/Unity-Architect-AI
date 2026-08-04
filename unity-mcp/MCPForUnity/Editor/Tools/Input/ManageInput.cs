@@ -68,6 +68,11 @@ namespace MCPForUnity.Editor.Tools.Input
         // sayı tavanı gerekiyor.
         private const int MaxSequenceSteps = 200;
 
+        private static readonly HashSet<string> ValidStepTypes = new()
+        {
+            "wait", "key", "mouse_move", "mouse_button", "scroll", "gamepad", "ui_click"
+        };
+
         public static async Task<object> HandleCommand(JObject @params)
         {
             if (@params == null)
@@ -384,6 +389,16 @@ namespace MCPForUnity.Editor.Tools.Input
 
                 string stepType = step["type"]?.ToString()?.ToLowerInvariant();
 
+                // ⚠️ Tür de ön taramada doğrulanıyor. 2. doğrulama turunda bulundu
+                // (4 Ağu 2026): ön tarama yalnız NESNE OLMAYI kontrol ediyordu, yani
+                // bilinmeyen bir `type` ancak yürütme sırasında fark ediliyor ve o
+                // ana kadarki adımlar çalışmış oluyordu. Yazım hatası bir tür adı,
+                // yarısı uygulanmış bir diziye mal olmamalı.
+                if (!ValidStepTypes.Contains(stepType))
+                    return new ErrorResponse(
+                        $"Adım {i}: bilinmeyen type '{stepType}'. Geçerli: " +
+                        string.Join(", ", ValidStepTypes) + ". Dizi çalıştırılmadı.");
+
                 double stepMs;
                 if (stepType == "wait")
                     stepMs = step["ms"]?.Value<double?>() ?? 0;
@@ -409,8 +424,25 @@ namespace MCPForUnity.Editor.Tools.Input
 
             var log = new List<object>();
 
+            // ⚠️ Gerçek bir süre gözcüsü. 2. doğrulama turunda bulundu (4 Ağu 2026):
+            // süre tavanı ve adım tavanı yalnız İSTENEN işi ölçüyordu, HARCANAN
+            // süreyi değil. `ui_click` senkron olarak oyunun kendi kodunu çalıştırıyor
+            // ve o kod ne kadar sürerse sürüyor — 200 adımlık izinli bir dizi
+            // saatlerce koşabilirdi. Adımlar arasında geçen süreye bakıyoruz;
+            // çalışan bir dinleyiciyi kesemeyiz, ama sıradakini başlatmayız.
+            double deadline = EditorApplication.timeSinceStartup + MaxSequenceSeconds;
+
             for (int i = 0; i < steps.Count; i++)
             {
+                if (EditorApplication.timeSinceStartup > deadline)
+                {
+                    return new ErrorResponse(
+                        $"Dizi {MaxSequenceSeconds}s tavanını aştı ve {i}. adımda durduruldu " +
+                        "(bir adım beklenenden uzun sürdü — ui_click çağrılan oyun kodunu " +
+                        "senkron çalıştırır). Basılı kalanları temizlemek için action='reset'.",
+                        new { completedSteps = i, stillHeld = InputSystemBridge.Describe(), log });
+                }
+
                 if (steps[i] is not JObject step)
                     return new ErrorResponse($"Adım {i} bir nesne değil.");
 
@@ -565,10 +597,20 @@ namespace MCPForUnity.Editor.Tools.Input
             if (action != "sequence") return false;
             if (props?["steps"] is not JArray steps || steps.Count == 0) return false;
 
+            // ⚠️ Sayı kontrolü ÖNCE. 2. doğrulama turunda bulundu (4 Ağu 2026):
+            // bu yardımcı adım tavanından ÖNCE çalıştığı için, bir milyon adımlık
+            // bir dizi önce baştan sona taranıp sonra tavana takılıyordu. Tavanın
+            // koruduğu şeyin önünde, tavanın görmediği bir tarama duruyordu.
+            if (steps.Count > MaxSequenceSteps) return false;
+
             foreach (var s in steps)
             {
                 if (s is not JObject step) return false;
-                if (step["type"]?.ToString()?.ToLowerInvariant() != "ui_click") return false;
+                var type = step["type"]?.ToString()?.ToLowerInvariant();
+                // `wait` de Input System'e dokunmuyor. 2. turda bulundu: yalnız
+                // ui_click'e izin vermek, "tıkla-bekle-tıkla" gibi tamamen uGUI olan
+                // dizileri paketsiz projelerde gereksizce engelliyordu.
+                if (type != "ui_click" && type != "wait") return false;
             }
             return true;
         }

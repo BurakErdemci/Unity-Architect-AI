@@ -326,18 +326,40 @@ namespace MCPForUnity.Editor.Tools.Input
             _update.Invoke(null, Array.Empty<object>());
         }
 
-        private static string QueueState(object device, Type stateType, object boxedState)
+        /// <summary>
+        /// Olayı kuyruğa alır ve işler.
+        /// ⚠️ İki aşama AYRI raporlanıyor — 2. doğrulama turunda bulundu (4 Ağu 2026).
+        /// Tek bir try içindeyken, kuyruğa alma BAŞARILI olup Flush patlarsa fonksiyon
+        /// hata döndürüyordu ve çağıran önbelleği işlemiyordu; oysa olay kuyrukta
+        /// duruyor ve Unity'nin bir sonraki güncellemesinde uygulanacak. Sonuç:
+        /// cihaz W'ye basmış, önbellek "W basılı değil" diyor. Kuyruğa girdiyse
+        /// önbellek işlenmeli; yalnız bir uyarı taşınır.
+        /// </summary>
+        /// <param name="queued">true ise olay kuyruğa girdi ve uygulanacak.</param>
+        private static string QueueState(object device, Type stateType, object boxedState, out bool queued)
         {
+            queued = false;
             try
             {
                 var closed = _queueStateEventOpen.MakeGenericMethod(stateType);
                 closed.Invoke(null, new[] { device, boxedState, (object)(-1.0) });
+                queued = true;
+            }
+            catch (Exception ex)
+            {
+                return $"Olay kuyruğa alınamadı: {ex.InnerException?.Message ?? ex.Message}";
+            }
+
+            try
+            {
                 Flush();
                 return null;
             }
             catch (Exception ex)
             {
-                return $"Olay kuyruğa alınamadı: {ex.InnerException?.Message ?? ex.Message}";
+                return "Olay kuyruğa alındı ve UYGULANACAK, ancak hemen işlenemedi: "
+                       + (ex.InnerException?.Message ?? ex.Message)
+                       + " — girdi bir sonraki Unity güncellemesinde etkili olur.";
             }
         }
 
@@ -397,12 +419,13 @@ namespace MCPForUnity.Editor.Tools.Input
                 return $"KeyboardState oluşturulamadı: {ex.InnerException?.Message ?? ex.Message}";
             }
 
-            var queueError = QueueState(device, _keyboardStateType, state);
-            if (queueError != null) return queueError;
+            var queueError = QueueState(device, _keyboardStateType, state, out bool queued);
+            if (!queued) return queueError;
 
+            // Kuyruğa girdiyse olay uygulanacak — önbellek onunla aynı şeyi söylemeli.
             HeldKeys.Clear();
             HeldKeys.UnionWith(next);
-            return null;
+            return queueError;
         }
 
         internal static IReadOnlyCollection<string> CurrentlyHeldKeys() => HeldKeys;
@@ -460,13 +483,13 @@ namespace MCPForUnity.Editor.Tools.Input
                 return $"MouseState oluşturulamadı: {ex.InnerException?.Message ?? ex.Message}";
             }
 
-            var queueError = QueueState(device, _mouseStateType, state);
-            if (queueError != null) return queueError;
+            var queueError = QueueState(device, _mouseStateType, state, out bool queued);
+            if (!queued) return queueError;
 
             _mousePosition = nextPosition;
             HeldMouseButtons.Clear();
             HeldMouseButtons.UnionWith(nextButtons);
-            return null;
+            return queueError;
         }
 
         internal static string[] KnownMouseButtons()
@@ -529,8 +552,8 @@ namespace MCPForUnity.Editor.Tools.Input
                 return $"GamepadState oluşturulamadı: {ex.InnerException?.Message ?? ex.Message}";
             }
 
-            var queueError = QueueState(device, _gamepadStateType, state);
-            if (queueError != null) return queueError;
+            var queueError = QueueState(device, _gamepadStateType, state, out bool queued);
+            if (!queued) return queueError;
 
             _leftStick = nextLeftStick;
             _rightStick = nextRightStick;
@@ -538,7 +561,7 @@ namespace MCPForUnity.Editor.Tools.Input
             _rightTrigger = nextRightTrigger;
             HeldGamepadButtons.Clear();
             HeldGamepadButtons.UnionWith(nextButtons);
-            return null;
+            return queueError;
         }
 
         internal static string[] KnownGamepadButtons()

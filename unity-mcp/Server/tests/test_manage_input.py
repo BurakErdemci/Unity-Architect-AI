@@ -141,8 +141,15 @@ def test_sequence_steps_survive_nesting(mock_unity):
         manage_input(SimpleNamespace(), action="sequence", properties=steps)
     )
     forwarded = mock_unity["params"]["properties"]["steps"]
-    assert len(forwarded) == 3
-    assert forwarded[1]["ms"] == 2000
+
+    # ⚠️ TAM eşitlik. 2. doğrulama turunda ampirik olarak ölçüldü (4 Ağu 2026):
+    # bu test önce yalnız adım SAYISINI ve ortadaki `ms` değerini kontrol ediyordu.
+    # Bir mutasyon probe'u ilk adımın tuşunu ve son adımın state'ini bozdu — 25
+    # testin 25'i yeşil kaldı. Yani "dizi bozulmadan geçiyor" diye bir şey
+    # ölçmüyordu; bozulan bir dizi tuşu basılı BIRAKABİLİR.
+    assert forwarded == steps["steps"], (
+        "Dizi adımları Unity'ye olduğu gibi ulaşmadı; iletim yolunda değişmiş."
+    )
 
 
 def test_properties_accepts_json_string(mock_unity):
@@ -179,6 +186,8 @@ def test_forwarded_window_actually_covers_the_ceiling(mock_unity):
                      properties={"steps": [{"type": "wait", "ms": 1000}]})
     )
 
+    from core.config import config
+
     forwarded = mock_unity["params"].get("timeout_seconds")
     assert forwarded is not None, (
         "sequence çağrısı taşımaya süre talebi İLETMEDİ; varsayılan "
@@ -188,11 +197,20 @@ def test_forwarded_window_actually_covers_the_ceiling(mock_unity):
         f"İletilen pencere {forwarded}s, tavan {MAX_SEQUENCE_SECONDS}s. "
         "Pencere tavandan büyük olmalı."
     )
-    assert MAX_SEQUENCE_SECONDS < float(PluginHub.COMMAND_TIMEOUT), (
-        f"Tavan {MAX_SEQUENCE_SECONDS}s, taşımanın varsayılanı "
-        f"{PluginHub.COMMAND_TIMEOUT}s. Tavan varsayılanın altında kalmalı ki "
-        "iletim başarısız olsa bile yetim bir Unity işi kalmasın."
-    )
+    # ⚠️ İKİ taşımanın DA sabiti sınanıyor. 2. doğrulama turunda ölçüldü
+    # (4 Ağu 2026): bu iddia yalnız PluginHub'a bakıyordu, oysa o yalnız
+    # HTTP/WebSocket yolunu yönetiyor; deponun VARSAYILANI `stdio` ve onun
+    # süresi `config.connection_timeout`. İkisi bugün de 30, ama biri gerileseydi
+    # nöbetçi yeşil kalırdı — yani yanlış sabiti bekliyordu.
+    for label, window in (
+        ("HTTP/WebSocket (PluginHub.COMMAND_TIMEOUT)", float(PluginHub.COMMAND_TIMEOUT)),
+        ("stdio (config.connection_timeout)", float(config.connection_timeout)),
+    ):
+        assert MAX_SEQUENCE_SECONDS < window, (
+            f"Tavan {MAX_SEQUENCE_SECONDS}s, {label} penceresi {window}s. "
+            "Tavan HER taşımanın penceresinin altında kalmalı, yoksa o yolda "
+            "zaman aşımından sonra çalışmaya devam eden yetim bir Unity işi kalır."
+        )
 
 
 def test_sequence_forwards_a_timeout_request(mock_unity):

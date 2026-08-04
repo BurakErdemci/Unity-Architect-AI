@@ -8,7 +8,11 @@ Mekanik: Unity'nin eski `UnityEngine.Input` API'si salt okunurdur, dışarıdan
 beslenemez. Input System'in `QueueStateEvent`'i olayı Unity sürecinin içinden
 üretir — pencere odağı gerekmez, kullanıcı bu sırada makinesini kullanabilir.
 ⚠️ Sınır: oyun kodu hâlâ `Input.GetKey` yazıyorsa bu olayları GÖRMEZ.
-`action="describe"` tam olarak bunu ölçüyor; bir şey çalışmıyorsa İLK oraya bak.
+⚠️ `action="describe"` bunu ÖLÇMEZ — 2. doğrulama turunda düzeltildi (4 Ağu 2026);
+bu satır önce "tam olarak bunu ölçüyor" diyordu ve aynı dosyanın araç açıklaması
+doğruyu söylerken docstring yanlışta kalmıştı. describe yalnız proje genelindeki
+Active Input Handling ayarını okuyor; "Both" ayarlı iki projeden girdisi çalışan
+ile çalışmayan AYNI cevabı verir. Yine de arıza aramaya başlanacak ilk yer orası.
 """
 
 from typing import Annotated, Any
