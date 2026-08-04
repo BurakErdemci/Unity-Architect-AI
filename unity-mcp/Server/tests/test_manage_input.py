@@ -9,6 +9,8 @@ import pytest
 from services.tools.manage_input import (
     manage_input,
     ALL_ACTIONS,
+    MAX_SEQUENCE_SECONDS,
+    SEQUENCE_TIMEOUT_SECONDS,
     INSPECTION_ACTIONS,
     KEYBOARD_ACTIONS,
     POINTER_ACTIONS,
@@ -150,6 +152,82 @@ def test_properties_accepts_json_string(mock_unity):
         manage_input(SimpleNamespace(), action="key", properties='{"key": "Space"}')
     )
     assert mock_unity["params"]["properties"] == '{"key": "Space"}'
+
+
+# ---------------------------------------------------------------------------
+# Denetimden (4 Ağu 2026) terfi eden nöbetçiler.
+# Bunlar bir probe'un kalıcı hâli: her biri o gün GERÇEKTEN üremiş bir arızayı
+# tutuyor, "olabilir" diye yazılmış değil.
+# ---------------------------------------------------------------------------
+
+def test_sequence_asks_for_a_transport_window_wider_than_its_own_ceiling():
+    """Dizi tavanı, taşımanın yanıt penceresinden BÜYÜK olamaz.
+
+    Ölçülen arıza: taşıma 30s'de zaman aşımına uğrarken C# tavanı 60s'ti. Çağıran
+    hatayı alıyor, ama C# işi yaşamaya ve girdi göndermeye devam ediyordu; kullanıcı
+    hatanın üzerine yeni komut verdiğinde eski dizi onun üstüne yazıyordu.
+
+    Bu, kaynak metni değil iki katman arasındaki SÖZLEŞMEYİ ölçüyor: Python'un
+    ilan ettiği tavan ile taşımanın gerçek sabiti. Davranışsal bir yolu yok,
+    çünkü arıza tam olarak iki sabitin ayrışmasıdır.
+    """
+    from transport.plugin_hub import PluginHub
+
+    assert MAX_SEQUENCE_SECONDS < float(PluginHub.COMMAND_TIMEOUT), (
+        f"Dizi tavanı {MAX_SEQUENCE_SECONDS}s, taşıma penceresi "
+        f"{PluginHub.COMMAND_TIMEOUT}s. Tavan pencereden büyükse zaman aşımından "
+        "sonra çalışmaya devam eden yetim bir Unity işi kalır."
+    )
+    assert SEQUENCE_TIMEOUT_SECONDS > MAX_SEQUENCE_SECONDS, (
+        "İstenen taşıma penceresi tavandan büyük olmalı, yoksa pay kalmaz."
+    )
+
+
+def test_sequence_forwards_a_timeout_request(mock_unity):
+    """Dizi çağrısı taşımaya süre talebini İLETMELİ.
+
+    `timeout_seconds` mekanizması taşımada vardı ama denetim gününe kadar hiçbir
+    araç kullanmıyordu; iletilmediğinde varsayılan 30s sessizce uygulanıyordu.
+    """
+    asyncio.run(
+        manage_input(SimpleNamespace(), action="sequence",
+                     properties={"steps": [{"type": "wait", "ms": 1000}]})
+    )
+    assert mock_unity["params"]["timeout_seconds"] == SEQUENCE_TIMEOUT_SECONDS
+
+
+def test_only_sequence_asks_for_a_longer_window(mock_unity):
+    """Tek tuşluk bir çağrı uzun pencere istememeli — istese, gerçekten asılı
+    kalan bir çağrı 40 saniye boyunca fark edilmezdi."""
+    asyncio.run(manage_input(SimpleNamespace(), action="key",
+                             properties={"key": "W", "state": "down"}))
+    assert "timeout_seconds" not in mock_unity["params"]
+
+
+def test_declared_ceiling_matches_the_csharp_constant():
+    """Python'un ilan ettiği tavan ile C#'ın uyguladığı tavan ayrışamaz.
+
+    Ayrışırlarsa model açıklamaya güvenip 60s'lik bir dizi kurar ve C# onu
+    reddeder; ya da tersi, açıklama olduğundan dar görünür. İki sabit iki ayrı
+    dosyada yaşıyor ve onları bağlayan tek şey bu satır.
+    """
+    import pathlib
+    import re
+
+    cs = pathlib.Path(__file__).resolve().parents[2] / (
+        "MCPForUnity/Editor/Tools/Input/ManageInput.cs"
+    )
+    if not cs.exists():
+        pytest.skip(f"C# kaynağı bulunamadı: {cs}")
+
+    match = re.search(
+        r"MaxSequenceSeconds\s*=\s*([0-9]+(?:\.[0-9]+)?)", cs.read_text(encoding="utf-8")
+    )
+    assert match, "ManageInput.cs içinde MaxSequenceSeconds sabiti bulunamadı."
+    assert float(match.group(1)) == MAX_SEQUENCE_SECONDS, (
+        f"C# tavanı {match.group(1)}s, Python {MAX_SEQUENCE_SECONDS}s. "
+        "İkisi aynı olmak zorunda."
+    )
 
 
 def test_non_dict_unity_response_is_wrapped(monkeypatch):

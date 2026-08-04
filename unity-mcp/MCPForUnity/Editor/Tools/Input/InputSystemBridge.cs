@@ -45,6 +45,8 @@ namespace MCPForUnity.Editor.Tools.Input
         private static MethodInfo _queueStateEventOpen;
         private static MethodInfo _update;
         private static PropertyInfo _devicesProperty;
+        private static MethodInfo _mouseWithButton;
+        private static MethodInfo _gamepadWithButton;
 
         // Basılı tutulan tuşlar. KeyboardState TÜM tuş kümesini taşıdığı için her
         // olayda kümenin tamamı yeniden gönderilmek zorunda; tek tuş göndermek
@@ -55,6 +57,13 @@ namespace MCPForUnity.Editor.Tools.Input
         private static Vector2 _mousePosition;
         private static Vector2 _leftStick;
         private static Vector2 _rightStick;
+
+        // Tetikler de önbelleklenmek ZORUNDA. Denetimde ölçüldü (4 Ağu 2026): her
+        // çağrı sıfırlanmış bir GamepadState kurduğu için, yalnız çubuğu güncelleyen
+        // ikinci bir çağrı basılı duran tetiği SESSİZCE bırakıyordu — kullanıcı
+        // "yalnız yönü değiştirdim" derken gaz/ateş düşüyordu.
+        private static float _leftTrigger;
+        private static float _rightTrigger;
 
         internal static bool Available
         {
@@ -87,6 +96,26 @@ namespace MCPForUnity.Editor.Tools.Input
             _mousePosition = Vector2.zero;
             _leftStick = Vector2.zero;
             _rightStick = Vector2.zero;
+            _leftTrigger = 0f;
+            _rightTrigger = 0f;
+        }
+
+        /// <summary>
+        /// Bir isim listesinin TAMAMINI, hiçbir şeye dokunmadan doğrular.
+        /// Denetimde ölçüldü (4 Ağu 2026): doğrulama ve mutasyon aynı döngüdeyken
+        /// `keys=['W','gecersiz']` hata döndürüyor ama W basılı kümede KALIYOR ve
+        /// bir sonraki başarılı çağrıda basılıyordu — reddedilen bir isteğin girdisi
+        /// başka bir isteğin üstünde beliriyordu. Önce hepsini doğrula, sonra yaz.
+        /// </summary>
+        private static bool ValidateAll(Type enumType, IEnumerable<string> names, out string error)
+        {
+            error = null;
+            if (names == null) return true;
+            foreach (var n in names)
+            {
+                if (!TryParseEnum(enumType, n, out _, out error)) return false;
+            }
+            return true;
         }
 
         private static void Resolve()
@@ -111,8 +140,10 @@ namespace MCPForUnity.Editor.Tools.Input
                 _mouseStateType = FindType("UnityEngine.InputSystem.LowLevel.MouseState");
                 _mouseButtonType = FindType("UnityEngine.InputSystem.LowLevel.MouseButton");
                 _gamepadStateType = FindType("UnityEngine.InputSystem.LowLevel.GamepadState");
-                _gamepadButtonType = FindType("UnityEngine.InputSystem.LowLevel.GamepadButton")
-                                     ?? FindType("UnityEngine.InputSystem.LowLevel.GamepadButton, Unity.InputSystem");
+                // (Denetimde ölü bir `?? FindType("...,Unity.InputSystem")` yedeği vardı:
+                // FindType zaten Type.GetType ile assembly-nitelikli adı çözüyor, ikinci
+                // çağrı hiçbir zaman ek bilgi getiremezdi. Kaldırıldı.)
+                _gamepadButtonType = FindType("UnityEngine.InputSystem.LowLevel.GamepadButton");
 
                 var statics = _inputSystemType.GetMethods(BindingFlags.Public | BindingFlags.Static);
 
@@ -148,6 +179,23 @@ namespace MCPForUnity.Editor.Tools.Input
                 if (_queueStateEventOpen == null) missing.Add("InputSystem.QueueStateEvent<T>(device,state,time)");
                 if (_update == null) missing.Add("InputSystem.Update()");
                 if (_devicesProperty == null) missing.Add("InputSystem.devices");
+
+                // ⚠️ Bu blok denetimde eklendi (4 Ağu 2026). Öncesinde `missing` yalnız
+                // TİPLERİ ve birkaç statik üyeyi kontrol ediyordu; kodun asıl bağımlı
+                // olduğu ALANLAR ve WithButton hiç bakılmıyordu. Sonuç: bir sürüm
+                // farkında Available=true kalıyor ve araç hiçbir şey yapmadan
+                // "başarılı" diyordu. Bağımlı olunan her üye burada olmak zorunda.
+                _mouseWithButton = _mouseStateType?.GetMethod("WithButton");
+                _gamepadWithButton = _gamepadStateType?.GetMethod("WithButton");
+                if (_mouseStateType != null && _mouseWithButton == null) missing.Add("MouseState.WithButton");
+                if (_gamepadStateType != null && _gamepadWithButton == null) missing.Add("GamepadState.WithButton");
+
+                foreach (var f in new[] { "position", "delta", "scroll" })
+                    if (_mouseStateType != null && _mouseStateType.GetField(f, BindingFlags.Public | BindingFlags.Instance) == null)
+                        missing.Add($"MouseState.{f}");
+                foreach (var f in new[] { "leftStick", "rightStick", "leftTrigger", "rightTrigger" })
+                    if (_gamepadStateType != null && _gamepadStateType.GetField(f, BindingFlags.Public | BindingFlags.Instance) == null)
+                        missing.Add($"GamepadState.{f}");
 
                 if (missing.Count > 0)
                 {
@@ -233,6 +281,7 @@ namespace MCPForUnity.Editor.Tools.Input
             Resolve();
             if (_unavailableReason != null) return _unavailableReason;
 
+            var failures = new List<string>();
             foreach (var name in new[] { KeyboardDeviceName, MouseDeviceName, GamepadDeviceName })
             {
                 var device = FindDeviceByName(name);
@@ -243,13 +292,24 @@ namespace MCPForUnity.Editor.Tools.Input
                 }
                 catch (Exception ex)
                 {
-                    return $"'{name}' kaldırılamadı: {ex.InnerException?.Message ?? ex.Message}";
+                    failures.Add($"{name}: {ex.InnerException?.Message ?? ex.Message}");
                 }
             }
 
-            // Cihaz zaten yoksa da başarı: reset'in sözleşmesi "sonrasında temiz
-            // olsun", "bir şey sildim" değil.
+            // ⚠️ Önbellek, bir cihaz kaldırma BAŞARISIZ olsa da temizleniyor.
+            // Denetimde ölçüldü (4 Ağu 2026): eski hâli ilk hatada erken dönüyordu,
+            // yani klavye silinmiş ama HeldKeys'te W duruyor olabiliyordu — sonraki
+            // çağrı klavyeyi yeniden yaratıp W'yi TEKRAR basıyordu. reset'in tek işi
+            // temiz bir duruma dönmek; kısmen başarısız olsa bile önbellek yalan
+            // söylememeli. Hata yine de çağırana bildiriliyor.
             ResetCachedState();
+
+            if (failures.Count > 0)
+            {
+                return "Sanal cihazların bir kısmı kaldırılamadı (" + string.Join("; ", failures)
+                       + "). Basılı tuş önbelleği yine de temizlendi; kalan cihaz için Unity'yi "
+                       + "play mode'dan çıkarıp tekrar dene.";
+            }
             return null;
         }
 
@@ -286,21 +346,17 @@ namespace MCPForUnity.Editor.Tools.Input
             Resolve();
             if (_unavailableReason != null) return _unavailableReason;
 
+            if (!ValidateAll(_keyType, down, out var validationError)) return validationError;
+            if (!ValidateAll(_keyType, up, out validationError)) return validationError;
+
             if (down != null)
             {
-                foreach (var k in down)
-                {
-                    if (!TryParseEnum(_keyType, k, out _, out var err)) return err;
-                    HeldKeys.Add(k);
-                }
+                foreach (var k in down) HeldKeys.Add(k);
             }
             if (up != null)
             {
                 foreach (var k in up)
-                {
-                    if (!TryParseEnum(_keyType, k, out _, out var err)) return err;
                     HeldKeys.RemoveWhere(h => string.Equals(h, k, StringComparison.OrdinalIgnoreCase));
-                }
             }
 
             var device = EnsureDevice("Keyboard", KeyboardDeviceName, out var deviceError);
@@ -339,21 +395,17 @@ namespace MCPForUnity.Editor.Tools.Input
             Resolve();
             if (_unavailableReason != null) return _unavailableReason;
 
+            if (!ValidateAll(_mouseButtonType, buttonsDown, out var validationError)) return validationError;
+            if (!ValidateAll(_mouseButtonType, buttonsUp, out validationError)) return validationError;
+
             if (buttonsDown != null)
             {
-                foreach (var b in buttonsDown)
-                {
-                    if (!TryParseEnum(_mouseButtonType, b, out _, out var err)) return err;
-                    HeldMouseButtons.Add(b);
-                }
+                foreach (var b in buttonsDown) HeldMouseButtons.Add(b);
             }
             if (buttonsUp != null)
             {
                 foreach (var b in buttonsUp)
-                {
-                    if (!TryParseEnum(_mouseButtonType, b, out _, out var err)) return err;
                     HeldMouseButtons.RemoveWhere(h => string.Equals(h, b, StringComparison.OrdinalIgnoreCase));
-                }
             }
 
             if (absolutePosition.HasValue) _mousePosition = absolutePosition.Value;
@@ -366,20 +418,17 @@ namespace MCPForUnity.Editor.Tools.Input
             try
             {
                 state = Activator.CreateInstance(_mouseStateType);
-                SetFieldIfPresent(_mouseStateType, state, "position", _mousePosition);
-                SetFieldIfPresent(_mouseStateType, state, "delta", delta ?? Vector2.zero);
-                SetFieldIfPresent(_mouseStateType, state, "scroll", scroll ?? Vector2.zero);
+                if (!SetField(_mouseStateType, ref state, "position", _mousePosition, out var fieldError)) return fieldError;
+                if (!SetField(_mouseStateType, ref state, "delta", delta ?? Vector2.zero, out fieldError)) return fieldError;
+                if (!SetField(_mouseStateType, ref state, "scroll", scroll ?? Vector2.zero, out fieldError)) return fieldError;
 
                 // WithButton bir KOPYA döndürüyor (struct); dönen değeri geri almazsak
-                // düğme basımı sessizce kaybolur.
-                var withButton = _mouseStateType.GetMethod("WithButton");
-                if (withButton != null)
+                // düğme basımı sessizce kaybolur. Varlığı Resolve()'da doğrulanıyor,
+                // burada null olması bir programlama hatasıdır — sessizce atlamak yok.
+                foreach (var held in HeldMouseButtons)
                 {
-                    foreach (var held in HeldMouseButtons)
-                    {
-                        if (!TryParseEnum(_mouseButtonType, held, out var value, out var err)) return err;
-                        state = withButton.Invoke(state, new[] { value, (object)true });
-                    }
+                    if (!TryParseEnum(_mouseButtonType, held, out var value, out var err)) return err;
+                    state = _mouseWithButton.Invoke(state, new[] { value, (object)true });
                 }
             }
             catch (Exception ex)
@@ -405,25 +454,23 @@ namespace MCPForUnity.Editor.Tools.Input
             Resolve();
             if (_unavailableReason != null) return _unavailableReason;
 
+            if (!ValidateAll(_gamepadButtonType, buttonsDown, out var validationError)) return validationError;
+            if (!ValidateAll(_gamepadButtonType, buttonsUp, out validationError)) return validationError;
+
             if (buttonsDown != null)
             {
-                foreach (var b in buttonsDown)
-                {
-                    if (!TryParseEnum(_gamepadButtonType, b, out _, out var err)) return err;
-                    HeldGamepadButtons.Add(b);
-                }
+                foreach (var b in buttonsDown) HeldGamepadButtons.Add(b);
             }
             if (buttonsUp != null)
             {
                 foreach (var b in buttonsUp)
-                {
-                    if (!TryParseEnum(_gamepadButtonType, b, out _, out var err)) return err;
                     HeldGamepadButtons.RemoveWhere(h => string.Equals(h, b, StringComparison.OrdinalIgnoreCase));
-                }
             }
 
             if (leftStick.HasValue) _leftStick = leftStick.Value;
             if (rightStick.HasValue) _rightStick = rightStick.Value;
+            if (leftTrigger.HasValue) _leftTrigger = leftTrigger.Value;
+            if (rightTrigger.HasValue) _rightTrigger = rightTrigger.Value;
 
             var device = EnsureDevice("Gamepad", GamepadDeviceName, out var deviceError);
             if (device == null) return deviceError;
@@ -432,19 +479,17 @@ namespace MCPForUnity.Editor.Tools.Input
             try
             {
                 state = Activator.CreateInstance(_gamepadStateType);
-                SetFieldIfPresent(_gamepadStateType, state, "leftStick", _leftStick);
-                SetFieldIfPresent(_gamepadStateType, state, "rightStick", _rightStick);
-                if (leftTrigger.HasValue) SetFieldIfPresent(_gamepadStateType, state, "leftTrigger", leftTrigger.Value);
-                if (rightTrigger.HasValue) SetFieldIfPresent(_gamepadStateType, state, "rightTrigger", rightTrigger.Value);
+                // Dördü de HER olayda yazılıyor: state bir fark değil tam durumdur,
+                // atlanan alan sıfırlanmış olarak gider.
+                if (!SetField(_gamepadStateType, ref state, "leftStick", _leftStick, out var fieldError)) return fieldError;
+                if (!SetField(_gamepadStateType, ref state, "rightStick", _rightStick, out fieldError)) return fieldError;
+                if (!SetField(_gamepadStateType, ref state, "leftTrigger", _leftTrigger, out fieldError)) return fieldError;
+                if (!SetField(_gamepadStateType, ref state, "rightTrigger", _rightTrigger, out fieldError)) return fieldError;
 
-                var withButton = _gamepadStateType.GetMethod("WithButton");
-                if (withButton != null)
+                foreach (var held in HeldGamepadButtons)
                 {
-                    foreach (var held in HeldGamepadButtons)
-                    {
-                        if (!TryParseEnum(_gamepadButtonType, held, out var value, out var err)) return err;
-                        state = withButton.Invoke(state, new[] { value, (object)true });
-                    }
+                    if (!TryParseEnum(_gamepadButtonType, held, out var value, out var err)) return err;
+                    state = _gamepadWithButton.Invoke(state, new[] { value, (object)true });
                 }
             }
             catch (Exception ex)
@@ -463,19 +508,39 @@ namespace MCPForUnity.Editor.Tools.Input
 
         // ---------- Ortak ----------
 
-        private static void SetFieldIfPresent(Type type, object boxedStruct, string fieldName, object value)
+        /// <summary>
+        /// Bir state alanını yazar; YAZAMAZSA sessizce dönmez, hata döndürür.
+        ///
+        /// Denetimde ölçüldü (4 Ağu 2026): eski hâli alanı bulamayınca sessizce
+        /// dönüyordu. Sonuç, aracın verebileceği en kötü cevaptı — "fare (500,300)'e
+        /// taşındı" der, fare (0,0)'dadır, ve Describe() de `available: true` derdi.
+        /// Bir paket sürümünde alan yeniden adlandırılırsa arıza artık ADIYLA görünür.
+        /// </summary>
+        private static bool SetField(Type type, ref object boxedStruct, string fieldName,
+                                     object value, out string error)
         {
+            error = null;
             var field = type.GetField(fieldName, BindingFlags.Public | BindingFlags.Instance);
-            if (field == null) return;
+            if (field == null)
+            {
+                error = $"Input System'in '{type.Name}' yapısında '{fieldName}' alanı bulunamadı. "
+                        + "Paket sürümü desteklenmiyor olabilir; action='describe' çözülen üyeleri listeler.";
+                return false;
+            }
 
-            // Alan tipi Vector2 yerine iç bir tip olabilir; dönüştüremezsek sessizce
-            // atlamak yerine atlıyoruz ama Describe() alanın varlığını raporluyor.
             if (value != null && !field.FieldType.IsInstanceOfType(value))
             {
                 try { value = Convert.ChangeType(value, field.FieldType); }
-                catch { return; }
+                catch (Exception ex)
+                {
+                    error = $"'{type.Name}.{fieldName}' alanına yazılamadı "
+                            + $"({value.GetType().Name} → {field.FieldType.Name}): {ex.Message}";
+                    return false;
+                }
             }
+
             field.SetValue(boxedStruct, value);
+            return true;
         }
 
         private static bool TryParseEnum(Type enumType, string name, out object value, out string error)
@@ -522,15 +587,31 @@ namespace MCPForUnity.Editor.Tools.Input
             {
                 available = _unavailableReason == null,
                 reason = _unavailableReason,
+                // ⚠️ Bu blok denetimde genişletildi (4 Ağu 2026). Öncesi yalnız beş tip
+                // ve iki metot listeliyordu, oysa yorumlar "değişen üyeyi ADIYLA
+                // gösterir" diye söz veriyordu — araç kendi vaadini tutmuyordu ve
+                // model bu teşhisi İLK çağırması söylenen şey.
                 resolved = new
                 {
                     inputSystem = _inputSystemType?.FullName,
                     keyEnum = _keyType?.FullName,
                     keyboardState = _keyboardStateType?.FullName,
                     mouseState = _mouseStateType?.FullName,
+                    mouseButtonEnum = _mouseButtonType?.FullName,
                     gamepadState = _gamepadStateType?.FullName,
+                    gamepadButtonEnum = _gamepadButtonType?.FullName,
                     addDevice = _addDevice?.ToString(),
+                    removeDevice = _removeDevice?.ToString(),
                     queueStateEvent = _queueStateEventOpen?.ToString(),
+                    update = _update?.ToString(),
+                    devices = _devicesProperty?.ToString(),
+                    mouseWithButton = _mouseWithButton?.ToString(),
+                    gamepadWithButton = _gamepadWithButton?.ToString(),
+                },
+                stateFields = new
+                {
+                    mouse = DescribeFields(_mouseStateType, "position", "delta", "scroll"),
+                    gamepad = DescribeFields(_gamepadStateType, "leftStick", "rightStick", "leftTrigger", "rightTrigger"),
                 },
                 virtualDevices = new
                 {
@@ -545,7 +626,27 @@ namespace MCPForUnity.Editor.Tools.Input
                     gamepadButtons = HeldGamepadButtons.ToArray(),
                 },
                 mousePosition = new { x = _mousePosition.x, y = _mousePosition.y },
+                // Tetikler de raporlanıyor: önbelleklendikleri için "neden hâlâ gaz
+                // veriyor" sorusunun cevabı burada görünmeli.
+                triggers = new { left = _leftTrigger, right = _rightTrigger },
+                sticks = new
+                {
+                    left = new { x = _leftStick.x, y = _leftStick.y },
+                    right = new { x = _rightStick.x, y = _rightStick.y },
+                },
             };
+        }
+
+        /// <summary>Bir state tipinde beklenen alanların gerçekten var olup olmadığını listeler.</summary>
+        private static Dictionary<string, string> DescribeFields(Type type, params string[] fieldNames)
+        {
+            var result = new Dictionary<string, string>();
+            foreach (var name in fieldNames)
+            {
+                var field = type?.GetField(name, BindingFlags.Public | BindingFlags.Instance);
+                result[name] = field == null ? "YOK" : field.FieldType.Name;
+            }
+            return result;
         }
     }
 }

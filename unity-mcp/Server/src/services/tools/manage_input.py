@@ -21,6 +21,13 @@ from services.tools import get_unity_instance_from_context
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
 
+# C# tarafındaki ManageInput.MaxSequenceSeconds ile AYNI olmak zorunda; ikisi
+# ayrışırsa test_manage_input.py'deki nöbetçi kırmızıya döner.
+MAX_SEQUENCE_SECONDS = 20.0
+
+# Diziye tanınan taşıma penceresi: tavan + kare payı.
+SEQUENCE_TIMEOUT_SECONDS = 40.0
+
 INSPECTION_ACTIONS = ["describe"]
 KEYBOARD_ACTIONS = ["key"]
 POINTER_ACTIONS = ["mouse_move", "mouse_button", "scroll"]
@@ -50,26 +57,39 @@ ALL_ACTIONS = (
         "manage_camera(action='screenshot', include_image=true) -> read_console.\n"
         "\n"
         "Actions:\n"
-        "- describe: what the input bridge resolved, which virtual devices exist, which keys are "
-        "held, and the project's Active Input Handling setting. START HERE when input seems ignored. "
-        "Safe to call outside play mode.\n"
-        "- key: properties {key|keys, state: down|up|tap, duration_ms}. 'tap' presses and releases.\n"
+        "- describe: which reflected members resolved, which virtual devices exist, which keys and "
+        "buttons are held, cached stick/trigger values, and the project's Active Input Handling "
+        "setting. START HERE when input seems ignored. Safe to call outside play mode.\n"
+        "- key: properties {key|keys, state: down|up|tap, duration_ms}. 'tap' presses and releases; "
+        "duration_ms defaults to 50.\n"
         "- mouse_move: properties {x, y} for absolute, or {dx, dy} for relative.\n"
-        "- mouse_button: properties {button: Left|Right|Middle, state: down|up|tap}.\n"
-        "- scroll: properties {y: 1} or {amount: -1}.\n"
+        "- mouse_button: properties {button|buttons, state: down|up|tap, duration_ms}. Buttons are "
+        "Left|Right|Middle|Forward|Back; a list presses several at once.\n"
+        "- scroll: properties {y: 1} for vertical, {x: 1} for horizontal, or {amount: -1}.\n"
         "- gamepad: properties {left_stick:{x,y}, right_stick:{x,y}, left_trigger, right_trigger, "
-        "buttons_down:[...], buttons_up:[...]}.\n"
-        "- ui_click: target='Canvas/StartButton'. Fires the uGUI Button's onClick directly, so it "
-        "works even in projects whose gameplay code uses the legacy Input API.\n"
+        "buttons_down:[...], buttons_up:[...]}. Sticks, triggers and buttons are all REMEMBERED "
+        "between calls, so updating one control does not release the others.\n"
+        "- ui_click: target='Canvas/StartButton'. Fires the uGUI Button's onClick directly. This is "
+        "the one action that does not need the Input System package at all, so it works in projects "
+        "whose gameplay code uses the legacy Input API. Note it bypasses the EventSystem entirely: "
+        "it ignores raycast blocking and a parent CanvasGroup, so it can click a button a real "
+        "player could not reach. It also runs every listener wired to that button, which may be any "
+        "public method in the project - not only what the button appears to do.\n"
         "- sequence: properties {steps:[...]} runs several steps in ONE call. Use this for anything "
         "timed — one round trip per keystroke is far too slow to play a game. Step types: wait "
-        "({ms}), key, mouse_move, mouse_button, scroll, gamepad, ui_click. Max total 60s.\n"
-        "- reset: remove the virtual devices and clear all held keys. Call this if a sequence "
-        "failed midway and a key may still be held down.\n"
+        "({ms}), key, mouse_move, mouse_button, scroll, gamepad, ui_click. Max total 20s, and steps "
+        "without an explicit duration still count 50ms each. Negative durations are rejected. If a "
+        "step fails the sequence stops and the reply reports what is still held down.\n"
+        "- reset: remove the virtual devices and clear all held keys, buttons, sticks and triggers. "
+        "Call this if a sequence failed midway and something may still be held down.\n"
         "\n"
         "IMPORTANT: injected events are only seen by code written against the Input System package. "
-        "Gameplay code using the legacy UnityEngine.Input API will NOT see them - 'describe' reports "
-        "this. Movement/aim input in such projects cannot be driven; ui_click still works."
+        "Gameplay code using the legacy UnityEngine.Input API will NOT see them - that API is "
+        "read-only and cannot be fed from outside, so movement/aim in such projects cannot be "
+        "driven; ui_click still works there. 'describe' reports the PROJECT-WIDE Active Input "
+        "Handling setting, which is a strong hint but not proof: a project set to 'Both' can still "
+        "have gameplay scripts reading the legacy API. If keys are ignored while describe says the "
+        "bridge is available, that mismatch is the likely cause."
     ),
     annotations=ToolAnnotations(
         title="Manage Input",
@@ -113,6 +133,15 @@ async def manage_input(
         params_dict["properties"] = properties
     if target is not None:
         params_dict["target"] = target
+
+    if action_normalized == "sequence":
+        # Denetimde ölçüldü (4 Ağu 2026): taşımanın varsayılan yanıt penceresi
+        # 30 saniye (plugin_hub.COMMAND_TIMEOUT) ve HİÇBİR araç bunu uzatmıyordu.
+        # Sonuç, zaman aşımından SONRA hâlâ girdi gönderen yetim bir C# işiydi:
+        # kullanıcı hatayı görüp yeni komut verdiğinde eski dizi onun üstüne
+        # yazıyordu. C# tavanı (20s) zaten pencerenin altında; bu satır taşımaya
+        # ayrıca pay bırakıyor, böylece ağır bir karede sınıra sürtmüyoruz.
+        params_dict["timeout_seconds"] = SEQUENCE_TIMEOUT_SECONDS
 
     result = await send_with_unity_instance(
         async_send_command_with_retry,

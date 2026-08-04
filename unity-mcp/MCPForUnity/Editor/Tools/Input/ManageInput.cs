@@ -18,10 +18,41 @@ namespace MCPForUnity.Editor.Tools.Input
     /// bir güvenlik yüzeyi açar.
     /// </summary>
     [McpForUnityTool("manage_input", AutoRegister = false, Group = "core")]
+    [InitializeOnLoad]
     public static class ManageInput
     {
+        /// <summary>
+        /// ⚠️ Bu abonelik denetimde eklendi (4 Ağu 2026). InputSystemBridge'in
+        /// yorumu "domain reload'u yakalayıp durumu sıfırlıyoruz" diyordu ama
+        /// ResetCachedState'i çağıran KİMSE yoktu — yorum var olmayan bir kancayı
+        /// tarif ediyordu. Sıradan bir reload statikleri zaten sıfırlıyor, ama
+        /// "Enter Play Mode Options → Reload Domain kapalı" projelerinde statikler
+        /// yaşıyor: bir oturumda basılı bırakılan W, sonraki oturumda describe'ta
+        /// görünüyor ve ilk tuş olayında yeniden basılıyordu.
+        /// </summary>
+        static ManageInput()
+        {
+            EditorApplication.playModeStateChanged += state =>
+            {
+                if (state == PlayModeStateChange.ExitingPlayMode)
+                    InputSystemBridge.ResetCachedState();
+            };
+        }
+
         // Tek bir MCP çağrısının Unity'yi süresiz bloke etmesini engelleyen tavan.
-        private const double MaxSequenceSeconds = 60.0;
+        //
+        // ⚠️ 60 → 20 (denetim, 4 Ağu 2026). Sebep ölçüldü, tercih değil: taşıma
+        // katmanının yanıt penceresi 30 saniye. 60 saniyelik bir tavan, çağıran
+        // 30. saniyede zaman aşımı hatası aldıktan SONRA hâlâ girdi göndermeye devam
+        // eden bir C# işi bırakıyordu — kullanıcı hatayı görüp yeni bir komut
+        // verdiğinde eski dizi onun üstüne yazıyordu. Tavan pencerenin altında
+        // kalmak zorunda. Daha uzun oyun için diziyi böl; zaten aralarda ekran
+        // görüntüsü almak gereken şey.
+        private const double MaxSequenceSeconds = 20.0;
+
+        // Süre verilmeyen tap adımlarının gerçek maliyeti. Tavan hesabı bunu 0
+        // sayıyordu; 5000 adımlık bir dizi "0 ms" diye geçip ~250 saniye koşuyordu.
+        private const int DefaultTapMs = 50;
 
         public static async Task<object> HandleCommand(JObject @params)
         {
@@ -34,7 +65,9 @@ namespace MCPForUnity.Editor.Tools.Input
             if (string.IsNullOrEmpty(action))
                 return new ErrorResponse("'action' parameter is required.");
 
-            var properties = ReadProperties(@params);
+            var properties = ReadProperties(@params, out var propertiesParseError);
+            if (propertiesParseError != null)
+                return new ErrorResponse(propertiesParseError);
 
             // describe her zaman serbest: "neden çalışmıyor" sorusunun cevabı
             // play mode dışındayken de alınabilmeli.
@@ -63,9 +96,6 @@ namespace MCPForUnity.Editor.Tools.Input
                     : new SuccessResponse("Sanal cihazlar kaldırıldı, basılı tuş kümesi sıfırlandı.");
             }
 
-            if (!InputSystemBridge.Available)
-                return new ErrorResponse(InputSystemBridge.UnavailableReason);
-
             // Play mode dışında girdinin alıcısı yok. Sessizce başarılı dönmek,
             // modele "bastım ama bir şey olmadı" dedirtip yanlış teşhise yollar.
             if (!EditorApplication.isPlaying)
@@ -73,10 +103,21 @@ namespace MCPForUnity.Editor.Tools.Input
                     "Girdi yalnızca play mode'da gönderilebilir. Önce manage_editor(action='play') çağır. " +
                     "Mevcut durumu action='describe' ile görebilirsin.");
 
-            if (EditorApplication.isPaused && action != "describe")
+            if (EditorApplication.isPaused)
                 return new ErrorResponse(
                     "Oyun duraklatılmış durumda; girdi işlenmez. manage_editor(action='pause') ile devam ettir. " +
                     "⚠️ 'pause' bir toggle'dır, ikinci çağrı duraklatmayı KALDIRIR.");
+
+            // ⚠️ ui_click, Input System kapısının ÖNÜNDE. Denetimde ölçüldü
+            // (4 Ağu 2026): kapı switch'ten önce çalıştığı için, "girdi arka ucundan
+            // bağımsız, eski Input API'li projelerde de çalışır" diye belgelenen tek
+            // eylem, paket kurulu değilken erişilemez oluyordu. Araç kendi vaadini
+            // tutmuyordu. ui_click yalnız uGUI'ye bağlı, Input System'e değil.
+            if (action == "ui_click")
+                return HandleUiClick(p, properties);
+
+            if (!InputSystemBridge.Available)
+                return new ErrorResponse(InputSystemBridge.UnavailableReason);
 
             try
             {
@@ -92,8 +133,6 @@ namespace MCPForUnity.Editor.Tools.Input
                         return HandleScroll(properties);
                     case "gamepad":
                         return HandleGamepad(properties);
-                    case "ui_click":
-                        return HandleUiClick(p, properties);
                     case "sequence":
                         return await HandleSequence(properties);
                     default:
@@ -132,14 +171,20 @@ namespace MCPForUnity.Editor.Tools.Input
                 }
                 case "tap":
                 {
-                    int durationMs = props?["duration_ms"]?.Value<int?>() ?? 50;
+                    int durationMs = props?["duration_ms"]?.Value<int?>() ?? DefaultTapMs;
                     var downErr = InputSystemBridge.SetKeys(keys, null);
                     if (downErr != null) return new ErrorResponse(downErr);
 
-                    await WaitFrames(durationMs);
+                    bool completed = await WaitFrames(durationMs);
 
                     var upErr = InputSystemBridge.SetKeys(null, keys);
                     if (upErr != null) return new ErrorResponse(upErr);
+
+                    if (!completed)
+                        return new ErrorResponse(
+                            $"Play mode {durationMs}ms dolmadan sona erdi; tuş istenen süre basılı KALMADI. " +
+                            "Tuşlar bırakıldı.");
+
                     return Held($"{string.Join(", ", keys)} {durationMs}ms basılıp bırakıldı.");
                 }
                 default:
@@ -181,14 +226,20 @@ namespace MCPForUnity.Editor.Tools.Input
                 }
                 case "tap":
                 {
-                    int durationMs = props?["duration_ms"]?.Value<int?>() ?? 50;
+                    int durationMs = props?["duration_ms"]?.Value<int?>() ?? DefaultTapMs;
                     var downErr = InputSystemBridge.SetMouse(null, null, null, buttons, null);
                     if (downErr != null) return new ErrorResponse(downErr);
 
-                    await WaitFrames(durationMs);
+                    bool completed = await WaitFrames(durationMs);
 
                     var upErr = InputSystemBridge.SetMouse(null, null, null, null, buttons);
                     if (upErr != null) return new ErrorResponse(upErr);
+
+                    if (!completed)
+                        return new ErrorResponse(
+                            $"Play mode {durationMs}ms dolmadan sona erdi; düğme istenen süre basılı KALMADI. " +
+                            "Düğmeler bırakıldı.");
+
                     return Held($"{string.Join(", ", buttons)} tıklandı.");
                 }
                 default:
@@ -283,15 +334,39 @@ namespace MCPForUnity.Editor.Tools.Input
                     "'steps' dizisi gerekli. Örn: [{\"type\":\"key\",\"key\":\"W\",\"state\":\"down\"}," +
                     "{\"type\":\"wait\",\"ms\":2000},{\"type\":\"key\",\"key\":\"W\",\"state\":\"up\"}]");
 
-            double totalMs = steps
-                .Select(s => s["type"]?.ToString()?.ToLowerInvariant() == "wait"
-                    ? s["ms"]?.Value<double?>() ?? 0
-                    : s["duration_ms"]?.Value<double?>() ?? 0)
-                .Sum();
+            // ⚠️ Bu hesap denetimde yeniden yazıldı (4 Ağu 2026). Eski hâli iki
+            // bağımsız yoldan aşılabiliyordu: (1) süresi verilmeyen tap adımları 0
+            // sayılıyordu, (2) negatif bir `ms` toplamı düşürüp pozitif bir beklemeyi
+            // maskeliyordu — `[{wait -3540000},{wait 3600000}]` toplamda 60s görünüp
+            // gerçekte bir saat koşuyordu. Artık her adım kendi gerçek maliyetiyle
+            // ve NEGATİF DEĞER REDDEDİLEREK toplanıyor.
+            double totalMs = 0;
+            for (int i = 0; i < steps.Count; i++)
+            {
+                if (steps[i] is not JObject step) continue;
+                string stepType = step["type"]?.ToString()?.ToLowerInvariant();
+
+                double stepMs;
+                if (stepType == "wait")
+                    stepMs = step["ms"]?.Value<double?>() ?? 0;
+                else if (stepType == "key" || stepType == "mouse_button")
+                    stepMs = step["duration_ms"]?.Value<double?>()
+                             ?? ((step["state"]?.ToString()?.ToLowerInvariant() ?? "tap") == "tap" ? DefaultTapMs : 0);
+                else
+                    stepMs = 0; // süresiz adımlar: mouse_move, scroll, gamepad, ui_click
+
+                if (stepMs < 0)
+                    return new ErrorResponse(
+                        $"Adım {i}: negatif süre ({stepMs} ms) geçersiz. Negatif değerler toplamı " +
+                        "düşürüp tavanı anlamsız kılıyordu.");
+
+                totalMs += stepMs;
+            }
 
             if (totalMs > MaxSequenceSeconds * 1000)
                 return new ErrorResponse(
-                    $"Dizinin toplam süresi {totalMs / 1000:0.#}s, tavan {MaxSequenceSeconds}s. " +
+                    $"Dizinin toplam süresi {totalMs / 1000:0.#}s, tavan {MaxSequenceSeconds}s " +
+                    "(süresi verilmeyen tap adımları " + DefaultTapMs + " ms sayılır). " +
                     "Daha kısa dizilere böl — böylece aralarda ekran görüntüsü alıp ne olduğunu görebilirsin.");
 
             var log = new List<object>();
@@ -304,12 +379,25 @@ namespace MCPForUnity.Editor.Tools.Input
                 string type = step["type"]?.ToString()?.ToLowerInvariant();
                 object result;
 
+                // ⚠️ Bu try, denetimde eklendi (4 Ağu 2026). Öncesinde kurtarma
+                // mesajı YALNIZ bir adım ErrorResponse döndürdüğünde çıkıyordu;
+                // bir istisna (`{"type":"mouse_move","x":"sayi-degil"}` gibi) döngüden
+                // KAÇIP dıştaki genel catch'e düşüyor ve kullanıcı "reset çağır"
+                // yönlendirmesini hiç görmüyordu — üstelik tuş basılı kalmışken.
+                try
+                {
                 switch (type)
                 {
                     case "wait":
-                        await WaitFrames(step["ms"]?.Value<int?>() ?? 0);
-                        result = new SuccessResponse($"{step["ms"]?.Value<int?>() ?? 0}ms beklendi.");
+                    {
+                        int waitMs = step["ms"]?.Value<int?>() ?? 0;
+                        bool completed = await WaitFrames(waitMs);
+                        result = completed
+                            ? new SuccessResponse($"{waitMs}ms beklendi.")
+                            : (object)new ErrorResponse(
+                                $"Play mode {waitMs}ms dolmadan sona erdi; dizi burada durdu.");
                         break;
+                    }
                     case "key":
                         result = await HandleKey(step);
                         break;
@@ -334,17 +422,28 @@ namespace MCPForUnity.Editor.Tools.Input
                             "mouse_button, scroll, gamepad, ui_click.");
                         break;
                 }
+                }
+                catch (Exception ex)
+                {
+                    result = new ErrorResponse($"Adım {i} istisna fırlattı: {ex.Message}");
+                }
 
                 log.Add(new { step = i, type, result });
 
                 // Bir adım patladıysa DURUYORUZ: yarısı uygulanmış bir dizi, hiç
-                // uygulanmamış bir diziden daha yanıltıcıdır.
+                // uygulanmamış bir diziden daha yanıltıcıdır. Hangi girdilerin
+                // basılı KALDIĞI cevabın içinde veriliyor — kullanıcıyı ayrı bir
+                // describe turuna zorlamak, tam da panik anında fazladan adım demek.
                 if (result is ErrorResponse)
                 {
                     return new ErrorResponse(
-                        $"Dizi {i}. adımda durdu. Basılı kalan tuşlar için action='describe', " +
-                        "temizlemek için action='reset'.",
-                        new { completedSteps = i, log });
+                        $"Dizi {i}. adımda durdu. Basılı kalanları temizlemek için action='reset'.",
+                        new
+                        {
+                            completedSteps = i,
+                            stillHeld = InputSystemBridge.Describe(),
+                            log,
+                        });
                 }
             }
 
@@ -363,9 +462,17 @@ namespace MCPForUnity.Editor.Tools.Input
         /// QueuePlayerLoopUpdate çağrısı, Editor odakta değilken bile oyun döngüsünün
         /// tıklamasını sağlıyor — aksi halde bekleme gerçek oyun karesi üretmezdi.
         /// </summary>
-        private static Task WaitFrames(int milliseconds)
+        /// <returns>
+        /// true = süre doldu; false = play mode bekleme sırasında SONA ERDİ.
+        /// ⚠️ Dönüş tipi denetimde `Task`'tan `Task&lt;bool&gt;`'a çevrildi
+        /// (4 Ağu 2026). Öncesinde iptal `TrySetResult(false)` ile kaydediliyor ama
+        /// tip düzeyinde okunamıyordu: kullanıcı oyunu 1. saniyede durdursa bile araç
+        /// "10000ms beklendi" ve "3 adım tamamlandı" diyordu. Kaydedilen ama
+        /// okunamayan bir sinyal, hiç olmayan bir sinyaldir.
+        /// </returns>
+        private static Task<bool> WaitFrames(int milliseconds)
         {
-            if (milliseconds <= 0) return Task.CompletedTask;
+            if (milliseconds <= 0) return Task.FromResult(true);
 
             var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             double deadline = EditorApplication.timeSinceStartup + (milliseconds / 1000.0);
@@ -419,8 +526,16 @@ namespace MCPForUnity.Editor.Tools.Input
             });
         }
 
-        private static JObject ReadProperties(JObject @params)
+        /// <summary>
+        /// ⚠️ Denetimde değişti (4 Ağu 2026): eskiden bozuk bir JSON dizesi sessizce
+        /// yutuluyor ve dış istek nesnesine düşülüyordu. Sonuç, kullanıcıyı YANLIŞ
+        /// yere bakmaya yollayan bir hata mesajıydı — "'key' gerekli" diyordu, oysa
+        /// key verilmişti, sadece JSON'u bozuktu. Artık ayrıştırma hatası adıyla
+        /// çağırana ulaşıyor.
+        /// </summary>
+        private static JObject ReadProperties(JObject @params, out string parseError)
         {
+            parseError = null;
             var raw = @params["properties"];
             if (raw == null) return @params;
             if (raw is JObject obj) return obj;
@@ -429,7 +544,11 @@ namespace MCPForUnity.Editor.Tools.Input
             if (raw.Type == JTokenType.String)
             {
                 try { return JObject.Parse(raw.ToString()); }
-                catch { return @params; }
+                catch (Exception ex)
+                {
+                    parseError = $"'properties' geçerli bir JSON nesnesi değil: {ex.Message}";
+                    return @params;
+                }
             }
             return @params;
         }
