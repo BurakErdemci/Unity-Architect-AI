@@ -69,12 +69,39 @@ def parse_data_uri(uri: str) -> Optional[Tuple[str, str]]:
         return None
 
 
+def _uzanti(veri: bytes) -> Optional[str]:
+    """Sihirli baytlardan gerçek biçimi çöz; tanınmazsa None."""
+    if veri.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "png"
+    if veri.startswith(b"\xff\xd8\xff"):
+        return "jpg"
+    if veri.startswith((b"GIF87a", b"GIF89a")):
+        return "gif"
+    if veri[:4] == b"RIFF" and veri[8:12] == b"WEBP":
+        return "webp"
+    return None
+
+
+def _sonucu_dogrula(ham: bytes, kucuk: bytes) -> Optional[bytes]:
+    """Küçültme İDDİASINI çıktının kendisiyle sına.
+
+    "Küçülttüm" demek küçüldüğünü göstermez: zaten JPEG olan devasa bir fotoğraf
+    yeniden kodlandığında büyüyebilir de. Ölçüt her zaman çıkan bayt.
+    """
+    if len(kucuk) > _MUTLAK_TAVAN_BAYT:
+        logger.warning(
+            f"[attachments] görsel küçültmeden sonra da {len(kucuk)} bayt — atlandı"
+        )
+        return None
+    logger.info(f"[attachments] görsel küçültüldü: {len(ham)} → {len(kucuk)} bayt")
+    return kucuk
+
+
 def kucult(ham: bytes) -> Optional[bytes]:
     """Eşiği aşan görseli küçültür. Küçültemezse None döner (çağıran atlar).
 
-    Dönen değer JPEG'dir; şeffaflık kaybı bilinçli — alternatif, ajanın cevabında
-    oturumu düşürecek boyutta bir base64 üretmek. Animasyonlu GIF'te ilk kare
-    alınır (aynı gerekçe).
+    Şeffaflık taşıyan görsel PNG kalır (gerekçe gövdede); taşımayan JPEG'e
+    çevrilir. Animasyonlu GIF'te ilk kare alınır — ajan zaten tek kare görüyor.
     """
     if len(ham) <= _KUCULTME_ESIGI_BAYT:
         return ham
@@ -84,11 +111,33 @@ def kucult(ham: bytes) -> Optional[bytes]:
         from PIL import Image
 
         img = Image.open(io.BytesIO(ham))
+        seffaf = img.mode in ("RGBA", "LA") or (
+            img.mode == "P" and "transparency" in img.info
+        )
         # `thumbnail` en-boy oranını korur ve zaten küçük olanı BÜYÜTMEZ; yani
         # 3 MB'lık ama 800 px'lik bir görsel yeniden örneklenmeden geçer.
         img.thumbnail((_KUCULTME_KENARI, _KUCULTME_KENARI), Image.LANCZOS)
-        if img.mode != "RGB":
+
+        if seffaf:
+            # ⚠️ Buradaki ilk yazım alfayı JPEG'e çevirirken DÜŞÜRÜYORDU ve
+            # doğrulama turu bunu ölçtü: bütünüyle şeffaf bir PNG çıktıda üç
+            # kanalın extrema'sı da (0,0), yani ajan TAMAMEN SİYAH bir görüntü
+            # görüyordu. Kullanıcının yapıştırdığı şey ile ajanın analiz ettiği
+            # şey sessizce farklıydı — küçültmenin kendisinden çok daha kötü.
+            # Şeffaflık varken biçim korunuyor; PNG kayıpsız olduğu için
+            # küçültülmüş boyut da zaten tavanın çok altında kalıyor.
+            buf = io.BytesIO()
+            img.save(buf, format="PNG", optimize=True)
+            if len(buf.getvalue()) <= _MUTLAK_TAVAN_BAYT:
+                return _sonucu_dogrula(ham, buf.getvalue())
+            # PNG bile sığmıyorsa alfayı BEYAZ zemine bindir. Atmakla arasındaki
+            # fark önemli: bindirme kompozisyonu korur, atmak siyaha boyar.
+            zemin = Image.new("RGB", img.size, (255, 255, 255))
+            zemin.paste(img.convert("RGBA"), mask=img.convert("RGBA").split()[-1])
+            img = zemin
+        elif img.mode != "RGB":
             img = img.convert("RGB")
+
         buf = io.BytesIO()
         img.save(buf, format="JPEG", quality=_KUCULTME_KALITESI)
         kucuk = buf.getvalue()
@@ -96,16 +145,7 @@ def kucult(ham: bytes) -> Optional[bytes]:
         logger.warning(f"[attachments] görsel küçültülemedi ({len(ham)} bayt): {e}")
         return None if len(ham) > _MUTLAK_TAVAN_BAYT else ham
 
-    # Küçültme beklenmedik biçimde işe yaramadıysa (ör. zaten JPEG olan devasa
-    # bir fotoğraf) sonucu yine de sınırla — "küçülttüm" demek küçüldüğünü
-    # göstermez, ölçüt çıktının kendisi.
-    if len(kucuk) > _MUTLAK_TAVAN_BAYT:
-        logger.warning(
-            f"[attachments] görsel küçültmeden sonra da {len(kucuk)} bayt — atlandı"
-        )
-        return None
-    logger.info(f"[attachments] görsel küçültüldü: {len(ham)} → {len(kucuk)} bayt")
-    return kucuk
+    return _sonucu_dogrula(ham, kucuk)
 
 
 def _attach_root(workspace: Optional[str]) -> str:
@@ -146,9 +186,11 @@ def materialize_images(images: Optional[List[str]], workspace: Optional[str],
         if veri is None:
             logger.warning(f"[attachments] görsel {i} çok büyük ve küçültülemedi — atlandı")
             continue
-        # Küçültülen içerik artık JPEG; uzantı da onu söylemeli, yoksa ajan
-        # `.png` sanıp yanlış çözer.
-        ext = "jpg" if veri is not ham else _EXT.get(media, "png")
+        # Uzantı İÇERİKTEN okunuyor, `media` başlığından ya da "değişti mi"
+        # kimlik karşılaştırmasından değil: küçültme çıktısı şeffaflığa göre PNG
+        # ya da JPEG olabiliyor, ve yanlış uzantı ajanın dosyayı yanlış çözmesine
+        # yol açıyor. Başlık zaten kullanıcıdan geliyor, içerikle uyuşma garantisi yok.
+        ext = _uzanti(veri) or _EXT.get(media, "png")
         p = os.path.join(turn_dir, f"img_{i}.{ext}")
         try:
             with open(p, "wb") as f:

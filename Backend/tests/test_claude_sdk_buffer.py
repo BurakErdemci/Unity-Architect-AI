@@ -108,9 +108,12 @@ def test_BUYUK_bir_satir_GERCEKTEN_ayristiriliyor():
 
     from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
 
-    # Kullanıcının vakasını temsil eden boyut: eski 1 MiB tavanının üstünde,
-    # yeni tavanın altında. Tavan geri düşerse bu satır ayrıştırılamaz.
-    dolgu = "x" * (2 * 1024 * 1024)
+    # Boyut, `test_tavan_gercekci_bir_FOTOGRAFI_kaldiriyor`'un İDDİA ettiği
+    # ölçekle aynı olmak zorunda. İlk yazımı 2 MiB'ydi ve doğrulama turu bunun
+    # yetmediğini ölçtü: etkin tavanı 3 MiB'ye sıkıştıran bir SDK regresyonunda
+    # 12 testin 12'si yeşil kalıyordu — "8 MiB fotoğrafı kaldırır" diyen test
+    # yalnız sabite bakıyor, guard'a hiç 8 MiB'lik satır vermiyordu.
+    dolgu = "x" * (8 * 1024 * 1024 * 4 // 3)
     satir = json.dumps({"type": "assistant", "payload": dolgu}) + "\n"
 
     class _ParcaliAkis:
