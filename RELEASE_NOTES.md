@@ -1,36 +1,72 @@
-## Unity Architect AI v2.2.0
+<!--
+  ⚠️ BU DOSYA ELLE GÜNCELLENİYOR ve bayatlamaya açık.
+  `.github/workflows/release.yml` taslak release'in GÖVDESİ olarak bunu basıyor
+  (`body_path: RELEASE_NOTES.md`). 2 Ağu 2026'da içeriği hâlâ v2.2.0'ındı; o iş
+  koşsaydı v2.3.0 release'ine bir önceki sürümün notları giderdi.
+  ▶ Yeni sürümden ÖNCE: `CHANGELOG.md`'nin en üst bölümünü buraya taşı.
+  Bu yorum GitHub'da görünmez (HTML yorumu).
+-->
 
-Bu sürümün yıldızı: **VSCode kalitesinde C# kod zekası**. El yapımı linter tarihe karıştı — yerine OmniSharp-Roslyn sidecar geldi. Ayrıca `execute_code` kalıcı olarak düzeldi, effort seçimi artık her modelde gerçek, dosya ağacı tüm Unity dosyalarını gösteriyor ve GLM 5.2 ücretsiz havuza katıldı.
+## Unity Architect AI v2.3.1
 
-### 🧠 OmniSharp C# Kod Zekası (YENİ)
-- **Canlı diagnostics:** Yazarken 1-2 saniyede gerçek derleyici hataları — Unity'nin ürettiği csproj'lardan beslenir, eski linter'ın çapraz-dosya false-positive'leri tamamen bitti.
-- **IntelliSense:** `transform.` yazınca gerçek Unity API tamamlama listesi; sembol üstünde hover ile dokümantasyon; Ctrl+tık ile tanıma gitme.
-- Workspace açılınca otomatik başlar ("C# analizi hazırlanıyor…" rozeti), Unity kapalıyken de çalışır. Kurulum gerektirmez — pakete gömülü.
-- Workspace'te .sln yoksa Unity'den otomatik `sync_csproj` tetiklenir.
+Küçük ama can sıkıcı bir hatanın sürümü: **sohbete fotoğraf yapıştırınca oturum
+bazen komple düşüyordu.**
 
-### ⚙️ execute_code — "dosya adı çok uzun" kalıcı çözüm
-- AI'nın Unity içinde kod çalıştırma aracı artık **Unity'nin kendi derleyicisini** kullanıyor (AssemblyBuilder): dil sürümü her zaman projeninkiyle aynı, oyunun kendi tiplerine (Assembly-CSharp) tam erişim, referans sorunu yapısal olarak imkânsız.
-- Derleme hataları temiz formatta doğru satır numarasıyla döner; runtime hataları stack trace ile.
+> 🍎 **macOS (Apple Silicon):** `Unity-Architect-AI-2.3.1-arm64.dmg`
+> · 🪟 **Windows:** `Unity-Architect-AI-Setup-2.3.1.exe`
 
-### 🎚️ Effort/Reasoning — artık her modelde GERÇEK
-- Seçtiğin düşünme seviyesi artık **tüm** sağlayıcılara gerçekten iletiliyor (önceden çoğunda yok sayılıyordu): Codex `model_reasoning_effort`, Gemini `thinking_level`, Copilot `--effort`, NVIDIA/DeepSeek/Groq/Z.ai reasoning parametreleri…
-- **Yeni seçici:** segmented bar yalnız aktif modelin gerçekten desteklediği seviyeleri gösterir; her seviyenin ne yaptığı panelde açıklanır.
-- **Auto varsayılanı:** dokunmazsan model kendi akıllı varsayılanıyla çalışır.
+### 🖼 Yapıştırılan görsel artık sohbeti öldürmüyor
 
-### 📁 Dosya ağacı — tüm Unity dosyaları
-- Prefab, animasyon, sahne, materyal, FBX, ses… artık hepsi ağaçta (tür bazlı renkli ikonlarla). Unity'nin YAML formatları editörde açılıp düzenlenebilir.
-- Guard'lar: binary dosyalar ve 8MB üstü dev dosyalar için bilgilendirici uyarı.
+Belirti şuydu: iki fotoğrafla oturum düşüyor, üç fotoğrafla düşmüyordu — yani
+sorun *adet* değil **boyut**tu.
 
-### 🤖 Model havuzu
-- **GLM 5.2** (açık ağırlıklı modellerin lideri, 1M bağlam) NVIDIA ücretsiz havuzuna eklendi ve varsayılan yapıldı; **Qwen3 Coder 480B** de katıldı.
+Sebep zincirin ucundaydı. Yapıştırdığın görsel diske yazılıyor ve modele yalnız
+dosya *yolu* veriliyor; model o dosyayı `Read` ile açtığında sonuç base64 olarak
+tek bir satır hâlinde geri geliyor. O satırın 1 MB'lık bir tavanı vardı ve
+aşıldığında hata kırpılmıyor, **oturumun tamamı düşüyordu**. base64 ham boyutun
+~4/3'ü olduğu için 750 KB'lık sıradan bir fotoğraf bile tavanı aşmaya yetiyordu.
 
-### 🛠️ Kararlılık & düzeltmeler
-- MCP sunucusunu artık yalnızca uygulamanın toggle'ı başlatır — Unity'nin kendi terminalinde sunucu açıp uygulamanın oturumunu çalması engellendi.
-- Editörde imleç/tıklama kayması düzeltildi (font yüklenme yarışı).
-- Üst barda uzun dosya yollarının taşması düzeltildi.
-- Antigravity (agy): uzun görevlerde ilerleme akışı, kaldığı yerden devam ve yanıt dilinin kullanıcı diline sabitlenmesi.
+Düzeltme iki katmanlı:
+- Satır tavanı, ürünün diğer CLI yolunda zaten kullandığı değere yükseltildi.
+- **Asıl sınır kaynağa kondu:** büyük görseller diske yazılmadan önce küçültülüyor.
+  Bu hem çökmeyi kapatıyor hem de token maliyetini düşürüyor.
 
-### 🔄 Güncelleme & Güvenlik
-Uygulama açılışta yeni sürümü kontrol eder ve **haber verir** — kurulumu sen onaylarsın, sessiz/otomatik kurulum yoktur. Windows'ta kurulum eski sürümü otomatik kaldırır.
+Şeffaf PNG'ler bu sırada bozulmuyor: alfa kanalı korunuyor. (İlk düzeltme
+denemesinde şeffaf görseller tamamen siyah kareye dönüyordu — bir denetim turu
+bunu yakaladı ve düzeltildi.)
 
-> macOS (Apple Silicon) paketi ayrıca eklenecektir.
+### 🎮 AI artık oyunu oynayabiliyor (`manage_input`)
+
+Play mode'a girmek ve ekran görüntüsü almak zaten vardı; eksik olan **müdahale**
+etmekti. `manage_input` çalışan oyuna klavye, fare, gamepad ve UI girdisi
+gönderiyor — yani AI yaptığı şeyi deneyebiliyor.
+
+Girdi, Unity Input System'in sanal cihazlarına sürecin içinden basılıyor:
+**pencere odağı gerekmiyor**, AI oynarken klavyen kilitlenmiyor.
+
+> ⚠️ **Sınırı önce ölç:** bu olayları yalnız yeni Input System'e göre yazılmış
+> oyun kodu görür. Projen eski `Input.GetKey` kullanıyorsa girdi ona ulaşmaz;
+> o projelerde çalışan tek yol uGUI düğmelerini tetikleyen `ui_click`'tir.
+> `manage_input action="describe"` projenin girdi arka ucunu raporlar.
+
+### 📸 Ekran görüntüsü aracının adı düzeltildi
+
+Modele var olmayan bir eylem adı öğretiliyordu; ekran görüntüsü istekleri bu
+yüzden bazen boşa düşüyordu. Doğru ada bağlandı.
+
+### 📖 Dokümantasyon
+
+README (TR + EN) 105 commit'lik gerçeklikle hizalandı. Öne çıkan düzeltme bir
+güvenlik iddiasıydı: dokümanlar "unityMCP hiçbir zaman onay kartı göstermez"
+diyordu, oysa v2.3.0'dan beri Claude yolunda sahneyi **değiştiren** çağrılar kart
+açıyor. Artık sağlayıcı bazında doğru anlatılıyor.
+
+---
+
+**Kurulum:** Windows'ta installer önceki sürümü otomatik kaldırır.
+macOS'ta imzasız dmg "hasar görmüş" derse:
+`xattr -cr "/Applications/Unity Architect AI.app"`
+
+⚠️ macOS'ta yalnız **Apple Silicon (arm64)** dağıtılıyor — Intel dmg'nin içine
+host mimarisinin backend'i gömüldüğü ve sınanacak Intel Mac olmadığı için
+bilerek yayınlanmıyor.

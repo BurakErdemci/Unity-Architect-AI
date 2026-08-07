@@ -2,6 +2,45 @@
 
 Bu dosya kullanıcıya görünen değişiklikleri taşır. Tam geçmiş için `git log`.
 
+## v2.3.1 — 7 Ağustos 2026
+
+Sohbete fotoğraf yapıştırınca oturumun düşmesi düzeltildi; ayrıca AI artık
+Unity'de çalışan oyuna girdi gönderebiliyor.
+
+### 🖼 Düzeltme — yapıştırılan görsel oturumu öldürüyordu
+- Belirti boyuta bağlıydı, adede değil: iki fotoğrafla düşüyor, üçle düşmüyordu.
+- Sebep: diske yazılan görseli model `Read` ile açınca sonuç base64 olarak tek bir
+  satırda geri geliyor; o satırın 1 MB tavanı aşılınca hata kırpılmıyor, **oturum
+  komple düşüyordu**. base64 ham boyutun ~4/3'ü olduğundan 750 KB'lık bir fotoğraf
+  bile yetiyordu.
+- İki katmanlı düzeltme: satır tavanı diğer CLI yoluyla hizalandı **ve** asıl sınır
+  kaynağa kondu — büyük görseller diske yazılmadan önce küçültülüyor. Token
+  maliyeti de düşüyor.
+- Şeffaf PNG'lerde alfa kanalı korunuyor (ilk düzeltme denemesi onları siyah kareye
+  çeviriyordu; denetim turu yakaladı).
+
+### 🎮 Yeni — `manage_input`: AI oyunu oynayabiliyor
+- Çalışan oyuna klavye, fare, gamepad ve UI girdisi gönderiliyor. Girdi Unity Input
+  System'in sanal cihazlarına sürecin içinden basıldığı için **pencere odağı
+  gerekmiyor**.
+- Aksiyonlar: `describe`, `key`, `mouse_move`, `mouse_button`, `scroll`, `gamepad`,
+  `ui_click`, `sequence`, `reset`.
+- ⚠️ Yalnız yeni Input System'e göre yazılmış oyun kodu bu olayları görür; eski
+  `Input.GetKey` kullanan projelerde çalışan tek yol `ui_click`'tir.
+
+### 📸 Düzeltme — ekran görüntüsü eylem adı
+- Modele var olmayan bir eylem adı öğretiliyordu; ekran görüntüsü istekleri bu
+  yüzden boşa düşebiliyordu.
+
+### 📖 Dokümantasyon
+- README (TR + EN) 105 commit'lik gerçeklikle hizalandı: unityMCP onay davranışı
+  artık sağlayıcı bazında doğru anlatılıyor, araç tablosu 46 aracın tamamını
+  kapsıyor, eksik üç CLI sağlayıcısı (Cursor, OpenCode, Kimi Code) eklendi, model
+  listeleri güncellendi ve gömülü .NET'in **SDK** olduğu (runtime değil) gerekçesiyle
+  yazıldı.
+
+---
+
 ## v2.3.0 — 2 Ağustos 2026
 
 **Bu sürüm bir güvenlik sürümüdür.** v2.2.0'dan bu yana 125 commit geldi ve
