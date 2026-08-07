@@ -53,23 +53,26 @@ Today a Unity developer juggles multiple windows for different jobs: one CLI to 
 
 - run **in the same chat window**,
 - see **the same project** as their workspace,
-- show **the same file/terminal approval cards** (no model changes a single byte without approval),
+- show **the same file/terminal approval cards** (scope below: deletes and dangerous commands are gated on every path; code writes are gated on the CLI paths and deliberately ungated on the cloud API path),
 - and, when enabled, drive **the same live Unity Editor** over MCP.
 
 ### Agent × Capability Matrix
 
 | | Chat & Analysis | Write/Edit files (approved) | Terminal (approved) | Live Unity Editor control | Auth source |
 |---|:---:|:---:|:---:|:---:|---|
-| **Claude Code** (CLI) | ✅ | ✅ MCP | ✅ MCP | ✅ unityMCP | your Anthropic subscription |
+| **Claude Code** (CLI) | ✅ | ✅ MCP | ✅ MCP | ✅ unityMCP — **gated** | your Anthropic subscription |
 | **Codex** (CLI) | ✅ | ✅ MCP | ✅ MCP | ✅ unityMCP | your OpenAI subscription |
 | **Antigravity / agy** (CLI) | ✅ | ✅ `unityai` bridge | ✅ bridge | ✅ unityMCP (HTTP) | your Google subscription |
 | **GitHub Copilot** (CLI) | ✅ | ✅ MCP | ✅ MCP | ✅ unityMCP | your Copilot subscription |
+| **Cursor** (CLI) | ✅ | ✅ MCP | ✅ MCP | ✅ unityMCP | your Cursor subscription |
+| **OpenCode** (CLI) | ✅ | ✅ MCP | ✅ MCP | ✅ unityMCP | free / your own key |
+| **Kimi Code** (CLI) | ✅ | ✅ MCP | ✅ MCP | ✅ unityMCP | your Moonshot subscription |
 | **Cloud API** (Claude/GPT/Gemini/…) | ✅ | ✅ function calling | ✅ function calling | ✅ function calling | your API key |
 | **Ollama** (local) | ✅ | ✅ (compatible models) | ✅ | ⚠️ partial | free, offline |
 
 What this matrix delivers is simple but rare: **the experience is identical regardless of the source.** Switching from Codex to Claude Code is one dropdown; the diff viewer, terminal approval and Unity integration you're used to stay exactly the same.
 
-> **Important distinction:** Approval cards appear for **file writes/deletes and terminal commands**. **Live Unity scene operations** (unityMCP tools) run **without approval** by design — so when you say "add a character to the scene," the AI builds the scene without asking. Details: [Approval scope](#️-approval-scope-what-is-and-isnt-confirmed-an-honesty-note).
+> **Important distinction:** Approval cards appear for **file deletes and dangerous terminal commands** on every path; for **file writes** on the CLI agent paths, but **not on the cloud API / Ollama function-calling path**. For **live Unity scene operations** it depends on the provider: on the Claude path, unityMCP calls that *mutate* the scene now open a card; on Codex and agy they do not. Full table and rationale: [Approval scope](#️-approval-scope-what-is-and-isnt-confirmed-an-honesty-note).
 
 ---
 
@@ -79,20 +82,20 @@ AI tools in the Unity ecosystem usually land at one of two extremes: they either
 
 | Traditional AI Assistants | Unity Architect AI |
 |---|---|
-| Locked to a single provider | Claude Code, Codex, agy, Copilot CLI, 8+ cloud APIs (incl. the free NVIDIA NIM pool), Ollama — one menu |
+| Locked to a single provider | 7 CLI agents (Claude Code, Codex, agy, Copilot, Cursor, OpenCode, Kimi Code), 8+ cloud APIs (incl. the free NVIDIA NIM pool), Ollama — one menu |
 | Writes code, doesn't see the project | Scans every `.cs` file in the workspace, extracts an architecture map |
 | Can't touch the file system | Read/write/delete files — every dangerous op behind an approval card |
 | Unaware of the Unity Editor | Adds GameObjects, binds components, reads the console via MCP |
 | Can't run terminal | Secure terminal layer; dangerous commands require approval |
 | Every chat starts from zero | Persistent memory + project analysis keep the context |
-| Setup hassle | `uv`, OmniSharp + .NET runtime, ffmpeg/yt-dlp — all **bundled into the app**, zero extra install |
+| Setup hassle | `uv`, OmniSharp + .NET SDK, ffmpeg/yt-dlp — all **bundled into the app**, zero extra install |
 
 ---
 
 ## ✨ Features
 
 ### Many agents, one experience
-- Claude Code / Codex / agy / GitHub Copilot CLI agents + Anthropic, Google, OpenAI, NVIDIA NIM (free pool: GLM 5.2, Qwen3 Coder 480B, Nemotron 3…), Groq, DeepSeek, Moonshot cloud APIs + local Ollama models
+- Claude Code / Codex / agy / GitHub Copilot / Cursor / OpenCode / Kimi Code CLI agents + Anthropic, Google, OpenAI, NVIDIA NIM (free pool: GLM 5.2, Qwen3 Coder 480B, Nemotron 3…), Groq, DeepSeek, Moonshot cloud APIs + local Ollama models
 - When a CLI is selected, the backend writes that tool's MCP config **at call time, automatically** (`~/.claude.json`, `~/.codex/config.toml`, `~/.gemini/antigravity-cli/mcp_config.json`; Copilot gets a session-scoped `--additional-mcp-config`)
 - **Transparent hot-swap**: as the Gemini CLI was being retired, the `gemini-*` model IDs were kept and the backend silently routes them to the Antigravity (`agy`) engine — the frontend never changed
 
@@ -102,15 +105,16 @@ AI tools in the Unity ecosystem usually land at one of two extremes: they either
 - Every step streams live (SSE): `thinking` → `tool_call` → `tool_result` → `response`
 - The "Stop" button both cuts the SSE connection and rejects all pending approval gates on the backend (two-layer cancellation)
 
-### Approval gate system (identical for every agent)
-- File write → side-by-side **diff viewer** (current vs. new)
-- File delete → delete confirmation with content preview
-- Terminal command → approval card showing the command
-- CLI agents (MCP / `unityai` bridge) and cloud APIs (function calling) all go through the **same** approval UI
+### Approval gate system
+- File write → side-by-side **diff viewer** (current vs. new) — **on the CLI agent paths** (MCP / `unityai` bridge); writes are ungated on the cloud API function-calling path, rationale in [Approval scope](#️-approval-scope-what-is-and-isnt-confirmed-an-honesty-note)
+- File delete → delete confirmation with content preview — **on every path**
+- Terminal command → approval card showing the command (except commands considered safe) — **on every path**
+- Whenever a card does appear, CLI agents and cloud APIs go through the **same** approval UI
 
 ### Live Unity Editor control (embedded, zero install)
-- 40+ Unity Editor tools based on [CoplayDev/unity-mcp](https://github.com/CoplayDev/unity-mcp)
+- 46 Unity Editor tools based on [CoplayDev/unity-mcp](https://github.com/CoplayDev/unity-mcp)
 - Scene, GameObject, components, prefabs, materials, physics, animation, build settings
+- **It can play the game** (`manage_input`): enters play mode, sends keyboard/mouse/gamepad input, takes a screenshot and judges the result — it actually tries what it built ([details and limits](#-the-ai-can-now-play-the-game-manage_input))
 - The `uv` toolchain is **bundled into the app** (macOS arm64+x64, Windows x64) — works even if the user has no `uv` installed
 - One-click toggle: turn it on while the Unity Editor is open, ready when it turns green
 
@@ -121,7 +125,9 @@ AI tools in the Unity ecosystem usually land at one of two extremes: they either
 
 ### OmniSharp code intelligence (embedded, zero install)
 - **OmniSharp LSP** sidecar — real Roslyn-based C# analysis; errors surface in the Monaco editor
-- The **.NET runtime it needs is bundled into the app** (macOS/Linux) — users don't need .NET installed
+- The **.NET SDK it needs is bundled into the app** (Windows, macOS, Linux) — users don't need .NET installed
+
+> **Why the SDK and not just the runtime?** Not a preference, a measured requirement: OmniSharp resolves MSBuild from the SDK to load a project. With only the runtime bundled, `hostfxr_resolve_sdk2` fails and the sidecar returns no `initialize` response for 25 seconds; with a real SDK the same work takes **3 seconds**. The measurement is written down in `scripts/fetch_omnisharp.py`.
 - Resolves the Unity project's `Assets/` and package references (the hand-made linter was removed in favor of a full LSP)
 
 ### Real effort control
@@ -201,7 +207,7 @@ AI tools in the Unity ecosystem usually land at one of two extremes: they either
                          ┌─────────────────┐
                          │   Unity MCP     │
                          │ (CoplayDev)     │  ← uvx bundled
-                         │  40+ tools      │
+                         │   46 tools      │
                          └────────┬────────┘
                                   ▼
                          ┌─────────────────┐
@@ -240,7 +246,7 @@ unityaıPython/
 ├── Frontend/frontend/
 │   ├── renderer/                # home.tsx (IDE), components/, hooks/, lib/i18n.tsx
 │   └── main/background.ts       # Electron main process, LOCAL_APP_TOKEN + updater
-├── scripts/fetch_omnisharp.py   # downloads OmniSharp + .NET runtime (third_party/, not in git)
+├── scripts/fetch_omnisharp.py   # downloads OmniSharp + .NET SDK (third_party/, not in git)
 ├── unity-mcp/                   # CoplayDev/unity-mcp fork (Server + MCPForUnity plugin)
 └── docker-compose.yml
 ```
@@ -261,6 +267,11 @@ The backend invokes the official CLI on your machine as a subprocess, using the 
 | **Codex** | gpt-5.6-sol/terra/luna, gpt-5.5, gpt-5.4 | `~/.codex/config.toml` | MCP native |
 | **Antigravity (agy)** | Gemini 3.5 Flash + Claude/GPT-OSS via agy | `~/.gemini/antigravity-cli/` | `run_command` → `unityai` bridge |
 | **GitHub Copilot** | copilot-auto + Claude/GPT/Gemini options | session-scoped `--additional-mcp-config` | MCP native (global config untouched) |
+| **Cursor** | cursor-auto + Claude/GPT options | session-scoped | MCP native |
+| **OpenCode** | free pool + your own key | `opencode.json` | MCP native |
+| **Kimi Code** | kimi-k3, kimi-k2.7-code | `<workspace>/.mcp.json` | MCP native |
+
+> ⚠️ **Kimi Code honesty note:** the provider is written and its tests pass, but the development machine has no Kimi subscription, so it has **never been exercised end to end**. If you hit unexpected behaviour on the Kimi path, that is why — an issue would be welcome.
 
 > **Why is agy different?** agy's `--print` mode does not natively load MCP servers. So file/terminal operations go through a `unityai` CLI bridge invoked via `run_command` that **shares the exact same approval gate** as the MCP tools. Details: [Developer Notes — The agy Saga, Scene 7](#scene-7-the-fix--i-was-knocking-on-the-wrong-door).
 
@@ -271,13 +282,13 @@ The backend calls the provider's official SDK or the OpenRouter gateway. Tool us
 | Provider | Models (example) | Notes |
 |---|---|---|
 | **Anthropic** | claude-sonnet-5, claude-fable-5, claude-opus-4-8, claude-haiku-4-5 | Extended Thinking, tool use |
-| **Google** | gemini-3.5-flash, gemini-3.1-pro, gemini-3-flash | Thinking stream, vision |
+| **Google** | gemini-3.6-flash, gemini-3.5-flash (+lite), gemini-3.1-pro, gemini-3.1-flash-lite | Thinking stream, vision |
 | **OpenAI** | gpt-5.6-sol/terra/luna, gpt-5.5-pro, gpt-5.5, gpt-5.4 | Function calling, vision |
 | **NVIDIA NIM** | GLM 5.2, Qwen3 Coder 480B, Nemotron 3 Ultra/Super, Mistral Large 3, Kimi K2.6… | **Free pool** with a single `nvapi-` key (40 RPM) |
 | **z-ai** | glm-5.2 | Open-weight, 1M context |
 | **Groq** | llama-3.3-70b-versatile | Low latency (LPU) |
-| **DeepSeek** | deepseek-chat (V3) | Cost-effective |
-| **Moonshot / Kimi** | kimi-k2.6, kimi-k2.5 | Long context |
+| **DeepSeek** | deepseek-v4-pro, deepseek-v4-flash | Cost-effective |
+| **Moonshot / Kimi** | kimi-k3, kimi-k2.7-code, kimi-k2.6 | Long context; thinking is always on for K3 |
 | **OpenRouter** | all of the above via `openrouter_id` | One key, all providers (fallback path) |
 
 ### 3. Local (Ollama)
@@ -299,7 +310,7 @@ Tool usage is a layer **independent** of the provider. When a model wants to rea
 ### MCP servers the backend runs
 
 1. **unityai MCP** (`Backend/app/unity_ai_mcp/server.py`) — `save_file`, `delete_file`, `read_file`, `list_directory`, `bash`/`run_terminal_command`/`execute_shell_command`. Write/delete/command operations are routed to the approval panel via `approval_bridge`.
-2. **Unity MCP** (CoplayDev/unity-mcp) — 40+ tools for the Unity Editor (scene, GameObject, prefab…), over HTTP at `127.0.0.1:8080`.
+2. **Unity MCP** (CoplayDev/unity-mcp) — 46 tools for the Unity Editor (scene, GameObject, prefab, input…), over HTTP at `127.0.0.1:8080`.
 
 ### When are MCP configs written?
 
@@ -337,22 +348,31 @@ AI wants to change a file
       Written     "rejected" returned
 ```
 
-CLI agents, cloud APIs and the `unityai` bridge all pass through the **same** `approval_bridge` / gate mechanism for **file and terminal** operations. Not a single byte is written to disk without approval.
+The flow above applies to the **CLI agents** (Claude Code, Codex, Copilot, Cursor, OpenCode, Kimi Code) and the **`unityai` bridge** (agy): on those paths a file write goes through `approval_bridge` and not a byte reaches disk unapproved. On the **cloud API / Ollama function-calling path, writes are deliberately out of scope**; deletes and dangerous terminal commands are gated there too.
 
 ### ⚠️ Approval scope: what is and isn't confirmed (an honesty note)
 
-The approval gate guards the **file system and the terminal** — not the **live Unity scene**. This is a deliberate design choice:
+The gate does not cover everything. The remaining deliberate trade-offs are **file writes on the cloud API path** and **live Unity scene operations on the Codex/agy paths**:
 
 | Operation | Tool | Approval? |
 |---|---|:---:|
-| Create / edit a file (.cs etc.) | `save_file` / `unityai save-file` / function calling | ✅ **Diff card appears** |
-| Delete a file | `delete_file` | ✅ **Delete card appears** |
+| Create / edit a file — **CLI agents** | `save_file` (MCP) / `unityai save-file` | ✅ **Diff card appears** |
+| Create / edit a file — **cloud API & Ollama** | `write_file` (function calling) | ❌ **No approval, writes directly** |
+| Delete a file | `delete_file` / `unityai` / function calling | ✅ **Delete card appears** |
 | Terminal command | `bash` / `run_command` | ✅ (except safe commands) |
-| Scene / GameObject / component / material change | **unityMCP tools** (`manage_gameobject`, `manage_scene`…) | ❌ **No approval, runs directly** |
+| unityMCP call that **reads** the scene | `manage_scene action=get_hierarchy`, `read_console`… | ➖ No card (read) |
+| unityMCP call that **mutates** the scene — **Claude path** | `manage_gameobject`, `manage_input`… | ✅ **Card appears** (v2.3.0) |
+| unityMCP call that **mutates** the scene — **Codex / agy** | same tools | ❌ **No approval, runs directly** |
 
-So if you say **"create PlayerController.cs"** an approval card appears; but if you say **"make a walking character in the scene"** the AI builds the GameObjects, components and scene **without asking** (if it also needs to write a `.cs` script, that step still requires approval).
+**Why is `write_file` unapproved on the cloud API path?** Writing code into the workspace is what this product is for. Asking on every write trains reflex-approval, which does not strengthen the gate — it destroys it, and then the delete card that actually matters gets approved by the same reflex. Writes are instead **confined to the workspace** by `_validate_path` (`Path.resolve()` + prefix check). Deletes are rare and irreversible, so they always show a card.
 
-**Why?** unityMCP performs reversible (Ctrl+Z) scene operations against Unity's live Editor; requiring approval for every GameObject add/move would make the workflow unusable. These tools are also exposed to the CLI agents with `trust: true` / `approval_mode = "approve"` — i.e. the approval decision is intentionally delegated to the unityMCP layer. Persistent writes to disk (code files) and the terminal are always gated.
+> **In practice:** with a cloud API model, **"create PlayerController.cs"** writes without asking (git can undo it). The same request through Claude Code / Codex / agy shows a diff card. If you want to see every change before it lands, **pick one of the CLI agents.**
+
+**Why does unityMCP differ per provider?** Originally it was ungated everywhere: scene operations are undoable (Ctrl+Z) and a card on every GameObject move made the workflow unusable. v2.3.0 removed that trade-off on the Claude path — but opens a card only for calls that **mutate state**.
+
+The read/write split is not a guess, it is a ledger: `unity-mcp/Server/src/services/registry/tool_actions.json` classifies every action of every tool, and `Backend/app/unity_tool_policy.py` reads it from the source rather than copying it — a copied list previously granted an exemption to an action that did not exist, and that line never matched anything. **If the ledger cannot be read, the policy fails closed:** no exemptions, every call shows a card.
+
+Codex and agy do not have this gate: unityMCP is still handed to them with `default_tools_approval_mode = "approve"` (Codex) and `trust: true` (agy).
 
 ### 3. Terminal security
 - Safe (read-only) commands run directly; any command outside the whitelist shows an approval card
@@ -385,7 +405,7 @@ Every HTTP request carries an X-Session-Token header
 - Node.js 20+
 - Unity Editor (for Unity MCP, optional)
 
-> None of these are needed for the packaged app — Python, uv, OmniSharp, the .NET runtime, and ffmpeg/yt-dlp are all bundled. These requirements are for **developing from source** only.
+> None of these are needed for the packaged app — Python, uv, OmniSharp, the .NET SDK, and ffmpeg/yt-dlp are all bundled. These requirements are for **developing from source** only.
 
 ### Backend
 
@@ -430,7 +450,7 @@ A distributable app is produced in four steps (none of the bundled binaries are 
 bash Backend/vendor/fetch_uv.sh
 #    Windows: pwsh Backend/vendor/fetch_uv.ps1
 
-# 2) Download OmniSharp + the .NET runtime (code intelligence; .NET is bundled on macOS/Linux)
+# 2) Download OmniSharp + the bundled .NET SDK (code intelligence; bundled on all three platforms)
 python3 scripts/fetch_omnisharp.py
 
 # 3) Download the video tools (ffmpeg + yt-dlp — the video→chat feature)
@@ -483,20 +503,37 @@ Unifies the [CoplayDev/unity-mcp](https://github.com/CoplayDev/unity-mcp) projec
 
 > Because `uv`/`uvx` is bundled in the packaged app, the user doesn't need to install it separately. If the Unity Editor is closed the toggle can't connect — open Unity first.
 
-> **Approval behavior:** unityMCP tools (scene/GameObject/component) are exposed with `trust: true` and **do not show an approval card** — the AI applies scene changes directly (undoable with Ctrl+Z in Unity). Approval only appears for file writes/deletes and terminal commands. See [Approval scope](#️-approval-scope-what-is-and-isnt-confirmed-an-honesty-note).
+> **Approval behavior:** On the Claude path, unityMCP calls that **mutate** the scene open an approval card; calls that only **read** (hierarchy, console, search) do not. On the Codex and agy paths unityMCP still runs unapproved. See [Approval scope](#️-approval-scope-what-is-and-isnt-confirmed-an-honesty-note).
 
-### Tools (40+)
+### Tools (46)
 
 | Category | Tools |
 |---|---|
-| Scene | `manage_scene`, `find_gameobjects`, `manage_gameobject` |
+| Scene | `manage_scene`, `find_gameobjects`, `manage_gameobject`, `set_active_instance` |
 | Components | `manage_components`, `manage_physics`, `manage_animation` |
+| **Input (new)** | **`manage_input`** — keyboard/mouse/gamepad/UI input into the running game |
 | UI/Camera | `manage_ui`, `manage_camera` (incl. screenshots) |
-| Prefab/Asset | `manage_prefabs`, `manage_scriptable_object`, `manage_asset` |
-| Visual | `manage_material`, `manage_shader`, `manage_texture`, `manage_graphics` |
-| Script | `manage_script`, `script_apply_edits`, `validate_script`, `read_console` |
-| Build | `manage_build`, `manage_packages`, `manage_editor` |
+| Prefab/Asset | `manage_prefabs`, `manage_scriptable_object`, `manage_asset`, `manage_fbx` |
+| Visual | `manage_material`, `manage_shader`, `manage_texture`, `manage_graphics`, `manage_sprite`, `manage_vfx` |
+| Script | `manage_script`, `script_apply_edits`, `apply_text_edits`, `create_script`, `delete_script`, `validate_script`, `get_sha`, `manage_script_capabilities`, `find_in_file`, `read_console` |
+| Test & Profiling | `run_tests`, `get_test_job`, `manage_profiler` |
+| Build | `manage_build`, `manage_packages`, `manage_editor`, `refresh_unity`, `manage_probuilder` |
+| Discovery | `unity_docs`, `unity_reflect`, `manage_tools`, `execute_custom_tool` |
 | Orchestration | `batch_execute` (up to 25 commands per call), `execute_code`, `execute_menu_item` |
+
+### 🎮 The AI can now play the game (`manage_input`)
+
+Entering play mode and taking screenshots already worked — what was missing was **acting**. The AI could start the game and watch it, but not play it; that was the open link in the loop.
+
+`manage_input` queues events into Unity Input System's **virtual devices** (`QueueStateEvent`). Because the events are produced from inside the process, **no window focus is required** — the AI can play while you do something else, and your keyboard is not hijacked.
+
+```
+"Start the game, walk forward with W for 2 seconds, jump with space, then take a screenshot"
+```
+
+Actions: `describe`, `key`, `mouse_move`, `mouse_button`, `scroll`, `gamepad`, `ui_click`, `sequence`, `reset`.
+
+> ⚠️ **A permanent limit — call `describe` first.** Only game code written against the **new Input System** sees these events. If your project uses the legacy `UnityEngine.Input` (`Input.GetKey`), virtual-device input **will not reach it**; the only thing that still works there is `ui_click`, which triggers uGUI buttons. `describe` reports the project's input backend — but it only reads the project setting, it does not measure which API the game code actually uses.
 
 ### A fork that evolves on agent feedback
 
@@ -713,13 +750,21 @@ The banner held for a few days. Then I asked again: *how does agy use unityMCP?*
 
 ## 🤝 Contributing
 
-```bash
-# Backend tests
-cd Backend && pytest
+The quality gate is three separate test suites — **~3,100 tests total**:
 
-# Frontend tests
-cd Frontend/frontend && npm test
+```bash
+# Backend (~1,118 tests)
+cd Backend && pytest
+#   Windows: venv\Scripts\python.exe -m pytest   (env: PYTHONUTF8=1)
+
+# unity-mcp server (~1,596 tests)
+cd unity-mcp/Server && pytest
+
+# Frontend (~396 tests) + the TypeScript gate
+cd Frontend/frontend && npm test && npx tsc --noEmit
 ```
+
+CI (`.github/workflows/test.yml`) runs four jobs: **Backend tests**, **unity-mcp Server tests**, **Frontend gate (tsc + vitest)** and a **PowerShell syntax check**. No release ships unless all four are green.
 
 1. Fork the repo
 2. Create a feature branch (`git checkout -b feat/amazing-feature`)
