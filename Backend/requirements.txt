@@ -1,7 +1,10 @@
 annotated-doc==0.0.4
 annotated-types==0.7.0
 anthropic>=0.19.0
-claude-agent-sdk>=0.2.110
+# Taban 0.2.110'dan yükseltildi: ClaudeAgentOptions.max_buffer_size bu tabanda
+# var olduğu ÖLÇÜLMEDİ, ve seçenek olmadan görsel taşıyan oturumlar 1 MiB'de
+# düşüyor (bkz. claude_sdk_session._SDK_STDOUT_LIMIT_BYTES). 0.2.128 ölçüldü.
+claude-agent-sdk>=0.2.128
 anyio==4.12.1
 bcrypt>=4.0.0
 keyring>=25.0.0

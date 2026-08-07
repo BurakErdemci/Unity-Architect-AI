@@ -223,6 +223,21 @@ _APP_SYSTEM_APPEND = (
 
 # Metin/thinking delta'ları bu boyuta ulaşınca SSE'ye basılır (event spam azaltma).
 _DELTA_FLUSH_CHARS = 48
+# SDK'nın CLI stdout'undaki TEK bir NDJSON satırı için tavanı. Varsayılanı 1 MiB
+# (`subprocess_cli._DEFAULT_MAX_BUFFER_SIZE`) ve aşıldığında `SDKJSONDecodeError`
+# fırlatıp oturumu komple düşürüyor — kırpma ya da atlama yok.
+#
+# Bu ürün için 1 MiB gerçekçi değil: kullanıcının sohbete yapıştırdığı görsel
+# diske yazılıp Claude'a `Read` ile açtırılıyor (bkz. providers/_attachments.py),
+# ve Read'in sonucu görüntüyü base64 olarak stdout'a geri koyuyor. base64 ham
+# boyutun ~4/3'ü olduğundan yalnızca ~750 KB'lık bir PNG tavanı aşırmaya yetiyor.
+# Sahada gözlenen desen tam da bu: iki fotoğrafla patlıyor, üç fotoğrafla
+# patlamıyor — belirleyici olan ADET değil, en büyük tek satırın boyutu.
+#
+# Değer, aynı sınıf için ephemeral CLI yolunda zaten seçilmiş olan tavanla
+# hizalı (`cli_base._CLI_STREAM_LIMIT_BYTES`); iki yolun aynı girdide farklı
+# davranması başlı başına bir arıza kaynağıydı.
+_SDK_STDOUT_LIMIT_BYTES = 32 * 1024 * 1024
 # Arka plan görevleri bitince CLI kendiliğinden devam etmezse bu süre sonra dürtülür.
 _TASKS_DONE_GRACE_S = 20.0
 # Nudge sonrası devam turu hiç gelmezse turu bitirme emniyeti.
@@ -815,6 +830,9 @@ class ClaudeSDKSession:
             # claude_code preset'i korunur (skill/slash bozulmaz); ortam bilgisi eklenir.
             system_prompt={"type": "preset", "preset": "claude_code",
                            "append": _APP_SYSTEM_APPEND},
+            # Görsel taşıyan tek bir stdout satırı 1 MiB varsayılanını aşınca oturum
+            # komple düşüyordu; gerekçe ve ölçüm _SDK_STDOUT_LIMIT_BYTES'ta.
+            max_buffer_size=_SDK_STDOUT_LIMIT_BYTES,
         )
         if self.model:
             opts_kwargs["model"] = self.model
