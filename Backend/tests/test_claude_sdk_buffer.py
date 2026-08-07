@@ -93,6 +93,76 @@ def test_tavan_gercekci_bir_FOTOGRAFI_kaldiriyor():
     )
 
 
+def test_BUYUK_bir_satir_GERCEKTEN_ayristiriliyor():
+    """Asıl kullanıcı senaryosu: 1 MiB'den büyük bir satır gelince oturum SAĞ KALMALI.
+
+    Denetim turu, üstteki üç testin hiçbirinin transport'un gerçek okuma yolunu
+    (`read_messages` → `_LineFramer` → `guard`) çalıştırmadığını ölçtü: seçenek
+    alanı 32 MiB görünürken guard'ın hâlâ 1 MiB uyguladığı bir SDK regresyonunda
+    üçü de yeşil kalıyordu (probe `ndjson_guard_blind`, o turda `rc=1`).
+
+    Bu test o boşluğu kapatıyor — alan değil DAVRANIŞ ölçüyor: gerçek transport'a
+    gerçek bir NDJSON satırı veriliyor ve ayrıştırıldığı görülüyor.
+    """
+    import json
+
+    from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
+
+    # Kullanıcının vakasını temsil eden boyut: eski 1 MiB tavanının üstünde,
+    # yeni tavanın altında. Tavan geri düşerse bu satır ayrıştırılamaz.
+    dolgu = "x" * (2 * 1024 * 1024)
+    satir = json.dumps({"type": "assistant", "payload": dolgu}) + "\n"
+
+    class _ParcaliAkis:
+        """CLI'ın stdout'u gibi davranır: satır parça parça gelir."""
+
+        def __aiter__(self):
+            async def uret():
+                # Akış çözülmüş metin taşıyor (`_LineFramer` str üzerinde çalışıyor).
+                for i in range(0, len(satir), 64 * 1024):
+                    yield satir[i:i + 64 * 1024]
+            return uret()
+
+    class _SahteSurec:
+        returncode = None
+
+        async def wait(self):
+            return 0
+
+    transport = SubprocessCLITransport(prompt="x", options=_olusan_secenekler())
+    transport._process = _SahteSurec()
+    transport._stdout_stream = _ParcaliAkis()
+
+    async def oku():
+        return [m async for m in transport.read_messages()]
+
+    mesajlar = asyncio.run(oku())
+
+    assert len(mesajlar) == 1, "2 MiB'lik geçerli satır hiç ayrıştırılamadı"
+    assert mesajlar[0]["payload"] == dolgu, "satır ayrıştırıldı ama içeriği bozuldu"
+
+
+def test_diske_yazilan_gorsel_tavani_TEHDIT_EDEMEZ():
+    """Zincirin diğer ucu: ekleme yolu tavanı aşabilecek bir dosya bırakmamalı.
+
+    Denetimin asıl bulgusu buydu — tavanı 32 MiB'ye çıkarmak sınıfı KAPATMIYOR,
+    erteliyordu: ~24 MiB'lik tek bir görselin base64'ü tavanı yine aşıyor ve aynı
+    çökme geri geliyordu (probe `accepted_24mib_image_exceeds_sdk_ceiling`, ana
+    ağaçta `rc=1`). İki sabit birbirine bağlı olmak zorunda; bağ kopar da ekleme
+    tavanı yükselirse bu test kırmızıya döner.
+    """
+    from providers._attachments import _MUTLAK_TAVAN_BAYT
+
+    # base64 ham boyutun 4/3'ü + zarf. En kötü hâlde bile satır tavanının altında kalmalı.
+    en_kotu_satir = _MUTLAK_TAVAN_BAYT * 4 // 3
+
+    assert en_kotu_satir < _SDK_STDOUT_LIMIT_BYTES, (
+        f"diske yazılabilen azami görsel {_MUTLAK_TAVAN_BAYT} bayt; base64'ü "
+        f"~{en_kotu_satir} bayt eder ve {_SDK_STDOUT_LIMIT_BYTES} baytlık satır "
+        "tavanını aşar — aynı çökme geri gelir"
+    )
+
+
 def test_iki_CLI_yolu_ayni_tavanda_bulusmali():
     """Aynı girdide iki yolun farklı davranması bu depoda tekrarlayan arıza şekli.
 

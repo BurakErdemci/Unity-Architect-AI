@@ -25,6 +25,31 @@ _EXT = {"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp
 
 _TMP_SUBDIR = os.path.join(".unity_architect_tmp", "attachments")
 
+# Bu iki sayının sebebi diskte değil, ajanın CEVAP yolunda.
+#
+# Buraya yazılan dosyayı ajan `Read` ile açıyor ve `Read`'in sonucu görseli
+# base64 olarak CLI'ın stdout'una TEK bir NDJSON satırı hâlinde geri koyuyor.
+# O satırın bir tavanı var (`claude_sdk_session._SDK_STDOUT_LIMIT_BYTES`) ve
+# aşılınca oturum komple düşüyor — kırpma yok. Yani buraya sınırsız bir görsel
+# yazmak, sonraki adımda sohbeti öldürüyor.
+#
+# base64 ham boyutun ~4/3'ü. Denetim turu bunu ölçtü: 25.165.824 baytlık bir
+# görsel tam 33.554.432 karakter base64 üretiyor ve JSON zarfıyla birlikte
+# 32 MiB tavanını AŞIYOR (probe `accepted_24mib_image_exceeds_sdk_ceiling`).
+# Yani tavanı yükseltmek sınıfı kapatmıyor, yalnız eşiği ötelemişti.
+#
+# Küçültme eşiği tavandan çok daha düşük tutuldu, çünkü asıl maliyet çökme
+# değil token: 4 MiB'lik bir fotoğraf ajana hiçbir şey kazandırmadan pahalıya
+# okunuyor. Ekran görüntüsü yolunda zaten aynı karar verilmiş durumda
+# (`tools/screenshot_tool.py`: 1280 px + JPEG q82).
+_KUCULTME_ESIGI_BAYT = 4 * 1024 * 1024
+# Küçültme mümkün olmazsa (PIL yok, bozuk/desteklenmeyen içerik) bunu aşan
+# görsel YAZILMAZ. Tek bir eki atlamak, kullanıcının bütün sohbet bağlamını
+# öldürmekten iyidir — fail-closed tarafı burada budur.
+_MUTLAK_TAVAN_BAYT = 16 * 1024 * 1024
+_KUCULTME_KENARI = 2048
+_KUCULTME_KALITESI = 85
+
 
 def parse_data_uri(uri: str) -> Optional[Tuple[str, str]]:
     """'data:image/png;base64,XXXX' → ('image/png', 'XXXX').
@@ -42,6 +67,45 @@ def parse_data_uri(uri: str) -> Optional[Tuple[str, str]]:
     except Exception:
         logger.warning("[attachments] data-uri ayrıştırılamadı", exc_info=True)
         return None
+
+
+def kucult(ham: bytes) -> Optional[bytes]:
+    """Eşiği aşan görseli küçültür. Küçültemezse None döner (çağıran atlar).
+
+    Dönen değer JPEG'dir; şeffaflık kaybı bilinçli — alternatif, ajanın cevabında
+    oturumu düşürecek boyutta bir base64 üretmek. Animasyonlu GIF'te ilk kare
+    alınır (aynı gerekçe).
+    """
+    if len(ham) <= _KUCULTME_ESIGI_BAYT:
+        return ham
+    try:
+        import io
+
+        from PIL import Image
+
+        img = Image.open(io.BytesIO(ham))
+        # `thumbnail` en-boy oranını korur ve zaten küçük olanı BÜYÜTMEZ; yani
+        # 3 MB'lık ama 800 px'lik bir görsel yeniden örneklenmeden geçer.
+        img.thumbnail((_KUCULTME_KENARI, _KUCULTME_KENARI), Image.LANCZOS)
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=_KUCULTME_KALITESI)
+        kucuk = buf.getvalue()
+    except Exception as e:
+        logger.warning(f"[attachments] görsel küçültülemedi ({len(ham)} bayt): {e}")
+        return None if len(ham) > _MUTLAK_TAVAN_BAYT else ham
+
+    # Küçültme beklenmedik biçimde işe yaramadıysa (ör. zaten JPEG olan devasa
+    # bir fotoğraf) sonucu yine de sınırla — "küçülttüm" demek küçüldüğünü
+    # göstermez, ölçüt çıktının kendisi.
+    if len(kucuk) > _MUTLAK_TAVAN_BAYT:
+        logger.warning(
+            f"[attachments] görsel küçültmeden sonra da {len(kucuk)} bayt — atlandı"
+        )
+        return None
+    logger.info(f"[attachments] görsel küçültüldü: {len(ham)} → {len(kucuk)} bayt")
+    return kucuk
 
 
 def _attach_root(workspace: Optional[str]) -> str:
@@ -72,11 +136,23 @@ def materialize_images(images: Optional[List[str]], workspace: Optional[str],
         if not parsed:
             continue
         media, b64 = parsed
-        ext = _EXT.get(media, "png")
+        try:
+            ham = base64.b64decode(b64)
+        except Exception as e:
+            logger.warning(f"[attachments] görsel {i} çözülemedi (atlandı): {e}")
+            continue
+
+        veri = kucult(ham)
+        if veri is None:
+            logger.warning(f"[attachments] görsel {i} çok büyük ve küçültülemedi — atlandı")
+            continue
+        # Küçültülen içerik artık JPEG; uzantı da onu söylemeli, yoksa ajan
+        # `.png` sanıp yanlış çözer.
+        ext = "jpg" if veri is not ham else _EXT.get(media, "png")
         p = os.path.join(turn_dir, f"img_{i}.{ext}")
         try:
             with open(p, "wb") as f:
-                f.write(base64.b64decode(b64))
+                f.write(veri)
             paths.append(os.path.abspath(p))
         except Exception as e:
             # Bozuk base64 kullanıcı kaynaklı olabilir → tam traceback yerine kısa not.
