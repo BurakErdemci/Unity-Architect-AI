@@ -4,9 +4,29 @@
 
 from PyInstaller.utils.hooks import collect_all
 
-# claude-agent-sdk: wheel kendi CLI binary'sini ve data dosyalarını getiriyor →
-# data + binary + submodule'leri topla (yoksa frozen build'de session açılmaz).
+# claude-agent-sdk: data + submodule'leri topla (yoksa frozen build'de session
+# açılmaz). ⚠️ "CLI binary'si de gerekiyor" kısmı YANLIŞTI — aşağıya bak.
 _cas_datas, _cas_binaries, _cas_hidden = collect_all('claude_agent_sdk')
+
+# ⛔ SDK'nın vendor'ladığı `_bundled/claude.exe` PAKETE GİRMİYOR (~253 MB).
+#
+# Ürün kararı (8 Ağu 2026): kullanıcıya HABERSİZ üçüncü taraf bir AI aracı
+# dağıtmıyoruz. İnsanlar Claude kullanmak istemeyebilir; ürünün işi, kullanıcının
+# ZATEN sahip olduğu aracı entegre etmek.
+#
+# Teknik gerekçe de aynı yöne bakıyor (ölçüldü, `subprocess_cli.py:150-161`):
+# SDK'nın arama sırası `options.cli_path` → **GÖMÜLÜ** → PATH. Yani gömülü ikili
+# paketteyken kullanıcının kendi Claude Code kurulumu HİÇ kullanılmıyordu —
+# ürünün "PC'dekine bağlan" tasarımının tam tersi. Çıkarınca sıra PATH'e düşüyor.
+#
+# ⚠️ `_cas_datas`'ın GERİ KALANI şart (paket verisi + submodule'ler); burada
+# yalnız `_bundled` ayıklanıyor. Ölçüm: collect_all 28 data girdisi döndürüyor,
+# bunların 2'si `_bundled` (claude.exe + .gitignore).
+# ⚠️ Bunun karşılığı: Claude yolunu kullanacak kişide Claude Code KURULU olmalı.
+# O yüzden bu değişiklik tek başına gitmiyor — sohbet, sağlayıcı bağlanana kadar
+# kilitli (`/provider-ready`), yani kullanıcı bozuk bir sohbete düşmüyor.
+_cas_datas = [_t for _t in _cas_datas
+              if "_bundled" not in str(_t[0]).replace("\\", "/")]
 
 # Video: ffmpeg + yt-dlp binary'lerini bundle'a ekle (VARSA). Yoksa build KIRILMAZ —
 # binary'ler Backend/vendor/bin/win/ altına konunca otomatik dahil olur.
