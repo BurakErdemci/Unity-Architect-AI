@@ -369,7 +369,12 @@ class AgentRunner:
         effort_level: str = "medium",
         ultracode: bool = False,
         videos: Optional[List[dict]] = None,
+        resume_id: Optional[str] = None,
     ):
+        # CLI'ın kendi diskindeki oturumu geri çağıran kimlik. Route yükleyip
+        # veriyor (DB orada); burada yalnız taşınıyor. None ise davranış eski:
+        # DB transcript'i enjekte edilir.
+        self.resume_id = resume_id
         self.provider_type = provider_type
         self.api_key = api_key
         self.model_name = model_name
@@ -1783,6 +1788,7 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
         _session_kwargs = dict(
             model=model,
             cwd=_workspace,
+            resume_id=self.resume_id,      # None ise SDK'ya `resume` hiç verilmiyor
             permission_mode="default",
             # ⚠️ `"project"`i buraya geri EKLEME — gerekçe ve canlı ölçüm
             # `claude_sdk_session.CLAUDE_SETTING_SOURCES`'ta. Kullanıcının açtığı
@@ -1824,7 +1830,11 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
 
             # İlk turda proje bağlamını ekle; sonraki turlarda session zaten hatırlıyor.
             message = user_message
-            if self.context and not session.session_id:
+            # ⚠️ `resume` varken transcript AYRICA enjekte EDİLMEZ: CLI kendi tam
+            # geçmişini zaten geri yüklüyor, üstüne bir de bizim özetimizi koymak
+            # modele aynı konuşmayı İKİ KEZ gösterirdi (ve 20.000 karakteri boşa
+            # harcardı). Kimlik yoksa eski yol aynen sürüyor.
+            if self.context and not session.session_id and not self.resume_id:
                 message = f"{user_message}\n\n{_HANDOFF_HEADER}\n{self.context}"
             # Ultracode (Claude-only): SDK'da option YOK → tek yol mesaja keyword enjeksiyonu.
             # CLI bu kelimeyi görünce çok-ajanlı ultracode akışını tetikler (belgesiz; sürüme bağlı).
