@@ -140,10 +140,13 @@ export function AnimatedChatInput({
     onStop,
     onFileDrop,
     isLoading,
-    placeholder = "Ask zap a question...",
+    // Varsayılanlar yalnız SON ÇARE: çağrı yerleri metni i18n'den geçiriyor.
+    // Eskiden burada "Ask zap a question..." yazıyordu — başka bir ürünün
+    // şablonundan kalmış bir metin, ve kullanıcının ilk yazacağı yerde duruyordu.
+    placeholder = "Type a message...",
     className,
     disabled = false,
-    disabledPlaceholder = "Bu bölüm bakımda...",
+    disabledPlaceholder = "Unavailable",
     slashCommands = [],
     skills = [],
     commandMeta = [],

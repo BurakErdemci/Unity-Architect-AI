@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import axios from 'axios';
-import { AIConfig, AvailableModels, UserData } from '../../components/home/types';
+import { AIConfig, AvailableModels, ProviderReady, UserData } from '../../components/home/types';
 import { apiHataMesaji } from '../../lib/apiError';
 
 /**
@@ -75,6 +75,10 @@ export const useAIConfig = (API: string, user: UserData | null, showToast: (msg:
   });
   const [availableModels, setAvailableModels] = useState<AvailableModels>({ local: [], cloud: [], subscription: [] });
   const [providersWithKeys, setProvidersWithKeys] = useState<string[]>([]);
+  // Sohbet kapısı. Tek doğruluk kaynağı backend'de (`/provider-ready`): model →
+  // CLI ailesi eşlemesi orada yaşıyor ve burada ikinci bir kopyasını tutmak
+  // ikisini zamanla ayrıştırırdı.
+  const [providerReady, setProviderReady] = useState<ProviderReady | null>(null);
   const [modelOrToggles, setModelOrToggles] = useState<Record<string, boolean>>({});
   const [showSettings, setShowSettings] = useState(false);
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
@@ -256,6 +260,23 @@ export const useAIConfig = (API: string, user: UserData | null, showToast: (msg:
     } catch (err) { console.error("Config hatası:", err); }
   }, [API, providersWithKeys]);
 
+  const fetchProviderReady = useCallback(async (userId: number, refresh = false) => {
+    if (!API) return;
+    try {
+      const res = await axios.get(`${API}/provider-ready/${userId}`,
+        refresh ? { params: { refresh: true } } : undefined);
+      setProviderReady(res.data ?? null);
+    } catch {
+      // ⚠️ Ölçüm BAŞARISIZ olduğunda kapı AÇIK bırakılıyor (fail-open), ve bu
+      // bilinçli: backend'e ulaşamamak "sağlayıcı yok" demek değil. Burada
+      // fail-closed davranmak, çalışan bir kurulumu olan kullanıcıyı geçici bir
+      // ağ/başlatma hatası yüzünden kilitlerdi — yani kapı, çözmek için var
+      // olduğu problemi kendisi üretirdi. Backend gerçekten çökmüşse zaten ayrı
+      // bir kurtarma ekranı devrede (`home.tsx`, backendDown dalı).
+      setProviderReady(null);
+    }
+  }, [API]);
+
   // ⚠️ `user?.sessionToken` bağımlılıkta OLMAK ZORUNDA. Eskiden yalnız `[API]`
   // vardı ve fonksiyon ilk render'ın `user`'ına kilitleniyordu; o anda token
   // henüz `useAuth`'un başlangıç değeri olan `'local'` (IPC `app-token-get`
@@ -362,6 +383,8 @@ export const useAIConfig = (API: string, user: UserData | null, showToast: (msg:
     fetchAIConfig,
     fetchAvailableModels,
     fetchProvidersWithKeys,
+    providerReady,
+    fetchProviderReady,
     saveAIConfig,
     deleteApiKey,
     effectiveProvider,

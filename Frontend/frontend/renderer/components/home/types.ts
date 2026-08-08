@@ -76,6 +76,19 @@ export interface AIConfig {
   has_key?: boolean;
 }
 
+/** `/provider-ready` yanıtı — sohbet kapısının girdisi.
+ *
+ * `needs` bilerek bir KOD, cümle değil: backend'in çeviri mekanizması yok ve
+ * oraya metin koymak ~300 sabit Türkçe metinlik borcu büyütürdü. Kullanıcıya
+ * görünen metin `i18n.tsx`'teki `gate.needs.*` anahtarlarından geliyor.
+ */
+export interface ProviderReady {
+  ready: boolean;
+  kind: 'api' | 'cli' | 'local';
+  provider: string;
+  needs: null | 'apikey' | 'install' | 'login' | 'service';
+}
+
 export interface ExportFileEntry {
   name: string;
   code: string;

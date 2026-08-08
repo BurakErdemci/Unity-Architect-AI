@@ -8,6 +8,7 @@ import {
   Zap, Code, Layout, MessageSquare
 } from 'lucide-react';
 import { LangContext, translations, type Lang } from '../lib/i18n';
+import { sohbetKilitliMi } from '../lib/providerGate';
 import { getUnsavedEditorContext } from '../lib/editor-context';
 
 import { Sidebar } from '../components/home/Sidebar';
@@ -143,6 +144,13 @@ export default function Home() {
     }
   }, [auth.isLoading, auth.user, API]);
 
+  // --- Sohbet kapısı: seçili sağlayıcı gerçekten kullanılabilir mi? ---
+  // Model/sağlayıcı DEĞİŞTİĞİNDE de yeniden ölçülüyor: kullanıcı anahtarı olmayan
+  // bir modele geçtiği anda kapı kapanmalı, bir sonraki mesajı beklemeden.
+  useEffect(() => {
+    if (auth.user && API) ai.fetchProviderReady(auth.user.id);
+  }, [auth.user, API, ai.aiConfig.provider_type, ai.aiConfig.model_name]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // --- Auto-Load Last Workspace ---
   useEffect(() => {
     if (fs.lastWorkspacePath && !fs.workspacePath && backendReady && !hasAutoLoadedRef.current) {
@@ -193,6 +201,10 @@ export default function Home() {
   }, []);
   const setLang = (l: Lang) => { setLangState(l); localStorage.setItem('app-lang', l); };
   const t = (key: string) => translations[lang][key] ?? key;
+
+  // Sohbet kapısı — karar `providerGate`'te, burada DEĞİL: aynı koşul composer'ın
+  // `disabled`'ı ve gönderme kapısı tarafından tüketiliyor ve iki kopya ayrışır.
+  const sohbetKilitli = sohbetKilitliMi(ai.aiConfig.provider_type, ai.providerReady);
   // Tek kavramsal effort skalası — GÖSTERİLEN seviyeler backend kayıtçısından gelir
   // (/effort-capabilities): provider+model neyi destekliyorsa o. 'auto' = model
   // varsayılanı, hiçbir parametre gönderilmez.
@@ -331,9 +343,17 @@ export default function Home() {
     // Send-gate: aktif bulut sağlayıcının API key'i yoksa göndermeyi engelle (net uyarı +
     // Ayarlar). Optimistic model seçimiyle beraber → keyless modele geçilse bile sessizce
     // yanlış sağlayıcıya düşmek yerine kullanıcı net yönlendirilir.
-    const _pt = ai.aiConfig.provider_type;
-    if (!['subscription', 'ollama', 'kb'].includes(_pt) && !ai.providersWithKeys.includes(_pt)) {
-      showToast(`Bu model için ${_pt} API key gerekli — Ayarlar'dan ekle.`, 'warning');
+    // Send-gate: bir sağlayıcı BAĞLANMADAN sohbet kullanılmıyor (ürün kararı,
+    // 8 Ağu 2026 — kullanıcıya habersiz hiçbir şey kurmuyoruz, dolayısıyla
+    // sağlayıcısı olmayan kullanıcı bozuk bir sohbete de düşmemeli).
+    // Eski hâli yalnız BULUT anahtarını kontrol ediyordu ve `subscription`ı muaf
+    // tutuyordu; sonuç ölçüldü: CLI'ı kurulu olmayan kullanıcı hiçbir uyarı
+    // görmeden mesaj gönderiyor ve ilk cevap olarak ham bir Python istisnası
+    // alıyordu. Kontrol artık sağlayıcı tipine göre backend'de yapılıyor.
+    const _hazir = ai.providerReady;
+    if (sohbetKilitliMi(ai.aiConfig.provider_type, _hazir)) {
+      const _sebep = _hazir?.needs ? t(`gate.needs.${_hazir.needs}`) : t('gate.hint');
+      showToast(`${_sebep} (${_hazir?.provider ?? ''})`.trim(), 'warning');
       ai.setShowSettings(true);
       return;
     }
@@ -650,6 +670,9 @@ export default function Home() {
             <div className="mt-3">
               <AnimatedChatInput
                 value={chat.chatInput} setValue={chat.setChatInput} onSendMessage={handleSendMessage} isLoading={chat.loading}
+                placeholder={t('chat.placeholder')}
+                disabled={sohbetKilitli}
+                disabledPlaceholder={t('gate.placeholder')}
                 slashCommands={slashCommands}
                 skills={skills}
                 commandMeta={commandMeta}

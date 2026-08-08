@@ -167,6 +167,17 @@ const tr = {
   'error.copy': 'Ayrıntıyı kopyala',
   'error.copied': 'Kopyalandı',
   'error.reload': 'Yeniden Yükle',
+  // Sohbet kapısı — sağlayıcı bağlanmadan sohbet açılmıyor. Metinler burada
+  // duruyor çünkü backend bilerek yalnız KOD döndürüyor (`/provider-ready`).
+  'gate.title': 'Önce bir sağlayıcı bağla',
+  'gate.hint': 'Sohbeti kullanmak için bir AI sağlayıcısı bağlaman gerekiyor: bir API anahtarı gir ya da kullandığın CLI aracını kur. Sana habersiz hiçbir şey kurmuyoruz.',
+  'gate.needs.apikey': 'Bu sağlayıcı için API anahtarı gerekiyor.',
+  'gate.needs.install': 'Bu CLI aracı bu bilgisayarda kurulu değil.',
+  'gate.needs.login': 'Bu CLI aracına giriş yapmalısın.',
+  'gate.needs.service': 'Ollama çalışmıyor görünüyor. Başlatıp tekrar dene.',
+  'gate.openSettings': 'Ayarları Aç',
+  'gate.placeholder': 'Sohbet kilitli — önce bir sağlayıcı bağla',
+  'chat.placeholder': 'Bir şey sor ya da bir görev ver...',
 } as const;
 
 const en: Record<keyof typeof tr, string> = {
@@ -328,6 +339,15 @@ const en: Record<keyof typeof tr, string> = {
   'error.copy': 'Copy details',
   'error.copied': 'Copied',
   'error.reload': 'Reload',
+  'gate.title': 'Connect a provider first',
+  'gate.hint': 'To use the chat you need to connect an AI provider: add an API key, or install the CLI tool you already use. We do not install anything without telling you.',
+  'gate.needs.apikey': 'This provider needs an API key.',
+  'gate.needs.install': 'This CLI tool is not installed on this computer.',
+  'gate.needs.login': 'You need to sign in to this CLI tool.',
+  'gate.needs.service': 'Ollama does not appear to be running. Start it and try again.',
+  'gate.openSettings': 'Open Settings',
+  'gate.placeholder': 'Chat locked — connect a provider first',
+  'chat.placeholder': 'Ask something, or give it a task...',
 };
 
 export const translations: Record<Lang, Record<string, string>> = { tr, en };
