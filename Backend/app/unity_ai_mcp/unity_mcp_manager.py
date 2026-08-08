@@ -718,6 +718,15 @@ class UnityMCPManager:
         import time
         editor_dir = os.path.join(workspace_path, "Assets", "Editor")
         os.makedirs(editor_dir, exist_ok=True)
+        # ⛔ BU AD ve aşağıdaki `namespace UnityArchitectAI` marka değişiminde
+        # (8 Ağu 2026) BİLEREK DEĞİŞTİRİLMEDİ — ad değil, KULLANICININ Unity
+        # projesindeki bir dosyanın adresi.
+        # Sebep ölçüldü: bu fonksiyon her seferinde aynı yola ÜZERİNE yazıyor ve
+        # kod tabanında eski dosyayı silen hiçbir yol yok. Ad değişirse mevcut
+        # kullanıcının projesinde eski dosya kalır, aynı namespace'te aynı sınıf
+        # İKİ KEZ tanımlanır ve Unity derlemesi kırılır — o noktada MCP köprüsü
+        # hiç kalkmaz (bkz. derleme hatası varken köprü kalkmaz kuralı).
+        # Değiştirilecekse ÖNCE eski dosyayı silen bir göç adımı yazılmalı.
         script_path = os.path.join(editor_dir, "UnityArchitectAIMCPSetup.cs")
 
         auto_start_val = "true" if auto_start else "false"

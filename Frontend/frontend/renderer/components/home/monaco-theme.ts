@@ -7,7 +7,7 @@
 import './monaco-loader';
 import type * as Monaco from 'monaco-editor';
 
-export const THEME_NAME = 'unityArchitectDark';
+export const THEME_NAME = 'gamachineDark';
 
 // JetBrains Mono webfont'u (globals.css @import) Monaco'nun font ölçümünden SONRA
 // yüklenebiliyor → ölçüm bayat kalınca tıklanan piksel yanlış kolona düşüyor

@@ -1,8 +1,15 @@
-# ⚠️ `appId` GÜNCELLEME KİMLİĞİDİR. 8 Ağu 2026'da `com.gamachine.app`'dan
-# değiştirildi (marka değişimi). Bedeli bilinerek ödendi: NSIS `oneClick` yalnız
-# AYNI appId'nin eski sürümünü kaldırdığı için eski "Gamachine" kurulumu
-# silinmiyor ve mevcut kullanıcılar güncelleme bildirimi almıyor. O anda kurulu
-# taban 3 indirmeydi — bu maliyet zamanla BÜYÜYOR, o yüzden şimdi yapıldı.
+# ⚠️ `appId` GÜNCELLEME KİMLİĞİDİR. 8 Ağu 2026'da marka değişiminde
+# `com.unityarchitect.ai` → `com.gamachine.app` yapıldı. Bedeli bilinerek ödendi:
+# NSIS `oneClick` yalnız AYNI appId'nin eski sürümünü kaldırdığı için eski
+# "Unity Architect AI" kurulumu silinmiyor ve mevcut kullanıcılar güncelleme
+# bildirimi almıyor. O anda kurulu taban 3 indirmeydi — bu maliyet zamanla
+# BÜYÜYOR, o yüzden şimdi yapıldı.
+#
+# ⚠️ Yukarıdaki iki eski dize BİLEREK duruyor: yorumun anlattığı şey NEYDEN
+# değişildiği. Otomatik bir yeniden adlandırma betiği bunları da ezdi ve cümle
+# "com.gamachine.app'dan com.gamachine.app'a değiştirildi" haline geldi — yani
+# yorum yanlış bir olguyu belgeliyordu. Bir sonraki toplu değiştirmede bu bloğu
+# hariç tut.
 appId: com.gamachine.app
 # Tek kelime OLMASI bilinçli: electron-builder çıktı adındaki boşlukları GitHub
 # yüklerken noktaya çeviriyor ve `latest.yml` tireli ad beklediği için her sürümde
