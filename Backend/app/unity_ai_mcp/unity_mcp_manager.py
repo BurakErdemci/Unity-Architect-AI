@@ -418,6 +418,18 @@ class UnityMCPManager:
             mcp_env = build_spawn_env(family="uvx", overrides={
                 "LOCAL_APP_TOKEN": os.environ.get("LOCAL_APP_TOKEN", ""),
                 "UNITY_MCP_LOCAL_API_TOKEN": self.local_api_token,
+                # Fork'tan devraldığımız telemetri VARSAYILAN AÇIK geliyor ve
+                # açılışta https://api-prod.coplay.dev/telemetry/events adresine
+                # ping atıyor (`unity-mcp/Server/src/core/config.py`,
+                # `telemetry_enabled: bool = True`). Kullanıcıya bunu söyleyen bir
+                # yer yok, dolayısıyla rızası da yok → kaynakta kapatıyoruz.
+                # Üç adın hepsi veriliyor: upstream `_is_disabled()` üçünü de
+                # kabul ediyor (`core/telemetry.py`), biri kaldırılırsa diğerleri
+                # tutsun — tek bir düz metin ada bağlı kalmak bu depoda daha önce
+                # sessizce açılan bir yol üretti.
+                "DISABLE_TELEMETRY": "true",
+                "UNITY_MCP_DISABLE_TELEMETRY": "true",
+                "MCP_DISABLE_TELEMETRY": "true",
             })
             self.process = subprocess.Popen(
                 cmd,

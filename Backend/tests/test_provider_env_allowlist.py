@@ -272,6 +272,33 @@ class TestUnityMcpSpawnOrtami:
         assert env.get("PATH")
         assert env.get("HOME")
 
+    def test_devralinan_telemetri_KAPALI_olarak_spawn_ediliyor(
+        self, canaries, hazir_manager
+    ):
+        """Fork'tan devralınan telemetri varsayılan AÇIK geliyor ve açılışta
+        `api-prod.coplay.dev`'e ping atıyor (`Server/src/core/config.py`,
+        `telemetry_enabled: bool = True`). Kullanıcıya bunu bildiren hiçbir yer
+        yok, dolayısıyla rızası da yok — bu yüzden spawn ortamında kapatılıyor.
+
+        Üç ad da sınanıyor: upstream `_is_disabled()` üçünü de kabul ediyor, ve
+        tek bir düz metin ada bağlı kalmak bu depoda daha önce sessizce açılan
+        bir yol üretti.
+
+        ⚠️ Sabitler ve kabul edilen değerler BİLEREK elle yazıldı, üretim
+        kodundan import EDİLMEDİ: korunan değeri koruduğu yerden okuyan bir test,
+        değer değişince ölçütünü de değiştirir ve hiçbir şeyi korumaz.
+        """
+        manager, box = hazir_manager
+        assert manager.start_server() is True
+        env = box["env"]
+        for ad in ("DISABLE_TELEMETRY",
+                   "UNITY_MCP_DISABLE_TELEMETRY",
+                   "MCP_DISABLE_TELEMETRY"):
+            # Kabul edilen değerler upstream `_is_disabled()` ile aynı küme.
+            assert env.get(ad, "").lower() in ("true", "1", "yes", "on"), (
+                f"{ad} spawn ortamında kapatma değeri taşımıyor: {env.get(ad)!r}"
+            )
+
 
 # ── 4. İzin listesi fonksiyonunun kendisi ────────────────────────────────────
 
