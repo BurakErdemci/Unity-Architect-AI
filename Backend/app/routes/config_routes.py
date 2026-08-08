@@ -245,6 +245,62 @@ def create_config_router(db):
             "has_key": has_key,
         }
 
+    @router.get("/provider-ready/{user_id}")
+    async def provider_ready(user_id: int, refresh: bool = False,
+                             x_session_token: str = Header(alias="X-Session-Token")):
+        """Seçili sağlayıcı GERÇEKTEN kullanılabilir mi? Sohbet kapısının tek kaynağı.
+
+        Model seçilmiş olması yetmiyor: arkasındaki şeyin var olması gerekiyor
+        (bulut → API anahtarı, CLI → kurulu, Ollama → servis ayakta). Sebep bir
+        ürün kararı: kullanıcıya hiçbir şeyi habersiz kurmuyoruz, dolayısıyla
+        sağlayıcısı olmayan kullanıcı bozuk bir sohbete DÜŞMEMELİ — ilk mesajında
+        ham bir istisna görmek yerine ne yapması gerektiğini görüyor.
+
+        ⚠️ Bu uç METİN DÖNDÜRMÜYOR, KOD döndürüyor (`needs`). Sebebi ölçülmüş bir
+        borç: backend'de kullanıcıya görünen ~300 sabit Türkçe metin var ve
+        çeviri mekanizması YOK. Buraya cümle koymak o borcu büyütürdü; metni
+        frontend kendi sözlüğünden kuruyor.
+
+        `needs` = None | "apikey" | "install" | "login" | "service"
+        `kind`  = "api" | "cli" | "local"
+        """
+        require_user(db, x_session_token, user_id)
+        provider_type, model_name, _, _ = db.get_ai_config(user_id)
+
+        if provider_type == "ollama":
+            # Yerel servis: kurulu olması yetmez, AYAKTA olması gerekiyor.
+            import httpx  # modül düzeyinde import edilmiyor; yalnız bu dal kullanıyor
+            ayakta = False
+            try:
+                async with httpx.AsyncClient(timeout=2.0) as c:
+                    ayakta = (await c.get("http://localhost:11434/api/tags")).status_code == 200
+            except Exception:
+                ayakta = False
+            return {"ready": ayakta, "kind": "local", "provider": "ollama",
+                    "needs": None if ayakta else "service"}
+
+        if provider_type != "subscription":
+            # Bulut sağlayıcı → anahtar şart.
+            var = bool(db.get_api_key(user_id, provider_type))
+            return {"ready": var, "kind": "api", "provider": provider_type,
+                    "needs": None if var else "apikey"}
+
+        # CLI sağlayıcı. Aile eşlemesi `env_family` ile yapılıyor, ELDE yeniden
+        # yazılmıyor: aynı önekleri `manager.get_provider` de kullanıyor ve ikisinin
+        # ayrışmaması bir testle sabitlenmiş durumda.
+        from providers.cli_base import env_family
+        aile = env_family(model_name or "claude")
+        doctor = await cli_doctor(refresh=refresh, x_session_token=x_session_token)
+        durum = doctor.get(aile) or {}
+        if not durum.get("installed"):
+            return {"ready": False, "kind": "cli", "provider": aile, "needs": "install"}
+        # `loggedIn` None = ÖLÇÜLEMEDİ, False = ölçüldü ve giriş yok. None'ı
+        # "giriş yok" saymak, durumu hiç ölçülmeyen CLI'lerde (claude/codex/agy/kimi)
+        # çalışan bir kurulumu yanlışlıkla kilitlerdi — bilmemek, yokluk değildir.
+        if durum.get("loggedIn") is False:
+            return {"ready": False, "kind": "cli", "provider": aile, "needs": "login"}
+        return {"ready": True, "kind": "cli", "provider": aile, "needs": None}
+
     @router.get("/api-keys/{user_id}")
     async def get_api_keys(user_id: int, x_session_token: str = Header(alias="X-Session-Token")):
         require_user(db, x_session_token, user_id)
