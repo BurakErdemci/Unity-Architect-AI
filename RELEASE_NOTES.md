@@ -6,74 +6,101 @@
   ▶ BEFORE cutting a release: move the top section of `CHANGELOG.md` here.
 
   Written in English on purpose: the release page is where a stranger lands at the
-  moment they download. Turkish notes made that page unreadable for most of the
-  audience. (This comment is invisible on GitHub — it is an HTML comment.)
+  moment they download. (This comment is invisible on GitHub.)
 -->
 
-## Gamachine v2.3.1
+## Gamachine v3.0.0
 
-A small but genuinely annoying bug: **pasting a photo into the chat sometimes
-killed the whole session.**
+**Unity Architect AI is now Gamachine.** A major version because this is not an
+upgrade you install over the old one — and because two things about how the app
+behaves have changed on purpose.
 
-> 🍎 **macOS (Apple Silicon):** `Gamachine-2.3.1-arm64.dmg`
-> · 🪟 **Windows:** `Gamachine-Setup-2.3.1.exe`
+> 🍎 **macOS (Apple Silicon):** `Gamachine-3.0.0-arm64.dmg`
+> · 🪟 **Windows:** `Gamachine-Setup-3.0.0.exe`
 
-### 🖼 A pasted image no longer kills the chat
+### ⚠️ Read this before installing
 
-The symptom was odd: two photos would drop the session, three would not — so the
-problem was not the *count*, it was the **size**.
+**The old version is not removed automatically.** The application id changed with
+the rename, so Windows treats this as a separate product: uninstall *Unity
+Architect AI* yourself, or you will have both. For the same reason, an installed
+v2.3.1 will not offer you this update — this is the only place it is announced.
 
-The cause sat at the end of a chain. The image you paste is written to disk and
-the model is handed only the file *path*; when the model opens it with `Read`, the
-result comes back as base64 on a single line. That line had a 1 MB ceiling, and
-crossing it did not truncate anything — **it took down the entire session.** Since
-base64 is roughly 4/3 of the raw size, an ordinary 750 KB photo was enough.
+**Your data is kept.** Chat history, API keys and settings live in
+`~/.unity_architect_ai` and that path deliberately did **not** change: it holds the
+key your API keys are encrypted with, and renaming it would have made them
+permanently unreadable. It is an invisible folder; the old name there costs you
+nothing.
 
-The fix has two layers:
+### 🔌 Bring your own AI — we no longer ship one
 
-- The line ceiling was raised to the value the product's other CLI path already
-  used.
-- **The real bound was moved to the source:** large images are downscaled before
-  they are ever written to disk. That closes the crash and cuts token cost.
+Earlier builds silently included a full copy of the Claude Code CLI. Nobody chose
+that: the SDK vendors it, and the packaging step swept it in. It also defeated the
+point — the bundled copy took priority over the CLI you had installed yourself, so
+your own Claude Code was never used.
 
-Transparent PNGs survive this: the alpha channel is preserved. (The first attempt
-turned transparent images into a solid black square — an audit round caught it
-before release.)
+It is gone. You connect what you already use: an API key, or a CLI agent on your
+machine. **We do not install a third-party AI tool on your computer without telling
+you.**
 
-### 🎮 The AI can now play the game (`manage_input`)
+The installer is **253 MB smaller** as a result (roughly 45%).
 
-Entering play mode and taking a screenshot already worked; what was missing was
-the ability to **act**. `manage_input` sends keyboard, mouse, gamepad and UI input
-to a running game, so the AI can actually try the thing it just built.
+### 🔒 The chat stays locked until a provider is connected
 
-Input is pressed onto Unity Input System's virtual devices from inside the
-process: **no window focus required**, so your keyboard is not hijacked while the
-AI plays.
+Picking a model was never the same as having the thing behind it. A cloud provider
+needs a key; a CLI agent needs to be installed. Previously the app let you send a
+message anyway, and the first reply could be a raw Python traceback.
 
-> ⚠️ **Measure the limit first:** only game code written against the new Input
-> System sees these events. If your project uses the old `Input.GetKey`, the input
-> will not reach it; there, the one path that works is `ui_click`, which triggers
-> uGUI buttons. Run `manage_input action="describe"` to have it report your
-> project's input backend.
+Now the composer is disabled until the selected provider is actually usable, and it
+tells you which of the three things is missing: a key, an installation, or a
+sign-in.
 
-### 📸 The screenshot tool's name was wrong
+### 🌍 English, properly
 
-The model was being taught an action name that did not exist, so screenshot
-requests sometimes went nowhere. It is now bound to the real one.
+The interface followed a hard-coded Turkish default even for users who had never
+seen Turkish — and that same value was sent to the model, so a question asked in
+English came back in Turkish. The starting language now follows your operating
+system.
 
-### 📖 Documentation
+The dictionary grew from 157 to 373 entries and the entire renderer goes through
+it: toasts, tool blocks, approval cards, the terminal panel, the export dialog.
 
-Both READMEs were realigned with 105 commits' worth of reality. The most important
-correction was a security claim: the docs said "unityMCP never shows an approval
-card", when since v2.3.0 calls that *mutate* the scene do open one on the Claude
-path. It is now described per provider.
+> Still Turkish: the operating-system dialogs the desktop shell opens (folder
+> authorisation, update prompt) and backend error messages. Both need work beyond
+> translation and are not done yet.
+
+### ⚖️ Licensing and privacy
+
+- **The installer now actually contains the licences it is required to ship.**
+  Previously `LICENSE` and `THIRD-PARTY-NOTICES.md` were never copied into the
+  package, while FFmpeg — which requires its licence text to travel with the binary
+  — was shipped.
+- **The FFmpeg notice was wrong.** It declared GPL everywhere; the Windows build is
+  LGPL, and no Windows source link was given at all. Now stated per platform.
+- **The bundled .NET was declared as MIT.** What ships is the .NET **SDK** under
+  Microsoft's proprietary terms. Corrected.
+- **Third-party telemetry is off.** The MCP server inherited from the upstream fork
+  reported to an external endpoint on startup, enabled by default, with nothing in
+  this product telling you so. Disabled at the source.
+
+### 🐛 Fixes
+
+- The Codex error path sent raw exception text to the interface without redaction —
+  the same text can carry the local MCP key. The Claude path already redacted it;
+  the sibling path did not.
+- The chat input's placeholder read *"Ask zap a question…"*, left over from a
+  template.
+- Dead screens were removed, which let the content-security policy drop its last
+  remote image source.
 
 ---
 
-**Installing:** on Windows the installer removes the previous version
-automatically. On macOS, if the unsigned dmg is reported as "damaged":
+**Installing:** on Windows, remove *Unity Architect AI* first (see above). On
+macOS, if the unsigned dmg is reported as "damaged":
 `xattr -cr "/Applications/Gamachine.app"`
 
-⚠️ Only **Apple Silicon (arm64)** is published for macOS. The Intel dmg is
-deliberately withheld: it gets the host architecture's backend embedded in it, and
-there is no Intel Mac here to test it on.
+⚠️ Only **Apple Silicon (arm64)** is published for macOS. The Intel dmg gets the
+host architecture's backend embedded in it and there is no Intel Mac here to test
+it on, so it is deliberately withheld rather than shipped untested.
+
+⚠️ The builds are **not code-signed**. Windows SmartScreen → *More info* → *Run
+anyway*; macOS → right-click → *Open*.

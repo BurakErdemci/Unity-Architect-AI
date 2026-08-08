@@ -2,6 +2,73 @@
 
 Bu dosya kullanıcıya görünen değişiklikleri taşır. Tam geçmiş için `git log`.
 
+> ℹ️ **8 Ağu 2026'dan itibaren yeni girdiler İngilizce yazılıyor.** Sebep: bu
+> dosyanın en üst bölümü `RELEASE_NOTES.md`'ye taşınıyor ve orası yabancı bir
+> kullanıcının indirme anında gördüğü sayfa. Eski girdiler olduğu gibi bırakıldı —
+> geçmişi yarım çevirmek, tek dilde bırakmaktan da iki dilde bırakmaktan da kötü.
+
+## v3.0.0 — 8 Ağustos 2026
+
+**Unity Architect AI → Gamachine.** Major version, because this is not an upgrade
+installed over the old one, and two behaviours changed deliberately.
+
+### 🏷 Rename
+- Product, `appId`, package name, window titles, repository and release pages.
+- ⚠️ The old install is **not** removed automatically (`appId` changed), and an
+  installed v2.3.1 gets **no** update notification. The release notes are the only
+  announcement channel.
+- `~/.unity_architect_ai` deliberately **unchanged** — it holds the key the API
+  keys are encrypted with; renaming it would make them permanently unreadable.
+  Same reasoning for the keyring service name and the markers written into the
+  user's own files.
+- "Unity" could not lead a product name under Unity's trademark guidelines; the
+  new name is engine-neutral so Unreal/Godot support would not force a second
+  rename.
+
+### 🔌 The bundled Claude Code CLI was removed
+- The SDK vendors its own copy and packaging swept it in — nobody chose it, and it
+  **took priority over the user's own installation**, so their Claude Code was
+  never used.
+- Installer **561 → 308 MB** (−253 MB, 45%), measured from a rebuilt package.
+- Consequence: the Claude path now needs Claude Code installed by the user.
+
+### 🔒 Chat is gated on a usable provider
+- New `GET /provider-ready`: cloud → has a key, CLI → installed (and signed in
+  where that is measurable), Ollama → service reachable.
+- The composer is disabled until then; previously the first reply could be a raw
+  Python traceback.
+- Fail-**open** when readiness cannot be measured: an unreachable backend does not
+  mean a missing provider, and locking there would reproduce the very problem the
+  gate exists to prevent.
+- `loggedIn == null` means *not measured*, not *not logged in* — only a measured
+  `false` blocks.
+
+### 🌍 Internationalisation
+- Starting language now derives from the OS. The old hard-coded `tr` also reached
+  the model, so an English question came back in Turkish.
+- Dictionary **157 → 373** keys; the whole renderer goes through it.
+- Still Turkish: Electron main-process dialogs (37 strings, no dictionary access)
+  and backend messages (~301, no mechanism).
+
+### ⚖️ Licensing, privacy
+- `LICENSE` + `THIRD-PARTY-NOTICES.md` are now **inside the installer** — they were
+  never copied, while FFmpeg (which requires it) was shipped.
+- FFmpeg licence stated **per platform** (Windows LGPL, macOS/Linux GPL) with the
+  Windows source link added; it previously claimed GPL everywhere.
+- Bundled .NET corrected: it is the **SDK** under Microsoft's terms, not MIT.
+- Inherited MCP telemetry to a third-party endpoint **disabled**; it was on by
+  default and undisclosed.
+
+### 🐛 Fixes
+- Codex error path leaked unredacted exception text to the UI (can carry the local
+  MCP key); the Claude path already redacted, the sibling did not.
+- Chat placeholder read "Ask zap a question…" (template leftover).
+- Dead auth screens removed, which let the CSP drop its last remote image source.
+
+### 🧪 Gates
+backend **1111** · frontend **406** · tsc **0**
+
+
 ## v2.3.1 — 7 Ağustos 2026
 
 Sohbete fotoğraf yapıştırınca oturumun düşmesi düzeltildi; ayrıca AI artık
