@@ -178,6 +178,12 @@ const tr = {
   'gate.openSettings': 'Ayarları Aç',
   'gate.placeholder': 'Sohbet kilitli — önce bir sağlayıcı bağla',
   'chat.placeholder': 'Bir şey sor ya da bir görev ver...',
+  // Sağlayıcı kartları — metin `SettingsModal`'da modül düzeyinde sabit olduğu
+  // için orada ANAHTAR saklanıyor, çeviri render anında yapılıyor.
+  'provider.badge.free': 'ücretsiz',
+  'provider.badge.local': 'yerel',
+  'provider.subscriptionCli': 'Abonelik (CLI)',
+  'models.apiKeyNeeded': "API anahtarı gerekli — Ayarlar'dan ekle.",
 } as const;
 
 const en: Record<keyof typeof tr, string> = {
@@ -348,6 +354,10 @@ const en: Record<keyof typeof tr, string> = {
   'gate.openSettings': 'Open Settings',
   'gate.placeholder': 'Chat locked — connect a provider first',
   'chat.placeholder': 'Ask something, or give it a task...',
+  'provider.badge.free': 'free',
+  'provider.badge.local': 'local',
+  'provider.subscriptionCli': 'Subscription (CLI)',
+  'models.apiKeyNeeded': 'API key required — add it in Settings.',
 };
 
 export const translations: Record<Lang, Record<string, string>> = { tr, en };

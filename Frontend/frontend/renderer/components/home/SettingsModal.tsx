@@ -24,18 +24,22 @@ const DEFAULT_MODELS: Record<string, string> = {
 
 // Sağlayıcı seçim ızgarası (marka avatarlı — native <select> yerine).
 // brand: ModelAvatar/ModelLogo anahtarı; badge: küçük rozet.
-const PROVIDER_TILES: { value: string; label: string; brand: string; badge?: string }[] = [
+// ⚠️ `label` marka adı (çevrilmez), `labelKey`/`badge` ise SÖZLÜK ANAHTARIDIR.
+// Bu liste modül düzeyinde sabit olduğu için `t()` burada çağrılamaz — anahtar
+// saklanıp render anında çevriliyor. Eskiden burada düz Türkçe metin duruyordu
+// ("ücretsiz", "yerel", "Abonelik (CLI)") ve dil EN yapılsa bile Türkçe kalıyordu.
+const PROVIDER_TILES: { value: string; label: string; labelKey?: string; brand: string; badge?: string }[] = [
   { value: "anthropic",    label: "Claude",     brand: "anthropic" },
   { value: "openai",       label: "OpenAI",     brand: "openai" },
   { value: "google",       label: "Gemini",     brand: "google" },
   { value: "deepseek",     label: "DeepSeek",   brand: "deepseek" },
   { value: "moonshot",     label: "Kimi",       brand: "moonshot" },
   { value: "z-ai",         label: "GLM",        brand: "z-ai" },
-  { value: "nvidia",       label: "NVIDIA",     brand: "nvidia", badge: "ücretsiz" },
+  { value: "nvidia",       label: "NVIDIA",     brand: "nvidia", badge: "provider.badge.free" },
   { value: "groq",         label: "Groq",       brand: "groq" },
   { value: "openrouter",   label: "OpenRouter", brand: "openrouter" },
-  { value: "ollama",       label: "Ollama",     brand: "ollama", badge: "yerel" },
-  { value: "subscription", label: "Abonelik (CLI)", brand: "subscription" },
+  { value: "ollama",       label: "Ollama",     brand: "ollama", badge: "provider.badge.local" },
+  { value: "subscription", label: "Subscription (CLI)", labelKey: "provider.subscriptionCli", brand: "subscription" },
 ];
 
 
@@ -222,11 +226,11 @@ export const SettingsModal = ({
                     >
                       <ModelAvatar provider={tile.brand} size={11} containerSize="h-5 w-5" />
                       <span className={`text-[11px] font-semibold truncate ${selected ? 'text-blue-300' : 'text-slate-300'}`}>
-                        {tile.label}
+                        {tile.labelKey ? t(tile.labelKey as any) : tile.label}
                       </span>
                       {tile.badge && (
                         <span className="absolute -top-1.5 -right-1 text-[7px] font-bold text-emerald-300 bg-emerald-500/15 border border-emerald-500/40 rounded px-1 uppercase tracking-wide">
-                          {tile.badge}
+                          {t(tile.badge as any)}
                         </span>
                       )}
                       {!tile.badge && hasKey && tile.value !== 'subscription' && tile.value !== 'ollama' && (

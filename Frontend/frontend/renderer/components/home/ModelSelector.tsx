@@ -106,7 +106,7 @@ const CLOUD_PROVIDER_META: Record<string, { label: string; badge?: string }> = {
   groq:       { label: 'Groq' },
   moonshot:   { label: 'Moonshot' },
   'z-ai':     { label: 'Z.ai' },
-  nvidia:     { label: 'NVIDIA NIM', badge: 'ücretsiz' },
+  nvidia:     { label: 'NVIDIA NIM', badge: 'provider.badge.free' },
 };
 
 export const ModelSelector: React.FC<ModelSelectorProps> = ({
@@ -260,7 +260,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
     if (user) await axios.post(`${API}/save-ai-config`, { ...newCfg, user_id: user.id });
     if (!hasKey) {
       setShowSettings(true);
-      showToast(`${orToggle ? 'OpenRouter' : m.provider} API key gerekli — Ayarlar'dan ekle.`, 'warning');
+      showToast(`${orToggle ? 'OpenRouter' : m.provider} ${t('models.apiKeyNeeded')}`, 'warning');
     }
   };
 
@@ -498,7 +498,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                               {isGroupActive && <span className={`h-1.5 w-1.5 rounded-full ${g.dot} shrink-0`} />}
                               {g.badge && installed && (
                                 <span className="text-[8px] font-semibold text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 rounded-md px-1.5 py-0.5 uppercase tracking-wide shrink-0">
-                                  {g.badge}
+                                  {t(g.badge as any)}
                                 </span>
                               )}
                               {!installed && (
@@ -572,7 +572,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                                 {isGroupActive && <span className="h-1.5 w-1.5 rounded-full bg-blue-400 shrink-0" />}
                                 {meta.badge && (
                                   <span className="text-[8px] font-semibold text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 rounded-md px-1.5 py-0.5 uppercase tracking-wide shrink-0">
-                                    {meta.badge}
+                                    {t(meta.badge as any)}
                                   </span>
                                 )}
                                 {hasKey ? (
