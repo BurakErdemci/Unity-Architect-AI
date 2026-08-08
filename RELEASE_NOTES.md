@@ -9,98 +9,57 @@
   moment they download. (This comment is invisible on GitHub.)
 -->
 
-## Gamachine v3.0.0
+## Gamachine v3.0.1
 
-**Unity Architect AI is now Gamachine.** A major version because this is not an
-upgrade you install over the old one — and because two things about how the app
-behaves have changed on purpose.
+Three fixes on top of v3.0.0. **If you installed v3.0.0, update** — the first one
+prevented Claude Code from starting at all on most Windows installs.
 
-> 🍎 **macOS (Apple Silicon):** `Gamachine-3.0.0-arm64.dmg`
-> · 🪟 **Windows:** `Gamachine-Setup-3.0.0.exe`
+> 🍎 **macOS (Apple Silicon):** `Gamachine-3.0.1-arm64.dmg`
+> · 🪟 **Windows:** `Gamachine-Setup-3.0.1.exe`
 
-### ⚠️ Read this before installing
+### 🔧 Claude Code would not start on Windows
 
-**The old version is not removed automatically.** The application id changed with
-the rename, so Windows treats this as a separate product: uninstall *Unity
-Architect AI* yourself, or you will have both. For the same reason, an installed
-v2.3.1 will not offer you this update — this is the only place it is announced.
+v3.0.0 stopped shipping a copy of the Claude Code CLI, so the app looks for the
+one you installed. But `npm install -g @anthropic-ai/claude-code` puts only a
+`claude.cmd` shim on PATH, and the SDK refuses to run `.cmd` files — a real
+precaution, since `cmd.exe` can execute commands injected through arguments. The
+result was a session that never opened, with Claude Code installed:
 
-**Your data is kept.** Chat history, API keys and settings live in
-`~/.unity_architect_ai` and that path deliberately did **not** change: it holds the
-key your API keys are encrypted with, and renaming it would have made them
-permanently unreadable. It is an invisible folder; the old name there costs you
-nothing.
+```
+Refusing to execute batch script '...\claude.CMD'
+```
 
-### 🔌 Bring your own AI — we no longer ship one
+The shim names its target in plain text, so the app now reads it and uses the real
+executable. Nothing to install or configure.
 
-Earlier builds silently included a full copy of the Claude Code CLI. Nobody chose
-that: the SDK vendors it, and the packaging step swept it in. It also defeated the
-point — the bundled copy took priority over the CLI you had installed yourself, so
-your own Claude Code was never used.
+### 🧠 The chat no longer forgets silently
 
-It is gone. You connect what you already use: an API key, or a CLI agent on your
-machine. **We do not install a third-party AI tool on your computer without telling
-you.**
+When history was too long to fit into the context, the oldest messages were
+dropped without a word. The model received a conversation that began in the
+middle and had no way to know anything was missing — so instead of saying "I don't
+have that part", it answered as if those messages never existed. On a real
+conversation this was measured at 17 of 48 messages surviving: **71% of the text
+gone, silently.**
 
-The installer is **253 MB smaller** as a result (roughly 45%).
+Two changes:
 
-### 🔒 The chat stays locked until a provider is connected
+- **The CLI's own session is resumed** where possible. It keeps the full
+  transcript on disk; the app now remembers the session id and calls it back
+  instead of re-sending a truncated summary. History survives closing the app.
+- When a summary *is* still needed — after switching agents, or if the session is
+  gone — the cut is now stated. The model is told how many earlier messages are
+  missing and asked to say so rather than guess.
 
-Picking a model was never the same as having the thing behind it. A cloud provider
-needs a key; a CLI agent needs to be installed. Previously the app let you send a
-message anyway, and the first reply could be a raw Python traceback.
-
-Now the composer is disabled until the selected provider is actually usable, and it
-tells you which of the three things is missing: a key, an installation, or a
-sign-in.
-
-### 🌍 English, properly
-
-The interface followed a hard-coded Turkish default even for users who had never
-seen Turkish — and that same value was sent to the model, so a question asked in
-English came back in Turkish. The starting language now follows your operating
-system.
-
-The dictionary grew from 157 to 373 entries and the entire renderer goes through
-it: toasts, tool blocks, approval cards, the terminal panel, the export dialog.
-
-> Still Turkish: the operating-system dialogs the desktop shell opens (folder
-> authorisation, update prompt) and backend error messages. Both need work beyond
-> translation and are not done yet.
-
-### ⚖️ Licensing and privacy
-
-- **The installer now actually contains the licences it is required to ship.**
-  Previously `LICENSE` and `THIRD-PARTY-NOTICES.md` were never copied into the
-  package, while FFmpeg — which requires its licence text to travel with the binary
-  — was shipped.
-- **The FFmpeg notice was wrong.** It declared GPL everywhere; the Windows build is
-  LGPL, and no Windows source link was given at all. Now stated per platform.
-- **The bundled .NET was declared as MIT.** What ships is the .NET **SDK** under
-  Microsoft's proprietary terms. Corrected.
-- **Third-party telemetry is off.** The MCP server inherited from the upstream fork
-  reported to an external endpoint on startup, enabled by default, with nothing in
-  this product telling you so. Disabled at the source.
-
-### 🐛 Fixes
-
-- The Codex error path sent raw exception text to the interface without redaction —
-  the same text can carry the local MCP key. The Claude path already redacted it;
-  the sibling path did not.
-- The chat input's placeholder read *"Ask zap a question…"*, left over from a
-  template.
-- Dead screens were removed, which let the content-security policy drop its last
-  remote image source.
+The session id is tied to the project folder. Open a different workspace and it is
+ignored, so a resumed session can never show you another project's history.
 
 ---
 
-**Installing:** on Windows, remove *Unity Architect AI* first (see above). On
-macOS, if the unsigned dmg is reported as "damaged":
+**Installing:** on Windows, if you are coming from *Unity Architect AI* (v2.x),
+remove it yourself first — the rename changed the application id, so it is not
+replaced automatically. On macOS, if the unsigned dmg is reported as "damaged":
 `xattr -cr "/Applications/Gamachine.app"`
 
-⚠️ Only **Apple Silicon (arm64)** is published for macOS. The Intel dmg gets the
-host architecture's backend embedded in it and there is no Intel Mac here to test
-it on, so it is deliberately withheld rather than shipped untested.
-
-⚠️ The builds are **not code-signed**. Windows SmartScreen → *More info* → *Run
-anyway*; macOS → right-click → *Open*.
+⚠️ Only **Apple Silicon (arm64)** is published for macOS, and the builds are **not
+code-signed**: Windows SmartScreen → *More info* → *Run anyway*; macOS →
+right-click → *Open*.

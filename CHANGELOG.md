@@ -7,6 +7,39 @@ Bu dosya kullanıcıya görünen değişiklikleri taşır. Tam geçmiş için `g
 > kullanıcının indirme anında gördüğü sayfa. Eski girdiler olduğu gibi bırakıldı —
 > geçmişi yarım çevirmek, tek dilde bırakmaktan da iki dilde bırakmaktan da kötü.
 
+## v3.0.1 — 8 Ağustos 2026
+
+Three fixes on top of v3.0.0; the first one blocked the Claude path entirely on
+most Windows installs.
+
+### 🔧 Claude Code would not start on Windows
+- v3.0.0 stopped bundling the CLI, so the SDK falls back to PATH — where npm puts
+  only a `claude.cmd` shim, and the SDK **refuses** `.cmd` (cmd.exe can execute
+  commands injected through arguments). Session never opened:
+  `Refusing to execute batch script '...\claude.CMD'`.
+- The shim carries its target in plain text; the app now reads it and passes the
+  real executable as `ClaudeAgentOptions(cli_path=)`. Measured here: resolves to
+  `claude.exe` 2.1.226, which PATH never exposed.
+- ⚠️ Recorded: the chat gate did **not** catch this. It asks "is a claude binary
+  installed" and the shim answers yes; the SDK needs something it can *execute*.
+  Two different questions with one name.
+
+### 🧠 Session continuity
+- **`resume`**: the CLI's own session is resumed when possible. It keeps the full
+  transcript on disk; only the id was missing. Stored per (conversation, CLI
+  family) with the workspace — a mismatch is ignored, because CLI sessions are
+  keyed by project directory and resuming elsewhere would show **another
+  project's** history.
+- When a summary is still needed (agent switch, session gone), **the cut is now
+  marked**. Previously the budget filled and older messages were dropped with a
+  bare `break`; the model got a transcript starting mid-conversation and could not
+  know. Measured: 17 of 48 messages survived, **71% of characters lost, silently**.
+- Resuming does **not** also inject the transcript — that would show the model the
+  same conversation twice.
+
+### 🧪 Gates
+backend **1127** · frontend **406** · tsc **0**
+
 ## v3.0.0 — 8 Ağustos 2026
 
 **Unity Architect AI → Gamachine.** Major version, because this is not an upgrade
