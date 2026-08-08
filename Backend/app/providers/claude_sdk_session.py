@@ -238,6 +238,67 @@ _DELTA_FLUSH_CHARS = 48
 # hizalı (`cli_base._CLI_STREAM_LIMIT_BYTES`); iki yolun aynı girdide farklı
 # davranması başlı başına bir arıza kaynağıydı.
 _SDK_STDOUT_LIMIT_BYTES = 32 * 1024 * 1024
+
+
+def claude_ikilisini_coz() -> Optional[str]:
+    """PATH'teki `claude` bir Windows toplu-iş kabuğuysa ARKASINDAKİ gerçek exe'yi bul.
+
+    Neden gerekli (8 Ağu 2026, kullanıcıda canlı çıktı): SDK'nın gömülü `claude.exe`'si
+    pakette taşınmıyor artık (ürün kararı: habersiz üçüncü taraf AI dağıtmıyoruz), o
+    yüzden SDK PATH'e düşüyor. Ama Claude Code'un npm kurulumu PATH'e yalnız
+    `claude.cmd` kabuğunu koyuyor ve SDK `.cmd`/`.bat` çalıştırmayı **bilerek
+    reddediyor** — cmd.exe argüman enjeksiyonuna açık ve güvenilir kaçış yok
+    (`subprocess_cli._reject_windows_batch_cli`). Sonuç: Claude Code KURULU olduğu
+    hâlde oturum "Refusing to execute batch script" ile açılmıyordu.
+
+    Kabuğun kendisi hedefi düz metin taşıyor, yani tahmin etmeye gerek yok:
+
+        "%dp0%\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe" %*
+
+    Önce kabuğu OKUYUP içindeki `.exe` yolunu çıkarıyoruz (en doğrusu; npm yerleşimi
+    değişse bile çalışır), tutmazsa bilinen yerleşimi deniyoruz.
+
+    None dönerse SDK kendi arama sırasına devam eder — yani bu fonksiyon bir
+    iyileştirme, zorunlu bir bağımlılık değil.
+    """
+    import shutil
+    import sys as _sys
+    import re as _re
+
+    if _sys.platform != "win32":
+        return None  # .cmd sorunu yalnız Windows'ta var
+
+    bulunan = shutil.which("claude.exe")
+    if bulunan:
+        return bulunan
+
+    kabuk = shutil.which("claude")
+    if not kabuk or not kabuk.lower().endswith((".cmd", ".bat")):
+        return None  # zaten native ya da hiç yok → SDK kendi işini yapsın
+
+    # 1) Kabuğun içindeki tırnaklı .exe yolunu oku.
+    try:
+        with open(kabuk, "r", encoding="utf-8", errors="replace") as fh:
+            metin = fh.read()
+        m = _re.search(r'"([^"]*?\.exe)"', metin, _re.IGNORECASE)
+        if m:
+            ham = m.group(1).replace("%dp0%", os.path.dirname(kabuk))
+            aday = os.path.normpath(os.path.expandvars(ham))
+            if os.path.isfile(aday):
+                logger.info(f"[ClaudeSDK] npm kabuğunun arkasındaki ikili bulundu: {aday}")
+                return aday
+    except OSError as e:
+        logger.warning(f"[ClaudeSDK] claude kabuğu okunamadı: {e}")
+
+    # 2) Bilinen npm yerleşimi.
+    aday = os.path.join(os.path.dirname(kabuk), "node_modules", "@anthropic-ai",
+                        "claude-code", "bin", "claude.exe")
+    if os.path.isfile(aday):
+        logger.info(f"[ClaudeSDK] bilinen npm yerleşiminden bulundu: {aday}")
+        return aday
+
+    logger.warning("[ClaudeSDK] PATH'te yalnız .cmd kabuğu var, arkasındaki exe bulunamadı")
+    return None
 # Arka plan görevleri bitince CLI kendiliğinden devam etmezse bu süre sonra dürtülür.
 _TASKS_DONE_GRACE_S = 20.0
 # Nudge sonrası devam turu hiç gelmezse turu bitirme emniyeti.
@@ -834,6 +895,12 @@ class ClaudeSDKSession:
             # komple düşüyordu; gerekçe ve ölçüm _SDK_STDOUT_LIMIT_BYTES'ta.
             max_buffer_size=_SDK_STDOUT_LIMIT_BYTES,
         )
+        # Windows'ta npm kurulumu PATH'e yalnız `claude.cmd` koyuyor ve SDK toplu-iş
+        # kabuğu çalıştırmayı reddediyor → gerçek exe'yi biz gösteriyoruz.
+        # None ise anahtar HİÇ verilmiyor: SDK'nın kendi arama sırası bozulmasın.
+        _cli = claude_ikilisini_coz()
+        if _cli:
+            opts_kwargs["cli_path"] = _cli
         if self.model:
             opts_kwargs["model"] = self.model
         if self.effort:
