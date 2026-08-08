@@ -230,20 +230,20 @@ namespace MCPForUnity.Editor.Services
         }
 
         /// <summary>
-        /// Unity Architect AI fork: yerel MCP sunucusunu YALNIZCA uygulamanın MCP
+        /// Gamachine fork: yerel MCP sunucusunu YALNIZCA uygulamanın MCP
         /// toggle'ı başlatır. Unity'nin kendi terminalinde sunucu açması, app'in
         /// başlattığı sunucuyu önce durdurup (port temizliği) oturumu çalıyordu —
         /// bu yol bilinçli olarak kapalı; Unity yalnızca çalışan sunucuya BAĞLANIR.
         /// </summary>
         public bool StartLocalHttpServer(bool quiet = false)
         {
-            McpLog.Warn("[MCP] Sunucu Unity içinden başlatılamaz — Unity Architect AI uygulamasındaki MCP toggle'ını kullanın.");
+            McpLog.Warn("[MCP] Sunucu Unity içinden başlatılamaz — Gamachine uygulamasındaki MCP toggle'ını kullanın.");
             if (!quiet)
             {
                 EditorUtility.DisplayDialog(
                     "MCP Server",
                     "MCP sunucusu Unity içinden başlatılamaz." +
-                    "\n\nSunucuyu Unity Architect AI uygulamasındaki MCP toggle'ı başlatır; " +
+                    "\n\nSunucuyu Gamachine uygulamasındaki MCP toggle'ı başlatır; " +
                     "Unity çalışan sunucuya otomatik bağlanır.",
                     "OK");
             }

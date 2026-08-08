@@ -1,5 +1,5 @@
 @echo off
-REM Unity Architect AI — Backend PyInstaller build scripti (Windows)
+REM Gamachine — Backend PyInstaller build scripti (Windows)
 REM Kullanim: build_backend.bat
 REM Once: pip install pyinstaller
 

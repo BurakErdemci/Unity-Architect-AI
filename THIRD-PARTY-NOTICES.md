@@ -1,6 +1,6 @@
 # Third-Party Notices
 
-Unity Architect AI incorporates or redistributes the third-party components
+Gamachine incorporates or redistributes the third-party components
 listed below. Each remains under its own license; nothing in this project's
 LICENSE alters those terms.
 
@@ -51,8 +51,8 @@ packaged artifact on this machine.
 
 FFmpeg is redistributed **unmodified**, as a standalone executable, and is invoked
 by this application only as a separate process (no linking against FFmpeg
-libraries). This constitutes mere aggregation; it does not place Unity Architect
-AI's own code under the GPL or LGPL. Recipients of a build containing FFmpeg are
+libraries). This constitutes mere aggregation; it does not place Gamachine's
+own code under the GPL or LGPL. Recipients of a build containing FFmpeg are
 entitled to the corresponding source of FFmpeg for **their** platform's build,
 available at the links above.
 
@@ -112,7 +112,7 @@ Copyright (c) Astral — dual licensed **MIT** or **Apache-2.0** — https://git
 ## External tools (not bundled)
 
 The application can drive AI command-line tools that the user installs and
-authenticates separately. These are **not** distributed with Unity Architect AI
+authenticates separately. These are **not** distributed with Gamachine
 and remain subject to their own licenses and terms of service:
 
 Claude Code (Anthropic), Codex CLI (OpenAI), Antigravity CLI (Google),

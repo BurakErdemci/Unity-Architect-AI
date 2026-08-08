@@ -30,10 +30,23 @@ logger = logging.getLogger(__name__)
 # Etiketli blok: kullanıcı `git diff`'inde ne olduğunu görsün ve tek parça
 # silebilsin. Sessizce araya satır sıkıştırmak, kullanıcının kendi dosyasını
 # ürünün habersizce düzenlemesi demek olurdu.
-BLOCK_BEGIN = "# >>> Unity Architect AI — yerel araç dosyaları (ürün tarafından eklendi) >>>"
-BLOCK_END = "# <<< Unity Architect AI <<<"
+BLOCK_BEGIN = "# >>> Gamachine — yerel araç dosyaları (ürün tarafından eklendi) >>>"
+BLOCK_END = "# <<< Gamachine <<<"
+
+# Marka değişiminden (8 Ağu 2026) ÖNCEKİ etiketler. Bunlar KULLANICININ kendi
+# `.gitignore`'ına yazılmış durumda, dolayısıyla yeni etiketlere geçmek tek başına
+# yeterli değil: eşleşme birebir dize karşılaştırması olduğu için eski blok YETİM
+# kalır ve dosyaya İKİNCİ bir blok eklenir — yani "tek parça silebilirsin" vaadi
+# tam da marka temizliği yüzünden bozulurdu. Eski blok bulunursa kaldırılıyor.
+#
+# ⚠️ Bu iki dize BİLEREK eski markayı taşıyor ve otomatik bir yeniden adlandırma
+# betiğine ASLA dahil edilmemeli. 8 Ağu 2026'da tam bu oldu: marka betiği bunları
+# da "Gamachine" yaptı, `_LEGACY_*` ile `BLOCK_*` eşitlendi ve geçiş kodu kendini
+# sessizce iptal etti — koruma yerinde görünüyor, hiçbir şey korumuyordu.
+_LEGACY_BEGIN = "# >>> Unity Architect AI — yerel araç dosyaları (ürün tarafından eklendi) >>>"
+_LEGACY_END = "# <<< Unity Architect AI <<<"
 _BLOCK_NOTE = (
-    "# Bu satırları Unity Architect AI ekledi — istemiyorsanız bu bloğu\n"
+    "# Bu satırları Gamachine ekledi — istemiyorsanız bu bloğu\n"
     "# (iki etiket dahil) silebilirsiniz, uygulama çalışmaya devam eder.\n"
     "# Sebebi: aşağıdaki dosyalar yerel MCP anahtarını DÜZ METİN taşır ve\n"
     "# depoya girerlerse anahtar da girer.\n"
@@ -294,6 +307,12 @@ def _compose(existing: str, missing: List[str]) -> str:
     etiketten birden fazla gösterirdi ve "tek parça sil" vaadini bozardı.
     """
     added = "".join(f"{e}\n" for e in missing)
+    # Eski markanın bloğu varsa ÖNCE kaldır (gerekçe: _LEGACY_BEGIN). Yoksa aynı
+    # dosyada iki blok birikir ve içindekiler de tekrarlanır.
+    if _LEGACY_BEGIN in existing and _LEGACY_END in existing:
+        _bas = existing.index(_LEGACY_BEGIN)
+        _son = existing.index(_LEGACY_END) + len(_LEGACY_END)
+        existing = (existing[:_bas] + existing[_son:]).lstrip("\n")
     if BLOCK_BEGIN in existing and BLOCK_END in existing:
         cut = existing.index(BLOCK_END)
         return existing[:cut] + added + existing[cut:]

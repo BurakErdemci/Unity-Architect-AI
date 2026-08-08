@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 _EXT = {"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp"}
 
-_TMP_SUBDIR = os.path.join(".unity_architect_tmp", "attachments")
+_TMP_SUBDIR = os.path.join(".gamachine_tmp", "attachments")
 
 # Bu iki sayının sebebi diskte değil, ajanın CEVAP yolunda.
 #

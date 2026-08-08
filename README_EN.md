@@ -1,6 +1,6 @@
 <div align="center">
 
-# Unity Architect AI
+# Gamachine
 
 **An agentic development studio that unifies every coding agent and live Unity control in a single desktop app**
 
@@ -18,7 +18,7 @@
 
 <br/>
 
-![Unity Architect AI Demo](docs/media/demo.gif)
+![Gamachine Demo](docs/media/demo.gif)
 
 *Develop with natural language in the code editor, then control the Unity Editor live — all from a single window.*
 
@@ -26,12 +26,12 @@
 
 ### Download
 
-**[⬇ Download the latest release](https://github.com/BurakErdemci/Unity-Architect-AI/releases/latest)**
+**[⬇ Download the latest release](https://github.com/BurakErdemci/gamachine/releases/latest)**
 
 | Platform | File |
 |---|---|
-| **Windows 10/11** (x64) | `Unity-Architect-AI-Setup-<version>.exe` |
-| **macOS** (Apple Silicon) | `Unity-Architect-AI-<version>-arm64.dmg` |
+| **Windows 10/11** (x64) | `Gamachine-Setup-<version>.exe` |
+| **macOS** (Apple Silicon) | `Gamachine-<version>-arm64.dmg` |
 
 Then bring your own AI: add an API key, or point it at a CLI agent you already
 use. The chat stays locked until one is connected — **we do not install a
@@ -39,7 +39,7 @@ third-party AI tool on your machine without telling you.**
 
 <sub>The builds are not code-signed yet, so the OS will warn you on first run:
 Windows SmartScreen → *More info* → *Run anyway*; macOS → right-click → *Open*,
-or `xattr -cr "/Applications/Unity Architect AI.app"`. Intel Macs are not
+or `xattr -cr "/Applications/Gamachine.app"`. Intel Macs are not
 supported. Prefer building from source? See [Installation](#-installation).</sub>
 
 </div>
@@ -49,7 +49,7 @@ supported. Prefer building from source? See [Installation](#-installation).</sub
 ## Table of Contents
 
 - [Under One Roof: What Does This Project Unify?](#-under-one-roof-what-does-this-project-unify)
-- [Why Unity Architect AI?](#-why-unity-architect-ai)
+- [Why Gamachine?](#-why-gamachine)
 - [Features](#-features)
 - [System Architecture](#-system-architecture)
 - [Supported AI Providers](#-supported-ai-providers)
@@ -69,7 +69,7 @@ supported. Prefer building from source? See [Installation](#-installation).</sub
 
 Today a Unity developer juggles multiple windows for different jobs: one CLI to generate code, a separate plugin to control the Editor, yet another app to chat. Each has its own approval logic, its own configuration, its own disconnected view of the project.
 
-**Unity Architect AI brings them all into a single application** — and puts them behind *one approval gate*. You pick a model from a dropdown; whether it's the Claude Code CLI, Codex, Antigravity (agy), GitHub Copilot CLI, or a direct cloud API — they all:
+**Gamachine brings them all into a single application** — and puts them behind *one approval gate*. You pick a model from a dropdown; whether it's the Claude Code CLI, Codex, Antigravity (agy), GitHub Copilot CLI, or a direct cloud API — they all:
 
 - run **in the same chat window**,
 - see **the same project** as their workspace,
@@ -96,11 +96,11 @@ What this matrix delivers is simple but rare: **the experience is identical rega
 
 ---
 
-## 🚀 Why Unity Architect AI?
+## 🚀 Why Gamachine?
 
 AI tools in the Unity ecosystem usually land at one of two extremes: they either just write code, or they just chat. Neither can do what a real development partner does on its own — understand the project, find the bug, fix it, test it in the terminal, and see it inside the Unity Editor.
 
-| Traditional AI Assistants | Unity Architect AI |
+| Traditional AI Assistants | Gamachine |
 |---|---|
 | Locked to a single provider | 7 CLI agents (Claude Code, Codex, agy, Copilot, Cursor, OpenCode, Kimi Code), 8+ cloud APIs (incl. the free NVIDIA NIM pool), Ollama — one menu |
 | Writes code, doesn't see the project | Scans every `.cs` file in the workspace, extracts an architecture map |
@@ -482,12 +482,12 @@ cd Frontend/frontend && npm install && npm run build
 ```
 
 Outputs land under `Frontend/frontend/build/`:
-- macOS: `Unity Architect AI-<version>-arm64.dmg` (Apple Silicon)
+- macOS: `Gamachine-<version>-arm64.dmg` (Apple Silicon)
 - Windows: NSIS installer (`.exe`)
 
 > ⚠️ **The x64 dmg trap:** electron-builder produces dmgs for both architectures, but the backend binary is only compiled for the host architecture — an x64 dmg built on Apple Silicon **won't work on Intel Macs**. Proper Intel support requires compiling the backend with an x64 Python separately.
 
-> 🍎 **macOS quarantine note:** the dmg is unsigned; if macOS reports it as "damaged" after downloading, clear the quarantine flag with `xattr -cr "/Applications/Unity Architect AI.app"`.
+> 🍎 **macOS quarantine note:** the dmg is unsigned; if macOS reports it as "damaged" after downloading, clear the quarantine flag with `xattr -cr "/Applications/Gamachine.app"`.
 
 The packaged app does **not** require Python or .NET — the backend is a single frozen binary; the `mcp-server` and `unityai` subcommands are invoked through that same binary. `uvx`, OmniSharp (+.NET), and ffmpeg/yt-dlp are all embedded.
 

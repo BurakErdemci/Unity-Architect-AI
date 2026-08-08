@@ -1,5 +1,5 @@
 @echo off
-REM Unity Architect AI — MCP Server launcher (Windows)
+REM Gamachine — MCP Server launcher (Windows)
 REM run_mcp_server.sh'in Windows karsiligi. Paketlenmis build: yanindaki
 REM backend.exe'yi kullanir (venv/python gerekmez); dev: venv python'a duser.
 setlocal

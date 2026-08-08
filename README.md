@@ -1,6 +1,6 @@
 <div align="center">
 
-# Unity Architect AI
+# Gamachine
 
 **Tüm kodlama ajanlarını ve canlı Unity kontrolünü tek bir masaüstü uygulamasında birleştiren agentic geliştirme stüdyosu**
 
@@ -18,7 +18,7 @@
 
 <br/>
 
-![Unity Architect AI Demo](docs/media/demo.gif)
+![Gamachine Demo](docs/media/demo.gif)
 
 *Kod editöründe doğal dille geliştir, ardından Unity Editor'ü canlı olarak kontrol et — tek pencereden.*
 
@@ -26,12 +26,12 @@
 
 ### İndir
 
-**[⬇ En son sürümü indir](https://github.com/BurakErdemci/Unity-Architect-AI/releases/latest)**
+**[⬇ En son sürümü indir](https://github.com/BurakErdemci/gamachine/releases/latest)**
 
 | Platform | Dosya |
 |---|---|
-| **Windows 10/11** (x64) | `Unity-Architect-AI-Setup-<sürüm>.exe` |
-| **macOS** (Apple Silicon) | `Unity-Architect-AI-<sürüm>-arm64.dmg` |
+| **Windows 10/11** (x64) | `Gamachine-Setup-<sürüm>.exe` |
+| **macOS** (Apple Silicon) | `Gamachine-<sürüm>-arm64.dmg` |
 
 Sonrası sana ait: bir API anahtarı gir ya da zaten kullandığın bir CLI ajanını
 göster. Bir sağlayıcı bağlanana kadar sohbet kilitli kalıyor — **sana habersiz
@@ -40,7 +40,7 @@ göster. Bir sağlayıcı bağlanana kadar sohbet kilitli kalıyor — **sana ha
 <sub>Derlemeler henüz imzalı değil, o yüzden ilk açılışta işletim sistemi uyarı
 veriyor: Windows SmartScreen → *Daha fazla bilgi* → *Yine de çalıştır*;
 macOS → sağ tık → *Aç*, ya da
-`xattr -cr "/Applications/Unity Architect AI.app"`. Intel Mac desteklenmiyor.
+`xattr -cr "/Applications/Gamachine.app"`. Intel Mac desteklenmiyor.
 Kaynaktan derlemeyi tercih ediyorsan: [Kurulum](#-kurulum).</sub>
 
 </div>
@@ -50,7 +50,7 @@ Kaynaktan derlemeyi tercih ediyorsan: [Kurulum](#-kurulum).</sub>
 ## İçindekiler
 
 - [Tek Çatı Altında: Bu Proje Neyi Birleştiriyor?](#-tek-çatı-altında-bu-proje-neyi-birleştiriyor)
-- [Neden Unity Architect AI?](#-neden-unity-architect-ai)
+- [Neden Gamachine?](#-neden-gamachine)
 - [Özellikler](#-özellikler)
 - [Sistem Mimarisi](#-sistem-mimarisi)
 - [Desteklenen AI Sağlayıcılar](#-desteklenen-ai-sağlayıcılar)
@@ -70,7 +70,7 @@ Kaynaktan derlemeyi tercih ediyorsan: [Kurulum](#-kurulum).</sub>
 
 Bugün bir Unity geliştiricisi farklı işler için farklı pencereler açmak zorunda: kod üretmek için bir CLI, Editor'ü kontrol etmek için ayrı bir eklenti, sohbet için bir başka uygulama. Her birinin kendi onay mantığı, kendi konfigürasyonu, projeden kendi kopuk görüşü var.
 
-**Unity Architect AI bunların hepsini tek bir uygulamada toplar** — ve hepsini *tek bir onay kapısının* arkasına alır. Bir modeli açılır menüden seçersin; ister Claude Code CLI olsun, ister Codex, ister Antigravity (agy), ister GitHub Copilot CLI, ister doğrudan bulut API'si — hepsi:
+**Gamachine bunların hepsini tek bir uygulamada toplar** — ve hepsini *tek bir onay kapısının* arkasına alır. Bir modeli açılır menüden seçersin; ister Claude Code CLI olsun, ister Codex, ister Antigravity (agy), ister GitHub Copilot CLI, ister doğrudan bulut API'si — hepsi:
 
 - **aynı sohbet penceresinde** çalışır,
 - **aynı projeyi** workspace olarak görür,
@@ -97,11 +97,11 @@ Bu matrisin sağladığı şey basit ama nadir: **kaynak ne olursa olsun deneyim
 
 ---
 
-## 🚀 Neden Unity Architect AI?
+## 🚀 Neden Gamachine?
 
 Unity ekosistemindeki AI araçları genelde iki uçtan birine düşer: ya sadece kod yazar, ya da sadece sohbet eder. Gerçek bir geliştirme ortağının yaptığını — projeyi anlamak, hatayı bulmak, düzeltmek, terminalde test etmek ve Unity Editor'de görmek — tek başına yapamaz.
 
-| Geleneksel AI Asistanlar | Unity Architect AI |
+| Geleneksel AI Asistanlar | Gamachine |
 |---|---|
 | Tek sağlayıcıya kilitli | 7 CLI ajanı (Claude Code, Codex, agy, Copilot, Cursor, OpenCode, Kimi Code), 8+ bulut API (NVIDIA NIM ücretsiz havuz dahil), Ollama — tek menüden |
 | Kod yazar, projeyi görmez | Workspace'teki tüm `.cs` dosyalarını tarar, mimari haritasını çıkarır |
@@ -493,14 +493,14 @@ cd Frontend/frontend && npm install && npm run build
 ```
 
 Çıktılar `Frontend/frontend/build/` altında:
-- macOS: `Unity Architect AI-<sürüm>-arm64.dmg` (Apple Silicon)
+- macOS: `Gamachine-<sürüm>-arm64.dmg` (Apple Silicon)
 - Windows: NSIS installer (`.exe`)
 
 > ⚠️ **x64 dmg tuzağı — bu yüzden Intel dmg yayınlanmıyor.** electron-builder her iki mimari için dmg üretir ama backend binary'si yalnızca host mimaride derlenir; Apple Silicon'da alınan x64 dmg'nin içine **arm64 backend** gömülür ve gerçek Intel Mac'te sessizce bozuktur. Derlenmesi çalıştığını göstermediği ve sınayacak Intel Mac olmadığı için **dağıtılan tek macOS varlığı arm64 dmg'dir.** Intel desteği için backend'i ayrıca x64 Python ile derlemek gerekir.
 >
 > ⚠️ **Intel Mac'te C# kod zekası yok:** OmniSharp çözümleyicisi macOS'ta mimariden bağımsız olarak `osx-arm64` klasörünü arar (`Backend/app/omnisharp/omnisharp_manager.py` → `_resolve_binary` / `_spawn_env`) ve `scripts/fetch_omnisharp.py`'de macOS için tanımlı tek varlık `osx-arm64`'tür — `osx-x64` ne indirilir ne aranır. Yani **desteklenen tek macOS mimarisi Apple Silicon'dur**; Intel Mac'te uygulama açılsa bile OmniSharp başlamaz — Monaco'da hata/tamamlama gelmez, geri kalan özellikler çalışır.
 
-> 🍎 **macOS karantina notu:** dmg imzasızdır; internetten indirilince "hasar görmüş" uyarısı çıkarsa `xattr -cr "/Applications/Unity Architect AI.app"` ile karantina kaldırılır.
+> 🍎 **macOS karantina notu:** dmg imzasızdır; internetten indirilince "hasar görmüş" uyarısı çıkarsa `xattr -cr "/Applications/Gamachine.app"` ile karantina kaldırılır.
 
 Paketlenmiş app'te Python veya .NET kurulu olması **gerekmez** — backend tek bir frozen binary'dir; `mcp-server` ve `unityai` alt komutları aynı binary üzerinden çağrılır. `uvx`, OmniSharp (+.NET) ve ffmpeg/yt-dlp uygulamaya gömülüdür.
 

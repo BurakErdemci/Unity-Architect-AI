@@ -136,7 +136,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          name: Unity Architect AI ${{ github.ref_name }}
+          name: Gamachine ${{ github.ref_name }}
           body_path: RELEASE_NOTES.md
           draft: true
           files: dist-artifacts/**/*

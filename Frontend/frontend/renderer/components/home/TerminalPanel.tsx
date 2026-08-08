@@ -174,7 +174,7 @@ const PortsTab: React.FC<{ apiUrl?: string; sessionToken?: string; unityConnecte
   );
 
   const ports = [
-    { name: 'Backend API', port: apiUrl ? new URL(apiUrl).port || '8000' : '8000', ok: backendOk, desc: 'FastAPI · Unity Architect AI' },
+    { name: 'Backend API', port: apiUrl ? new URL(apiUrl).port || '8000' : '8000', ok: backendOk, desc: 'FastAPI · Gamachine' },
     { name: 'Unity MCP', port: '8080', ok: mcpOk, desc: 'MCP Server · Unity Editor bağlantısı' },
   ];
 

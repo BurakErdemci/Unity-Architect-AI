@@ -23,7 +23,7 @@ export const WorkspaceScreen = ({
   const { t } = useLang();
   return (
   <div className="h-screen flex items-center justify-center bg-[#000000] text-white">
-    <Head><title>Unity Architect AI | Workspace</title></Head>
+    <Head><title>Gamachine | Workspace</title></Head>
     <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}

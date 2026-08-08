@@ -265,7 +265,7 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
                 />
               </div>
               <div className="text-center space-y-2 opacity-30 px-6">
-                <h3 className="text-sm font-bold text-slate-400 tracking-[0.2em] uppercase">Unity Architect Engine</h3>
+                <h3 className="text-sm font-bold text-slate-400 tracking-[0.2em] uppercase">Gamachine Engine</h3>
                 <p className="text-[11px] text-slate-500 max-w-[240px] leading-relaxed">
                   {t('home.editorHint')}
                 </p>

@@ -42,7 +42,7 @@ def maskeli_cmd(cmd: list, prompt: str) -> str:
 
     NEDEN VAR: `[CMD]` satırı prompt'un TAMAMINI basıyordu ve o satır uçucu
     değil — zincir 2026-08-01'de uçtan uca ölçüldü: backend stdout → Electron
-    `console.log` → `fileLog` → `%TEMP%/unity-architect-ai.log` (appendFileSync,
+    `console.log` → `fileLog` → `%TEMP%/gamachine.log` (appendFileSync,
     kalıcı). Yani kullanıcının sohbete yapıştırdığı her şey (kod, yol, sır)
     diskte birikiyordu. Şablon iki satır aşağıdaki `[ENV]`: değeri değil
     VARLIĞINI bas.
@@ -725,7 +725,7 @@ class BaseCLIProvider(AIProvider):
                 # stdout'u modelin CEVAP metnini taşıyor, cevap da prompt'u
                 # tekrarlayabiliyor ya da okuduğu dosya içeriğini içerebiliyor.
                 # Yani prompt'u argv'den ve `[CMD]`'den çıkarmak yetmiyordu —
-                # aynı kalıcı log dosyasına (`%TEMP%/unity-architect-ai.log`)
+                # aynı kalıcı log dosyasına (`%TEMP%/gamachine.log`)
                 # bu yoldan geri giriyordu. Sır maskesi de kurtarmıyor: o
                 # ADLANDIRILMIŞ kimlik bilgilerini maskeliyor, serbest metni değil.
                 #

@@ -7,13 +7,13 @@
   Bu yorum GitHub'da görünmez (HTML yorumu).
 -->
 
-## Unity Architect AI v2.3.1
+## Gamachine v2.3.1
 
 Küçük ama can sıkıcı bir hatanın sürümü: **sohbete fotoğraf yapıştırınca oturum
 bazen komple düşüyordu.**
 
-> 🍎 **macOS (Apple Silicon):** `Unity-Architect-AI-2.3.1-arm64.dmg`
-> · 🪟 **Windows:** `Unity-Architect-AI-Setup-2.3.1.exe`
+> 🍎 **macOS (Apple Silicon):** `Gamachine-2.3.1-arm64.dmg`
+> · 🪟 **Windows:** `Gamachine-Setup-2.3.1.exe`
 
 ### 🖼 Yapıştırılan görsel artık sohbeti öldürmüyor
 
@@ -65,7 +65,7 @@ açıyor. Artık sağlayıcı bazında doğru anlatılıyor.
 
 **Kurulum:** Windows'ta installer önceki sürümü otomatik kaldırır.
 macOS'ta imzasız dmg "hasar görmüş" derse:
-`xattr -cr "/Applications/Unity Architect AI.app"`
+`xattr -cr "/Applications/Gamachine.app"`
 
 ⚠️ macOS'ta yalnız **Apple Silicon (arm64)** dağıtılıyor — Intel dmg'nin içine
 host mimarisinin backend'i gömüldüğü ve sınanacak Intel Mac olmadığı için

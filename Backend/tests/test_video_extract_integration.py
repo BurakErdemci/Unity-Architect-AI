@@ -25,7 +25,7 @@ class TestExtractIntegration(unittest.TestCase):
                                 for u in res.frame_data_uris))
             self.assertEqual(res.meta["frame_count"], len(res.frame_data_uris))
             # extract kendi temp'ini sildi mi
-            leftover = os.path.join(td, ".unity_architect_tmp", "video")
+            leftover = os.path.join(td, ".gamachine_tmp", "video")
             self.assertTrue(not os.path.isdir(leftover) or not os.listdir(leftover))
 
     def test_missing_path_raises(self):

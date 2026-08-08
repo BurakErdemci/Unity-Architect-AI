@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-# PyInstaller spec — Unity Architect AI backend
+# PyInstaller spec — Gamachine backend
 # Kullanım: cd Backend && pyinstaller backend.spec
 
 from PyInstaller.utils.hooks import collect_all

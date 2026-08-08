@@ -19,8 +19,15 @@ class KimiProvider(BaseCLIProvider):
     .mcp.json shape'ini okuduğu bir Kimi hesabıyla test edilmeli.
     """
 
-    _KIMI_MANAGED_MARKER = "# >>> unity-architect managed (permission rules) >>>"
-    _KIMI_MANAGED_END = "# <<< unity-architect managed <<<"
+    _KIMI_MANAGED_MARKER = "# >>> gamachine managed (permission rules) >>>"
+    _KIMI_MANAGED_END = "# <<< gamachine managed <<<"
+    # Marka değişiminden (8 Ağu 2026) önceki işaretçi. Bu blok KULLANICININ
+    # `~/.kimi-code/config.toml`'una yazılıyor, dolayısıyla yalnız yeni işaretçiye
+    # bakmak eski bloğu görmezden gelip İKİNCİ bir blok eklerdi.
+    # ⚠️ Eski blok kaldırılmıyor, yalnız "zaten yönetiliyor" sayılıyor: kaldırma
+    # kodu bu sağlayıcıda CANLI SINANAMIYOR (abonelik yok, CLI kurulu değil), ve
+    # sınanmamış bir dosya-değiştirme kolu kullanıcının config'inde çalıştırılmaz.
+    _KIMI_LEGACY_MARKER = "# >>> unity-architect managed (permission rules) >>>"
     _KIMI_PERMISSION_BLOCK = (
         "\n" + _KIMI_MANAGED_MARKER + "\n"
         "# Built-in yazma/shell araçları DENY (deny mutlak — --print/--yolo bunu ezmez).\n"
@@ -54,7 +61,8 @@ class KimiProvider(BaseCLIProvider):
         except Exception as e:
             logger.warning(f"[KimiProvider] config.toml okunamadı: {e}")
             existing = ""
-        if self._KIMI_MANAGED_MARKER in existing:
+        if (self._KIMI_MANAGED_MARKER in existing
+                or self._KIMI_LEGACY_MARKER in existing):
             return  # zaten yazılı — idempotent
         try:
             with open(path, "a", encoding="utf-8") as f:

@@ -734,8 +734,8 @@ class UnityMCPManager:
             uvx_override = f'            EditorPrefs.SetString("MCPForUnity.UvxPath", "{uvx_cs}");\n'
 
         script = f"""\
-// Unity Architect AI — MCP bağlantı yapılandırması (güncelleme: {timestamp})
-// Bu dosya Unity Architect AI tarafından oluşturulmuştur. Silmeyin.
+// Gamachine — MCP bağlantı yapılandırması (güncelleme: {timestamp})
+// Bu dosya Gamachine tarafından oluşturulmuştur. Silmeyin.
 #if UNITY_EDITOR
 using UnityEditor;
 

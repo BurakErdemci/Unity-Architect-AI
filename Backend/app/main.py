@@ -235,7 +235,7 @@ db_path = _resolve_db_path()
 _DOCS_ENABLED = not getattr(sys, "frozen", False)
 
 app = FastAPI(
-    title="Unity Architect AI",
+    title="Gamachine",
     lifespan=lifespan,
     docs_url="/docs" if _DOCS_ENABLED else None,
     redoc_url="/redoc" if _DOCS_ENABLED else None,
@@ -273,7 +273,7 @@ app.include_router(create_mcp_router())
 
 @app.get("/health")
 def health_check():
-    return {"status": "ok", "service": "unity-architect-ai"}
+    return {"status": "ok", "service": "gamachine"}
 
 
 

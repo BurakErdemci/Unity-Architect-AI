@@ -278,7 +278,7 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
     e.stopPropagation();
     setTreeDragSource(entry);
     e.dataTransfer.effectAllowed = 'copyMove';
-    e.dataTransfer.setData('application/x-unity-architect-file', JSON.stringify(entry));
+    e.dataTransfer.setData('application/x-gamachine-file', JSON.stringify(entry));
     e.dataTransfer.setData('text/plain', entry.path);
   }, []);
 

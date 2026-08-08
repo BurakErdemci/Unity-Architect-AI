@@ -4,7 +4,7 @@
 
 (a) KALICI LOG. Zincir 2026-08-01'de uçtan uca ölçüldü:
     cli_base `[CMD]` satırı → backend stdout → Electron `console.log`
-    → `fileLog` → `%TEMP%/unity-architect-ai.log` (`fs.appendFileSync`).
+    → `fileLog` → `%TEMP%/gamachine.log` (`fs.appendFileSync`).
     Yani `[CMD]` uçucu bir konsol satırı değildi; kullanıcının sohbete
     yapıştırdığı her şey diske birikiyordu. Çözüm: `maskeli_cmd`.
 

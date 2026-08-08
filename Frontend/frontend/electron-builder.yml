@@ -1,6 +1,14 @@
-appId: com.unityarchitect.ai
-productName: Unity Architect AI
-copyright: Copyright © 2026 Unity Architect AI
+# ⚠️ `appId` GÜNCELLEME KİMLİĞİDİR. 8 Ağu 2026'da `com.gamachine.app`'dan
+# değiştirildi (marka değişimi). Bedeli bilinerek ödendi: NSIS `oneClick` yalnız
+# AYNI appId'nin eski sürümünü kaldırdığı için eski "Gamachine" kurulumu
+# silinmiyor ve mevcut kullanıcılar güncelleme bildirimi almıyor. O anda kurulu
+# taban 3 indirmeydi — bu maliyet zamanla BÜYÜYOR, o yüzden şimdi yapıldı.
+appId: com.gamachine.app
+# Tek kelime OLMASI bilinçli: electron-builder çıktı adındaki boşlukları GitHub
+# yüklerken noktaya çeviriyor ve `latest.yml` tireli ad beklediği için her sürümde
+# asset'leri elle yeniden adlandırmak gerekiyordu. Boşluk yoksa o tuzak yok.
+productName: Gamachine
+copyright: Copyright © 2026 Burak Emre Erdemci
 directories:
   output: build
   buildResources: resources
@@ -93,4 +101,6 @@ nsis:
 publish:
   provider: github
   owner: BurakErdemci
-  repo: Unity-Architect-AI
+  # ⚠️ GitHub'daki repo adıyla BİREBİR eşleşmek zorunda — `app-update.yml` buradan
+  # üretiliyor ve ayrışırsa güncelleme beslemesi sessizce kırılır.
+  repo: gamachine

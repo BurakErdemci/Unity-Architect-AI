@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 # _frame_signature kare-başına ffmpeg çağırdığı için bu olmadan onlarca pencere yanıp sönerdi.
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
-_TMP_SUBDIR = os.path.join(".unity_architect_tmp", "video")
+_TMP_SUBDIR = os.path.join(".gamachine_tmp", "video")
 _FRAME_CAP = 60
 
 

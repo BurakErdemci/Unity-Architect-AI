@@ -456,7 +456,7 @@ export default function Home() {
     <LangContext.Provider value={langCtxValue}>
     <div className="flex h-screen bg-[#0B0D12] text-slate-200 font-sans overflow-hidden">
       <Head>
-        <title>{`Unity Architect AI | ${auth.user?.name || 'Giriş'}`}</title>
+        <title>{`Gamachine | ${auth.user?.name || 'Giriş'}`}</title>
         <style>{globalStyles}</style>
       </Head>
 
@@ -586,7 +586,7 @@ export default function Home() {
                 />
                 <Zap size={48} className="relative z-10 opacity-60 transition-colors duration-700" style={{ color: `rgb(${brandRgb})` }} />
               </div>
-              <h2 className="text-2xl font-bold text-slate-100 mb-3 tracking-tight relative">UNITY ARCHITECT ENGINE</h2>
+              <h2 className="text-2xl font-bold text-slate-100 mb-3 tracking-tight relative">GAMACHINE ENGINE</h2>
               <p className="text-slate-500 text-sm max-w-md leading-relaxed mb-8 relative">{t("home.editorHint")}</p>
               <div className="grid grid-cols-3 gap-3 max-w-lg w-full mb-10 relative">
                 {[ {icon:<Activity size={14}/>, label: t('home.bugfix')}, {icon:<Code size={14}/>, label: t('home.codegen')}, {icon:<Layout size={14}/>, label: t('home.analyze')} ].map((item, i) => (

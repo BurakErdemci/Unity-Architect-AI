@@ -33,7 +33,7 @@ const BACKEND_HOST = '127.0.0.1'
 
 // --- DOSYA LOGLAMA (paketlenmiş app'te konsol görünmez) ---
 // Logları hem temp hem userData altına yazar; başka PC'de teşhis için kalıcı.
-const logFilePath = path.join(os.tmpdir(), 'unity-architect-ai.log')
+const logFilePath = path.join(os.tmpdir(), 'gamachine.log')
 function fileLog(level: string, args: any[]) {
   try {
     const line = `[${new Date().toISOString()}] [${level}] ` +
@@ -631,7 +631,7 @@ async function waitForBackendHealth(timeoutMs: number): Promise<void> {
   for (let i = 0; i < maxAttempts; i++) {
     try {
       const response = await axios.get(`${getBackendBaseUrl()}/health`, { timeout: interval })
-      if (response.data?.status === 'ok' && response.data?.service === 'unity-architect-ai') {
+      if (response.data?.status === 'ok' && response.data?.service === 'gamachine') {
         console.log(`--- BACKEND HAZIR (${(i * interval / 1000).toFixed(1)}s) ${getBackendBaseUrl()} ---`)
         return
       }
@@ -768,7 +768,7 @@ if (!gotTheLock) {
       // Windows görev çubuğu ikonu: AppUserModelId set edilmezse taskbar default
       // Electron ikonunu gösterir (window/exe ikonundan bağımsız). appId ile eşle.
       if (process.platform === 'win32') {
-        app.setAppUserModelId('com.unityarchitect.ai')
+        app.setAppUserModelId('com.gamachine.app')
       }
 
       try {
@@ -923,7 +923,7 @@ if (!gotTheLock) {
                 'Kurulumu sen onaylayacaksın — otomatik/sessiz kurulum yapılmaz.',
             })
             if (response === 0) {
-              await shell.openExternal('https://github.com/BurakErdemci/Unity-Architect-AI/releases/latest')
+              await shell.openExternal('https://github.com/BurakErdemci/gamachine/releases/latest')
             }
           } catch (e) { console.error('[updater] bildirim hatası:', (e as any)?.message || e) }
         })

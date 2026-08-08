@@ -20,14 +20,14 @@ interface AuthScreenProps {
 
 export const AuthScreen = ({ authMode, notice, onSubmit, onOAuth, onToggleMode, oauthProviders }: AuthScreenProps) => (
   <div className="bg-[#000000] text-foreground">
-    <Head><title>{`Unity Architect AI | ${authMode === "login" ? "Giriş" : "Kayıt"}`}</title></Head>
+    <Head><title>{`Gamachine | ${authMode === "login" ? "Giriş" : "Kayıt"}`}</title></Head>
     <SignInPage
       authMode={authMode}
       notice={notice}
       title={
         <div className="mb-2">
           <span className="font-light text-slate-300 tracking-tighter">Hoş Geldiniz </span><br />
-          <span className="font-extrabold text-white tracking-tight">Unity Architect <span className="text-blue-500">AI</span></span>
+          <span className="font-extrabold text-white tracking-tight">Gama<span className="text-blue-500">chine</span></span>
         </div>
       }
       description={authMode === "login" ? "Hesabınıza giriş yapın ve Unity projelerinizi geliştirmeye devam edin." : "Yeni bir hesap oluşturun ve kod kalitenizi hemen artırın."}

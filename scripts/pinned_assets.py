@@ -192,7 +192,7 @@ def verify_file(path: str, key: str) -> None:
 # için yazılmış olmasına rağmen açardı. Yazmak açık niyet ister (`--write`).
 # ─────────────────────────────────────────────────────────────────────────────
 
-_UA = "unity-architect-pinned-assets (+scripts/pinned_assets.py)"
+_UA = "gamachine-pinned-assets (+scripts/pinned_assets.py)"
 _HTTP_TIMEOUT = 60
 
 

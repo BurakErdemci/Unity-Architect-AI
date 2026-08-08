@@ -1,5 +1,5 @@
 #!/bin/bash
-# Unity Architect AI — Backend PyInstaller build scripti
+# Gamachine — Backend PyInstaller build scripti
 # Kullanım: cd Backend && ./build_backend.sh
 # Önce: pip install pyinstaller
 

@@ -212,7 +212,7 @@ _PLAN_TOOLS = {"TodoWrite", "TaskCreate", "TaskUpdate"}
 # skill/slash komutları BOZULMAZ). "Bekleme moduna geçme" sapmasını ve gereksiz
 # subagent token yakımını hedefler.
 _APP_SYSTEM_APPEND = (
-    "[ORTAM] Unity Architect AI masaüstü uygulamasının sohbet arayüzü içinden "
+    "[ORTAM] Gamachine masaüstü uygulamasının sohbet arayüzü içinden "
     "kullanılıyorsun (Unity odaklı). Arka plan görevleri (background subagent/Bash) "
     "desteklenir: bir arka plan görevi bittiğinde sistem seni OTOMATİK uyandırır ve "
     "kaldığın yerden devam edersin. Bu yüzden kendini 'bekleme moduna' alma, bekleme "

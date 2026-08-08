@@ -241,7 +241,9 @@ export function AnimatedChatInput({
         e.preventDefault();
         
         // 1. Internal File Drop (from Sidebar)
-        const internalData = e.dataTransfer.getData('application/x-unity-architect-file');
+        // ⚠️ `useFileSystem.ts`'teki `setData` ile BİREBİR eşleşmek zorunda; ayrışırsa
+        // dosya sürükleme sessizce çalışmaz hale gelir (aynı oturum içi, sürüm riski yok).
+        const internalData = e.dataTransfer.getData('application/x-gamachine-file');
         if (internalData) {
             try {
                 const entry = JSON.parse(internalData);

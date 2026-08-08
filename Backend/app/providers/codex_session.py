@@ -162,7 +162,7 @@ async def fetch_codex_skills(cwd: Optional[str] = None, force: bool = False) -> 
                 await proc.stdin.drain()
                 return rid
 
-            await send("initialize", {"clientInfo": {"name": "unity-architect", "version": "0.1.0"}})
+            await send("initialize", {"clientInfo": {"name": "gamachine", "version": "0.1.0"}})
             await send("initialized", notify=True)
             skills_id = await send("skills/list", {})
 
@@ -473,7 +473,7 @@ class CodexSession:
 
         # 1) initialize + initialized (zorunlu)
         await self._request("initialize", {
-            "clientInfo": {"name": "unity-architect", "version": "0.1.0"},
+            "clientInfo": {"name": "gamachine", "version": "0.1.0"},
         }, timeout=30)
         await self._notify("initialized")
 
