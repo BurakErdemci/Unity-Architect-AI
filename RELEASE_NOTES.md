@@ -1,72 +1,79 @@
 <!--
-  ⚠️ BU DOSYA ELLE GÜNCELLENİYOR ve bayatlamaya açık.
-  `.github/workflows/release.yml` taslak release'in GÖVDESİ olarak bunu basıyor
-  (`body_path: RELEASE_NOTES.md`). 2 Ağu 2026'da içeriği hâlâ v2.2.0'ındı; o iş
-  koşsaydı v2.3.0 release'ine bir önceki sürümün notları giderdi.
-  ▶ Yeni sürümden ÖNCE: `CHANGELOG.md`'nin en üst bölümünü buraya taşı.
-  Bu yorum GitHub'da görünmez (HTML yorumu).
+  ⚠️ THIS FILE IS MAINTAINED BY HAND and goes stale easily.
+  `.github/workflows/release.yml` publishes it as the BODY of the draft release
+  (`body_path: RELEASE_NOTES.md`). On 2 Aug 2026 it still held v2.2.0's text; had
+  the release job run, v2.3.0 would have shipped the previous version's notes.
+  ▶ BEFORE cutting a release: move the top section of `CHANGELOG.md` here.
+
+  Written in English on purpose: the release page is where a stranger lands at the
+  moment they download. Turkish notes made that page unreadable for most of the
+  audience. (This comment is invisible on GitHub — it is an HTML comment.)
 -->
 
 ## Gamachine v2.3.1
 
-Küçük ama can sıkıcı bir hatanın sürümü: **sohbete fotoğraf yapıştırınca oturum
-bazen komple düşüyordu.**
+A small but genuinely annoying bug: **pasting a photo into the chat sometimes
+killed the whole session.**
 
 > 🍎 **macOS (Apple Silicon):** `Gamachine-2.3.1-arm64.dmg`
 > · 🪟 **Windows:** `Gamachine-Setup-2.3.1.exe`
 
-### 🖼 Yapıştırılan görsel artık sohbeti öldürmüyor
+### 🖼 A pasted image no longer kills the chat
 
-Belirti şuydu: iki fotoğrafla oturum düşüyor, üç fotoğrafla düşmüyordu — yani
-sorun *adet* değil **boyut**tu.
+The symptom was odd: two photos would drop the session, three would not — so the
+problem was not the *count*, it was the **size**.
 
-Sebep zincirin ucundaydı. Yapıştırdığın görsel diske yazılıyor ve modele yalnız
-dosya *yolu* veriliyor; model o dosyayı `Read` ile açtığında sonuç base64 olarak
-tek bir satır hâlinde geri geliyor. O satırın 1 MB'lık bir tavanı vardı ve
-aşıldığında hata kırpılmıyor, **oturumun tamamı düşüyordu**. base64 ham boyutun
-~4/3'ü olduğu için 750 KB'lık sıradan bir fotoğraf bile tavanı aşmaya yetiyordu.
+The cause sat at the end of a chain. The image you paste is written to disk and
+the model is handed only the file *path*; when the model opens it with `Read`, the
+result comes back as base64 on a single line. That line had a 1 MB ceiling, and
+crossing it did not truncate anything — **it took down the entire session.** Since
+base64 is roughly 4/3 of the raw size, an ordinary 750 KB photo was enough.
 
-Düzeltme iki katmanlı:
-- Satır tavanı, ürünün diğer CLI yolunda zaten kullandığı değere yükseltildi.
-- **Asıl sınır kaynağa kondu:** büyük görseller diske yazılmadan önce küçültülüyor.
-  Bu hem çökmeyi kapatıyor hem de token maliyetini düşürüyor.
+The fix has two layers:
 
-Şeffaf PNG'ler bu sırada bozulmuyor: alfa kanalı korunuyor. (İlk düzeltme
-denemesinde şeffaf görseller tamamen siyah kareye dönüyordu — bir denetim turu
-bunu yakaladı ve düzeltildi.)
+- The line ceiling was raised to the value the product's other CLI path already
+  used.
+- **The real bound was moved to the source:** large images are downscaled before
+  they are ever written to disk. That closes the crash and cuts token cost.
 
-### 🎮 AI artık oyunu oynayabiliyor (`manage_input`)
+Transparent PNGs survive this: the alpha channel is preserved. (The first attempt
+turned transparent images into a solid black square — an audit round caught it
+before release.)
 
-Play mode'a girmek ve ekran görüntüsü almak zaten vardı; eksik olan **müdahale**
-etmekti. `manage_input` çalışan oyuna klavye, fare, gamepad ve UI girdisi
-gönderiyor — yani AI yaptığı şeyi deneyebiliyor.
+### 🎮 The AI can now play the game (`manage_input`)
 
-Girdi, Unity Input System'in sanal cihazlarına sürecin içinden basılıyor:
-**pencere odağı gerekmiyor**, AI oynarken klavyen kilitlenmiyor.
+Entering play mode and taking a screenshot already worked; what was missing was
+the ability to **act**. `manage_input` sends keyboard, mouse, gamepad and UI input
+to a running game, so the AI can actually try the thing it just built.
 
-> ⚠️ **Sınırı önce ölç:** bu olayları yalnız yeni Input System'e göre yazılmış
-> oyun kodu görür. Projen eski `Input.GetKey` kullanıyorsa girdi ona ulaşmaz;
-> o projelerde çalışan tek yol uGUI düğmelerini tetikleyen `ui_click`'tir.
-> `manage_input action="describe"` projenin girdi arka ucunu raporlar.
+Input is pressed onto Unity Input System's virtual devices from inside the
+process: **no window focus required**, so your keyboard is not hijacked while the
+AI plays.
 
-### 📸 Ekran görüntüsü aracının adı düzeltildi
+> ⚠️ **Measure the limit first:** only game code written against the new Input
+> System sees these events. If your project uses the old `Input.GetKey`, the input
+> will not reach it; there, the one path that works is `ui_click`, which triggers
+> uGUI buttons. Run `manage_input action="describe"` to have it report your
+> project's input backend.
 
-Modele var olmayan bir eylem adı öğretiliyordu; ekran görüntüsü istekleri bu
-yüzden bazen boşa düşüyordu. Doğru ada bağlandı.
+### 📸 The screenshot tool's name was wrong
 
-### 📖 Dokümantasyon
+The model was being taught an action name that did not exist, so screenshot
+requests sometimes went nowhere. It is now bound to the real one.
 
-README (TR + EN) 105 commit'lik gerçeklikle hizalandı. Öne çıkan düzeltme bir
-güvenlik iddiasıydı: dokümanlar "unityMCP hiçbir zaman onay kartı göstermez"
-diyordu, oysa v2.3.0'dan beri Claude yolunda sahneyi **değiştiren** çağrılar kart
-açıyor. Artık sağlayıcı bazında doğru anlatılıyor.
+### 📖 Documentation
+
+Both READMEs were realigned with 105 commits' worth of reality. The most important
+correction was a security claim: the docs said "unityMCP never shows an approval
+card", when since v2.3.0 calls that *mutate* the scene do open one on the Claude
+path. It is now described per provider.
 
 ---
 
-**Kurulum:** Windows'ta installer önceki sürümü otomatik kaldırır.
-macOS'ta imzasız dmg "hasar görmüş" derse:
+**Installing:** on Windows the installer removes the previous version
+automatically. On macOS, if the unsigned dmg is reported as "damaged":
 `xattr -cr "/Applications/Gamachine.app"`
 
-⚠️ macOS'ta yalnız **Apple Silicon (arm64)** dağıtılıyor — Intel dmg'nin içine
-host mimarisinin backend'i gömüldüğü ve sınanacak Intel Mac olmadığı için
-bilerek yayınlanmıyor.
+⚠️ Only **Apple Silicon (arm64)** is published for macOS. The Intel dmg is
+deliberately withheld: it gets the host architecture's backend embedded in it, and
+there is no Intel Mac here to test it on.

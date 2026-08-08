@@ -2,181 +2,179 @@
 
 # Gamachine
 
-**Tüm kodlama ajanlarını ve canlı Unity kontrolünü tek bir masaüstü uygulamasında birleştiren agentic geliştirme stüdyosu**
+**An agentic development studio that unifies every coding agent and live Unity control in a single desktop app**
 
 [![Python](https://img.shields.io/badge/Python-3.13-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![Electron](https://img.shields.io/badge/Electron-34-47848F?style=for-the-badge&logo=electron&logoColor=white)](https://electronjs.org)
 [![React](https://img.shields.io/badge/React-18-61DAFB?style=for-the-badge&logo=react&logoColor=black)](https://react.dev)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://typescriptlang.org)
-[![Unity MCP](https://img.shields.io/badge/Unity_MCP-Gömülü-7B2FBE?style=for-the-badge&logo=unity&logoColor=white)](./unity-mcp)
-[![License](https://img.shields.io/badge/Lisans-MIT%20%2B%20Commons%20Clause-green?style=for-the-badge)](LICENSE)
+[![Unity MCP](https://img.shields.io/badge/Unity_MCP-Embedded-7B2FBE?style=for-the-badge&logo=unity&logoColor=white)](./unity-mcp)
+[![License](https://img.shields.io/badge/License-MIT%20%2B%20Commons%20Clause-green?style=for-the-badge)](LICENSE)
 
-*Claude Code, Codex, Antigravity (agy), bulut API'leri ve canlı Unity Editor kontrolü — hepsi aynı sohbet penceresinde, aynı onay sisteminin arkasında, aynı projeyi tanıyarak çalışır.*
+*Claude Code, Codex, Antigravity (agy), cloud APIs and live Unity Editor control — all in the same chat window, behind the same approval system, aware of the same project.*
 
-[English README](./README_EN.md)
+[Türkçe README](./README_TR.md)
 
 <br/>
 
 ![Gamachine Demo](docs/media/demo.gif)
 
-*Kod editöründe doğal dille geliştir, ardından Unity Editor'ü canlı olarak kontrol et — tek pencereden.*
+*Develop with natural language in the code editor, then control the Unity Editor live — all from a single window.*
 
 <br/>
 
-### İndir
+### Download
 
-**[⬇ En son sürümü indir](https://github.com/BurakErdemci/gamachine/releases/latest)**
+**[⬇ Download the latest release](https://github.com/BurakErdemci/gamachine/releases/latest)**
 
-| Platform | Dosya |
+| Platform | File |
 |---|---|
-| **Windows 10/11** (x64) | `Gamachine-Setup-<sürüm>.exe` |
-| **macOS** (Apple Silicon) | `Gamachine-<sürüm>-arm64.dmg` |
+| **Windows 10/11** (x64) | `Gamachine-Setup-<version>.exe` |
+| **macOS** (Apple Silicon) | `Gamachine-<version>-arm64.dmg` |
 
-Sonrası sana ait: bir API anahtarı gir ya da zaten kullandığın bir CLI ajanını
-göster. Bir sağlayıcı bağlanana kadar sohbet kilitli kalıyor — **sana habersiz
-üçüncü taraf bir AI aracı kurmuyoruz.**
+Then bring your own AI: add an API key, or point it at a CLI agent you already
+use. The chat stays locked until one is connected — **we do not install a
+third-party AI tool on your machine without telling you.**
 
-<sub>Derlemeler henüz imzalı değil, o yüzden ilk açılışta işletim sistemi uyarı
-veriyor: Windows SmartScreen → *Daha fazla bilgi* → *Yine de çalıştır*;
-macOS → sağ tık → *Aç*, ya da
-`xattr -cr "/Applications/Gamachine.app"`. Intel Mac desteklenmiyor.
-Kaynaktan derlemeyi tercih ediyorsan: [Kurulum](#-kurulum).</sub>
+<sub>The builds are not code-signed yet, so the OS will warn you on first run:
+Windows SmartScreen → *More info* → *Run anyway*; macOS → right-click → *Open*,
+or `xattr -cr "/Applications/Gamachine.app"`. Intel Macs are not
+supported. Prefer building from source? See [Installation](#-installation).</sub>
 
 </div>
 
 ---
 
-## İçindekiler
+## Table of Contents
 
-- [Tek Çatı Altında: Bu Proje Neyi Birleştiriyor?](#-tek-çatı-altında-bu-proje-neyi-birleştiriyor)
-- [Neden Gamachine?](#-neden-gamachine)
-- [Özellikler](#-özellikler)
-- [Sistem Mimarisi](#-sistem-mimarisi)
-- [Desteklenen AI Sağlayıcılar](#-desteklenen-ai-sağlayıcılar)
-- [Tool Ekosistemi (MCP + Function Calling)](#-tool-ekosistemi-mcp--function-calling)
-- [Onay & Güvenlik Mimarisi](#-onay--güvenlik-mimarisi)
-- [Kurulum](#-kurulum)
-- [Paketleme (dmg / exe)](#-paketleme-dmg--exe)
-- [Kullanım](#-kullanım)
-- [Unity MCP Entegrasyonu](#-unity-mcp-entegrasyonu)
-- [Agentic Sistem Detayları](#-agentic-sistem-detayları)
-- [Geliştirici Notları: Alınan Dersler](#-geliştirici-notları-alınan-dersler-ve-mimari-kararlar)
-- [Katkıda Bulunma](#-katkıda-bulunma)
+- [Under One Roof: What Does This Project Unify?](#-under-one-roof-what-does-this-project-unify)
+- [Why Gamachine?](#-why-gamachine)
+- [Features](#-features)
+- [System Architecture](#-system-architecture)
+- [Supported AI Providers](#-supported-ai-providers)
+- [Tool Ecosystem (MCP + Function Calling)](#-tool-ecosystem-mcp--function-calling)
+- [Approval & Security Architecture](#-approval--security-architecture)
+- [Installation](#-installation)
+- [Packaging (dmg / exe)](#-packaging-dmg--exe)
+- [Usage](#-usage)
+- [Unity MCP Integration](#-unity-mcp-integration)
+- [Agentic System Details](#-agentic-system-details)
+- [Developer Notes: Lessons Learned](#-developer-notes-lessons-learned-and-architectural-decisions)
+- [Contributing](#-contributing)
 
 ---
 
-## 🎯 Tek Çatı Altında: Bu Proje Neyi Birleştiriyor?
+## 🎯 Under One Roof: What Does This Project Unify?
 
-Bugün bir Unity geliştiricisi farklı işler için farklı pencereler açmak zorunda: kod üretmek için bir CLI, Editor'ü kontrol etmek için ayrı bir eklenti, sohbet için bir başka uygulama. Her birinin kendi onay mantığı, kendi konfigürasyonu, projeden kendi kopuk görüşü var.
+Today a Unity developer juggles multiple windows for different jobs: one CLI to generate code, a separate plugin to control the Editor, yet another app to chat. Each has its own approval logic, its own configuration, its own disconnected view of the project.
 
-**Gamachine bunların hepsini tek bir uygulamada toplar** — ve hepsini *tek bir onay kapısının* arkasına alır. Bir modeli açılır menüden seçersin; ister Claude Code CLI olsun, ister Codex, ister Antigravity (agy), ister GitHub Copilot CLI, ister doğrudan bulut API'si — hepsi:
+**Gamachine brings them all into a single application** — and puts them behind *one approval gate*. You pick a model from a dropdown; whether it's the Claude Code CLI, Codex, Antigravity (agy), GitHub Copilot CLI, or a direct cloud API — they all:
 
-- **aynı sohbet penceresinde** çalışır,
-- **aynı projeyi** workspace olarak görür,
-- **aynı dosya/terminal onay kartlarını** gösterir (kapsamı aşağıda: silme ve tehlikeli komutlar her yolda onaylı; kod yazma CLI yolunda onaylı, bulut API yolunda bilinçli olarak onaysız),
-- ve istenirse **aynı canlı Unity Editor'e** MCP üzerinden komut verir.
+- run **in the same chat window**,
+- see **the same project** as their workspace,
+- show **the same file/terminal approval cards** (scope below: deletes and dangerous commands are gated on every path; code writes are gated on the CLI paths and deliberately ungated on the cloud API path),
+- and, when enabled, drive **the same live Unity Editor** over MCP.
 
-### Ajan × Yetenek Matrisi
+### Agent × Capability Matrix
 
-| | Sohbet & Analiz | Dosya yaz/düzenle | Terminal (onaylı) | Canlı Unity Editor kontrolü | Auth kaynağı |
+| | Chat & Analysis | Write/Edit files (approved) | Terminal (approved) | Live Unity Editor control | Auth source |
 |---|:---:|:---:|:---:|:---:|---|
-| **Claude Code** (CLI) | ✅ | ✅ MCP — onaylı | ✅ MCP | ✅ unityMCP — **onaylı** | Anthropic aboneliğin |
-| **Codex** (CLI) | ✅ | ✅ MCP — onaylı | ✅ MCP | ✅ unityMCP | OpenAI aboneliğin |
-| **Antigravity / agy** (CLI) | ✅ | ✅ `unityai` köprüsü — onaylı | ✅ köprü | ✅ unityMCP (HTTP) | Google aboneliğin |
-| **GitHub Copilot** (CLI) | ✅ | ✅ MCP — onaylı | ✅ MCP | ✅ unityMCP | Copilot aboneliğin |
-| **Cursor** (CLI) | ✅ | ✅ MCP — onaylı | ✅ MCP | ✅ unityMCP | Cursor aboneliğin |
-| **OpenCode** (CLI) | ✅ | ✅ MCP — onaylı | ✅ MCP | ✅ unityMCP | Ücretsiz / kendi anahtarın |
-| **Kimi Code** (CLI) | ✅ | ✅ MCP — onaylı | ✅ MCP | ✅ unityMCP | Moonshot aboneliğin |
-| **Bulut API** (Claude/GPT/Gemini/…) | ✅ | ✅ function calling — **onaysız** | ✅ function calling | ✅ function calling | Kendi API anahtarın |
-| **Ollama** (yerel) | ✅ | ✅ (uyumlu modeller) — **onaysız** | ✅ | ⚠️ kısmi | Maliyet yok, offline |
+| **Claude Code** (CLI) | ✅ | ✅ MCP | ✅ MCP | ✅ unityMCP — **gated** | your Anthropic subscription |
+| **Codex** (CLI) | ✅ | ✅ MCP | ✅ MCP | ✅ unityMCP | your OpenAI subscription |
+| **Antigravity / agy** (CLI) | ✅ | ✅ `unityai` bridge | ✅ bridge | ✅ unityMCP (HTTP) | your Google subscription |
+| **GitHub Copilot** (CLI) | ✅ | ✅ MCP | ✅ MCP | ✅ unityMCP | your Copilot subscription |
+| **Cursor** (CLI) | ✅ | ✅ MCP | ✅ MCP | ✅ unityMCP | your Cursor subscription |
+| **OpenCode** (CLI) | ✅ | ✅ MCP | ✅ MCP | ✅ unityMCP | free / your own key |
+| **Kimi Code** (CLI) | ✅ | ✅ MCP | ✅ MCP | ✅ unityMCP | your Moonshot subscription |
+| **Cloud API** (Claude/GPT/Gemini/…) | ✅ | ✅ function calling | ✅ function calling | ✅ function calling | your API key |
+| **Ollama** (local) | ✅ | ✅ (compatible models) | ✅ | ⚠️ partial | free, offline |
 
-Bu matrisin sağladığı şey basit ama nadir: **kaynak ne olursa olsun deneyim aynı.** Codex'ten Claude Code'a geçmek bir açılır menü; alıştığın diff ekranı, terminal onayı ve Unity entegrasyonu olduğu gibi kalır.
+What this matrix delivers is simple but rare: **the experience is identical regardless of the source.** Switching from Codex to Claude Code is one dropdown; the diff viewer, terminal approval and Unity integration you're used to stay exactly the same.
 
-> **Önemli ayrım:** Onay kartları **dosya silme ve tehlikeli terminal komutları** için her yolda çıkar; **dosya yazma** için CLI ajanlarında çıkar, **bulut API / Ollama function-calling yolunda çıkmaz**. **Canlı Unity sahne işlemleri** için durum sağlayıcıya göre değişir: Claude yolunda sahneyi *değiştiren* unityMCP çağrıları artık onay kartı açar, Codex ve agy yolunda açmaz. Tam tablo ve gerekçeler: [Onay kapsamı](#️-onay-kapsamı-neyin-onaylandığı-neyin-onaylanmadığı-dürüstlük-notu).
+> **Important distinction:** Approval cards appear for **file deletes and dangerous terminal commands** on every path; for **file writes** on the CLI agent paths, but **not on the cloud API / Ollama function-calling path**. For **live Unity scene operations** it depends on the provider: on the Claude path, unityMCP calls that *mutate* the scene now open a card; on Codex and agy they do not. Full table and rationale: [Approval scope](#️-approval-scope-what-is-and-isnt-confirmed-an-honesty-note).
 
 ---
 
-## 🚀 Neden Gamachine?
+## 🚀 Why Gamachine?
 
-Unity ekosistemindeki AI araçları genelde iki uçtan birine düşer: ya sadece kod yazar, ya da sadece sohbet eder. Gerçek bir geliştirme ortağının yaptığını — projeyi anlamak, hatayı bulmak, düzeltmek, terminalde test etmek ve Unity Editor'de görmek — tek başına yapamaz.
+AI tools in the Unity ecosystem usually land at one of two extremes: they either just write code, or they just chat. Neither can do what a real development partner does on its own — understand the project, find the bug, fix it, test it in the terminal, and see it inside the Unity Editor.
 
-| Geleneksel AI Asistanlar | Gamachine |
+| Traditional AI Assistants | Gamachine |
 |---|---|
-| Tek sağlayıcıya kilitli | 7 CLI ajanı (Claude Code, Codex, agy, Copilot, Cursor, OpenCode, Kimi Code), 8+ bulut API (NVIDIA NIM ücretsiz havuz dahil), Ollama — tek menüden |
-| Kod yazar, projeyi görmez | Workspace'teki tüm `.cs` dosyalarını tarar, mimari haritasını çıkarır |
-| Dosya sistemine erişemez | Dosya oku/yaz/sil — hepsi workspace'e kilitli; silme ve tehlikeli komutlar onay kartıyla |
-| Unity Editor'den habersiz | MCP ile sahneye GameObject ekler, bileşen bağlar, konsolu okur |
-| Terminal çalıştıramaz | Güvenli terminal katmanı; tehlikeli komutlar onay ister |
-| Her sohbet sıfırdan başlar | Kalıcı hafıza + proje analizi ile bağlamı korur |
-| Kurulum derdi | `uv`, OmniSharp + .NET SDK, ffmpeg/yt-dlp — hepsi **uygulamaya gömülü**, sıfır ek kurulum |
+| Locked to a single provider | 7 CLI agents (Claude Code, Codex, agy, Copilot, Cursor, OpenCode, Kimi Code), 8+ cloud APIs (incl. the free NVIDIA NIM pool), Ollama — one menu |
+| Writes code, doesn't see the project | Scans every `.cs` file in the workspace, extracts an architecture map |
+| Can't touch the file system | Read/write/delete files — every dangerous op behind an approval card |
+| Unaware of the Unity Editor | Adds GameObjects, binds components, reads the console via MCP |
+| Can't run terminal | Secure terminal layer; dangerous commands require approval |
+| Every chat starts from zero | Persistent memory + project analysis keep the context |
+| Setup hassle | `uv`, OmniSharp + .NET SDK, ffmpeg/yt-dlp — all **bundled into the app**, zero extra install |
 
 ---
 
-## ✨ Özellikler
+## ✨ Features
 
-### Çoklu Ajan, Tek Deneyim
-- Claude Code / Codex / agy / GitHub Copilot / Cursor / OpenCode / Kimi Code CLI ajanları + Anthropic, Google, OpenAI, NVIDIA NIM (ücretsiz havuz: GLM 5.2, Qwen3 Coder 480B, Nemotron 3…), Groq, DeepSeek, Moonshot bulut API'leri + Ollama yerel modelleri
-- CLI seçilince backend, o aracın MCP konfigürasyonunu **çağrı anında otomatik** yazar (`~/.claude.json`, `~/.codex/config.toml`, `~/.gemini/antigravity-cli/mcp_config.json`; Copilot'ta session-bazlı `--additional-mcp-config`)
-- **Şeffaf hot-swap**: Gemini CLI kapanırken `gemini-*` model ID'leri korundu, backend bunları sessizce Antigravity (`agy`) motoruna yönlendiriyor — frontend hiç değişmedi
+### Many agents, one experience
+- Claude Code / Codex / agy / GitHub Copilot / Cursor / OpenCode / Kimi Code CLI agents + Anthropic, Google, OpenAI, NVIDIA NIM (free pool: GLM 5.2, Qwen3 Coder 480B, Nemotron 3…), Groq, DeepSeek, Moonshot cloud APIs + local Ollama models
+- When a CLI is selected, the backend writes that tool's MCP config **at call time, automatically** (`~/.claude.json`, `~/.codex/config.toml`, `~/.gemini/antigravity-cli/mcp_config.json`; Copilot gets a session-scoped `--additional-mcp-config`)
+- **Transparent hot-swap**: as the Gemini CLI was being retired, the `gemini-*` model IDs were kept and the backend silently routes them to the Antigravity (`agy`) engine — the frontend never changed
 
-### Otonom Agentic Loop
-- AI görevi alır → düşünür → araç çağırır → sonucu değerlendirir → döngü tamamlanana kadar devam eder
-- Maksimum 15 iterasyon ile sonsuz döngü koruması
-- Her adım canlı (SSE) akar: `thinking` → `tool_call` → `tool_result` → `response`
-- "Durdur" butonu hem SSE bağlantısını keser hem de backend'deki bekleyen tüm onay kapılarını reddeder (iki katmanlı iptal)
+### Autonomous agentic loop
+- AI receives a task → thinks → calls a tool → evaluates the result → loops until done
+- Infinite-loop protection at 15 iterations max
+- Every step streams live (SSE): `thinking` → `tool_call` → `tool_result` → `response`
+- The "Stop" button both cuts the SSE connection and rejects all pending approval gates on the backend (two-layer cancellation)
 
-### Onay Kapısı Sistemi
-- Dosya yazma → yan yana **diff görüntüleyici** (mevcut vs. yeni) — **CLI ajanlarında** (MCP / `unityai` köprüsü); bulut API function-calling yolunda yazma onaysızdır, gerekçesi [Onay kapsamı](#️-onay-kapsamı-neyin-onaylandığı-neyin-onaylanmadığı-dürüstlük-notu)'nda
-- Dosya silme → içerik önizlemeli silme onayı — **her yolda**
-- Terminal komutu → komutu gösteren onay kartı (güvenli sayılan komutlar hariç) — **her yolda**
-- Kart çıktığı her durumda CLI ajanları ve bulut API'leri **aynı** onay UI'ından geçer
+### Approval gate system
+- File write → side-by-side **diff viewer** (current vs. new) — **on the CLI agent paths** (MCP / `unityai` bridge); writes are ungated on the cloud API function-calling path, rationale in [Approval scope](#️-approval-scope-what-is-and-isnt-confirmed-an-honesty-note)
+- File delete → delete confirmation with content preview — **on every path**
+- Terminal command → approval card showing the command (except commands considered safe) — **on every path**
+- Whenever a card does appear, CLI agents and cloud APIs go through the **same** approval UI
 
-### Canlı Unity Editor Kontrolü (gömülü, sıfır kurulum)
-- [CoplayDev/unity-mcp](https://github.com/CoplayDev/unity-mcp) tabanlı 46 Unity Editor aracı
-- Sahne, GameObject, bileşen, prefab, materyal, fizik, animasyon, build ayarları
-- **Oyunu oynayabilir** (`manage_input`): play mode'a girer, klavye/fare/gamepad girdisi gönderir, ekran görüntüsü alıp sonucu değerlendirir — yani "yaptığını dener" ([ayrıntı ve sınırı](#-ai-artık-oyunu-oynayabiliyor-manage_input))
-- `uv` araç zinciri **uygulamaya gömülü** (macOS arm64+x64, Windows x64) — kullanıcının makinesinde `uv` kurulu olmasa da çalışır
-- Tek tıkla toggle: Unity Editor açıkken aç, yeşile dönünce hazır
+### Live Unity Editor control (embedded, zero install)
+- 46 Unity Editor tools based on [CoplayDev/unity-mcp](https://github.com/CoplayDev/unity-mcp)
+- Scene, GameObject, components, prefabs, materials, physics, animation, build settings
+- **It can play the game** (`manage_input`): enters play mode, sends keyboard/mouse/gamepad input, takes a screenshot and judges the result — it actually tries what it built ([details and limits](#-the-ai-can-now-play-the-game-manage_input))
+- The `uv` toolchain is **bundled into the app** (macOS arm64+x64, Windows x64) — works even if the user has no `uv` installed
+- One-click toggle: turn it on while the Unity Editor is open, ready when it turns green
 
-### Proje Farkındalığı (anahtar kelime tabanlı proje içi arama)
-- Workspace'teki tüm `.cs` dosyaları taranır, ~800 karakterlik satır bazlı parçalara (chunk) bölünür; sorgudaki kelimelerin geçiş sayısına göre puanlanıp en ilgili parçalar bağlama eklenir
-- **Embedding ya da vektör indeksi yoktur** — bu semantik değil, sözcük eşleşmeli bir aramadır (`Backend/app/rag/project_rag.py`). Eş anlamlıyı değil, yazdığın kelimeyi bulur
-- "Projeyi Öğren" → sınıfları, kalıtım ilişkilerini ve önemli metotları çıkarıp **mimari harita** üretir, kullanıcıya özet + kendi hafızasına teknik not yazar
-- `/compact` ile uzun sohbetler AI tarafından özetlenir, bağlam token limiti aşılmadan korunur
+### Project awareness (RAG)
+- All `.cs` files in the workspace are scanned, chunked, and relevant code is pulled via keyword search
+- "Learn Project" → extracts classes, inheritance relationships and key methods to produce an **architecture map**, writes a user-facing summary plus a technical note to its own memory
+- `/compact` lets the AI summarize long conversations, preserving context before hitting the token limit
 
-### OmniSharp Kod Zekası (gömülü, sıfır kurulum)
-- **OmniSharp LSP** sidecar — gerçek Roslyn tabanlı C# analizi; hatalar Monaco editöründe gösterilir
-- Gerektirdiği **.NET SDK'sı da uygulamaya gömülü** (Windows, macOS, Linux) — kullanıcının makinesinde .NET kurulu olması gerekmez
-- Unity projesinin `Assets/` ve paket referanslarını çözümleyerek çalışır (el yapımı linter söküldü, yerine tam LSP geldi)
+### OmniSharp code intelligence (embedded, zero install)
+- **OmniSharp LSP** sidecar — real Roslyn-based C# analysis; errors surface in the Monaco editor
+- The **.NET SDK it needs is bundled into the app** (Windows, macOS, Linux) — users don't need .NET installed
 
-> **Neden runtime değil SDK?** Bu bir tercih değil, ölçülmüş bir zorunluluk: OmniSharp proje yüklemek için MSBuild'i SDK'dan çözüyor. Yalnız runtime gömüldüğünde `hostfxr_resolve_sdk2` başarısız oluyor ve sidecar 25 saniye boyunca `initialize` yanıtı vermiyor; gerçek SDK ile aynı iş **3 saniye**. Ölçüm `scripts/fetch_omnisharp.py` içinde yazılı.
+> **Why the SDK and not just the runtime?** Not a preference, a measured requirement: OmniSharp resolves MSBuild from the SDK to load a project. With only the runtime bundled, `hostfxr_resolve_sdk2` fails and the sidecar returns no `initialize` response for 25 seconds; with a real SDK the same work takes **3 seconds**. The measurement is written down in `scripts/fetch_omnisharp.py`.
+- Resolves the Unity project's `Assets/` and package references (the hand-made linter was removed in favor of a full LSP)
 
-### Gerçek Effort Kontrolü
-- Segmented **effort seçici** (Auto varsayılan) — seçim her sağlayıcıda **gerçekten** etki eder, süs değil
-- Provider-farkında kayıtçı: Codex'te `model_reasoning_effort`, Gemini'de `thinking_level`/`thinkingBudget`, Claude'da düşünme bütçesi — model hangi seviyeleri destekliyorsa arayüz onları gösterir
+### Real effort control
+- Segmented **effort selector** (Auto by default) — the selection **actually** takes effect on every provider, it's not decorative
+- Provider-aware registry: `model_reasoning_effort` for Codex, `thinking_level`/`thinkingBudget` for Gemini, thinking budget for Claude — the UI only shows the levels each model supports
 
-### Video → Sohbet
-- Sohbete video linki/dosyası at: gömülü **ffmpeg + yt-dlp** ile kareler ve transkript çıkarılır, görsel analiz hattına katılır
-- Süreye göre akıllı kare bütçesi + kare tekilleştirme — token maliyeti kontrol altında
+### Video → chat
+- Drop a video link/file into the chat: bundled **ffmpeg + yt-dlp** extract frames and a transcript, which join the visual analysis pipeline
+- Duration-aware frame budgeting + frame dedup keep the token cost under control
 
-### Otomatik Güncelleme Bildirimi
-- GitHub Releases üzerinden **yeni sürüm bildirimi** (electron-updater) — sessiz indirme/kurulum yok, karar kullanıcının
+### Update notifications
+- **New-release notifications** via GitHub Releases (electron-updater) — no silent download/install, the user decides
 
-### Profesyonel IDE Arayüzü
-- **Monaco Editor** (VS Code motoru) — Unity C# sözdizimi
-- **Entegre terminal** (xterm.js + node-pty) — gerçek PTY, sistem komutları
-- **Diff görüntüleyici**, **canlı düşünce bloğu** (Claude Extended Thinking / Gemini thinking stream)
-- **Model seçici** — sağlayıcılar arası anında geçiş
-- **İki dilli arayüz (TR/EN)** — React Context + `useLang()`, 100+ çeviri anahtarı, localStorage ile kalıcı
+### Professional IDE interface
+- **Monaco Editor** (the VS Code engine) — Unity C# syntax
+- **Integrated terminal** (xterm.js + node-pty) — real PTY, system commands
+- **Diff viewer**, **live thinking block** (Claude Extended Thinking / Gemini thinking stream)
+- **Model selector** — instant switching across providers
+- **Bilingual UI (TR/EN)** — React Context + `useLang()`, 100+ translation keys, persisted via localStorage
 
 ---
 
-## 🏗 Sistem Mimarisi
+## 🏗 System Architecture
 
 ```
 ┌──────────────────────────────────────────────────────┐
-│                   Electron Masaüstü App                │
+│                  Electron Desktop App                  │
 │  ┌──────────────────────────────────────────────────┐ │
 │  │  main/background.ts — LOCAL_APP_TOKEN = uuid()     │ │
 │  │  ├─► Backend subprocess env                        │ │
@@ -195,15 +193,15 @@ Unity ekosistemindeki AI araçları genelde iki uçtan birine düşer: ya sadece
 │            FastAPI Backend (Python 3.13)               │
 │  ┌─────────────────────────────────────────────────┐  │
 │  │              AgentRunner (Agentic Loop)          │  │
-│  │   İstek → Düşün → Araç Çağır → Sonuç → … → Yanıt │  │
+│  │   Request → Think → Tool Call → Result → … → Ans │  │
 │  └────────────────────┬────────────────────────────┘  │
 │         ┌─────────────┼─────────────┐                  │
 │         ▼             ▼             ▼                   │
 │  ┌────────────┐ ┌──────────┐ ┌──────────────┐          │
 │  │ToolRegistry│ │ProjectRAG│ │MemoryManager │          │
-│  │read/write  │ │.cs tarama│ │/compact      │          │
+│  │read/write  │ │.cs scan  │ │/compact      │          │
 │  │run_command │ │+ keyword │ │memories/*.md │          │
-│  │search_proj │ │+ mimari  │ └──────────────┘          │
+│  │search_proj │ │+ arch map│ └──────────────┘          │
 │  └────────────┘ └──────────┘                           │
 │  ┌──────────────────────────────────────────────────┐ │
 │  │                  AI Providers                     │ │
@@ -212,24 +210,24 @@ Unity ekosistemindeki AI araçları genelde iki uçtan birine düşer: ya sadece
 │  ┌──────────────────────────────────────────────────┐ │
 │  │       unityai MCP Server (FastMCP)                │ │
 │  │  save_file │ read_file │ list_directory │ bash    │ │
-│  │            ↑ approval_bridge → onay kartı          │ │
+│  │            ↑ approval_bridge → approval card       │ │
 │  └──────────────────────────────────────────────────┘ │
 └─────────────────────────────────┬──────────────────────┘
-                                  │ MCP (stdio / HTTP) + run_command köprüsü
+                                  │ MCP (stdio / HTTP) + run_command bridge
           ┌───────────────────────┼───────────────────┐
           ▼                       ▼                    ▼
    ┌─────────────┐       ┌─────────────────┐   ┌──────────────────┐
    │ Claude Code │       │   Codex CLI     │   │ Antigravity (agy)│
    │ MCP native  │       │   MCP native    │   │ run_command →    │
-   │             │       │                 │   │ unityai köprüsü  │
+   │             │       │                 │   │ unityai bridge   │
    └──────┬──────┘       └────────┬────────┘   └─────────┬────────┘
           └───────────────────────┼──────────────────────┘
                                   │ MCP HTTP (127.0.0.1:8080)
                                   ▼
                          ┌─────────────────┐
                          │   Unity MCP     │
-                         │ (CoplayDev)     │  ← uvx gömülü
-                         │   46 tool       │
+                         │ (CoplayDev)     │  ← uvx bundled
+                         │   46 tools      │
                          └────────┬────────┘
                                   ▼
                          ┌─────────────────┐
@@ -238,205 +236,196 @@ Unity ekosistemindeki AI araçları genelde iki uçtan birine düşer: ya sadece
                          └─────────────────┘
 ```
 
-### Dizin Yapısı
+### Directory Layout
 
 ```
 unityaıPython/
 ├── Backend/
 │   ├── app/
-│   │   ├── agentic/             # AgentRunner (agentic loop), onay kapıları
-│   │   ├── providers/           # Sağlayıcı katmanı (bölünmüş)
-│   │   │   ├── manager.py        #   provider seçimi (tek giriş noktası)
-│   │   │   ├── cli_base.py       #   ortak CLI mantığı + MCP config yazımı
+│   │   ├── agentic/             # AgentRunner (agentic loop), approval gates
+│   │   ├── providers/           # Provider layer (split)
+│   │   │   ├── manager.py        #   provider selection (single entry point)
+│   │   │   ├── cli_base.py       #   shared CLI logic + MCP config writing
 │   │   │   ├── claude_provider.py / codex_provider.py / agy_provider.py
-│   │   │   └── api_providers.py  #   Anthropic/Gemini/OpenAI/Ollama SDK'leri
-│   │   ├── unity_ai_mcp/        # Bizim MCP sunucumuz (FastMCP)
+│   │   │   └── api_providers.py  #   Anthropic/Gemini/OpenAI/Ollama SDKs
+│   │   ├── unity_ai_mcp/        # Our MCP server (FastMCP)
 │   │   │   ├── tools/            #   save_file, delete_file, read_file, list_dir, bash
-│   │   │   ├── approval_bridge.py#   MCP/CLI ↔ backend onay köprüsü
-│   │   │   ├── unity_mcp_manager.py # Unity MCP subprocess + gömülü uvx
+│   │   │   ├── approval_bridge.py#   MCP/CLI ↔ backend approval bridge
+│   │   │   ├── unity_mcp_manager.py # Unity MCP subprocess + bundled uvx
 │   │   │   └── server.py
-│   │   ├── unityai_cli.py       # agy için run_command köprüsü (aynı onay kapısı)
-│   │   ├── tools/               # Function-calling ToolRegistry (bulut API yolu)
-│   │   ├── rag/                 # ProjectRAG (tarama+keyword), MemoryManager
-│   │   ├── routes/              # FastAPI router'ları (auth/chat/config/…)
-│   │   ├── omnisharp/           # OmniSharp LSP sidecar (manager + client, gömülü .NET ile)
-│   │   ├── auth_utils.py        # LOCAL_APP_TOKEN doğrulama
-│   │   └── database.py          # SQLite — tek lokal kullanıcı (id=1), Fernet
-│   ├── vendor/                  # fetch_uv (uv zinciri) + fetch_video_bins (ffmpeg/yt-dlp)
+│   │   ├── unityai_cli.py       # run_command bridge for agy (same approval gate)
+│   │   ├── tools/               # Function-calling ToolRegistry (cloud API path)
+│   │   ├── rag/                 # ProjectRAG (scan+keyword), MemoryManager
+│   │   ├── routes/              # FastAPI routers (auth/chat/config/…)
+│   │   ├── omnisharp/           # OmniSharp LSP sidecar (manager + client, with bundled .NET)
+│   │   ├── auth_utils.py        # LOCAL_APP_TOKEN validation
+│   │   └── database.py          # SQLite — single local user (id=1), Fernet
+│   ├── vendor/                  # fetch_uv (uv toolchain) + fetch_video_bins (ffmpeg/yt-dlp)
 │   ├── backend.spec             # PyInstaller — frozen 'backend' binary
 │   └── tests/
 ├── Frontend/frontend/
 │   ├── renderer/                # home.tsx (IDE), components/, hooks/, lib/i18n.tsx
-│   └── main/background.ts       # Electron ana süreç, LOCAL_APP_TOKEN + updater
-├── scripts/fetch_omnisharp.py   # OmniSharp + .NET SDK indirir (third_party/, git'e girmez)
-├── unity-mcp/                   # CoplayDev/unity-mcp fork'u (Server + MCPForUnity eklentisi)
-└── docker-compose.yml           # ⚠️ deneysel / DESTEKLENMİYOR — bkz. aşağıdaki not
+│   └── main/background.ts       # Electron main process, LOCAL_APP_TOKEN + updater
+├── scripts/fetch_omnisharp.py   # downloads OmniSharp + .NET SDK (third_party/, not in git)
+├── unity-mcp/                   # CoplayDev/unity-mcp fork (Server + MCPForUnity plugin)
+└── docker-compose.yml
 ```
-
-> ⚠️ **Docker yolu çalışmıyor.** Depoda bir `docker-compose.yml` duruyor ama `REQUIRE_LOCAL_APP_TOKEN=1` veriyor ve yanına bir `LOCAL_APP_TOKEN` koymuyor; `Backend/app/main.py` bu kombinasyonda açılışta `RuntimeError` fırlatıyor, yani container ayağa kalkmıyor. Token'ı normalde Electron ana süreci üretip subprocess env'ine geçiriyor (bkz. [Lokal token mimarisi](#4-lokal-token-mimarisi-ephemeral)) — Compose tarafında böyle bir handshake yok. Ayrıca bu bir masaüstü uygulaması: Electron arayüzü, gömülü `uvx`/OmniSharp ve makinedeki CLI ajanları container içinde yok. **Desteklenen kurulum yolu paketlenmiş uygulama ya da yukarıdaki kaynak-kod akışıdır.**
 
 ---
 
-## 🤖 Desteklenen AI Sağlayıcılar
+## 🤖 Supported AI Providers
 
-Sağlayıcılar **modelin nereden çalıştığına** göre 3 kategoriye ayrılır. Tool kullanımı (MCP / function calling) ayrı bir katmandır — bir sonraki bölümde.
+Providers fall into 3 categories based on **where the model runs**. Tool usage (MCP / function calling) is a separate layer — covered in the next section.
 
-### 1. Subscription CLI Ajanları (öne çıkan)
+### 1. Subscription CLI agents (the headline)
 
-Backend, makinendeki resmi CLI aracını subprocess olarak çağırır; aracın kendi auth'unu (senin aboneliğin) kullanır. Tool kullanımı **MCP** ile — backend her çağrı öncesi gerekli config dosyasını yazar.
+The backend invokes the official CLI on your machine as a subprocess, using the tool's own auth (your subscription). Tool usage is via **MCP** — the backend writes the required config before each call.
 
-| CLI Aracı | Modeller (örnek) | Config Dosyası | Tool Mekanizması |
+| CLI Tool | Models (example) | Config file | Tool mechanism |
 |---|---|---|---|
-| **Claude Code** | claude-sonnet-5, claude-fable-5, claude-opus-5, claude-opus-4-8, claude-haiku-4-5 | `~/.claude.json` (user scope) | MCP native (stdio + HTTP) |
+| **Claude Code** | claude-sonnet-5, claude-fable-5, claude-opus-4-8, claude-haiku-4-5 | `~/.claude.json` (user scope) | MCP native (stdio + HTTP) |
 | **Codex** | gpt-5.6-sol/terra/luna, gpt-5.5, gpt-5.4 | `~/.codex/config.toml` | MCP native |
-| **Antigravity (agy)** | Gemini 3.6 Flash (önerilen) + agy üzerinden Claude/GPT-OSS | `~/.gemini/antigravity-cli/` | `run_command` → `unityai` köprüsü |
-| **GitHub Copilot** | copilot-auto + Claude/GPT/Gemini seçenekleri | session-bazlı `--additional-mcp-config` | MCP native (global config'e dokunulmaz) |
-| **Cursor** | cursor-auto + Claude/GPT seçenekleri | session-bazlı | MCP native |
-| **OpenCode** | ücretsiz havuz + kendi anahtarın | `opencode.json` | MCP native |
+| **Antigravity (agy)** | Gemini 3.5 Flash + Claude/GPT-OSS via agy | `~/.gemini/antigravity-cli/` | `run_command` → `unityai` bridge |
+| **GitHub Copilot** | copilot-auto + Claude/GPT/Gemini options | session-scoped `--additional-mcp-config` | MCP native (global config untouched) |
+| **Cursor** | cursor-auto + Claude/GPT options | session-scoped | MCP native |
+| **OpenCode** | free pool + your own key | `opencode.json` | MCP native |
 | **Kimi Code** | kimi-k3, kimi-k2.7-code | `<workspace>/.mcp.json` | MCP native |
 
-> ⚠️ **Kimi Code dürüstlük notu:** Sağlayıcı yazıldı ve testleri geçiyor, ama geliştirme makinesinde Kimi aboneliği olmadığı için **uçtan uca canlı çalıştırılmadı**. Kimi yolunda beklenmedik bir davranışla karşılaşırsan bu yüzdendir; issue açarsan sevinirim.
+> ⚠️ **Kimi Code honesty note:** the provider is written and its tests pass, but the development machine has no Kimi subscription, so it has **never been exercised end to end**. If you hit unexpected behaviour on the Kimi path, that is why — an issue would be welcome.
 
-> **agy neden farklı?** agy'nin `--print` modu MCP sunucularını native yüklemez. Bu yüzden dosya/terminal işlemleri, `run_command` ile çağrılan ve MCP tool'larıyla **aynı onay kapısını paylaşan** bir `unityai` CLI köprüsü üzerinden yapılır. Detaylar: [Geliştirici Notları — agy Macerası, Sahne 7](#sahne-7-çözüm--yanlış-kapıyı-çalıyormuşum).
+> **Why is agy different?** agy's `--print` mode does not natively load MCP servers. So file/terminal operations go through a `unityai` CLI bridge invoked via `run_command` that **shares the exact same approval gate** as the MCP tools. Details: [Developer Notes — The agy Saga, Scene 7](#scene-7-the-fix--i-was-knocking-on-the-wrong-door).
 
-### 2. Cloud API (doğrudan API çağrısı)
+### 2. Cloud API (direct API call)
 
-Backend, sağlayıcının resmi SDK'sı veya OpenRouter gateway'i üzerinden istek atar. Tool kullanımı **function calling** ile (model JSON tool çağrısı üretir, `AgentRunner` dispatch eder).
+The backend calls the provider's official SDK or the OpenRouter gateway. Tool usage is via **function calling** (the model emits a JSON tool call, the `AgentRunner` dispatches it).
 
-| Sağlayıcı | Modeller (örnek) | Notlar |
+| Provider | Models (example) | Notes |
 |---|---|---|
-| **Anthropic** | claude-sonnet-5, claude-fable-5, claude-opus-5, claude-opus-4-8, claude-sonnet-4-6, claude-haiku-4-5 | Extended Thinking, tool use |
+| **Anthropic** | claude-sonnet-5, claude-fable-5, claude-opus-4-8, claude-haiku-4-5 | Extended Thinking, tool use |
 | **Google** | gemini-3.6-flash, gemini-3.5-flash (+lite), gemini-3.1-pro, gemini-3.1-flash-lite | Thinking stream, vision |
-| **OpenAI** | gpt-5.6-sol/terra/luna, gpt-5.5-pro, gpt-5.5, gpt-5.4, gpt-5.4-mini | Function calling, vision |
-| **NVIDIA NIM** | GLM 5.2, Qwen3 Coder 480B, Qwen3.5 397B, Nemotron 3 Ultra/Super, Mistral Large 3, MiniMax M3, DeepSeek V4 Pro… | Tek `nvapi-` anahtarıyla **ücretsiz havuz** (40 RPM) |
-| **z-ai** | glm-5.2 | Açık ağırlık, 1M bağlam |
-| **Groq** | llama-3.3-70b-versatile | Düşük gecikme (LPU) |
-| **DeepSeek** | deepseek-v4-pro, deepseek-v4-flash | Uygun fiyat |
-| **Moonshot / Kimi** | kimi-k3, kimi-k2.7-code, kimi-k2.6 | Uzun bağlam; K3'te düşünme her zaman açık |
-| **OpenRouter** | Yukarıdakilerin hepsi `openrouter_id` ile | Tek anahtar, tüm sağlayıcılar (yedek yol) |
+| **OpenAI** | gpt-5.6-sol/terra/luna, gpt-5.5-pro, gpt-5.5, gpt-5.4 | Function calling, vision |
+| **NVIDIA NIM** | GLM 5.2, Qwen3 Coder 480B, Nemotron 3 Ultra/Super, Mistral Large 3, Kimi K2.6… | **Free pool** with a single `nvapi-` key (40 RPM) |
+| **z-ai** | glm-5.2 | Open-weight, 1M context |
+| **Groq** | llama-3.3-70b-versatile | Low latency (LPU) |
+| **DeepSeek** | deepseek-v4-pro, deepseek-v4-flash | Cost-effective |
+| **Moonshot / Kimi** | kimi-k3, kimi-k2.7-code, kimi-k2.6 | Long context; thinking is always on for K3 |
+| **OpenRouter** | all of the above via `openrouter_id` | One key, all providers (fallback path) |
 
 ### 3. Local (Ollama)
 
-`http://localhost:11434` yoklanır; yüklü tüm modeller dinamik listelenir. Sıfır maliyet, tam offline. Function calling destekleyen modeller (Llama 3.3, Qwen2.5 vb.) tool kullanabilir.
+`http://localhost:11434` is polled; all installed models are listed dynamically. Zero cost, fully offline. Models that support function calling (Llama 3.3, Qwen2.5, etc.) can use tools.
 
 ---
 
-## 🔧 Tool Ekosistemi (MCP + Function Calling)
+## 🔧 Tool Ecosystem (MCP + Function Calling)
 
-Tool kullanımı sağlayıcıdan **bağımsız** bir katmandır. Bir model dosya okumak/yazmak veya komut çalıştırmak istediğinde iki mekanizma vardır:
+Tool usage is a layer **independent** of the provider. When a model wants to read/write a file or run a command, there are these mechanisms:
 
-| Mekanizma | Kimler | Nasıl |
+| Mechanism | Who | How |
 |---|---|---|
-| **Function Calling** | Bulut API + Ollama | Model JSON tool çağrısı üretir → `AgentRunner` yakalar → `ToolRegistry`'den çalıştırır |
-| **MCP** | Claude Code, Codex | CLI bir MCP client'tır → backend'in yazdığı config ile MCP sunucularına bağlanır → tool'ları stdio/HTTP ile çağırır |
-| **run_command köprüsü** | agy | agy `unityai` CLI'ını `run_command` ile çağırır → CLI, MCP ile aynı onay kapısını kullanır |
+| **Function Calling** | Cloud API + Ollama | Model emits a JSON tool call → `AgentRunner` catches it → runs it via `ToolRegistry` |
+| **MCP** | Claude Code, Codex | The CLI is an MCP client → connects to MCP servers via the config the backend writes → calls tools over stdio/HTTP |
+| **run_command bridge** | agy | agy calls the `unityai` CLI via `run_command` → the CLI uses the same approval gate as MCP |
 
-### Backend'in çalıştırdığı MCP sunucuları
+### MCP servers the backend runs
 
-1. **unityai MCP** (`Backend/app/unity_ai_mcp/server.py`) — `save_file`, `delete_file`, `read_file`, `list_directory`, `bash`/`run_terminal_command`/`execute_shell_command`. Yazma/silme/komut işlemleri `approval_bridge` ile onay paneline yönlenir.
-2. **Unity MCP** (CoplayDev/unity-mcp) — Unity Editor için 46 tool (sahne, GameObject, prefab, girdi…), HTTP üzerinden `127.0.0.1:8080`.
+1. **unityai MCP** (`Backend/app/unity_ai_mcp/server.py`) — `save_file`, `delete_file`, `read_file`, `list_directory`, `bash`/`run_terminal_command`/`execute_shell_command`. Write/delete/command operations are routed to the approval panel via `approval_bridge`.
+2. **Unity MCP** (CoplayDev/unity-mcp) — 46 tools for the Unity Editor (scene, GameObject, prefab, input…), over HTTP at `127.0.0.1:8080`.
 
-### MCP config'leri ne zaman yazılır?
+### When are MCP configs written?
 
-| Olay | Sonuç |
+| Event | Result |
 |---|---|
-| Bulut API / Ollama seçilir | Config yazılmaz (function calling kullanılır) |
-| CLI modeli seçilir | Henüz bir şey olmaz |
-| **CLI ile mesaj gönderilir** | İlgili config dosyasına **unityai MCP** kaydı yazılır |
-| **Unity MCP toggle açılır** | Unity MCP subprocess başlar; sonraki CLI çağrısında config'e `unityMCP` de eklenir |
-| Toggle kapanır | Server durur, sonraki config'lerden `unityMCP` çıkarılır |
+| Cloud API / Ollama selected | No config written (function calling is used) |
+| CLI model selected | Nothing happens yet |
+| **A message is sent with a CLI** | The **unityai MCP** entry is written to that CLI's config file |
+| **Unity MCP toggle turned on** | The Unity MCP subprocess starts; the next CLI call adds a `unityMCP` entry to the config |
+| Toggle turned off | The server stops, `unityMCP` is removed from subsequent configs |
 
 ---
 
-## 🛡 Onay & Güvenlik Mimarisi
+## 🛡 Approval & Security Architecture
 
-Bir AI'nın terminal ve dosya sistemine erişimini güvenli kılmak için çok katmanlı savunma:
+A multi-layered defense to make an AI's access to the terminal and file system safe:
 
-### 1. Dosya sistemi kilidi
-- Tüm dosya işlemleri `workspace_path` ile sınırlı; `Path.resolve()` + prefix kontrolü ile workspace dışına çıkış reddedilir (hem backend MCP tarafında `_resolve`, hem Electron IPC tarafında `isAllowedWorkspacePath`).
+### 1. File system lock
+- All file operations are bounded by `workspace_path`; `Path.resolve()` + prefix checks reject attempts to escape the workspace (both `_resolve` on the backend MCP side and `isAllowedWorkspacePath` on the Electron IPC side).
 
-### 2. Onay kapısı (tüm ajanlar için ortak)
+### 2. Approval gate (shared by all agents)
 
 ```
-AI bir dosya değiştirmek ister
+AI wants to change a file
           │
-   Değişiklik var mı? (strip() karşılaştırma)
+   Any change? (strip() comparison)
      │              │
-    Hayır → "değişiklik yok"
+    No → "no change"
      │
-    Evet → onay kapısı açılır → UI'da DiffViewer
+    Yes → gate opens → DiffViewer in the UI
               │
         ┌─────┴─────┐
-      Onayla       Reddet
+      Approve      Reject
         │             │
-      Yazılır     "reddedildi" döner
+      Written     "rejected" returned
 ```
 
-Yukarıdaki akış **CLI ajanları** (Claude Code, Codex, Copilot) ve **`unityai` köprüsü** (agy) için geçerlidir: bu yollarda dosya yazma `approval_bridge`'ten geçer, onay verilmeden diske tek byte yazılmaz. Bulut API / Ollama function-calling yolunda ise **yazma** bilinçli olarak kapsam dışıdır; **silme** ve **tehlikeli terminal komutları** orada da aynı gate'ten geçer. Ayrıntı ve gerekçe: aşağıdaki tablo.
+The flow above applies to the **CLI agents** (Claude Code, Codex, Copilot, Cursor, OpenCode, Kimi Code) and the **`unityai` bridge** (agy): on those paths a file write goes through `approval_bridge` and not a byte reaches disk unapproved. On the **cloud API / Ollama function-calling path, writes are deliberately out of scope**; deletes and dangerous terminal commands are gated there too.
 
-### ⚠️ Onay kapsamı: neyin onaylandığı, neyin onaylanmadığı (dürüstlük notu)
+### ⚠️ Approval scope: what is and isn't confirmed (an honesty note)
 
-Onay kapısı her şeyi kapsamaz. Kalan bilinçli tavizler: **bulut API yolunda dosya yazma** ve **Codex/agy yolunda canlı Unity sahne işlemleri**. Tam tablo:
+The gate does not cover everything. The remaining deliberate trade-offs are **file writes on the cloud API path** and **live Unity scene operations on the Codex/agy paths**:
 
-| İşlem | Hangi araç | Onay? |
+| Operation | Tool | Approval? |
 |---|---|:---:|
-| Dosya oluştur / düzenle — **CLI ajanları** | `save_file` (MCP) / `unityai save-file` | ✅ **Diff kartı çıkar** |
-| Dosya oluştur / düzenle — **bulut API & Ollama** | `write_file` (function calling) | ❌ **Onaysız, doğrudan yazar** |
-| Dosya sil | `delete_file` / `unityai` / function calling | ✅ **Silme kartı çıkar** |
-| Terminal komutu | `bash` / `run_command` | ✅ (güvenli sayılan komutlar hariç) |
-| Sahneyi **okuyan** unityMCP çağrısı | `manage_scene action=get_hierarchy`, `read_console`… | ➖ Kart yok (okuma) |
-| Sahneyi **değiştiren** unityMCP çağrısı — **Claude yolu** | `manage_gameobject`, `manage_input`… | ✅ **Kart çıkar** (v2.3.0) |
-| Sahneyi **değiştiren** unityMCP çağrısı — **Codex / agy** | aynı araçlar | ❌ **Onaysız, doğrudan çalışır** |
+| Create / edit a file — **CLI agents** | `save_file` (MCP) / `unityai save-file` | ✅ **Diff card appears** |
+| Create / edit a file — **cloud API & Ollama** | `write_file` (function calling) | ❌ **No approval, writes directly** |
+| Delete a file | `delete_file` / `unityai` / function calling | ✅ **Delete card appears** |
+| Terminal command | `bash` / `run_command` | ✅ (except safe commands) |
+| unityMCP call that **reads** the scene | `manage_scene action=get_hierarchy`, `read_console`… | ➖ No card (read) |
+| unityMCP call that **mutates** the scene — **Claude path** | `manage_gameobject`, `manage_input`… | ✅ **Card appears** (v2.3.0) |
+| unityMCP call that **mutates** the scene — **Codex / agy** | same tools | ❌ **No approval, runs directly** |
 
-**Neden `write_file` bulut API yolunda onaysız?** Workspace'e kod yazmak bu ürünün asıl işi. Her yazımda onay istemek kullanıcıyı refleks-onaya alıştırır — bu kapıyı güçlendirmez, tamamen değersizleştirir; sonra gerçekten önemli olan silme kartı da aynı refleksle onaylanır. Yazma buna karşılık `_validate_path` ile **workspace'e hapsedilmiş** durumda: `Path.resolve()` + prefix kontrolü, workspace dışına çıkış yok. Silme ise seyrek ve geri alınamaz olduğu için her yolda kart çıkarır. Karar ve gerekçesi kodda da yazılı: `AgentRunner._approval_prompt` (`Backend/app/agentic/agent_runner.py`).
+**Why is `write_file` unapproved on the cloud API path?** Writing code into the workspace is what this product is for. Asking on every write trains reflex-approval, which does not strengthen the gate — it destroys it, and then the delete card that actually matters gets approved by the same reflex. Writes are instead **confined to the workspace** by `_validate_path` (`Path.resolve()` + prefix check). Deletes are rare and irreversible, so they always show a card.
 
-> **Pratik sonucu:** bulut API modeliyle **"PlayerController.cs oluştur"** dersen dosya sorulmadan yazılır (git ile geri alabilirsin). Aynı isteği Claude Code / Codex / agy ile yaparsan diff kartı çıkar. Yazma öncesi her değişikliği görmek istiyorsan **CLI ajanlarından birini seç.**
+> **In practice:** with a cloud API model, **"create PlayerController.cs"** writes without asking (git can undo it). The same request through Claude Code / Codex / agy shows a diff card. If you want to see every change before it lands, **pick one of the CLI agents.**
 
-**unityMCP neden sağlayıcıya göre farklı?** Başlangıçta unityMCP tümüyle onaysızdı: sahne işlemleri Unity'de Ctrl+Z ile geri alınabiliyor ve her GameObject taşımasında kart açmak akışı kullanılmaz hale getiriyordu. v2.3.0 bu tavizi Claude yolunda kaldırdı — ama kartı her çağrıya değil, yalnız **durumu değiştirenlere** açarak.
+**Why does unityMCP differ per provider?** Originally it was ungated everywhere: scene operations are undoable (Ctrl+Z) and a card on every GameObject move made the workflow unusable. v2.3.0 removed that trade-off on the Claude path — but opens a card only for calls that **mutate state**.
 
-Ayrımı yapan şey bir tahmin değil, bir kütük: `unity-mcp/Server/src/services/registry/tool_actions.json` her aracın her action'ını okuma/yazma diye sınıflandırır ve `Backend/app/unity_tool_policy.py` onu okur. İki nokta önemli:
+The read/write split is not a guess, it is a ledger: `unity-mcp/Server/src/services/registry/tool_actions.json` classifies every action of every tool, and `Backend/app/unity_tool_policy.py` reads it from the source rather than copying it — a copied list previously granted an exemption to an action that did not exist, and that line never matched anything. **If the ledger cannot be read, the policy fails closed:** no exemptions, every call shows a card.
 
-- **Kütük kopyalanmaz, kaynağından okunur.** Bu depodaki arızaların ortak biçimi "birbiriyle uyuşması gereken iki yer uyuşmuyor" — nitekim daha önce elle kopyalanmış bir liste, var olmayan bir action'a muafiyet yazıyordu ve o satır hiç eşleşmedi. Kütük artık kaynağa karşı bir ayrışma testiyle bağlı.
-- **Kütük bulunamazsa fail-closed:** hiçbir muafiyet uygulanmaz, yani her çağrı karta düşer. Sessizce serbest bırakmaktansa gürültülü olmak doğru taraf.
+Codex and agy do not have this gate: unityMCP is still handed to them with `default_tools_approval_mode = "approve"` (Codex) and `trust: true` (agy).
 
-Codex ve agy yollarında bu kapı **yok**: unityMCP oralara hâlâ `default_tools_approval_mode = "approve"` (Codex) ve `trust: true` (agy) ile sunuluyor. Yani **"sahneye yürüyen bir karakter yap"** dersen Claude yolunda kart görürsün, Codex/agy yolunda AI sahneyi sormadan kurar.
+### 3. Terminal security
+- Safe (read-only) commands run directly; any command outside the whitelist shows an approval card
+- Attempts to write files via the terminal (`python3 -c "open().write()"`, `printf > path`, `echo > path`) are caught and routed to the DiffViewer
+- CLI built-in write tools (`Write`/`Edit`, agy's `write_to_file`, etc.) are disabled via `disallowedTools`/`disabledTools` → the model is forced onto the approved channel (`save_file` / `unityai`)
 
-### 3. Terminal güvenliği
-- Güvenli (salt-okuma) komutlar direkt çalışır; whitelist dışı her komut onay kartı gösterir
-- `python3 -c "open().write()"`, `printf > path`, `echo > path` gibi terminal üzerinden dosya yazma girişimleri yakalanıp DiffViewer'a yönlendirilir
-- CLI built-in yazma araçları (`Write`/`Edit`, agy `write_to_file` vb.) `disallowedTools`/`disabledTools` ile kapatılır → model onaylı kanala (`save_file` / `unityai`) düşmek zorunda kalır
+### 4. Local token architecture (ephemeral)
 
-### 4. Lokal token mimarisi (ephemeral)
-
-Bu bir masaüstü uygulaması olduğu için OAuth/JWT/session DB katmanları **kaldırıldı**. Yerine uygulama-yaşam-süresi token'ı:
+Because this is a desktop app, the OAuth/JWT/session-DB layers were **removed**. In their place, an application-lifetime token:
 
 ```
-Electron başlar → randomUUID() ile token üretir
-   ├─► Backend subprocess env'i (LOCAL_APP_TOKEN)
-   ├─► Unity MCP subprocess env'i
-   └─► Renderer'a IPC ile sunulur ('app-token-get')
+Electron starts → generates a token with randomUUID()
+   ├─► Backend subprocess env (LOCAL_APP_TOKEN)
+   ├─► Unity MCP subprocess env
+   └─► Exposed to the renderer via IPC ('app-token-get')
 
-Her HTTP isteği X-Session-Token header'ı ile gelir
-   → auth_utils._check_token() env var'la karşılaştırır
-       eşleşmezse 401 · eşleşirse user_id=1 (tek lokal kullanıcı)
+Every HTTP request carries an X-Session-Token header
+   → auth_utils._check_token() compares against the env var
+       mismatch → 401 · match → user_id=1 (single local user)
 ```
 
-- **API anahtarı şifrelemesi**: Fernet ile şifrelenir; anahtar `~/.unity_architect_ai/api_key_fernet.key` dosyasında deterministik tutulur (paketlenmiş imzasız binary Keychain'i güvenilir okuyamadığı için dosya-tabanlı çözüldü). `api_keys` tablosu yalnızca şifreli veri tutar.
-
-### 5. Arayüz dışarıya bağlanmaz (CSP)
-
-Uygulama penceresi bir **Content-Security-Policy** ile kilitli ve Monaco Editor dahil tüm varlıklar **yerelden** servis edilir — arayüzün çalışması için hiçbir CDN'e ya da dış sunucuya istek gitmez. Pratik sonucu: internetin yokken editör bozulmaz, ve bir üçüncü parti sunucusu ele geçse bile uygulamanın içine kod enjekte edemez. Dışarıya çıkan tek trafik senin seçtiğin AI sağlayıcısına gider.
+- **API key encryption**: keys are encrypted with Fernet; the key lives deterministically at `~/.unity_architect_ai/api_key_fernet.key` (file-based because an unsigned packaged binary can't reliably read the Keychain). The `api_keys` table holds only encrypted data.
 
 ---
 
-## ⚙️ Kurulum
+## ⚙️ Installation
 
-### Gereksinimler
+### Requirements
 - Python 3.13+
 - Node.js 20+
-- Unity Editor (Unity MCP için, isteğe bağlı)
+- Unity Editor (for Unity MCP, optional)
 
-> Paketlenmiş uygulamada bunların hiçbiri gerekmez — Python, uv, OmniSharp, .NET SDK, ffmpeg/yt-dlp hepsi gömülüdür. Bu gereksinimler yalnızca **kaynak koddan geliştirme** içindir.
+> None of these are needed for the packaged app — Python, uv, OmniSharp, the .NET SDK, and ffmpeg/yt-dlp are all bundled. These requirements are for **developing from source** only.
 
 ### Backend
 
@@ -446,403 +435,398 @@ python3 -m venv venv
 source venv/bin/activate          # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 
-# Geliştirme sunucusu
+# Dev server
 uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-> API anahtarlarını `.env` ile değil, uygulama içindeki **Ayarlar** ekranından girersin (şifrelenerek saklanır). Backend'i Electron olmadan tek başına çalıştırırsan `LOCAL_APP_TOKEN` boş kalır ve kontrol **fail-closed** davranır: her istek `503` döner. Dev için token'sız çalışmayı `UNITYAI_ALLOW_NO_TOKEN=1` ile açıkça seçmen gerekir (o zaman `127.0.0.1:8000`'deki tüm uçlar kimliksiz olur — `/chat`, `/write-file`, api-keys dahil).
+> You enter API keys from the in-app **Settings** screen (stored encrypted), not via `.env`. If you run the backend standalone (without Electron), `LOCAL_APP_TOKEN` stays empty → token checks are skipped (dev mode).
 
 ### Frontend
 
 ```bash
 cd Frontend/frontend
-npm install          # postinstall node-pty'yi otomatik derler
-npm run dev          # geliştirme
+npm install          # postinstall builds node-pty automatically
+npm run dev          # development
 ```
 
-### Ortam değişkenleri (opsiyonel)
+### Environment variables (optional)
 
 ```env
 DB_PATH=~/.unity_architect_ai/unity_master_v3.db
 HOST=127.0.0.1
-PORT=8000                      # Electron rastgele boş port seçer; sabit istiyorsan ayarla
-API_KEY_ENCRYPTION_KEY=        # boşsa dosya-tabanlı anahtar üretilir
+PORT=8000                      # Electron picks a random free port; set this for a fixed one
+API_KEY_ENCRYPTION_KEY=        # if empty, a file-based key is generated
 ```
 
 ---
 
-## 📦 Paketleme (dmg / exe)
+## 📦 Packaging (dmg / exe)
 
-Dağıtılabilir uygulama dört adımda üretilir. Gömülü binary'lerin hiçbiri git'e konmaz; her build öncesi indirilir — ve **sabitlenmiş bir kütükten, özet (digest) doğrulamasıyla**: `scripts/pinned_assets.json` her varlığın sürümünü ve karmasını tutar, indirme betikleri karma tutmazsa durur. Bir bağımlılığın sessizce değişmesi ya da yanlış bir dosyanın pakete girmesi böyle engelleniyor.
+A distributable app is produced in four steps (none of the bundled binaries are committed to git; they are fetched before each build):
 
 ```bash
-# 1) Unity MCP için uv araç zincirini indir
-#    macOS: her iki mimari (arm64 + x64) indirilir
+# 1) Download the uv toolchain for Unity MCP
+#    macOS: downloads both architectures (arm64 + x64)
 bash Backend/vendor/fetch_uv.sh
 #    Windows: pwsh Backend/vendor/fetch_uv.ps1
 
-# 2) OmniSharp + gömülü .NET SDK'sını indir (kod zekası; üç platformda da gömülür)
+# 2) Download OmniSharp + the bundled .NET SDK (code intelligence; bundled on all three platforms)
 python3 scripts/fetch_omnisharp.py
 
-# 3) Video araçlarını indir (ffmpeg + yt-dlp — video→sohbet özelliği)
+# 3) Download the video tools (ffmpeg + yt-dlp — the video→chat feature)
 bash Backend/vendor/fetch_video_bins.sh
 
-# 4) Backend'i PyInstaller ile derle, sonra Electron'u paketle
+# 4) Compile the backend with PyInstaller, then package the Electron app
 cd Backend && ./build_backend.sh        # Windows: build_backend.bat
 cd Frontend/frontend && npm install && npm run build
 ```
 
-Çıktılar `Frontend/frontend/build/` altında:
-- macOS: `Gamachine-<sürüm>-arm64.dmg` (Apple Silicon)
+Outputs land under `Frontend/frontend/build/`:
+- macOS: `Gamachine-<version>-arm64.dmg` (Apple Silicon)
 - Windows: NSIS installer (`.exe`)
 
-> ⚠️ **x64 dmg tuzağı — bu yüzden Intel dmg yayınlanmıyor.** electron-builder her iki mimari için dmg üretir ama backend binary'si yalnızca host mimaride derlenir; Apple Silicon'da alınan x64 dmg'nin içine **arm64 backend** gömülür ve gerçek Intel Mac'te sessizce bozuktur. Derlenmesi çalıştığını göstermediği ve sınayacak Intel Mac olmadığı için **dağıtılan tek macOS varlığı arm64 dmg'dir.** Intel desteği için backend'i ayrıca x64 Python ile derlemek gerekir.
->
-> ⚠️ **Intel Mac'te C# kod zekası yok:** OmniSharp çözümleyicisi macOS'ta mimariden bağımsız olarak `osx-arm64` klasörünü arar (`Backend/app/omnisharp/omnisharp_manager.py` → `_resolve_binary` / `_spawn_env`) ve `scripts/fetch_omnisharp.py`'de macOS için tanımlı tek varlık `osx-arm64`'tür — `osx-x64` ne indirilir ne aranır. Yani **desteklenen tek macOS mimarisi Apple Silicon'dur**; Intel Mac'te uygulama açılsa bile OmniSharp başlamaz — Monaco'da hata/tamamlama gelmez, geri kalan özellikler çalışır.
+> ⚠️ **The x64 dmg trap:** electron-builder produces dmgs for both architectures, but the backend binary is only compiled for the host architecture — an x64 dmg built on Apple Silicon **won't work on Intel Macs**. Proper Intel support requires compiling the backend with an x64 Python separately.
 
-> 🍎 **macOS karantina notu:** dmg imzasızdır; internetten indirilince "hasar görmüş" uyarısı çıkarsa `xattr -cr "/Applications/Gamachine.app"` ile karantina kaldırılır.
+> 🍎 **macOS quarantine note:** the dmg is unsigned; if macOS reports it as "damaged" after downloading, clear the quarantine flag with `xattr -cr "/Applications/Gamachine.app"`.
 
-Paketlenmiş app'te Python veya .NET kurulu olması **gerekmez** — backend tek bir frozen binary'dir; `mcp-server` ve `unityai` alt komutları aynı binary üzerinden çağrılır. `uvx`, OmniSharp (+.NET) ve ffmpeg/yt-dlp uygulamaya gömülüdür.
+The packaged app does **not** require Python or .NET — the backend is a single frozen binary; the `mcp-server` and `unityai` subcommands are invoked through that same binary. `uvx`, OmniSharp (+.NET), and ffmpeg/yt-dlp are all embedded.
 
 ---
 
-## 💡 Kullanım
+## 💡 Usage
 
-1. **Workspace seç** — Unity projenin klasörünü seç; backend `.cs` dosyalarını tarar.
-2. **Model seç** — Ayarlar'dan sağlayıcı/model seç. Bulut API ise anahtarını gir (şifreli saklanır); CLI ise makinende kurulu olması yeter.
-3. **Konuş** —
+1. **Pick a workspace** — choose your Unity project folder; the backend scans the `.cs` files.
+2. **Pick a model** — choose a provider/model in Settings. For a cloud API, enter your key (stored encrypted); for a CLI, just having it installed is enough.
+3. **Talk** —
 
 ```
-"PlayerController.cs'teki performans sorunlarını bul"
-"Inventory için ScriptableObject tabanlı ItemData scripti oluştur"
-"NullReferenceException PlayerController.cs:47 — sebebi ne, düzelt"
-"Sahneye bir Player capsule ekle ve Rigidbody bağla"   # Unity MCP açıkken
-/compact                                                # uzun sohbeti özetle
+"Find the performance issues in PlayerController.cs"
+"Create a ScriptableObject-based ItemData script for Inventory"
+"NullReferenceException PlayerController.cs:47 — what's the cause, fix it"
+"Add a Player capsule to the scene and attach a Rigidbody"   # when Unity MCP is on
+/compact                                                      # summarize a long chat
 ```
 
-4. **Onayla** — AI onay gerektiren bir işlem isteyince akış durur, diff/komut kartı açılır; onayla veya reddet. (Bulut API modellerinde dosya *yazma* kart açmaz — bkz. [Onay kapsamı](#️-onay-kapsamı-neyin-onaylandığı-neyin-onaylanmadığı-dürüstlük-notu).)
+4. **Approve** — when the AI requests a file/terminal operation the stream pauses and a diff/command card opens; approve or reject.
 
 ---
 
-## 🎮 Unity MCP Entegrasyonu
+## 🎮 Unity MCP Integration
 
-[CoplayDev/unity-mcp](https://github.com/CoplayDev/unity-mcp) projesini birleştirir ve AI'a Unity Editor'ü doğrudan kontrol yeteneği verir.
+Unifies the [CoplayDev/unity-mcp](https://github.com/CoplayDev/unity-mcp) project, giving the AI direct control of the Unity Editor.
 
-### Kurulum: tamamen otomatik
-1. Unity projeni aç (Editor açık olmalı)
-2. Uygulamada **Unity MCP toggle**'ına bas
-3. `unity_mcp_manager`, gömülü `uvx` ile MCP sunucusunu başlatır, paketi kurar ve Editor'le bağlantıyı kurar
-4. Toggle yeşile dönünce (`Unity bağlandı ✓`) hazırdır
+### Setup: fully automatic
+1. Open your Unity project (the Editor must be running)
+2. Click the **Unity MCP toggle** in the app
+3. `unity_mcp_manager` starts the MCP server with the bundled `uvx`, installs the package, and connects to the Editor
+4. When the toggle turns green (`Unity connected ✓`) it's ready
 
-> Paketlenmiş app'te `uv`/`uvx` gömülü olduğu için kullanıcının ayrıca kurmasına gerek yoktur. Unity Editor kapalıysa toggle bağlanamaz — önce Unity'yi aç.
+> Because `uv`/`uvx` is bundled in the packaged app, the user doesn't need to install it separately. If the Unity Editor is closed the toggle can't connect — open Unity first.
 
-> **Onay davranışı:** Claude yolunda sahneyi **değiştiren** unityMCP çağrıları onay kartı açar; **okuyan** çağrılar (hiyerarşi, konsol, arama) açmaz. Codex ve agy yollarında unityMCP hâlâ onaysız çalışır. Bkz. [Onay kapsamı](#️-onay-kapsamı-neyin-onaylandığı-neyin-onaylanmadığı-dürüstlük-notu).
+> **Approval behavior:** On the Claude path, unityMCP calls that **mutate** the scene open an approval card; calls that only **read** (hierarchy, console, search) do not. On the Codex and agy paths unityMCP still runs unapproved. See [Approval scope](#️-approval-scope-what-is-and-isnt-confirmed-an-honesty-note).
 
-### Araçlar (46)
+### Tools (46)
 
-| Kategori | Araçlar |
+| Category | Tools |
 |---|---|
-| Sahne | `manage_scene`, `find_gameobjects`, `manage_gameobject`, `set_active_instance` |
-| Bileşen | `manage_components`, `manage_physics`, `manage_animation` |
-| **Girdi (yeni)** | **`manage_input`** — çalışan oyuna klavye/fare/gamepad/UI girdisi |
-| UI/Kamera | `manage_ui`, `manage_camera` (screenshot dahil) |
+| Scene | `manage_scene`, `find_gameobjects`, `manage_gameobject`, `set_active_instance` |
+| Components | `manage_components`, `manage_physics`, `manage_animation` |
+| **Input (new)** | **`manage_input`** — keyboard/mouse/gamepad/UI input into the running game |
+| UI/Camera | `manage_ui`, `manage_camera` (incl. screenshots) |
 | Prefab/Asset | `manage_prefabs`, `manage_scriptable_object`, `manage_asset`, `manage_fbx` |
-| Görsel | `manage_material`, `manage_shader`, `manage_texture`, `manage_graphics`, `manage_sprite`, `manage_vfx` |
+| Visual | `manage_material`, `manage_shader`, `manage_texture`, `manage_graphics`, `manage_sprite`, `manage_vfx` |
 | Script | `manage_script`, `script_apply_edits`, `apply_text_edits`, `create_script`, `delete_script`, `validate_script`, `get_sha`, `manage_script_capabilities`, `find_in_file`, `read_console` |
-| Test & Profil | `run_tests`, `get_test_job`, `manage_profiler` |
+| Test & Profiling | `run_tests`, `get_test_job`, `manage_profiler` |
 | Build | `manage_build`, `manage_packages`, `manage_editor`, `refresh_unity`, `manage_probuilder` |
-| Keşif | `unity_docs`, `unity_reflect`, `manage_tools`, `execute_custom_tool` |
-| Orkestrasyon | `batch_execute` (25 komuta kadar tek çağrı), `execute_code`, `execute_menu_item` |
+| Discovery | `unity_docs`, `unity_reflect`, `manage_tools`, `execute_custom_tool` |
+| Orchestration | `batch_execute` (up to 25 commands per call), `execute_code`, `execute_menu_item` |
 
-### 🎮 AI artık oyunu oynayabiliyor (`manage_input`)
+### 🎮 The AI can now play the game (`manage_input`)
 
-Play mode'a girmek ve ekran görüntüsü almak zaten vardı — eksik olan **müdahale** etmekti. AI oyunu başlatabiliyor ve izleyebiliyordu ama oynayamıyordu; döngünün kapanmayan halkası buydu.
+Entering play mode and taking screenshots already worked — what was missing was **acting**. The AI could start the game and watch it, but not play it; that was the open link in the loop.
 
-`manage_input` Unity Input System'in **sanal cihazlarına** olay basar (`QueueStateEvent`). Olaylar sürecin içinden üretildiği için **pencere odağı gerekmez** — AI oynarken sen başka bir şey yapabilirsin, klavyen kilitlenmez.
+`manage_input` queues events into Unity Input System's **virtual devices** (`QueueStateEvent`). Because the events are produced from inside the process, **no window focus is required** — the AI can play while you do something else, and your keyboard is not hijacked.
 
 ```
-"Oyunu başlat, W ile 2 saniye ileri yürü, boşlukla zıpla ve ekran görüntüsü al"
+"Start the game, walk forward with W for 2 seconds, jump with space, then take a screenshot"
 ```
 
-Aksiyonlar: `describe`, `key`, `mouse_move`, `mouse_button`, `scroll`, `gamepad`, `ui_click`, `sequence`, `reset`.
+Actions: `describe`, `key`, `mouse_move`, `mouse_button`, `scroll`, `gamepad`, `ui_click`, `sequence`, `reset`.
 
-> ⚠️ **Kalıcı sınır — önce `describe` çağır.** Bu olayları yalnızca **yeni Input System**'e göre yazılmış oyun kodu görür. Projen eski `UnityEngine.Input` (`Input.GetKey`) kullanıyorsa sanal cihaz girdisi ona **ulaşmaz**; o projelerde çalışan tek yol uGUI düğmelerini tetikleyen `ui_click`'tir. `describe` projenin girdi arka ucunu raporlar — ama yalnız proje ayarını okur, oyun kodunun hangi API'yi kullandığını ölçmez.
+> ⚠️ **A permanent limit — call `describe` first.** Only game code written against the **new Input System** sees these events. If your project uses the legacy `UnityEngine.Input` (`Input.GetKey`), virtual-device input **will not reach it**; the only thing that still works there is `ui_click`, which triggers uGUI buttons. `describe` reports the project's input backend — but it only reads the project setting, it does not measure which API the game code actually uses.
 
-### Ajan geri bildirimiyle evrilen fork
+### A fork that evolves on agent feedback
 
-Bu fork'taki araçlar, gerçek gece-boyu ajan oturumlarının (Claude, GLM) geri bildirimleriyle sürekli iyileştiriliyor:
+The tools in this fork are continuously improved based on feedback from real overnight agent sessions (Claude, GLM):
 
-- **Token ekonomisi** — `get_hierarchy` varsayılan olarak hafif özet döner (`detail:"full"` ile ayrıntı); `find_gameobjects` sonuçları `name+path` özetiyle gelir (N+1 çağrı derdi yok)
-- **Akıllı arama** — `find_gameobjects`'te `match_mode: exact|contains|prefix` ("Prop_" ile tüm prop'lar)
-- **Tek turda yaz-derle-doğrula** — `wait_for_compile: true` ile script yazımı, derleme sonucunu ve konsol hatalarını aynı yanıtta getirir
-- **Batch zincirleme** — `"$[0].data.instanceID"` referanslarıyla create→configure→parent tek `batch_execute`'ta
-- **Dürüst geri bildirim** — play mode'da script değişikliği uyarı verir; hiçbir şey değiştirmeyen modify çağrısı `no_op` olarak raporlanır
+- **Token economy** — `get_hierarchy` returns a lightweight summary by default (`detail:"full"` for everything); `find_gameobjects` results ship with a `name+path` summary (no N+1 follow-up calls)
+- **Smart search** — `match_mode: exact|contains|prefix` on `find_gameobjects` ("Prop_" finds every prop)
+- **Write-compile-verify in one turn** — `wait_for_compile: true` makes script writes return the compile result and console errors in the same response
+- **Batch chaining** — `"$[0].data.instanceID"` references enable create→configure→parent in a single `batch_execute`
+- **Honest feedback** — script changes during play mode carry a warning; a modify call that changes nothing is reported as `no_op`
 
-### Çoklu Unity Instance
+### Multiple Unity instances
 
-Birden fazla proje açıksa hangi instance'a komut gideceği seçilebilir (`set_active_instance`).
+If more than one project is open, you can choose which instance receives commands (`set_active_instance`).
 
 ---
 
-## 🧩 Agentic Sistem Detayları
+## 🧩 Agentic System Details
 
-### Araç Çantası (function-calling ToolRegistry)
+### Toolbox (function-calling ToolRegistry)
 
 ```python
-read_file(file_path)                 # Dosya oku (max 500 satır, özet)
-write_file(file_path, content)       # Dosya yaz — ONAYSIZ, workspace'e kilitli
-delete_file(file_path)               # Dosya sil (onay kartı)
-list_directory(dir_path)             # Klasör listele
-search_in_project(query, exts)       # Proje içi arama
-find_files(pattern)                  # Dosya adı örüntüsü
-run_command(command)                 # Terminal (tehlikeliyse onay)
-save_to_memory(content) / recall_memory()   # Kalıcı hafıza
-capture_unity_screenshot()           # Editor görüntüsü (görsel doğrulama)
+read_file(file_path)                 # Read file (max 500 lines, summarized)
+write_file(file_path, content)       # Write file (approval)
+delete_file(file_path)               # Delete file (approval)
+list_directory(dir_path)             # List a directory
+search_in_project(query, exts)       # In-project search
+find_files(pattern)                  # File-name pattern
+run_command(command)                 # Terminal (approval if dangerous)
+save_to_memory(content) / recall_memory()   # Persistent memory
+capture_unity_screenshot()           # Editor screenshot (visual verification)
 ```
 
-### SSE Olay Akışı
+### SSE Event Stream
 
 ```
-POST /chat-stream → SSE açılır
-event: thinking      → AI'ın düşünme metni
-event: tool_call     → çağrılan araç + argümanlar
-event: tool_result   → araç çıktısı özeti
-event: response      → final yanıt (+ kod blokları)
-event: context_usage → bağlam doluluk yüzdesi
+POST /chat-stream → SSE opens
+event: thinking      → the AI's reasoning text
+event: tool_call     → the called tool + arguments
+event: tool_result   → tool output summary
+event: response      → final answer (+ code blocks)
+event: context_usage → context fill percentage
 event: done
 ```
 
 ---
 
-## 📓 Geliştirici Notları: Alınan Dersler ve Mimari Kararlar
+## 📓 Developer Notes: Lessons Learned and Architectural Decisions
 
-Bu bölüm projenin evrimindeki gerçek kararları, çıkmaz sokakları ve öğrenilen dersleri belgeler. Commit geçmişi "ne yaptığını" söyler; bu bölüm "neden" sorusunu yanıtlar.
-
----
-
-### Başlangıç: "Analiz Aracı" Dönemi
-
-Projeyi aslında bir Unity kod **analiz** aracı olarak başlattım. İlk versiyonda kullanıcı bir C# scripti yapıştırıyordu, sistem bunu statik analizden geçirip tek bir büyük JSON raporu dönüyordu. Çok sayıda ajan (intent classifier, orchestrator, unity expert, critic, game feel…) sırayla çalışıyordu.
-
-**Sorun:** Bu pipeline 45-60 saniye sürüyordu. Kullanıcı "şu değişkenin adını düzelt" dediğinde bile tüm ajanlar tetikleniyordu.
-
-**Ders:** Analitik mimari, interaktif geliştirme için yanlış paradigmadır. Rapor için 60 saniye kabul edilebilir; "şunu düzelt" için 60 saniye öldürücüdür.
+This section documents the real decisions, dead ends and lessons from the project's evolution. The commit history tells you "what changed"; this section answers "why."
 
 ---
 
-### Büyük Geçiş: Analiz Aracından Agentic IDE'ye
+### The Beginning: the "Analysis Tool" Era
 
-Bu projenin en kritik mimari kararıdır. Önceki modelde kullanıcı sorar, tek seferlik yanıt gelir, sohbet biterdi — AI çalışma dosyalarını göremez, hata loglarını okuyamaz, terminale erişemezdi.
+I actually started the project as a Unity code **analysis** tool. In the first version the user pasted a C# script, the system ran static analysis and returned one big JSON report. Many agents (intent classifier, orchestrator, unity expert, critic, game feel…) ran in sequence.
 
-**Beni bu karara götüren şey:** "hata şu: NullReferenceException at PlayerController.cs:47, düzelt" mesajıydı. AI 47. satırı göremediği için sadece genel tavsiye verebiliyordu. Bir kıdemli ne yapardı? Dosyayı açar, satırı okur, bağlamı anlar, düzeltirdi.
+**The problem:** that pipeline took 45–60 seconds. Even when the user said "rename this variable," all the agents fired.
 
-```
-Eski model:  Kullanıcı → [tek LLM çağrısı] → Yanıt
-Yeni model:  Kullanıcı → [LLM] → araç çağrısı → [sonuç] → [LLM] → … → Yanıt
-```
-
-`AgentRunner` ve `ToolRegistry` bu geçişin ürünü.
+**Lesson:** an analytical architecture is the wrong paradigm for interactive development. 60 seconds is acceptable for a report; for "fix this" it's lethal.
 
 ---
 
-### main.py: God Object'e Karşı Refactor
+### The Big Shift: From Analysis Tool to Agentic IDE
 
-Bir noktada `main.py` 2000+ satıra ulaştı — auth, chat, OAuth, analiz, config hepsi tek dosyada. Tam bir route refactor yaptım:
+This is the project's most critical architectural decision. In the old model the user asked, a one-shot answer came back, and the chat ended — the AI couldn't see working files, read error logs, or touch the terminal.
+
+**What pushed me to it:** the message "error: NullReferenceException at PlayerController.cs:47, fix it." Since the AI couldn't see line 47, it could only give generic advice. What would a senior do? Open the file, read the line, understand the context, fix it.
 
 ```
-Önce:  main.py (2000+ satır)
-Sonra: routes/{auth,conversation,config,analysis,…}_routes.py + main.py (~30 satırlık bootstrap)
+Old model:  User → [single LLM call] → Answer
+New model:  User → [LLM] → tool call → [result] → [LLM] → … → Answer
 ```
 
-**Ders:** "Şimdilik buraya yazayım" kararı er ya da geç ödenir. 2000 satırlık dosya sadece kod borcu değil, bilişsel yük borcudur. (Aynı disiplinle sonradan `ai_providers.py` god-object'i de `providers/` altına bölündü.)
+`AgentRunner` and `ToolRegistry` are the products of this shift.
 
 ---
 
-### MCP Kararı: Neden CLI Katmanı?
+### main.py: Refactor Against the God Object
 
-Kritik bir tercih: AI araçları doğrudan backend üzerinden mi çalışsın, yoksa CLI araçları (Claude Code, Codex, Gemini) üzerinden mi?
-
-Doğrudan backend'in sorunu: her yeni model için tool calling'i yeniden yazmak, her modelin farklı formatını handle etmek, güvenlik sınırlarını sürekli yeniden inşa etmek.
-
-CLI yaklaşımının avantajı: bu araçların kendi tool ekosistemi, güvenlik katmanı ve MCP desteği **zaten var**. Üzerlerine MCP sunucusu olarak konumlanmak, her CLI'nin gücünü miras almak demek.
+At one point `main.py` reached 2000+ lines — auth, chat, OAuth, analysis, config all in one file. I did a full route refactor:
 
 ```
-Eski:  Frontend → Backend → [kendi tool kodum] → dosya sistemi
-Yeni:  Frontend → Backend → CLI (MCP client) → MCP server → dosya sistemi
+Before:  main.py (2000+ lines)
+After:   routes/{auth,conversation,config,analysis,…}_routes.py + main.py (~30-line bootstrap)
 ```
 
-**Maliyet:** 3 farklı CLI config formatını (JSON / TOML / JSON) ve davranış farkını yönetmek.
+**Lesson:** "I'll just put it here for now" gets paid back sooner or later. A 2000-line file isn't just code debt, it's cognitive-load debt. (With the same discipline the `ai_providers.py` god object was later split under `providers/`.)
 
 ---
 
-### Gemini'nin Gizli Araç Çakışması
+### The MCP Decision: Why a CLI Layer?
 
-MCP üzerinden `write_file` aracı tanımladım. Gemini CLI'de görünmüyordu: `Tool 'mcp_..._write_file' not found`. Log analizi yerine doğrudan CLI'ye sordum:
-> "Hangi MCP araçlarını görüyorsun, built-in listende `write_file` var mı?"
+A critical choice: should the AI tools run directly through the backend, or through CLI tools (Claude Code, Codex, Gemini)?
 
-Cevap: Gemini'nin `write_file` adlı built-in aracı vardı ve aynı isimli MCP aracını **sessizce susturuyordu**. Adı `save_file` yapınca çözüldü.
+The problem with going direct: rewriting tool calling for every new model, handling each model's different format, rebuilding security boundaries again and again.
 
-**Ders:** CLI araçlarını debug ederken en hızlı yöntem log değil, aracın kendisine sormaktır.
+The advantage of the CLI approach: these tools **already have** their own tool ecosystem, security layer and MCP support. Positioning as an MCP server on top of them means inheriting each CLI's power.
+
+```
+Old:  Frontend → Backend → [my own tool code] → file system
+New:  Frontend → Backend → CLI (MCP client) → MCP server → file system
+```
+
+**Cost:** managing 3 different CLI config formats (JSON / TOML / JSON) and their behavioral differences.
 
 ---
 
-### Stop Butonu: Görünüşte Basit, Gerçekte İki Katmanlı
+### Gemini's Hidden Tool Collision
 
-"Durdur"a basınca AbortController ile SSE'yi kestim — ama backend CLI süreci hâlâ çalışıyor, onay için polling yapıyordu. Çözüm iki parça:
+I defined a `write_file` tool over MCP. It didn't show up in the Gemini CLI: `Tool 'mcp_..._write_file' not found`. Instead of analyzing logs I asked the CLI directly:
+> "Which MCP tools do you see, and is `write_file` in your built-in list?"
+
+The answer: Gemini had a built-in tool named `write_file` and was **silently suppressing** the same-named MCP tool. Renaming it to `save_file` fixed it.
+
+**Lesson:** when debugging CLI tools, the fastest method isn't logs — it's asking the tool itself.
+
+---
+
+### The Stop Button: Seemingly Simple, Actually Two Layers
+
+On "Stop" I cut the SSE with an AbortController — but the backend CLI process kept running, polling for approval. The fix was in two parts:
 
 ```typescript
 stopMessage: () => {
-  abortControllerRef.current?.abort();               // SSE bağlantısını kes
-  fetch(`${API}/mcp-abort-all`, { method: 'POST' }); // Bekleyen onay kapılarını reddet
+  abortControllerRef.current?.abort();               // cut the SSE connection
+  fetch(`${API}/mcp-abort-all`, { method: 'POST' }); // reject pending approval gates
 }
 ```
 
-**Ders:** İptal semantiği birden fazla katmanı kapsar. "Frontend iptal etti" ≠ "işlem iptal edildi". Her async sınırın kendi iptal mekanizması olmalı.
+**Lesson:** cancellation semantics span multiple layers. "The frontend cancelled" ≠ "the operation cancelled." Every async boundary needs its own cancellation mechanism.
 
 ---
 
-### Auth'u Söktüm: Web Mimarisinden Lokal Desktop'a
+### I Tore Out Auth: From Web Architecture to Local Desktop
 
-Refleks olarak web paternleriyle başladım: bcrypt, JWT, session DB, OAuth2 (Google+GitHub), rate limiting — ~2000 satır, 4 tablo, 7 endpoint.
+By reflex I started with web patterns: bcrypt, JWT, session DB, OAuth2 (Google+GitHub), rate limiting — ~2000 lines, 4 tables, 7 endpoints.
 
-Bir gün fark ettim: **Bu bir Electron uygulaması.** Kullanıcı zaten cihazına fiziksel erişimi olan kişi. Multi-user katmanı sahte güvenlik veriyordu — saldırgan zaten `app_data/`'ya, API anahtarlarına, dosya sistemine erişebilir.
+One day I realized: **this is an Electron app.** The user already has physical access to their device. The multi-user layer was offering fake security — an attacker can already reach `app_data/`, the API keys, the file system.
 
 ```typescript
-const localAppToken = randomUUID()                 // her açılışta yeni
+const localAppToken = randomUUID()                 // new each launch
 spawn(backend, { env: { ...process.env, LOCAL_APP_TOKEN: localAppToken } })
 ipcMain.handle('app-token-get', () => localAppToken)
 ```
 
-`users` tablosunda artık tek satır: `(id=1, username='local')`. Sessions/OAuth tabloları DROP edildi.
+The `users` table now has a single row: `(id=1, username='local')`. The sessions/OAuth tables were dropped.
 
-**Sonuç:** ~2000 satır silindi, 7 endpoint stub'a indi, 4 tablo kalktı, pytest %40 hızlandı.
+**Result:** ~2000 lines removed, 7 endpoints reduced to stubs, 4 tables gone, pytest 40% faster.
 
-**Ders:** Mimari, uygulama bağlamına uymalı. Web paternlerini lokal uygulamaya kopyalamak sadece teknik borç üretir.
+**Lesson:** architecture must fit the application's context. Copying web patterns into a local app only produces technical debt.
 
 ---
 
-### agy Macerası: CLI Embed Etmenin Sınırlarını Öğrendim (xD)
+### The agy Saga: I Learned the Limits of Embedding a CLI (xD)
 
-Projenin en büyük çıkmaz sokağıydı. Uzun süre bir **uyarı banner'ıyla** idare etti — ta ki doğru kanalı (`run_command` köprüsü) keşfedip **gerçekten çözene** kadar.
+The project's biggest dead end. It limped along behind a **warning banner** for a while — until I found the right channel (the `run_command` bridge) and **actually solved it.**
 
-#### Sahne 1: "27 günümüz var"
-Google'ın Gemini CLI'yi 27 günde kapatacağını öğrendim; yerine Antigravity (`agy`) geliyordu. Hot-swap basit görünüyordu: `--print` çağır, prompt'u stdin'den ver, çıktıyı oku. 3 saatlik iş gibi durdu. **Üç gün sürdü.**
+#### Scene 1: "We have 27 days"
+I learned Google would retire the Gemini CLI in 27 days; Antigravity (`agy`) was the replacement. The hot-swap looked simple: call `--print`, feed the prompt via stdin, read the output. It looked like a 3-hour job. **It took three days.**
 
-#### Sahne 2: "Tool çağrıları nerede?"
-agy text yanıt veriyordu ama dosya yazma isteklerinde MCP tool'ları **hiç çağrılmıyordu**. agy log'unda kritik satır: `checkpoint model generated tool calls`. agy'ye ve Codex'e sordum: **`--print` modu tool dispatch'i tasarım gereği engelliyor** dediler.
+#### Scene 2: "Where are the tool calls?"
+agy returned text, but on file-write requests the MCP tools were **never called**. The agy log had a key line: `checkpoint model generated tool calls`. I asked agy and Codex: **`--print` mode blocks tool dispatch by design**, they said.
 
-#### Sahne 3: "`-i` modu kullanırız!"
-`--print` yerine interactive (`-i`) modu önerdiler. İlk deneme:
+#### Scene 3: "We'll use `-i` mode!"
+They suggested interactive (`-i`) mode instead of `--print`. First attempt:
 ```
 bubbletea: could not open TTY: open /dev/tty: device not configured
 ```
-bubbletea (agy'nin TUI'si) PIPE'ı reddediyordu — gerçek bir PTY gerekiyordu.
+bubbletea (agy's TUI) refused the PIPE — a real PTY was required.
 
-#### Sahne 4: PTY ve Terminal Hijack Felaketi
-`pty.openpty()`, `termios`, `start_new_session=True` — hepsi kitabına göre. Çalıştırdım: agy'nin TUI'si (sign-in, spinner, izin promptları) **kullanıcının terminaline** aktı, backend stdout'tan hiçbir şey okuyamadı. Üstelik `--dangerously-skip-permissions` bile `-i` modunda native shell promptlarını bypass etmiyordu.
+#### Scene 4: The PTY and Terminal Hijack Disaster
+`pty.openpty()`, `termios`, `start_new_session=True` — all by the book. I ran it: agy's TUI (sign-in, spinners, permission prompts) leaked **into the user's terminal**, and the backend could read nothing from stdout. Worse, even `--dangerously-skip-permissions` didn't bypass the native shell prompts in `-i` mode.
 
-#### Sahne 5: Araştırma — Yalnız Değiliz
-GitHub'da `antigravity-cli` Issue #187 tam bizim sorunumuzdu, Google'dan yanıt yoktu. Gemini API dokümanında "Antigravity Agent: function_calling and mcp are not yet supported." Üç yol da kapalıydı.
+#### Scene 5: Research — We're Not Alone
+On GitHub, `antigravity-cli` Issue #187 was exactly our problem, with no response from Google. The Gemini API docs said "Antigravity Agent: function_calling and mcp are not yet supported." All three paths were closed.
 
-#### Sahne 6: Kabul ve Banner
-`--print`'e döndüm. agy bazen dosya yazıyor/komut çalıştırıyordu — bizim onay köprümüzü bypass ederek. Dürüst tek çözüm: kullanıcıya bunu söyleyen sarı, dismissable bir banner.
+#### Scene 6: Acceptance and a Banner
+I went back to `--print`. agy sometimes wrote files / ran commands — bypassing our approval bridge. The only honest solution: a dismissable yellow banner telling the user.
 
-#### Sahne 7: Çözüm — "Yanlış Kapıyı Çalıyormuşum"
-Banner birkaç gün idare etti. Sonra şu soruyu tekrar sordum: *agy unityMCP'yi nasıl kullanıyor?* Çünkü unityMCP **çalışıyordu** — agy sahneye GameObject ekleyebiliyordu. İzole bir testle cevabı buldum. agy kendi ağzıyla anlattı:
+#### Scene 7: The Fix — "I Was Knocking on the Wrong Door"
+The banner held for a few days. Then I asked again: *how does agy use unityMCP?* Because unityMCP **worked** — agy could add GameObjects to the scene. An isolated test gave the answer. agy explained it in its own words:
 
-> "`read_console` aracım HTTP MCP üzerinden lazily-loaded; o yüzden workspace'e bir Python script yazıp `streamable_http_client` ile `127.0.0.1:8080/mcp`'ye bağlanıp aracı oradan çağırdım."
+> "My `read_console` tool is lazily-loaded over an HTTP MCP server; so I wrote a Python script into the workspace and connected to `127.0.0.1:8080/mcp` with `streamable_http_client` to call the tool from there."
 
-**Aydınlanma anı.** agy `--print`'te MCP'yi native yüklemiyor — ama yeterince akıllı: bir HTTP MCP URL'i görünce `run_command` ile **kendi köprü script'ini yazıp** bağlanıyor. Yani `--print` modunda agy'nin gördüğü **tek gerçek kanal `run_command`.** Bunca zaman yanlış kapıyı çalıyormuşum.
+**The lightbulb moment.** agy doesn't natively load MCP under `--print` — but it's smart enough: seeing an HTTP MCP URL, it writes **its own bridge script** with `run_command` and connects. So under `--print` the **only real channel agy sees is `run_command`.** I'd been knocking on the wrong door the whole time.
 
-**Çözüm — `unityai` CLI köprüsü:**
-1. `unityai_cli.py` + `unityai` wrapper yazdım. Bu CLI, MCP tool'larıyla **aynı `approval_bridge`'i** paylaşıyor — `unityai save-file …` çağrısı da tıpkı `mcp__unityai__save_file` gibi onay kartını açıyor. agy bunu `run_command` ile çağırıyor.
-2. agy'nin **gerçek** built-in yazma araçlarını (`write_to_file`, `replace_file_content`, `multi_replace_file_content`) `disabledTools` ile kapattım. (Doğru isimleri agy'nin kendi araç listesini bastırarak öğrendim — eski tahmin isimler tutmuyordu.) Yazma kapanınca agy tek yol olarak `run_command → unityai`'ye düşüyor → **onay kartı çıkıyor.**
-3. Sarı banner'ı kaldırdım — artık yalan söylüyordu. agy de Claude Code/Codex gibi onay kapısından geçiyor.
+**The solution — the `unityai` CLI bridge:**
+1. I wrote `unityai_cli.py` + a `unityai` wrapper. This CLI **shares the same `approval_bridge`** as the MCP tools — a `unityai save-file …` call opens the approval card just like `mcp__unityai__save_file`. agy calls it via `run_command`.
+2. I disabled agy's **real** built-in write tools (`write_to_file`, `replace_file_content`, `multi_replace_file_content`) via `disabledTools`. (I learned the correct names by having agy dump its own tool list — the earlier guessed names never matched.) With writes disabled, agy's only path is `run_command → unityai` → **an approval card appears.**
+3. I removed the yellow banner — it was lying now. agy goes through the approval gate just like Claude Code/Codex.
 
-**Hâlâ duran ufak ödünleşme (dürüstlük payı):** `run_command`'ı kapatamıyoruz (çünkü `unityai`'yi de onunla çağırıyoruz). Bu yüzden agy teorik olarak ham shell ile onayı bypass edebilir; bunu sadece prompt'la caydırıyoruz. Claude Code & Codex MCP'yi native yüklediği için onlarda yasak **kesin**; agy'de değil. agy unityMCP'yi sahne kontrolü için serbestçe kullansın diye kabul edilebilir bir ödün.
+**A small remaining trade-off (in the spirit of honesty):** we can't disable `run_command` (we call `unityai` through it). So agy could theoretically bypass approval via raw shell; we only deter that with prompting. Claude Code & Codex load MCP natively, so for them the ban is **absolute**; for agy it isn't. An acceptable trade-off so agy can keep using unityMCP freely for scene control.
 
-#### Çıkarılan Dersler
-1. **CLI embed etmek API entegrasyonundan kategori olarak farklıdır** — CLI interaktif kullanıcı aracı olarak tasarlanır; programatik yönetmek yanlış katmanı zorlamaktır.
-2. **AI ajanına danışırken doğrula** — agy "PIPE'ta fallback yaparım" dedi, yanlıştı; Codex de aynısını söyledi. Ajanlar kütüphane davranışını hatırlamaz, tahmin eder.
-3. **"Çalışmıyor" bir cevaptır** — kırılgan bir hack yerine net bilgi vermek (geçici de olsa) her zaman daha iyidir.
-4. **GitHub Issues'i erken kontrol et** — Issue #187 ilk gün oradaydı; 2 gün kazanırdım.
-5. **Çıkmaz sokakları belgele** — bu bölüm bunun için var.
-
----
-
-### Pratik Kurallar (Katkı Yaparken)
-
-1. **CLI konfigürasyonlarını global scope'ta yaz** — headless mod genelde proje seviyesi config'i okumaz.
-2. **Onay gate'inde `strip()` karşılaştırması kullan** — trailing newline farkı gereksiz diff açar.
-3. **MCP araç isimlerini CLI built-in listesiyle karşılaştır** — isim çakışması sessizdir.
-4. **Route'ları erken ayır** — 500 satırı geçen route bölünmeli; en pahalı teknik borç buydu.
-5. **Subprocess olarak bir CLI çağırmadan önce upstream Issues'ları tara.**
-6. **AI ajanlarının kendi kütüphaneleri hakkındaki iddialarını izole testle doğrula.**
+#### Lessons
+1. **Embedding a CLI is categorically different from API integration** — a CLI is designed as an interactive user tool; driving it programmatically means forcing the wrong layer.
+2. **When you consult an AI agent, verify** — agy said "it falls back on PIPE," which was wrong; Codex said the same. Agents don't remember their libraries' behavior, they guess.
+3. **"It doesn't work" is an answer** — clear information (even if temporary) beats a fragile hack.
+4. **Check GitHub Issues early** — Issue #187 was there on day one; I'd have saved 2 days.
+5. **Document the dead ends** — that's what this section is for.
 
 ---
 
-## 🤝 Katkıda Bulunma
+### Practical Rules (When Contributing)
 
-Kalite kapısı üç ayrı test paketinden oluşuyor — **toplam ~3100 test**:
+1. **Write CLI configs at global scope** — headless mode usually doesn't read project-level config.
+2. **Use a `strip()` comparison in the approval gate** — a trailing-newline diff opens an unnecessary card.
+3. **Compare MCP tool names against the CLI's built-in list** — name collisions are silent.
+4. **Split routes early** — any route file over 500 lines should be split; this was the most expensive debt.
+5. **Scan upstream Issues before spawning a CLI as a subprocess.**
+6. **Verify an AI agent's claims about its own libraries with an isolated test.**
+
+---
+
+## 🤝 Contributing
+
+The quality gate is three separate test suites — **~3,100 tests total**:
 
 ```bash
-# Backend (~1118 test)
+# Backend (~1,118 tests)
 cd Backend && pytest
-#   Windows: venv\Scripts\python.exe -m pytest    (ortam: PYTHONUTF8=1)
+#   Windows: venv\Scripts\python.exe -m pytest   (env: PYTHONUTF8=1)
 
-# unity-mcp sunucusu (~1596 test)
+# unity-mcp server (~1,596 tests)
 cd unity-mcp/Server && pytest
 
-# Frontend (~396 test) + TypeScript kapısı
+# Frontend (~396 tests) + the TypeScript gate
 cd Frontend/frontend && npm test && npx tsc --noEmit
 ```
 
-CI'da (`.github/workflows/test.yml`) dört job birden koşar: **Backend testleri**, **unity-mcp Server testleri**, **Frontend kapısı (tsc + vitest)** ve **PowerShell sözdizimi denetimi**. Dördü de yeşil olmadan sürüm çıkmaz.
+CI (`.github/workflows/test.yml`) runs four jobs: **Backend tests**, **unity-mcp Server tests**, **Frontend gate (tsc + vitest)** and a **PowerShell syntax check**. No release ships unless all four are green.
 
-1. Repo'yu fork'la
-2. Feature branch aç (`git checkout -b feat/harika-ozellik`)
-3. Testleri çalıştır
-4. Pull request aç
-
-> 💡 **Yerel yeşil, CI hakkında hiçbir şey söylemez.** Bu depoda defalarca ölçüldü: platform farkı (Windows ↔ Linux), yol ayırıcıları ve ortam değişkenleri yerelde geçen bir testi CI'da kırabiliyor. Push'tan sonra `gh run list` bir alışkanlık değil, bir adım.
+1. Fork the repo
+2. Create a feature branch (`git checkout -b feat/amazing-feature`)
+3. Run the tests
+4. Open a pull request
 
 ---
 
-## 👤 Geliştirici
+## 👤 Developer
 
 **Burak Emre Erdemci**
 
-Unity geliştirme sürecini AI ile kökten dönüştürmek isteyen geliştiriciler için açık kaynaklı bir portfolyo ve araştırma çalışması.
+An open-source portfolio and research project for developers who want to fundamentally transform Unity development with AI.
 
 ---
 
-## 📄 Lisans
+## 📄 License
 
-**MIT + [Commons Clause](https://commonsclause.com/)** — bkz. [LICENSE](LICENSE)
+**MIT + [Commons Clause](https://commonsclause.com/)** — see [LICENSE](LICENSE)
 
-Bu proje **her zaman ücretsiz** kalacak şekilde lisanslanmıştır:
+This project is licensed to stay **free forever**:
 
-- ✅ **Kullanabilirsin** — kişisel, eğitim, araştırma, kurumsal, her amaçla
-- ✅ **İnceleyebilir, değiştirebilir, fork'layabilirsin**
-- ✅ **Yaptığın oyunları satabilirsin** — bu uygulamayla ürettiğin işler tamamen senindir
-- ❌ **Uygulamanın kendisini satamazsın** — fork'layıp ücretli bir ürün/servis olarak sunmak yasaktır
+- ✅ **Use it** — personal, educational, research, or commercial settings
+- ✅ **Study, modify and fork it**
+- ✅ **Sell the games you make with it** — whatever you create is entirely yours
+- ❌ **You may not sell the application itself** — forking it into a paid product or service is not permitted
 
-Üçüncü parti bileşenlerin lisansları için: [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)
-(Gömülü FFmpeg'in lisansı **platforma göre değişiyor** — Windows'ta LGPL-3.0,
-macOS/Linux'ta GPL-3.0 — ve her durumda yalnızca ayrı bir süreç olarak çağrılıyor.)
+For third-party component licenses, see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)
+(The bundled FFmpeg's licence **differs per platform** — LGPL-3.0 on Windows,
+GPL-3.0 on macOS/Linux — and in every case it is invoked only as a separate process.)
 
-Güvenlik açığı bildirimi: [SECURITY.md](SECURITY.md) ·
-Katkı rehberi: [CONTRIBUTING.md](CONTRIBUTING.md)
+Reporting a vulnerability: [SECURITY.md](SECURITY.md) ·
+Contributing: [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ---
 
-## Markalar
+## Trademarks
 
-Bu proje Unity Technologies ile **bağlantılı değildir**, onun tarafından
-desteklenmiyor ve onaylanmıyor. "Unity" ve "Unity Technologies", Unity
-Technologies veya bağlı kuruluşlarının ABD'de ve diğer ülkelerdeki ticari
-markaları ya da tescilli ticari markalarıdır. Aynı şekilde "Unreal Engine" Epic
-Games'in, "Godot" Godot Foundation'ın, "Claude" Anthropic'in, "Codex" ve "GPT"
-OpenAI'ın, "Gemini" ve "Antigravity" Google'ın, "GitHub Copilot" GitHub'ın,
-"Cursor" Anysphere'in markalarıdır. Bu adlar yalnızca uyumluluğu **tanımlamak**
-için kullanılıyor.
+This project is **not affiliated with, sponsored by, or endorsed by** Unity
+Technologies. "Unity" and "Unity Technologies" are trademarks or registered
+trademarks of Unity Technologies or its affiliates in the U.S. and elsewhere.
+Likewise "Unreal Engine" is a trademark of Epic Games, "Godot" of the Godot
+Foundation, "Claude" of Anthropic, "Codex" and "GPT" of OpenAI, "Gemini" and
+"Antigravity" of Google, "GitHub Copilot" of GitHub, and "Cursor" of Anysphere.
+These names are used only to **describe** compatibility.
