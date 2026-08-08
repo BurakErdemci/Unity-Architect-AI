@@ -93,13 +93,24 @@ def test_model_adi_DOGRU_CLI_ailesine_esleniyor(cli_durumu):
 
 def test_giris_yapilmadigi_OLCULDUYSE_sohbet_ACILMIYOR(cli_durumu, monkeypatch):
     from routes import config_routes as cr
+    from providers import oneshot_cli
 
     cli_durumu["installed"] = True
     # cursor'ın giriş probe'u ölçüyor ve "giriş yok" diyor.
     async def _yok(cmd, family, timeout=10):
         return "not logged in"
+    # ⚠️ İKİ AYRI YERE yamalanıyor ve bu fark önemli:
+    #   • `_run_cli_capture` → `config_routes`'un GLOBAL'i, closure oradan okuyor.
+    #   • `resolve_cli_cmd`  → `cli_doctor` bunu ÇAĞRI ANINDA `providers.oneshot_cli`
+    #     içinden import ediyor, yani `config_routes` üzerine yamamak HİÇBİR ŞEY
+    #     yapmıyor.
+    # İlk yazımda ikincisi yanlış yere konmuştu ve gerçek fonksiyon koşuyordu.
+    # Test bu makinede YEŞİLDİ — ama doğru sebeple değil: burada Cursor CLI kurulu
+    # olduğu için gerçek çözümleyici bir yol döndürüyordu. CI'da (Linux, Cursor yok)
+    # `None` döndü, giriş hiç ölçülmedi ve kapı açıldı → kırmızı.
+    # Ders: ortama bağlı bir test, ölçtüğünü sandığı şeyi ölçmüyor.
     monkeypatch.setattr(cr, "_run_cli_capture", _yok)
-    monkeypatch.setattr(cr, "resolve_cli_cmd", lambda ad: ["/bin/cursor"], raising=False)
+    monkeypatch.setattr(oneshot_cli, "resolve_cli_cmd", lambda ad: ["/bin/cursor"])
 
     d = _sor(_db("subscription", "cursor-composer"))
     assert d["provider"] == "cursor"
