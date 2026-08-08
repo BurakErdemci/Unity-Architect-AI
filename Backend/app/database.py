@@ -1,11 +1,15 @@
 import sqlite3
 import json
+import logging
 import os
 from contextlib import closing
 from datetime import datetime
 import bcrypt
 from typing import List, Dict, Any, Optional, Tuple
 from cryptography.fernet import Fernet, InvalidToken
+
+logger = logging.getLogger(__name__)
+
 
 class DatabaseManager:
     def __init__(self, db_path: str):
@@ -94,6 +98,25 @@ class DatabaseManager:
                 user_id INTEGER PRIMARY KEY, provider_type TEXT, model_name TEXT, api_key TEXT, use_multi_agent INTEGER DEFAULT 1,
                 FOREIGN KEY (user_id) REFERENCES users (id))''')
             self._migrate_ai_configs_table(conn)
+            # CLI oturum kimlikleri: "kaldığın yerden devam"ın TEK kalıcı kaydı.
+            #
+            # Neden gerekli (ölçüldü 8 Ağu 2026): Claude/Codex oturumları yalnız
+            # RAM'de yaşıyordu. Uygulama kapanınca kimlik ölüyor, sonraki mesajda
+            # DB transcript'i yeniden enjekte ediliyor ve o enjeksiyon 20.000
+            # karakterle sınırlı → gerçek bir sohbette 48 mesajın 17'si geçti,
+            # %71 karakter kayboldu. CLI ise tam transcript'i kendi diskinde
+            # tutuyor; tek eksik onu geri çağıracak kimlikti.
+            #
+            # `workspace` ŞART: Claude Code oturumları proje diziniyle anahtarlı.
+            # Kullanıcı klasör değiştirdiyse eski kimlikle resume etmek yanlış
+            # projenin geçmişini açardı — eşleşmiyorsa kimlik kullanılmıyor.
+            cursor.execute('''CREATE TABLE IF NOT EXISTS cli_sessions (
+                conversation_id INTEGER NOT NULL,
+                provider TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                workspace TEXT,
+                updated_at TEXT,
+                PRIMARY KEY (conversation_id, provider))''')
             # Eski Geçmiş (geriye uyumluluk)
             cursor.execute('''CREATE TABLE IF NOT EXISTS history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, timestamp TEXT, title TEXT,
@@ -361,6 +384,53 @@ class DatabaseManager:
                 {"id": r[0], "role": r[1], "content": r[2], "smells": json.loads(r[3]), "timestamp": r[4]}
                 for r in rows
             ]
+
+    # ===================== CLI OTURUM KİMLİKLERİ =====================
+    def save_cli_session(self, conv_id: int, provider: str,
+                         session_id: str, workspace: str = "") -> None:
+        """Tur bittiğinde CLI'ın oturum kimliğini saklar (idempotent, üzerine yazar)."""
+        if not conv_id or not provider or not session_id:
+            return
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        try:
+            with closing(sqlite3.connect(self.db_path)) as conn, conn:
+                conn.execute(
+                    'INSERT INTO cli_sessions (conversation_id, provider, session_id, workspace, updated_at) '
+                    'VALUES (?, ?, ?, ?, ?) '
+                    'ON CONFLICT(conversation_id, provider) DO UPDATE SET '
+                    'session_id=excluded.session_id, workspace=excluded.workspace, updated_at=excluded.updated_at',
+                    (conv_id, provider, session_id, workspace or "", now))
+        except sqlite3.Error as e:
+            # Oturum kimliğini saklayamamak bir kolaylık kaybı; sohbeti kırmamalı.
+            # Kaydedilemezse sonraki tur transcript enjeksiyonuna düşer (eski davranış).
+            logger.warning(f"[cli_sessions] kimlik saklanamadı: {e}")
+
+    def get_cli_session(self, conv_id: int, provider: str,
+                        workspace: str = "") -> Optional[str]:
+        """Saklı kimliği döndürür — YALNIZ workspace eşleşiyorsa.
+
+        Eşleşme şartı bir güvenlik değil DOĞRULUK önlemi: CLI oturumları proje
+        diziniyle anahtarlı, yani başka bir klasörde açılmış bir kimliği resume
+        etmek kullanıcıya YANLIŞ projenin geçmişini gösterirdi.
+        """
+        if not conv_id or not provider:
+            return None
+        try:
+            with closing(sqlite3.connect(self.db_path)) as conn, conn:
+                row = conn.execute(
+                    'SELECT session_id, workspace FROM cli_sessions '
+                    'WHERE conversation_id = ? AND provider = ?',
+                    (conv_id, provider)).fetchone()
+        except sqlite3.Error as e:
+            logger.warning(f"[cli_sessions] kimlik okunamadı: {e}")
+            return None
+        if not row:
+            return None
+        kayitli_ws = row[1] or ""
+        if (workspace or "") != kayitli_ws:
+            logger.info("[cli_sessions] workspace değişmiş → kimlik kullanılmıyor")
+            return None
+        return row[0] or None
 
     # ===================== HAFIZA (MEMORY) =====================
     def save_memory(self, conv_id: int, summary: str) -> None:

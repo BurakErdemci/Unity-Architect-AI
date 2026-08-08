@@ -53,6 +53,7 @@ def _build_handoff_context(memory: str, history_messages: list,
     msgs = history_messages[:-1] if history_messages else []
     lines: list = []
     used = 0
+    dusen = 0          # bütçeye sığmayan (yani modelin HİÇ görmediği) mesaj sayısı
     for m in reversed(msgs):
         role = (m.get("role") or "").upper()
         content = (m.get("content") or "").strip()
@@ -62,14 +63,26 @@ def _build_handoff_context(memory: str, history_messages: list,
             content = content[:per_msg_cap] + " …[kısaltıldı]"
         line = f"{role}: {content}"
         if used + len(line) > budget_chars and lines:
+            dusen = len([x for x in msgs if (x.get("content") or "").strip()]) - len(lines)
             break
         lines.append(line)
         used += len(line)
     lines.reverse()
     if lines:
+        # ⚠️ KIRPMA İŞARETLENMEK ZORUNDA. Eskiden bütçe dolunca sessizce `break`
+        # ediliyordu ve model transcript'in ORTASINDAN başladığını bilmiyordu —
+        # yani eksik olduğunu söyleyemiyor, hiç konuşulmamış gibi davranıyordu.
+        # Kullanıcıya bu "model aptallaştı" diye görünüyor. Ölçüldü (8 Ağu 2026,
+        # gerçek sohbet): 48 mesajın 17'si geçiyordu, %71 karakter kaybı.
+        # Aynı deponun diğer iki yolu (agent_runner'daki agy ve one-shot CLI
+        # dalları) bu işareti zaten koyuyordu; eksik olan yalnız bu yoldu.
+        bas = ""
+        if dusen > 0:
+            bas = (f"…[bu sohbetin daha ESKİ {dusen} mesajı bağlam sınırına sığmadı ve "
+                   "aşağıda YOK. Gerekirse kullanıcıya sor, hatırlıyormuş gibi yapma.]\n")
         parts.append(
             "[SOHBET GEÇMİŞİ — bu konuşma başka bir AI CLI ile sürdürülmüş olabilir; "
-            "aşağıdaki geçmişi dikkate alıp kaldığın yerden devam et]\n" + "\n".join(lines)
+            "aşağıdaki geçmişi dikkate alıp kaldığın yerden devam et]\n" + bas + "\n".join(lines)
         )
     return "\n\n".join(parts)
 

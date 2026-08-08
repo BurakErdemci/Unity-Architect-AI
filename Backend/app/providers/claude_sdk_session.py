@@ -818,7 +818,12 @@ class ClaudeSDKSession:
         approval_timeout: float = APPROVAL_TIMEOUT_S,
         auto_approve: bool = False,
         effort: Optional[str] = None,
+        resume_id: Optional[str] = None,
     ):
+        # CLI'ın KENDİ diskindeki oturumu geri çağıran kimlik (DB'de saklanıyor).
+        # Uygulama yeniden başladığında tam transcript bu sayede geri geliyor;
+        # yoksa yalnız 20.000 karakterlik DB enjeksiyonu kalıyor (%71 kayıp ölçüldü).
+        self.resume_id = resume_id
         self.conversation_id = conversation_id
         self.model = model
         self.cwd = cwd
@@ -901,6 +906,13 @@ class ClaudeSDKSession:
         _cli = claude_ikilisini_coz()
         if _cli:
             opts_kwargs["cli_path"] = _cli
+        # Kaldığın yerden devam: CLI kendi transcript'ini diskte tutuyor, biz yalnız
+        # kimliği saklıyoruz. Kimlik geçersizse (dosya silinmiş, başka makine) SDK
+        # hata verir ve `stream()` içindeki mevcut "session sıkışmış → reset + retry"
+        # dalı temiz bir oturumla yeniden dener; yani başarısızlık ÖLÜMCÜL DEĞİL.
+        if self.resume_id:
+            opts_kwargs["resume"] = self.resume_id
+            logger.info(f"[ClaudeSDKSession:{self.conversation_id}] resume={self.resume_id}")
         if self.model:
             opts_kwargs["model"] = self.model
         if self.effort:
