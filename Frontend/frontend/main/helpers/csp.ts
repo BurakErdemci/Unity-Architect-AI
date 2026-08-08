@@ -130,13 +130,16 @@ export const buildPolicy = (isProd: boolean): string => {
 
     // data: ölçülmüş bir ihtiyaç: sohbete eklenen görseller ve önizlemeleri
     // FileReader.readAsDataURL ile data: URI olarak render ediliyor
-    // (animated-ai-chat.tsx, ChatPanel.tsx). unsplash ise giriş ekranının
-    // hero görseli (AuthScreen.tsx) — kaldırılınca `img-src <-
-    // https://images.unsplash.com/...` ihlali ölçüldü.
+    // (animated-ai-chat.tsx, ChatPanel.tsx).
+    // ⛔ `https://images.unsplash.com` KALDIRILDI (8 Ağu 2026): o izin yalnızca
+    // `AuthScreen.tsx`'in uzak hero görseli için vardı ve o dosya ölü koddu
+    // (hiçbir yerden import edilmiyordu) — silindi. Uygulama artık hiçbir uzak
+    // görsel çekmiyor, yani izin sürdürülürse bedeli olan ama karşılığı olmayan
+    // bir dış kaynak açık kalırdı. Ölü kodu silmek CSP'yi de daralttı.
     // blob: ise ÖLÇÜLMÜŞ DEĞİL, temkinli bir izin: kodda createObjectURL
     // bulunmadı. Güvenlik bedeli yok (blob'u sayfanın kendisi üretir, dışarı
     // veri taşımaz), o yüzden bırakıldı.
-    'img-src': ["'self'", 'data:', 'blob:', 'https://images.unsplash.com'],
+    'img-src': ["'self'", 'data:', 'blob:'],
 
     // Sızdırmayı asıl kapatan direktif bu. Uygulama dışarıya yalnızca kendi
     // yerel backend'ine konuşuyor; sağlayıcı API'leri (Claude/Codex/...)
