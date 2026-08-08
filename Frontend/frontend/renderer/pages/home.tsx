@@ -7,7 +7,7 @@ import {
   Code2, Activity, X, PanelRightClose,
   Zap, Code, Layout, MessageSquare
 } from 'lucide-react';
-import { LangContext, translations, type Lang } from '../lib/i18n';
+import { LangContext, osDilindenDil, translations, type Lang } from '../lib/i18n';
 import { sohbetKilitliMi } from '../lib/providerGate';
 import { getUnsavedEditorContext } from '../lib/editor-context';
 
@@ -197,7 +197,13 @@ export default function Home() {
   const [lang, setLangState] = useState<Lang>('tr');
   useEffect(() => {
     const stored = localStorage.getItem('app-lang') as Lang | null;
-    if (stored === 'tr' || stored === 'en') setLangState(stored);
+    if (stored === 'tr' || stored === 'en') { setLangState(stored); return; }
+    // Kayıtlı tercih YOK → işletim sistemi dilinden türet. Eskiden burada hiçbir
+    // şey yapılmıyordu, yani dil sabit 'tr' kalıyordu ve İngilizce kullanıcı hem
+    // Türkçe arayüz hem Türkçe MODEL CEVABI alıyordu (gerekçe: osDilindenDil).
+    // Bilerek KAYDEDİLMİYOR: türetilmiş bir varsayımı kalıcı tercih gibi
+    // yazmak, kullanıcı OS dilini değiştirdiğinde onu eski dilde kilitlerdi.
+    setLangState(osDilindenDil(typeof navigator !== 'undefined' ? navigator.language : null));
   }, []);
   const setLang = (l: Lang) => { setLangState(l); localStorage.setItem('app-lang', l); };
   const t = (key: string) => translations[lang][key] ?? key;

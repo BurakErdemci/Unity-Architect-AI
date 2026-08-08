@@ -352,6 +352,22 @@ const en: Record<keyof typeof tr, string> = {
 
 export const translations: Record<Lang, Record<string, string>> = { tr, en };
 
+/** İşletim sistemi / tarayıcı yerel ayarından uygulama dilini türetir.
+ *
+ * Neden gerekti: kayıtlı tercih yokken dil sabit `'tr'` kalıyordu ve bunun
+ * bedeli iki katmanlıydı — İngilizce bir kullanıcı hem Türkçe arayüz görüyor,
+ * hem `language: 'tr'` backend'e gidip `prompts.get_language_instr` modele
+ * "yanıtını tamamen TÜRKÇE ver" dedirtiyordu. Yani eksik olan tek satır,
+ * arayüzü değil MODELİN CEVABINI da bozuyordu.
+ *
+ * Türkçe DIŞINDAKİ her şey `en`'e düşüyor: desteklenen iki dil var ve bilinmeyen
+ * bir yerel ayarda İngilizce'ye düşmek, Türkçe'ye düşmekten kıyaslanamaz derecede
+ * daha az yanlış.
+ */
+export function osDilindenDil(navigatorLanguage: string | undefined | null): Lang {
+  return (navigatorLanguage ?? '').toLowerCase().startsWith('tr') ? 'tr' : 'en';
+}
+
 export interface LangContextValue {
   lang: Lang;
   setLang: (l: Lang) => void;
