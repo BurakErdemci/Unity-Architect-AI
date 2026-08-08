@@ -2,6 +2,7 @@ import { AlertTriangle, CheckCircle2, FileCode, FileDown, Folder, X } from "luci
 import { AnimatePresence, motion } from "framer-motion";
 
 import { ExportModalState } from "./types";
+import { useLang } from "../../lib/i18n";
 
 
 interface ExportModalProps {
@@ -25,7 +26,9 @@ export const ExportModal = ({
   onChangeExportDir,
   onExportSingleFile,
   onExportMultipleFiles,
-}: ExportModalProps) => (
+}: ExportModalProps) => {
+  const { t } = useLang();
+  return (
   <AnimatePresence>
     {exportModal?.isOpen && (
       <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[100]" onClick={() => !exportModal.exportResult && onClose()}>
@@ -47,7 +50,7 @@ export const ExportModal = ({
               </div>
               <div className="text-center">
                 <h3 className="text-base font-bold text-white mb-1">
-                  {exportModal.exportResult.success ? 'Export Başarılı!' : 'Export Hatası'}
+                  {exportModal.exportResult.success ? t('export.success') : t('export.error')}
                 </h3>
                 <p className="text-[13px] text-slate-400 whitespace-pre-line">
                   {exportModal.exportResult.message}
@@ -60,7 +63,7 @@ export const ExportModal = ({
                 onClick={onClose}
                 className="mt-2 px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-bold text-xs tracking-wide transition-all"
               >
-                TAMAM
+                {t('export.ok')}
               </button>
             </div>
           ) : (
@@ -72,10 +75,10 @@ export const ExportModal = ({
                   </div>
                   <div>
                     <h2 className="text-base font-bold text-white">
-                      {exportModal.multiFile ? 'Çoklu Dosya Export' : 'Unity Projesine Aktar'}
+                      {exportModal.multiFile ? t('export.multiTitle') : t('export.singleTitle')}
                     </h2>
                     <p className="text-[10px] text-slate-500 mt-0.5">
-                      {exportModal.multiFile ? `${exportModal.files.length} dosya oluşturulacak` : 'Kodu .cs dosyası olarak kaydet'}
+                      {exportModal.multiFile ? t('export.multiSubtitle', { sayi: exportModal.files.length }) : t('export.singleSubtitle')}
                     </p>
                   </div>
                 </div>
@@ -87,13 +90,13 @@ export const ExportModal = ({
               <div className="mb-4 p-3 bg-slate-900/50 rounded-xl border border-slate-800/50 hover:border-slate-700/60 transition-colors">
                 <div className="flex items-center justify-between mb-1">
                   <div className="flex items-center gap-2 text-[10px] text-slate-500 font-semibold uppercase tracking-wider">
-                    <Folder size={11} /> Hedef Dizin
+                    <Folder size={11} /> {t('export.targetDir')}
                   </div>
                   <button
                     onClick={onChangeExportDir}
                     className="text-[10px] text-blue-400 hover:text-blue-300 font-semibold transition-colors px-2 py-0.5 rounded hover:bg-blue-500/10"
                   >
-                    Değiştir
+                    {t('export.change')}
                   </button>
                 </div>
                 <p className="text-[12px] text-slate-300 font-mono truncate">
@@ -104,7 +107,7 @@ export const ExportModal = ({
               {exportModal.multiFile ? (
                 <div className="space-y-3 mb-5">
                   <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider">
-                    Oluşturulacak Dosyalar
+                    {t('export.filesToCreate')}
                   </label>
                   <div className="space-y-1.5 max-h-[240px] overflow-y-auto custom-scrollbar">
                     {exportModal.files.map((file, idx) => (
@@ -115,7 +118,7 @@ export const ExportModal = ({
                           <p className="text-[10px] text-slate-600 truncate">{file.path.replace(workspacePath || '', '').replace(/^\//, '')}</p>
                         </div>
                         <span className="text-[9px] text-slate-600 shrink-0">
-                          {file.code.split('\n').length} satır
+                          {t('export.lines', { sayi: file.code.split('\n').length })}
                         </span>
                       </div>
                     ))}
@@ -125,14 +128,14 @@ export const ExportModal = ({
                     className="w-full bg-emerald-600 hover:bg-emerald-500 text-white p-3 rounded-xl font-bold text-xs tracking-wide transition-all flex items-center justify-center gap-2"
                   >
                     <FileDown size={14} />
-                    Tümünü Unity'ye Yaz ({exportModal.files.length} dosya)
+                    {t('export.writeAll', { sayi: exportModal.files.length })}
                   </button>
                 </div>
               ) : (
                 <div className="space-y-4 mb-5">
                   <div>
                     <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
-                      Dosya Adı
+                      {t('export.fileName')}
                     </label>
                     <input
                       type="text"
@@ -148,10 +151,9 @@ export const ExportModal = ({
                     <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl flex items-start gap-2.5">
                       <AlertTriangle size={16} className="text-amber-400 shrink-0 mt-0.5" />
                       <div>
-                        <p className="text-[12px] text-amber-300 font-medium">Dosya zaten var!</p>
+                        <p className="text-[12px] text-amber-300 font-medium">{t('export.exists')}</p>
                         <p className="text-[11px] text-amber-400/70 mt-0.5">
-                          Bu isimde bir dosya mevcut. Üzerine yazmak isterseniz aşağıdaki butonu kullanın,
-                          veya dosya adını değiştirin.
+                          {t('export.existsHint')}
                         </p>
                       </div>
                     </div>
@@ -159,8 +161,8 @@ export const ExportModal = ({
 
                   <div className="p-3 bg-slate-900/30 rounded-xl border border-slate-800/30">
                     <div className="flex items-center justify-between mb-2">
-                      <span className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider">Kod Önizleme</span>
-                      <span className="text-[10px] text-slate-600">{exportModal.codeString.split('\n').length} satır</span>
+                      <span className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider">{t('export.preview')}</span>
+                      <span className="text-[10px] text-slate-600">{t('export.lines', { sayi: exportModal.codeString.split('\n').length })}</span>
                     </div>
                     <pre className="text-[11px] text-slate-400 font-mono max-h-[120px] overflow-y-auto custom-scrollbar leading-relaxed">
                       {exportModal.codeString.substring(0, 400)}{exportModal.codeString.length > 400 ? '\n...' : ''}
@@ -173,13 +175,13 @@ export const ExportModal = ({
                       className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white p-3 rounded-xl font-bold text-xs tracking-wide transition-all flex items-center justify-center gap-2"
                     >
                       <FileDown size={14} />
-                      {exportModal.existingFile ? 'Üzerine Yaz' : 'Dosyayı Oluştur'}
+                      {exportModal.existingFile ? t('export.overwrite') : t('export.create')}
                     </button>
                     <button
                       onClick={onClose}
                       className="px-4 py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl font-bold text-xs tracking-wide transition-all"
                     >
-                      İptal
+                      {t('export.cancel')}
                     </button>
                   </div>
                 </div>
@@ -190,4 +192,5 @@ export const ExportModal = ({
       </div>
     )}
   </AnimatePresence>
-);
+  );
+};

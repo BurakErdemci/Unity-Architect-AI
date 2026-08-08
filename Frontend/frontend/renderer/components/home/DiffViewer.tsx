@@ -4,6 +4,7 @@ import { DiffEditor } from '@monaco-editor/react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { AlertTriangle, Check, CheckCircle2, FileCode, X } from 'lucide-react';
 import { defineUnityTheme, THEME_NAME } from './monaco-theme';
+import { useLang } from '../../lib/i18n';
 
 export interface DiffData {
   original_code: string;
@@ -20,7 +21,9 @@ interface DiffViewerProps {
   onReject: () => void;
 }
 
-export const DiffViewer = ({ diffData, filename, applied, onAccept, onReject }: DiffViewerProps) => (
+export const DiffViewer = ({ diffData, filename, applied, onAccept, onReject }: DiffViewerProps) => {
+  const { t } = useLang();
+  return (
   <AnimatePresence mode="wait">
     {applied ? (
       <motion.div
@@ -33,7 +36,7 @@ export const DiffViewer = ({ diffData, filename, applied, onAccept, onReject }: 
           <CheckCircle2 size={14} className="text-emerald-400" />
         </div>
         <div>
-          <p className="text-[12px] font-semibold text-emerald-300 leading-none">{filename || 'Dosya'} güncellendi</p>
+          <p className="text-[12px] font-semibold text-emerald-300 leading-none">{t('diff.updated', { ad: filename || t('diff.fileFallback') })}</p>
           <p className="text-[11px] text-slate-500 mt-1">{diffData.explanation}</p>
         </div>
       </motion.div>
@@ -54,18 +57,18 @@ export const DiffViewer = ({ diffData, filename, applied, onAccept, onReject }: 
               <FileCode size={13} className="text-blue-400" />
             </div>
             <span className="text-[13px] font-semibold text-slate-200 tracking-tight">
-              {filename || 'Düzeltme Önerisi'}
+              {filename || t('diff.suggestionTitle')}
             </span>
             <span className="text-[10px] text-slate-600 font-mono">patch</span>
           </div>
           <div className="flex items-center gap-3 text-[10px] font-mono">
             <span className="flex items-center gap-1">
               <span className="w-2 h-2 rounded-full bg-red-500/60" />
-              <span className="text-slate-600">eski</span>
+              <span className="text-slate-600">{t('diff.old')}</span>
             </span>
             <span className="flex items-center gap-1">
               <span className="w-2 h-2 rounded-full bg-emerald-500/60" />
-              <span className="text-slate-600">yeni</span>
+              <span className="text-slate-600">{t('diff.new')}</span>
             </span>
           </div>
         </div>
@@ -74,7 +77,7 @@ export const DiffViewer = ({ diffData, filename, applied, onAccept, onReject }: 
         <div className="px-4 py-3 border-b border-white/[0.04] flex items-start gap-3 bg-[#0e0e11]">
           <div className="w-1 self-stretch rounded-full bg-amber-500/40 shrink-0" />
           <p className="text-[12px] text-slate-300 leading-relaxed">
-            <span className="font-semibold text-amber-400/90">Düzeltme · </span>
+            <span className="font-semibold text-amber-400/90">{t('diff.badge')}</span>
             {diffData.explanation}
           </p>
         </div>
@@ -124,20 +127,21 @@ export const DiffViewer = ({ diffData, filename, applied, onAccept, onReject }: 
             className="group flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-[12px] font-semibold transition-all duration-150 shadow-lg shadow-emerald-900/30"
           >
             <Check size={13} strokeWidth={2.5} />
-            Kabul Et
+            {t('diff.accept')}
           </button>
           <button
             onClick={onReject}
             className="flex items-center gap-2 px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/[0.07] text-slate-400 hover:text-slate-300 text-[12px] font-semibold transition-all duration-150"
           >
             <X size={13} strokeWidth={2.5} />
-            Reddet
+            {t('diff.reject')}
           </button>
           <span className="text-[10px] text-slate-700 ml-auto tracking-wide">
-            kabul edersen dosya güncellenir
+            {t('diff.acceptHint')}
           </span>
         </div>
       </motion.div>
     )}
   </AnimatePresence>
-);
+  );
+};

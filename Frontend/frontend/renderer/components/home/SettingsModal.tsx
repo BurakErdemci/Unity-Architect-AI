@@ -281,7 +281,7 @@ export const SettingsModal = ({
                 value={aiConfig.model_name}
                 onChange={e => onChange({ ...aiConfig, model_name: e.target.value })}
                 className="w-full bg-white/[0.04] border border-white/[0.08] rounded-xl p-3 text-white text-sm outline-none focus:border-blue-500/60 focus:bg-white/[0.06] transition-colors placeholder:text-slate-600"
-                placeholder={DEFAULT_MODELS[aiConfig.provider_type] || "model-adı-girin"}
+                placeholder={DEFAULT_MODELS[aiConfig.provider_type] || t('settings.modelPlaceholder')}
               />
               {MODEL_HINTS[aiConfig.provider_type] && (
                 <div className="flex flex-wrap gap-1.5 mt-2">

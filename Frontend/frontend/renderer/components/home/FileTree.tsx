@@ -14,6 +14,7 @@ import {
   Trash2 
 } from "lucide-react";
 import { FileEntry } from './types';
+import { useLang } from '../../lib/i18n';
 
 interface FileTreeProps {
   entries: FileEntry[];
@@ -55,6 +56,7 @@ const GIT_BADGE: Record<string, { letter: string; text: string }> = {
 };
 
 export const FileTree: React.FC<FileTreeProps> = (props) => {
+  const { t } = useLang();
   const {
     entries, depth = 0, openedFilePath, expandedDirs, dirContents,
     toggleDir, openFile, treeDragSource, treeDragTarget,
@@ -137,12 +139,12 @@ export const FileTree: React.FC<FileTreeProps> = (props) => {
                       {entry.name}
                     </span>
                     {badge && (
-                      <span className={`${badge.text} text-[10px] font-bold shrink-0 pr-1 group-hover:hidden`} title={gs === 'untracked' ? 'Yeni (untracked)' : gs === 'modified' ? 'Değiştirildi' : gs === 'added' ? 'Eklendi (staged)' : 'Silindi'}>
+                      <span className={`${badge.text} text-[10px] font-bold shrink-0 pr-1 group-hover:hidden`} title={gs === 'untracked' ? t('git.untracked') : gs === 'modified' ? t('git.modified') : gs === 'added' ? t('git.added') : t('git.deleted')}>
                         {badge.letter}
                       </span>
                     )}
                     {gs === 'contains' && (
-                      <span className="text-[#E2C08D] text-[9px] shrink-0 pr-1.5 group-hover:hidden" title="Bu klasörde değişiklik var">●</span>
+                      <span className="text-[#E2C08D] text-[9px] shrink-0 pr-1.5 group-hover:hidden" title={t('git.dirDirty')}>●</span>
                     )}
                   </>
                 );

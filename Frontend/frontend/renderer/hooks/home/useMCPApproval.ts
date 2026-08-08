@@ -21,6 +21,7 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 import axios from 'axios';
 import { PendingFile } from '../../components/home/FileCreationApproval';
+import { cevir } from '../../lib/i18n';
 
 /**
  * Ekranda karar bekleyen MCP isteği. Kartı çizen taraf gate kimliğini ve
@@ -153,14 +154,14 @@ export const unityOzeti = (tool: string, params: any): string => {
     const nesne = deger !== null && typeof deger === 'object';
     if (nesne) {
       if (gorulen.has(deger as object)) {
-        satirlar.push(`${onek}: (döngüsel referans — gösterilmedi)`);
+        satirlar.push(`${onek}: ${cevir('mcp.circularRef')}`);
         return;
       }
       gorulen.add(deger as object);
       const girdiler: Array<[string, any]> = Array.isArray(deger)
         ? deger.map((v, i) => [String(i), v])
         : Object.entries(deger);
-      if (girdiler.length === 0) { satirlar.push(`${onek}: (boş)`); return; }
+      if (girdiler.length === 0) { satirlar.push(`${onek}: ${cevir('mcp.emptyValue')}`); return; }
       for (const [anahtar, alt] of girdiler) {
         yaz(onek ? `${onek}.${anahtar}` : anahtar, alt, derinlik + 1);
       }
@@ -169,7 +170,7 @@ export const unityOzeti = (tool: string, params: any): string => {
     const metin = typeof deger === 'string' ? deger : JSON.stringify(deger);
     const guvenli = metin === undefined ? 'undefined' : String(metin);
     const kisa = guvenli.length > OZET_DEGER_SINIRI
-      ? `${guvenli.slice(0, OZET_DEGER_SINIRI)}… [+${guvenli.length - OZET_DEGER_SINIRI} karakter gizlendi]`
+      ? `${guvenli.slice(0, OZET_DEGER_SINIRI)}… [+${cevir('mcp.charsHidden', { sayi: guvenli.length - OZET_DEGER_SINIRI })}]`
       : guvenli;
     satirlar.push(`${onek}: ${kisa}`);
   };
@@ -198,7 +199,7 @@ export const unityOzeti = (tool: string, params: any): string => {
     ? (params as any).safety_checks
     : undefined;
   if (guvenlikBayragi !== undefined && guvenlikBayragi !== true) {
-    satirlar.push('⚠️ GÜVENLİK KONTROLLERİ KAPALI — dosya silme, süreç başlatma ve sonsuz döngü kontrolleri bu çağrıda ÇALIŞMAYACAK.');
+    satirlar.push(cevir('mcp.safetyOff'));
   }
   const hedef = params && typeof params === 'object' ? (params as any).unity_instance : undefined;
   if (typeof hedef === 'string' && hedef) {
@@ -209,7 +210,7 @@ export const unityOzeti = (tool: string, params: any): string => {
     yaz(anahtar, deger, 0);
   }
   if (atlanan > 0) {
-    satirlar.push(`… ${atlanan} alan daha gösterilmedi — kart sınırına ulaşıldı`);
+    satirlar.push(cevir('mcp.fieldsHidden', { sayi: atlanan }));
   }
   return satirlar.length ? `${tool}\n${satirlar.join('\n')}` : tool;
 };
@@ -297,11 +298,7 @@ export const useMCPApproval = ({
       console.warn(`[MCP] /mcp-pending erişilemiyor (${failStreakRef.current}. hata)`, err);
       if (failStreakRef.current >= POLL_FAILURE_ALERT_AFTER && !alertedRef.current) {
         alertedRef.current = true;  // her saniye tekrar basmasın
-        showToast?.(
-          'MCP onay isteklerine ulaşılamıyor. Bir onay kartı beklediyseniz ' +
-          'gelmeyecek ve istek zaman aşımıyla reddedilecek.',
-          'error',
-        );
+        showToast?.(cevir('mcp.pollUnreachable'), 'error');
       }
       return;
     }
@@ -364,7 +361,7 @@ export const useMCPApproval = ({
             data: {
               original_code: original,
               fixed_code: content,
-              explanation: `MCP: ${path} güncelleniyor`,
+              explanation: cevir('mcp.updatingFile', { yol: path }),
               editor_hint: path,
             },
             gateId,

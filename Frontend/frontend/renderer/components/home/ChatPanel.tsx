@@ -135,7 +135,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
    * yazılabilir" söylüyor.
    */
   const writeErrorText = (name: string, res: any) =>
-    `${name} yazılamadı: ${res?.error || 'bilinmeyen hata'}`;
+    t('chat.writeFailed', { ad: name, hata: res?.error || t('common.unknownError') });
 
   // 12400 → "12.4k" (aktivite satırı + usage özeti için)
   const fmtTok = (n?: number | null) =>
@@ -252,7 +252,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           // Hiçbir yazım denenmedi: diskte değişen bir şey yok.
           // Eskiden burada da "✅ Dosya güncellendi" basılıyordu.
           setPendingFix((prev: any) => prev ? { ...prev, applied: true } : null);
-          showToast('Değişiklik editöre uygulandı — dosyaya yazılmadı', 'info');
+          showToast(t('chat.diffApplied'), 'info');
           return;
         }
         const res = await ipc.invoke('write-file', openedFilePath, fixedCode, workspacePath);
@@ -263,7 +263,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
         setPendingFix((prev: any) => prev ? { ...prev, applied: true } : null);
         refreshFileTree();
         setTimeout(() => analyzeProject(true), 1500);
-        showToast(`✅ Dosya güncellendi`, 'success');
+        showToast(t('chat.fileUpdated'), 'success');
       }}
       onReject={() => setPendingFix(null)}
     />
@@ -359,8 +359,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                   {/* Scope Warning Buttons */}
                   {msg.content.includes('SCOPE_WARNING_ACTIVE') && msgIdx === messages.length - 1 && !loading && (
                     <div className="flex gap-2 mt-3">
-                      <button onClick={() => sendMessage('Tam Sistemi Üret')} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600/20 border border-blue-500/30 text-blue-300 text-[12px] font-medium hover:bg-blue-600/35 transition-colors"> ✅ {t('chat.generateFull')} </button>
-                      <button onClick={() => sendMessage('Basit Versiyon')} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-700/40 border border-slate-600/30 text-slate-300 text-[12px] font-medium hover:bg-slate-700/60 transition-colors"> ⚡ {t('chat.simpleVersion')} </button>
+                      <button onClick={() => sendMessage(t('chat.generateFull'))} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600/20 border border-blue-500/30 text-blue-300 text-[12px] font-medium hover:bg-blue-600/35 transition-colors"> ✅ {t('chat.generateFull')} </button>
+                      <button onClick={() => sendMessage(t('chat.simpleVersion'))} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-700/40 border border-slate-600/30 text-slate-300 text-[12px] font-medium hover:bg-slate-700/60 transition-colors"> ⚡ {t('chat.simpleVersion')} </button>
                     </div>
                   )}
 
@@ -438,11 +438,11 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                         // değil (bkz. decisionToast'ın gerekçesi). 2026-07-29'da bu
                         // iki satırdan biri düzeltilip diğeri unutulursa aynı sınıf
                         // yarım kapanmış olur.
-                        if (!failure) showToast('Onayınız gönderildi — komut başlatılıyor', 'info');
+                        if (!failure) showToast(t('mcp.sentCommand'), 'info');
                       }}
                       onCancel={async () => {
                         const failure = await onApproveCommand(pendingCommand.gateId, false);
-                        if (!failure) showToast('Komut iptal edildi', 'info');
+                        if (!failure) showToast(t('mcp.commandCancelled'), 'info');
                       }}
                     />
                   )}
@@ -563,7 +563,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           <button
             onClick={() => setLightboxSrc(null)}
             className="absolute top-4 right-4 h-9 w-9 rounded-full bg-white/10 hover:bg-white/20 text-white text-lg leading-none flex items-center justify-center transition-colors"
-            title="Kapat (Esc)"
+            title={t('chat.closeEsc')}
           >
             ✕
           </button>

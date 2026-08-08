@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { AlertTriangle } from 'lucide-react';
+import { cevir } from '../../lib/i18n';
 
 /**
  * Uygulama-içi onay dialog'u — native window.confirm() yerine.
@@ -23,7 +24,13 @@ interface ConfirmState {
 
 let _trigger: ((opts: { message: string; confirmLabel: string; cancelLabel: string }) => Promise<boolean>) | null = null;
 
-export function confirmDialog(message: string, confirmLabel = 'Sil', cancelLabel = 'İptal'): Promise<boolean> {
+// Varsayilan etiketler cagri aninda cevriliyor: bu modul `_app.tsx`'te,
+// yani `LangContext.Provider`'in DISINDA duruyor ve `useLang` cagiramaz.
+export function confirmDialog(
+  message: string,
+  confirmLabel = cevir('confirm.delete'),
+  cancelLabel = cevir('confirm.cancel'),
+): Promise<boolean> {
   if (!_trigger) {
     return Promise.resolve(typeof window !== 'undefined' ? window.confirm(message) : false);
   }

@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Gauge, Layers, Clock, ChevronDown, ChevronRight } from 'lucide-react';
 import { MarkdownRenderer } from './MarkdownRenderer';
+import { useLang } from '../../lib/i18n';
 
 /**
  * Claude Code'un metin döndüren slash komutlarını düz markdown baloncuğu yerine
@@ -24,6 +25,7 @@ const ContextCard: React.FC<{
   workspacePath?: string | null;
   onOpenFile?: (path: string) => void;
 }> = ({ text, workspacePath, onOpenFile }) => {
+  const { t } = useLang();
   const [open, setOpen] = useState(false);
   const head = useMemo(() => {
     const m = text.match(/\*\*Tokens:\*\*\s*([\d.]+\s*[kKmMbB]?)\s*\/\s*([\d.]+\s*[kKmMbB]?)\s*\((\d+(?:\.\d+)?)%\)/);
@@ -45,7 +47,7 @@ const ContextCard: React.FC<{
     <div className="bg-[#000000] rounded-xl border border-violet-500/20 overflow-hidden">
       <div className="flex items-center gap-2 px-4 py-2.5 border-b border-violet-500/20">
         <Layers size={14} className="text-violet-400" />
-        <span className="text-[11px] font-semibold uppercase tracking-wider text-violet-400">Bağlam</span>
+        <span className="text-[11px] font-semibold uppercase tracking-wider text-violet-400">{t('slash.context')}</span>
         <span className="text-[10px] text-slate-500 ml-auto font-mono">/context</span>
       </div>
       <div className="px-4 py-3 space-y-2.5">
@@ -61,7 +63,7 @@ const ContextCard: React.FC<{
         </div>
         <button onClick={() => setOpen(v => !v)} className="flex items-center gap-1 text-[10px] text-slate-500 hover:text-slate-300 transition-colors">
           {open ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
-          <span>Kategori dökümü</span>
+          <span>{t('slash.categoryBreakdown')}</span>
         </button>
         {open && (
           <div className="prose prose-invert max-w-none text-[11px] leading-relaxed prose-table:text-[10.5px] prose-th:py-1 prose-td:py-0.5 border-t border-slate-800 pt-2">
@@ -119,6 +121,7 @@ interface Props {
 }
 
 export const SlashCommandCard: React.FC<Props> = ({ command, text, workspacePath, onOpenFile }) => {
+  const { t } = useLang();
   if (command === 'context') return <ContextCard text={text} workspacePath={workspacePath} onOpenFile={onOpenFile} />;
 
   const { subtitle, bars, stats, notes } = useMemo(() => parseSlashOutput(text), [text]);
@@ -138,7 +141,7 @@ export const SlashCommandCard: React.FC<Props> = ({ command, text, workspacePath
       {/* Başlık */}
       <div className="flex items-center gap-2 px-4 py-2.5 border-b border-blue-500/20">
         <Gauge size={14} className="text-blue-400" />
-        <span className="text-[11px] font-semibold uppercase tracking-wider text-blue-400">Kullanım</span>
+        <span className="text-[11px] font-semibold uppercase tracking-wider text-blue-400">{t('slash.usage')}</span>
         <span className="text-[10px] text-slate-500 ml-auto font-mono">/{command}</span>
       </div>
 
@@ -165,7 +168,7 @@ export const SlashCommandCard: React.FC<Props> = ({ command, text, workspacePath
                 {b.reset && (
                   <div className="flex items-center gap-1 mt-1 text-[10px] text-slate-500">
                     <Clock size={9} />
-                    <span>{b.reset.replace(/^resets?\s*/i, 'sıfırlanır: ')}</span>
+                    <span>{b.reset.replace(/^resets?\s*/i, t('slash.resetsPrefix'))}</span>
                   </div>
                 )}
               </div>
@@ -193,7 +196,7 @@ export const SlashCommandCard: React.FC<Props> = ({ command, text, workspacePath
               className="flex items-center gap-1 text-[10px] text-slate-500 hover:text-slate-300 transition-colors"
             >
               {notesOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
-              <span>Ayrıntı ({notes.length})</span>
+              <span>{t('slash.details', { sayi: notes.length })}</span>
             </button>
             {notesOpen && (
               <div className="mt-2 space-y-1 text-[11px] text-slate-500 leading-relaxed border-l border-slate-800 pl-2.5">

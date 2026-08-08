@@ -143,9 +143,9 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
     try {
       const res = await axios.get(`${API}/cli-doctor${refresh ? '?refresh=true' : ''}`, { headers: { 'X-Session-Token': user?.sessionToken ?? '' } });
       setDoctor(res.data || {});
-      if (refresh) showToast('CLI durumları güncellendi.', 'success');
+      if (refresh) showToast(t('models.doctorRefreshed'), 'success');
     } catch {
-      if (refresh) showToast('CLI durumları alınamadı.', 'error');
+      if (refresh) showToast(t('models.doctorFailed'), 'error');
     } finally {
       if (refresh) setDoctorRefreshing(false);
     }
@@ -169,18 +169,18 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
     setBusyCli(g.key);
     try {
       await axios.post(`${API}/cli-install/${g.availKey}`, null, { headers: { 'X-Session-Token': user?.sessionToken ?? '' } });
-      showToast('Kurulum penceresi açıldı — bittiğinde buradaki ↻ Yenile ile kontrol et.', 'info');
+      showToast(t('models.installStarted'), 'info');
     } catch (e: any) {
-      showToast(apiHataMesaji(e, 'Kurulum başlatılamadı.'), 'error');
+      showToast(apiHataMesaji(e, t('models.installFailed')), 'error');
     } finally { setBusyCli(null); }
   };
   const loginCli = async (g: CliGroupDef) => {
     setBusyCli(g.key);
     try {
       await axios.post(`${API}/cli-login/${g.availKey}`, null, { headers: { 'X-Session-Token': user?.sessionToken ?? '' } });
-      showToast('Giriş penceresi açıldı — tarayıcıda hesabınla giriş yap, sonra ↻ Yenile.', 'info');
+      showToast(t('models.loginStarted'), 'info');
     } catch (e: any) {
-      showToast(apiHataMesaji(e, 'Giriş başlatılamadı.'), 'error');
+      showToast(apiHataMesaji(e, t('models.loginFailed')), 'error');
     } finally { setBusyCli(null); }
   };
 
@@ -233,16 +233,16 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
 
   const selectCliModel = async (g: CliGroupDef, m: ModelItem) => {
     if (m.disabled) {
-      showToast(`Aboneliğin "${m.name}" modelini desteklemiyor — ${g.label} Auto'yu kullanabilirsin.`, 'warning');
+      showToast(t('models.planLocked', { model: m.name, cli: g.label }), 'warning');
       return;
     }
     const newCfg = { ...aiConfig, provider_type: 'subscription', model_name: m.id, api_key: 'CLI_SESSION' };
     setAiConfig(newCfg);
     setIsModelDropdownOpen(false);
     if (user) await axios.post(`${API}/save-ai-config`, { ...newCfg, user_id: user.id });
-    showToast(`${m.name} seçildi.`, 'info');
+    showToast(t('models.selected', { model: m.name }), 'info');
     if (doctor && doctor[g.availKey]?.installed === false) {
-      showToast(`${g.cliLabel} bu bilgisayarda bulunamadı. Aşağıdaki Kur butonuyla kurabilirsin.`, 'warning');
+      showToast(t('models.cliNotFound', { cli: g.cliLabel }), 'warning');
     }
   };
 
@@ -311,11 +311,11 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
         <button
           key={m.id}
           onClick={() => selectCliModel(g, m)}
-          title="Planında kilitli görünüyor — yine de deneyebilirsin; model çalışırsa kilit otomatik kalkar"
+          title={t('models.planLockedTitle')}
           className={`w-full text-left ${indent ? 'pl-[46px]' : 'pl-4'} pr-3 py-[7px] text-[12px] flex items-center justify-between rounded-lg hover:bg-white/[0.03] transition-colors`}
         >
           <span className="truncate font-medium text-slate-600 line-through decoration-slate-700">{m.name}</span>
-          <span className="text-[9px] text-slate-600 shrink-0 ml-2">🔒 planda yok</span>
+          <span className="text-[9px] text-slate-600 shrink-0 ml-2">{t('models.notInPlan')}</span>
         </button>
       );
     }
@@ -350,7 +350,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
               {m.name}
               {hasKey
                 ? <Key size={9} className="text-blue-400/70 shrink-0" />
-                : <span className="text-[8px] text-amber-400/90 bg-amber-500/10 border border-amber-500/30 rounded px-1 leading-tight shrink-0">key yok</span>}
+                : <span className="text-[8px] text-amber-400/90 bg-amber-500/10 border border-amber-500/30 rounded px-1 leading-tight shrink-0">{t('models.noKey')}</span>}
             </span>
             <span className="text-[9.5px] text-slate-500 truncate">{orToggle ? 'via OpenRouter' : m.provider}</span>
           </span>
@@ -362,7 +362,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
               e.stopPropagation();
               setModelOrToggles({ ...modelOrToggles, [m.id]: !orToggle });
             }}
-            title={orToggle && !providersWithKeys.includes('openrouter') ? "OpenRouter key yok — Ayarlar'dan ekle" : 'OpenRouter üzerinden çağır'}
+            title={orToggle && !providersWithKeys.includes('openrouter') ? t('models.openrouterNoKey') : t('models.viaOpenrouter')}
             className={`mr-2 px-1.5 py-0.5 rounded-md text-[8px] font-semibold border transition-colors ${
               orToggle
                 ? (providersWithKeys.includes('openrouter') ? 'border-purple-500/70 text-purple-300 bg-purple-500/10' : 'border-amber-500/70 text-amber-300 bg-amber-500/10')
@@ -467,7 +467,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                         <button
                           onClick={() => { if (!doctorRefreshing) { fetchDoctor(true); setDynModels({}); } }}
                           disabled={doctorRefreshing}
-                          title="Kurulum/giriş durumlarını ve model listelerini yenile"
+                          title={t('models.refreshTitle')}
                           className={`p-1 rounded-md transition-colors ${doctorRefreshing
                             ? 'text-blue-400 bg-blue-500/10'
                             : 'text-slate-500 hover:text-slate-300 hover:bg-white/[0.06] active:scale-90'}`}
@@ -504,7 +504,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                               {!installed && (
                                 <span
                                   onClick={e => { e.stopPropagation(); if (busyCli !== g.key) installCli(g); }}
-                                  title={`${g.cliLabel} kurulu değil — tıkla, otomatik kuralım (terminal penceresi açılır).`}
+                                  title={t('models.installHint', { cli: g.cliLabel })}
                                   className="flex items-center gap-1 text-amber-200 bg-amber-500/15 border border-amber-500/40 rounded-md px-1.5 py-0.5 text-[8.5px] font-semibold uppercase tracking-wide shrink-0 hover:bg-amber-500/30 transition-colors cursor-pointer"
                                 >
                                   {busyCli === g.key ? <Loader2 size={10} className="animate-spin" /> : <Download size={10} />} {t('models.install')}
@@ -513,7 +513,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                               {groupNeedsLogin(g) && (
                                 <span
                                   onClick={e => { e.stopPropagation(); if (busyCli !== g.key) loginCli(g); }}
-                                  title={`${g.cliLabel} kurulu ama giriş yapılmamış — tıkla, giriş penceresi açılsın.`}
+                                  title={t('models.loginHint', { cli: g.cliLabel })}
                                   className="flex items-center gap-1 text-sky-200 bg-sky-500/15 border border-sky-500/40 rounded-md px-1.5 py-0.5 text-[8.5px] font-semibold uppercase tracking-wide shrink-0 hover:bg-sky-500/30 transition-colors cursor-pointer"
                                 >
                                   {busyCli === g.key ? <Loader2 size={10} className="animate-spin" /> : <LogIn size={10} />} {t('models.login')}
@@ -578,7 +578,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                                 {hasKey ? (
                                   <Key size={10} className="text-blue-400/70 shrink-0" />
                                 ) : (
-                                  <span className="text-[8px] text-amber-400/90 bg-amber-500/10 border border-amber-500/30 rounded px-1 leading-tight shrink-0">key yok</span>
+                                  <span className="text-[8px] text-amber-400/90 bg-amber-500/10 border border-amber-500/30 rounded px-1 leading-tight shrink-0">{t('models.noKey')}</span>
                                 )}
                                 <ChevronDown size={12} className={`text-slate-500 transition-transform duration-200 shrink-0 ${isOpen ? 'rotate-180' : ''}`} />
                               </button>

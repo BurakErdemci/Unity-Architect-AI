@@ -9,6 +9,7 @@ import {
   Info, AlertTriangle, WifiOff, RefreshCw
 } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { useLang } from '../../lib/i18n';
 
 interface TerminalPanelProps {
   id: string;
@@ -26,6 +27,9 @@ const ipc = typeof window !== 'undefined' ? (window as any).ipc : null;
 
 // ── Output Tab ────────────────────────────────────────────────────────────────
 const OutputTab: React.FC<{ apiUrl?: string; sessionToken?: string; unityConnected?: boolean }> = ({ apiUrl, sessionToken, unityConnected }) => {
+  // `t` DEĞİL `ceviri`: bu dosyada yerel yardımcılar `const t = (type||'')…`
+  // diye bir değişken tanımlıyor ve aynı adı kullanmak onu gölgelerdi.
+  const { t: ceviri } = useLang();
   const [entries, setEntries] = useState<any[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
   const autoScrollRef = useRef(true);
@@ -65,9 +69,9 @@ const OutputTab: React.FC<{ apiUrl?: string; sessionToken?: string; unityConnect
         autoScrollRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
       }}>
       {!unityConnected ? (
-        <div className="h-full flex items-center justify-center text-slate-700 text-xs">Unity MCP bağlı değil</div>
+        <div className="h-full flex items-center justify-center text-slate-700 text-xs">{ceviri('terminal.unityDisconnected')}</div>
       ) : entries.length === 0 ? (
-        <div className="h-full flex items-center justify-center text-slate-700 text-xs">Unity logları bekleniyor...</div>
+        <div className="h-full flex items-center justify-center text-slate-700 text-xs">{ceviri('terminal.unityWaiting')}</div>
       ) : entries.map((entry, i) => (
         <div key={i} className={`flex gap-2 hover:bg-white/3 px-1 py-0.5 rounded leading-relaxed ${typeColor(entry.type || entry.logType || '')}`}>
           <span className="text-slate-300 break-all">{entry.message || entry.text || JSON.stringify(entry)}</span>
@@ -80,6 +84,7 @@ const OutputTab: React.FC<{ apiUrl?: string; sessionToken?: string; unityConnect
 
 // ── Debug Console Tab ─────────────────────────────────────────────────────────
 const DebugConsoleTab: React.FC<{ apiUrl?: string; sessionToken?: string; unityConnected?: boolean }> = ({ apiUrl, sessionToken, unityConnected }) => {
+  const { t: ceviri } = useLang();
   const [entries, setEntries] = useState<any[]>([]);
   const [filter, setFilter] = useState<'all' | 'log' | 'warning' | 'error'>('all');
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -122,8 +127,8 @@ const DebugConsoleTab: React.FC<{ apiUrl?: string; sessionToken?: string; unityC
         <div className="mx-3 mt-3 p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/20 flex items-start gap-2.5 text-yellow-300">
           <AlertTriangle size={14} className="shrink-0 mt-0.5" />
           <div className="flex flex-col gap-0.5">
-            <span className="text-[11px] font-bold uppercase tracking-wider">Unity Bağlantısı Yok</span>
-            <span className="text-[10px] text-slate-400">Unity MCP aktif değil. Canlı konsol akışını başlatmak için üst menüden Unity MCP bağlantısını açın.</span>
+            <span className="text-[11px] font-bold uppercase tracking-wider">{ceviri('terminal.unityNoConnection')}</span>
+            <span className="text-[10px] text-slate-400">{ceviri('terminal.unityNoConnectionHint')}</span>
           </div>
         </div>
       )}
@@ -134,11 +139,11 @@ const DebugConsoleTab: React.FC<{ apiUrl?: string; sessionToken?: string; unityC
             {f}
           </button>
         ))}
-        <span className="ml-auto text-[9px] text-slate-700">{filtered.length} giriş</span>
+        <span className="ml-auto text-[9px] text-slate-700">{ceviri('terminal.entries', { sayi: filtered.length })}</span>
       </div>
       <div className="flex-1 overflow-y-auto font-mono text-[11px] p-2 custom-scrollbar">
         {filtered.length === 0 ? (
-          <div className="h-full flex items-center justify-center text-slate-700 text-xs">Unity Console boş</div>
+          <div className="h-full flex items-center justify-center text-slate-700 text-xs">{ceviri('terminal.unityConsoleEmpty')}</div>
         ) : filtered.map((entry, i) => (
           <div key={i} className="flex gap-2 hover:bg-white/3 px-1 py-0.5 rounded leading-relaxed">
             {iconFor(entry.type || entry.logType || '')}
@@ -153,6 +158,7 @@ const DebugConsoleTab: React.FC<{ apiUrl?: string; sessionToken?: string; unityC
 
 // ── Ports Tab ─────────────────────────────────────────────────────────────────
 const PortsTab: React.FC<{ apiUrl?: string; sessionToken?: string; unityConnected?: boolean }> = ({ apiUrl, sessionToken, unityConnected }) => {
+  const { t: ceviri } = useLang();
   const [backendOk, setBackendOk] = useState<boolean | null>(null);
   const [mcpOk, setMcpOk] = useState<boolean | null>(null);
 
@@ -175,13 +181,13 @@ const PortsTab: React.FC<{ apiUrl?: string; sessionToken?: string; unityConnecte
 
   const ports = [
     { name: 'Backend API', port: apiUrl ? new URL(apiUrl).port || '8000' : '8000', ok: backendOk, desc: 'FastAPI · Gamachine' },
-    { name: 'Unity MCP', port: '8080', ok: mcpOk, desc: 'MCP Server · Unity Editor bağlantısı' },
+    { name: 'Unity MCP', port: '8080', ok: mcpOk, desc: ceviri('terminal.unityMcpDesc') },
   ];
 
   return (
     <div className="flex-1 p-4 bg-[#0a0a0a] flex flex-col gap-2">
       <div className="flex items-center justify-between mb-1">
-        <span className="text-[10px] text-slate-600 uppercase tracking-widest font-medium">Aktif Portlar</span>
+        <span className="text-[10px] text-slate-600 uppercase tracking-widest font-medium">{ceviri('terminal.activePorts')}</span>
         <button onClick={check} className="text-slate-600 hover:text-slate-400 transition-colors">
           <RefreshCw size={11} />
         </button>
@@ -216,6 +222,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
   id, isOpen, onClose, workspacePath, problems = [], onProblemClick,
   apiUrl, sessionToken, unityConnected
 }) => {
+  const { t: ceviri } = useLang();
   const [isMaximized, setIsMaximized] = useState(false);
   const [terminalHeight, setTerminalHeight] = useState(320);
   const [sidebarWidth, setSidebarWidth] = useState(200);
@@ -312,7 +319,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
       });
 
       const unsubscribeExit = ipc.on(`terminal-exit-${sId}`, () => {
-        term.write('\r\n[İşlem sonlandırıldı]\r\n');
+        term.write(`\r\n${ceviri('terminal.processTerminated')}\r\n`);
       });
 
       const handleResize = () => {
@@ -586,7 +593,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
         <div className="flex items-center gap-3 text-[9px] text-slate-600 uppercase tracking-widest">
           <div className="flex items-center gap-1.5">
             <div className={`w-1.5 h-1.5 rounded-full ${unityConnected ? 'bg-emerald-500' : 'bg-slate-700'}`} />
-            <span>{unityConnected ? 'Unity Bağlı' : 'Unity Bağlı Değil'}</span>
+            <span>{unityConnected ? ceviri('terminal.unityConnected') : ceviri('terminal.unityNotConnected')}</span>
           </div>
         </div>
         <span className="text-[9px] text-slate-700 font-mono">PTY v5.9</span>

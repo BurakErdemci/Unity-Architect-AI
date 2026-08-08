@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import axios from 'axios'
+import { cevir } from '../../lib/i18n'
 
 export interface User {
   id: number
@@ -55,9 +56,9 @@ export function useAuth(_API: string, backendReady: boolean) {
           // atanıyordu: `axios.defaults.headers.common['X-Session-Token']`
           // undefined olunca başlık hiç gönderilmiyor ve backend 503 dönüyordu.
           if (typeof alinan === 'string' && alinan.length > 0) token = alinan
-          else hata = `Oturum token'ı beklenmeyen biçimde döndü (${typeof alinan})`
+          else hata = cevir('auth.tokenShape', { tur: typeof alinan })
         } catch (e) {
-          hata = `Oturum token'ı alınamadı: ${e instanceof Error ? e.message : String(e)}`
+          hata = cevir('auth.tokenFailed', { hata: e instanceof Error ? e.message : String(e) })
         }
       }
       if (hata) console.error('[auth]', hata)

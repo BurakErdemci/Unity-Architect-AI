@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useToast } from '../../components/ui/Toast';
+import { cevir } from '../../lib/i18n';
 
 const ipc = typeof window !== 'undefined' ? (window as any).ipc : null;
 
@@ -13,7 +14,7 @@ export const useAppInitialization = () => {
     const loadBackendBaseUrl = async () => {
       try {
         let baseUrl = ipc ? await ipc.invoke('get-backend-base-url') : '';
-        if (!baseUrl) throw new Error('Backend URL alınamadı.');
+        if (!baseUrl) throw new Error(cevir('app.backendUrlFailed'));
         if (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1);
         setAPI(baseUrl);
         setBackendReady(true);

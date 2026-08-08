@@ -25,6 +25,7 @@ import { FileDeleteApproval } from './FileDeleteApproval';
 import { CommandApproval } from './CommandApproval';
 import { GateFailure, postMcpDecision, decisionToast } from '../../hooks/home/gateResponse';
 import { MCP_MSG_ID, McpActiveGate } from '../../hooks/home/useMCPApproval';
+import { useLang, type TKey } from '../../lib/i18n';
 
 /**
  * Bir karar denemesinin sonucu — ÜÇ durum, iki değil.
@@ -53,13 +54,11 @@ type DecisionResult =
  * İki durum ayrı cümle çünkü kullanıcının yapabileceği şey farklı: uçuştaki
  * karar birazdan sonuçlanır ve toast'ı gelir; sonuçlanmış karar geri alınamaz.
  */
-const SUPPRESSED_MESSAGES: Record<'in-flight' | 'already-decided', string> = {
-  'in-flight':
-    'Önceki kararınız gönderiliyor — bu isteğe ikinci bir karar verilemez. ' +
-    'Sonucu birazdan göreceksiniz.',
-  'already-decided':
-    'Bu istek için karar zaten gönderildi; geri alınamaz. ' +
-    'Aksini istiyorsanız işlemi yeniden başlatın.',
+// Tablo modul duzeyinde sabit oldugu icin ANAHTAR saklaniyor, metin degil:
+// `t()` ancak render aninda cagrilabilir.
+const SUPPRESSED_MESSAGE_KEYS: Record<'in-flight' | 'already-decided', TKey> = {
+  'in-flight': 'mcp.suppressedInFlight',
+  'already-decided': 'mcp.suppressedDecided',
 };
 
 interface McpApprovalCardsProps {
@@ -110,6 +109,7 @@ const WorkspaceBanner: React.FC<{
   mismatch: boolean;
   openWorkspacePath: string | null;
 }> = ({ gate, mismatch, openWorkspacePath }) => {
+  const { t } = useLang();
   // Gate workspace'i boşsa iddia edilecek bir şey yok — bilinmiyor de.
   const bilinmiyor = !gate.workspacePath;
   const renk = mismatch
@@ -120,12 +120,12 @@ const WorkspaceBanner: React.FC<{
       {mismatch ? <AlertTriangle size={13} className="mt-px shrink-0" />
                 : <FolderOpen size={13} className="mt-px shrink-0" />}
       <div className="min-w-0">
-        {mismatch && <div className="font-bold">⚠ BAŞKA PROJE</div>}
+        {mismatch && <div className="font-bold">{t('mcp.otherProject')}</div>}
         <div className="truncate font-mono">
-          {bilinmiyor ? 'Kaynak proje bildirilmedi' : gate.workspacePath}
+          {bilinmiyor ? t('mcp.sourceUnknown') : gate.workspacePath}
         </div>
         {mismatch && openWorkspacePath && (
-          <div className="truncate opacity-70">açık olan: {openWorkspacePath}</div>
+          <div className="truncate opacity-70">{t('mcp.openWorkspace')} {openWorkspacePath}</div>
         )}
       </div>
     </div>
@@ -153,6 +153,7 @@ export const McpApprovalCards: React.FC<McpApprovalCardsProps> = ({
   onOpenFile,
   setCode,
 }) => {
+  const { t } = useLang();
   /**
    * Bu SUNUM için karar sonuçlandı mı (gate id ile).
    *
@@ -226,11 +227,11 @@ export const McpApprovalCards: React.FC<McpApprovalCardsProps> = ({
   // ayırıyor. Aynı sebep aşağıdaki iki çağrı yerinde de geçerli.
   const reportDecision = (result: DecisionResult, deliveredMessage: string) => {
     if (result.sent === false) {
-      showToast(SUPPRESSED_MESSAGES[result.reason], 'warning');
+      showToast(t(SUPPRESSED_MESSAGE_KEYS[result.reason]), 'warning');
       return;
     }
-    const t = decisionToast(result.failure, deliveredMessage);
-    showToast(t.message, t.type);
+    const bildirim = decisionToast(result.failure, deliveredMessage);
+    showToast(bildirim.message, bildirim.type);
   };
 
   /**
@@ -266,7 +267,7 @@ export const McpApprovalCards: React.FC<McpApprovalCardsProps> = ({
    */
   const rejectByUser = async () => {
     const result = await decide(false);
-    if (result.sent === false) showToast(SUPPRESSED_MESSAGES[result.reason], 'warning');
+    if (result.sent === false) showToast(t(SUPPRESSED_MESSAGE_KEYS[result.reason]), 'warning');
     else if (result.failure) showToast(result.failure.message, result.failure.type);
     onResolved();
   };
@@ -316,7 +317,7 @@ export const McpApprovalCards: React.FC<McpApprovalCardsProps> = ({
               // (ölçüldü 2026-07-29: hedefin üst dizini normal bir dosyaysa
               // `os.makedirs` → FileExistsError, dosya diske hiç yazılmıyor —
               // ekranda ise "✅ oluşturuldu" duruyordu).
-              reportDecision(result, `Onayınız gönderildi — ${file.name} yazılıyor`);
+              reportDecision(result, t('mcp.sentWriteFile', { ad: file.name }));
               // ⚠️ BİLİNEN BOŞLUK: dönen `true` FileCreationApproval'ın kartında
               // dosyayı "oluşturuldu" listesine taşıyor. O sözleşme (bkz.
               // FileCreationApproval.tsx:34) yerel IPC yolunda GERÇEKTEN
@@ -335,7 +336,7 @@ export const McpApprovalCards: React.FC<McpApprovalCardsProps> = ({
               const result = await decide(true);
               refreshFileTree();
               // Kardeş satır: yukarıdaki tek-dosya yoluyla AYNI sınıf, aynı dil.
-              reportDecision(result, 'Onayınız gönderildi — dosyalar yazılıyor');
+              reportDecision(result, t('mcp.sentWriteFiles'));
               return result.sent && !result.failure;
             }}
             // "Kapat" (kararlar bitti) ile "İptal" (kullanıcının kararı) AYRI:
@@ -362,7 +363,7 @@ export const McpApprovalCards: React.FC<McpApprovalCardsProps> = ({
               // "silindi" DEĞİL "siliniyor": onayın iletilmesi silmenin
               // yapıldığını değil, köprünün onu ~500ms sonra DENEYECEĞİNİ
               // gösteriyor (üstteki refreshFileTree gecikmesi tam bu yüzden var).
-              reportDecision(result, '🗑️ Onayınız gönderildi — dosya siliniyor');
+              reportDecision(result, t('mcp.sentDelete'));
             }}
             onCancel={() => { setPendingDelete(null); void rejectByUser(); }}
           />)}
@@ -382,7 +383,7 @@ export const McpApprovalCards: React.FC<McpApprovalCardsProps> = ({
               onResolved();
               // "çalışıyor" iddiası onay iletilse BİLE erken: komutu köprü
               // bundan sonra başlatıyor ve başlatma da düşebilir.
-              reportDecision(result, 'Onayınız gönderildi — komut başlatılıyor');
+              reportDecision(result, t('mcp.sentCommand'));
             }}
             onCancel={async () => {
               const result = await decide(false);
@@ -399,7 +400,7 @@ export const McpApprovalCards: React.FC<McpApprovalCardsProps> = ({
               // basılan İptal bastırılıyor, `reportDecision` olmadan ekrana
               // "Komut iptal edildi" yazılıyor ve komut çalışıyordu — yani
               // fail-closed garantisi hiç var olmayan bir POST'a dayandırılıyordu.
-              reportDecision(result, 'Komut iptal edildi');
+              reportDecision(result, t('mcp.commandCancelled'));
             }}
           />)}
         </div>
@@ -426,7 +427,7 @@ export const McpApprovalCards: React.FC<McpApprovalCardsProps> = ({
               refreshFileTree();
               // "Onaylandı" değil "gönderildi": dosyayı MCP köprüsü
               // BUNDAN SONRA yazıyor ve orada düşebiliyor.
-              reportDecision(result, 'Onayınız gönderildi — değişiklik uygulanıyor');
+              reportDecision(result, t('mcp.sentDiff'));
             }}
             onReject={() => { setPendingFix(null); void rejectByUser(); }}
           />)}

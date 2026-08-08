@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import axios from 'axios';
 import { AIConfig, AvailableModels, ProviderReady, UserData } from '../../components/home/types';
 import { apiHataMesaji } from '../../lib/apiError';
+import { cevir } from '../../lib/i18n';
 
 /**
  * Backend'in `GET /mcp/unity/status` sözleşmesi (`unity_mcp_manager.get_status`).
@@ -213,8 +214,8 @@ export const useAIConfig = (API: string, user: UserData | null, showToast: (msg:
       const msg = apiHataMesaji(
         err,
         err?.response?.status === 409
-          ? "Unity Editor açık değil. Lütfen önce Unity'yi açın."
-          : 'Unity MCP toggle başarısız.',
+          ? cevir('unity.editorClosed')
+          : cevir('unity.toggleFailed'),
       );
       showToast(msg, 'error');
       setUnityMcpError(msg);
@@ -325,16 +326,16 @@ export const useAIConfig = (API: string, user: UserData | null, showToast: (msg:
       }
 
       if (isCloud && !configToSave.api_key && !providersWithKeys.includes(configToSave.provider_type)) {
-        showToast(`${configToSave.provider_type} için API key eksik!`, 'warning');
+        showToast(cevir('settings.apiKeyMissingFor', { saglayici: configToSave.provider_type }), 'warning');
         return;
       }
 
       await axios.post(`${API}/save-ai-config`, configToSave);
       setAiConfig({ ...aiConfig, api_key: '' });
       await fetchProvidersWithKeys(user.id);
-      showToast("Ayarlar kaydedildi!", 'success');
+      showToast(cevir('settings.saved'), 'success');
       setShowSettings(false);
-    } catch (err) { showToast("Kaydedilemedi.", 'error'); }
+    } catch (err) { showToast(cevir('settings.saveFailed'), 'error'); }
   }, [API, aiConfig, fetchProvidersWithKeys, providersWithKeys, showToast, user]);
 
   const deleteApiKey = useCallback(async (provider: string) => {
@@ -344,14 +345,14 @@ export const useAIConfig = (API: string, user: UserData | null, showToast: (msg:
       await fetchProvidersWithKeys(user.id);
       setAiConfig(prev => ({ ...prev, api_key: '' }));
     } catch (err) {
-      showToast('Key silinirken bir hata oluştu.', 'error');
+      showToast(cevir('settings.keyDeleteError'), 'error');
     }
   }, [API, fetchProvidersWithKeys, showToast, user]);
 
   const effectiveProvider = useMemo(() => aiConfig.provider_type, [aiConfig.provider_type]);
 
   const displayModelName = useMemo(() => {
-    if (!aiConfig.model_name) return 'Model Seçin';
+    if (!aiConfig.model_name) return cevir('models.select');
     const allModels = [...availableModels.cloud, ...(availableModels.subscription || [])];
     const found = allModels.find(m =>
       m.id === aiConfig.model_name || (m as any).openrouter_id === aiConfig.model_name

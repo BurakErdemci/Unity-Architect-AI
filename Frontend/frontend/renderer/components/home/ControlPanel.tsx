@@ -69,15 +69,15 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
   // Seviye görselleri — hangi seviyelerin listeleneceğine backend kayıtçısı karar
   // verir (effortCaps.levels). Burada yalnız etiket/renk/açıklama eşlemesi var.
   const LEVEL_META: Record<string, { label: string; color: string; desc: string }> = {
-    auto:    { label: 'Auto',    color: 'text-sky-400',     desc: 'Model kendi varsayılanıyla çalışır — parametre gönderilmez.' },
-    off:     { label: 'Kapalı',  color: 'text-slate-500',   desc: 'Düşünme/reasoning kapatılır.' },
-    none:    { label: 'None',    color: 'text-slate-500',   desc: 'Reasoning kapalı.' },
-    minimal: { label: 'Minimal', color: 'text-teal-400',    desc: 'En sığ düşünme — en hızlı yanıt.' },
-    low:     { label: 'Düşük',   color: 'text-emerald-400', desc: 'Hafif düşünme — rutin işler.' },
-    medium:  { label: 'Orta',    color: 'text-violet-400',  desc: 'Dengeli düşünme.' },
-    high:    { label: 'Yüksek',  color: 'text-fuchsia-400', desc: 'Derin düşünme — zor görevler.' },
-    xhigh:   { label: 'XHigh',   color: 'text-orange-400',  desc: 'Çok derin düşünme — karmaşık mimari/debug.' },
-    max:     { label: 'Max',     color: 'text-red-400',     desc: 'Tek görevde mümkün olan en derin düşünme.' },
+    auto:    { label: t('effort.label.auto'),    color: 'text-sky-400',     desc: t('effort.desc.auto') },
+    off:     { label: t('effort.label.off'),     color: 'text-slate-500',   desc: t('effort.desc.off') },
+    none:    { label: t('effort.label.none'),    color: 'text-slate-500',   desc: t('effort.desc.none') },
+    minimal: { label: t('effort.label.minimal'), color: 'text-teal-400',    desc: t('effort.desc.minimal') },
+    low:     { label: t('effort.label.low'),     color: 'text-emerald-400', desc: t('effort.desc.low') },
+    medium:  { label: t('effort.label.medium'),  color: 'text-violet-400',  desc: t('effort.desc.medium') },
+    high:    { label: t('effort.label.high'),    color: 'text-fuchsia-400', desc: t('effort.desc.high') },
+    xhigh:   { label: t('effort.label.xhigh'),   color: 'text-orange-400',  desc: t('effort.desc.xhigh') },
+    max:     { label: t('effort.label.max'),     color: 'text-red-400',     desc: t('effort.desc.max') },
   };
   const levels = (effortCaps?.levels?.length ? effortCaps.levels : ['auto'])
     .filter((l) => LEVEL_META[l]);
@@ -155,7 +155,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
                 {/* Aktif seviye açıklaması / model notu */}
                 <div className="px-0.5 pt-2 text-[9px] leading-relaxed text-slate-500">
                   {isClaudeSubscription && ultracode
-                    ? 'Ultracode: xhigh effort + çok-ajanlı workflow orkestrasyonu.'
+                    ? t('effort.ultracodeDesc')
                     : (onlyAuto && effortCaps?.note) ? effortCaps.note : activeMeta.desc}
                 </div>
 
@@ -193,7 +193,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
               ? 'bg-blue-500/20 text-blue-400 animate-pulse'
               : 'text-slate-500 hover:text-blue-400 hover:bg-blue-500/5'
           }`}
-          title="Tüm projeyi tarar ve AI'nın mimariyi öğrenmesini sağlar"
+          title={t('memory.learnTitle')}
         >
           {isAnalyzingProject ? (
             <div className="flex items-center gap-2">
@@ -261,7 +261,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
           <button
             onClick={() => compactConversation()}
             disabled={isCompacting}
-            title={`Hafıza Kullanımı: %${contextUsage.percent} (${contextUsage.message_count} mesaj)\nTıkla ve özetle`}
+            title={t('memory.usageTitle', { yuzde: contextUsage.percent, sayi: contextUsage.message_count })}
             className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium transition-colors group relative ${
               contextUsage.percent >= 90 ? 'bg-red-500/10 border border-red-500/30 text-red-400 hover:bg-red-500/20'
               : contextUsage.percent >= 75 ? 'bg-amber-500/10 border border-amber-500/30 text-amber-400 hover:bg-amber-500/20'

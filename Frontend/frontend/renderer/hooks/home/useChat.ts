@@ -5,6 +5,7 @@ import { PendingFile } from '../../components/home/FileCreationApproval';
 import { Task } from '../../components/ui/agent-plan';
 import { confirmDialog } from '../../components/ui/ConfirmDialog';
 import { deliveryFromFetch, gateFailure } from './gateResponse';
+import { cevir } from '../../lib/i18n';
 
 const ipc = typeof window !== 'undefined' ? (window as any).ipc : null;
 
@@ -90,7 +91,7 @@ export const useChat = (
   const deleteConversation = useCallback(async (e: React.MouseEvent, convId: number) => {
     e.stopPropagation();
     if (!user) return;
-    if (!(await confirmDialog("Bu sohbet silinsin mi?"))) return;
+    if (!(await confirmDialog(cevir('chat.deleteConfirm')))) return;
     try {
       await axios.delete(`${API}/conversations/${convId}`);
       if (activeConvId === convId) {
@@ -110,10 +111,11 @@ export const useChat = (
     } catch (err) { console.error("Yeniden adlandırma hatası:", err); }
   }, [API, fetchConversations, tempTitle, user]);
 
-  const createNewConversation = useCallback(async (title = 'Yeni Sohbet') => {
+  const createNewConversation = useCallback(async (title?: string) => {
+    const baslik = title ?? cevir('sidebar.newChat');
     if (!user || !API) return null;
     try {
-      const res = await axios.post(`${API}/conversations`, { user_id: user.id, title });
+      const res = await axios.post(`${API}/conversations`, { user_id: user.id, title: baslik });
       await fetchConversations(user.id);
       setActiveConvId(res.data.id);
       setMessages([]);
@@ -256,13 +258,13 @@ export const useChat = (
               // Canlı aktivite göstergesi: status event'leri + türev sinyaller.
               if (data.type === 'status') {
                 setActivity(prev => ({
-                  detail: data.detail || prev?.detail || 'Çalışıyor…',
+                  detail: data.detail || prev?.detail || cevir('activity.working'),
                   tokens: (typeof data.tokens === 'number' && data.tokens > 0) ? data.tokens : prev?.tokens,
                 }));
               } else if (data.type === 'thinking') {
-                setActivity(prev => ({ detail: '🧠 Düşünüyor…', tokens: prev?.tokens }));
+                setActivity(prev => ({ detail: cevir('activity.thinking'), tokens: prev?.tokens }));
               } else if (data.type === 'text') {
-                setActivity(prev => ({ detail: '✍️ Yazıyor…', tokens: prev?.tokens }));
+                setActivity(prev => ({ detail: cevir('activity.writing'), tokens: prev?.tokens }));
               } else if (data.type === 'tool_call' && data.tool !== 'TodoWrite') {
                 const s = data.summary ? ` — ${String(data.summary).slice(0, 60)}` : '';
                 setActivity(prev => ({ detail: `🔧 ${data.tool}${s}`, tokens: prev?.tokens }));
@@ -313,7 +315,7 @@ export const useChat = (
       }
       fetchConversations(user.id);
     } catch (err: any) {
-      if (err?.name !== 'AbortError') setMessages(prev => [...prev, { id: Date.now() + 2, role: 'assistant', content: '❌ Hata oluştu.', smells: [], timestamp: new Date().toISOString() }]);
+      if (err?.name !== 'AbortError') setMessages(prev => [...prev, { id: Date.now() + 2, role: 'assistant', content: cevir('chat.errorOccurred'), smells: [], timestamp: new Date().toISOString() }]);
     } finally { setLoading(false); setActivity(null); }
   }, [API, activeConvId, aiConfig.provider_type, createNewConversation, fetchConversations, loading, suggestFilePath, user, workspacePath]);
 
@@ -322,8 +324,8 @@ export const useChat = (
     try {
       // session-clear IPC channel removed; session management now handled by auth layer
       setMessages([]);
-      showToast('Sohbet geçmişi temizlendi', 'info');
-    } catch (err) { showToast('Geçmiş temizlenemedi', 'error'); }
+      showToast(cevir('chat.historyCleared'), 'info');
+    } catch (err) { showToast(cevir('chat.historyClearFailed'), 'error'); }
   }, [activeConvId, showToast]);
 
   const analyzeProject = useCallback(async (silent = false) => {
@@ -332,7 +334,7 @@ export const useChat = (
     // Aktif sohbet yoksa Projeyi Öğren tek tıkla çalışsın diye yenisini açıyoruz.
     let targetConvId = activeConvId;
     if (!targetConvId) {
-      targetConvId = await createNewConversation('Proje Analizi');
+      targetConvId = await createNewConversation(cevir('chat.projectAnalysisTitle'));
       if (!targetConvId) return;
     }
 
@@ -343,11 +345,11 @@ export const useChat = (
       });
       if (res.data.status === 'success') {
         if (!silent) {
-          showToast(`🧠 Proje hafızaya alındı! (${res.data.file_count} dosya)`, 'success');
-          setMessages(prev => [...prev, { id: Date.now(), role: 'assistant', content: `🧠 **Analiz Raporu**\n\n${res.data.summary}`, timestamp: new Date().toISOString(), smells: [] }]);
+          showToast(cevir('memory.learned', { sayi: res.data.file_count }), 'success');
+          setMessages(prev => [...prev, { id: Date.now(), role: 'assistant', content: `${cevir('memory.analysisReport')}\n\n${res.data.summary}`, timestamp: new Date().toISOString(), smells: [] }]);
         }
       }
-    } catch (err: any) { if (!silent) showToast('Analiz hatası.', 'error'); }
+    } catch (err: any) { if (!silent) showToast(cevir('memory.analysisError'), 'error'); }
     finally { setIsAnalyzingProject(false); }
   }, [API, activeConvId, createNewConversation, showToast, user]);
 
@@ -355,12 +357,12 @@ export const useChat = (
     if (!activeConvId || !user || !API) return;
     try {
       const res = await axios.get(`${API}/conversations/${activeConvId}/export-memory`, { headers: { 'X-Session-Token': user.sessionToken } });
-      if (!res.data.content) { showToast('Henüz hafıza yok.', 'error'); return; }
+      if (!res.data.content) { showToast(cevir('memory.none'), 'error'); return; }
       const out = await ipc?.invoke('export-text-file', `wisdom_${activeConvId}.md`, res.data.content);
       if (out?.canceled) return;
-      if (out?.success) showToast('Hafıza kaydedildi.', 'success');
-      else showToast(`Kaydedilemedi: ${out?.error || 'bilinmeyen hata'}`, 'error');
-    } catch { showToast('Export hatası.', 'error'); }
+      if (out?.success) showToast(cevir('memory.saved'), 'success');
+      else showToast(cevir('memory.saveFailed', { hata: out?.error || cevir('common.unknownError') }), 'error');
+    } catch { showToast(cevir('memory.exportError'), 'error'); }
   }, [API, activeConvId, showToast, user]);
 
   const importMemory = useCallback(async () => {
@@ -370,16 +372,16 @@ export const useChat = (
       if (res?.canceled) return;
       if (res?.content) {
         await axios.post(`${API}/conversations/${activeConvId}/import-memory`, { content: res.content }, { headers: { 'X-Session-Token': user.sessionToken } });
-        showToast('Hafıza aktarıldı!', 'success');
-        setMessages(prev => [...prev, { id: Date.now(), role: 'assistant', content: `📤 **Hafıza İçe Aktarıldı**`, timestamp: new Date().toISOString(), smells: [] }]);
+        showToast(cevir('memory.imported'), 'success');
+        setMessages(prev => [...prev, { id: Date.now(), role: 'assistant', content: cevir('memory.importedHeading'), timestamp: new Date().toISOString(), smells: [] }]);
       }
-    } catch { showToast('Import hatası.', 'error'); }
+    } catch { showToast(cevir('memory.importError'), 'error'); }
   }, [API, activeConvId, showToast, user]);
 
   const compactConversation = useCallback(async () => {
     if (!activeConvId || !API || !user) return;
     setIsCompacting(true);
-    showToast('Sohbet özetleniyor…', 'info');
+    showToast(cevir('compact.running'), 'info');
     try {
       // Timeout ŞART: backend'de AI özetleme takılırsa buton sonsuza dek kilitli
       // kalıyordu ("basınca bir şey olmuyor" bug'ı). Backend 120s'de fallback'e düşer.
@@ -391,12 +393,12 @@ export const useChat = (
           const msgRes = await axios.get(`${API}/conversations/${activeConvId}/messages`);
           setMessages(msgRes.data);
           setContextUsage({ percent: 5, should_compact: false, message_count: 1 });
-          showToast('Sohbet özetlendi! Yeni turlar küçük bağlamla devam edecek.', 'success');
+          showToast(cevir('compact.done'), 'success');
         } else {
-          showToast(res.data.message || 'Sohbet zaten kısa.', 'info');
+          showToast(res.data.message || cevir('compact.tooShort'), 'info');
         }
       }
-    } catch { showToast('Özetleme hatası — tekrar deneyin.', 'error'); } finally { setIsCompacting(false); }
+    } catch { showToast(cevir('compact.error'), 'error'); } finally { setIsCompacting(false); }
   }, [API, activeConvId, showToast, user]);
 
   return {

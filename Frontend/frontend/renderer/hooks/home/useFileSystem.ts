@@ -4,6 +4,7 @@ import { FileEntry, ExportModalState, UserData } from '../../components/home/typ
 import { PendingFile } from '../../components/home/FileCreationApproval';
 import { splitCodeIntoFiles } from '../../components/home/export-utils';
 import { confirmDialog } from '../../components/ui/ConfirmDialog';
+import { cevir } from '../../lib/i18n';
 
 const ipc = typeof window !== 'undefined' ? (window as any).ipc : null;
 
@@ -49,10 +50,10 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
     if (res?.success) {
       setOriginalCode(code);
       setIsDirty(false);
-      showToast('Dosya kaydedildi', 'success');
+      showToast(cevir('file.saved'), 'success');
       return true;
     } else {
-      showToast('Kaydetme hatası: ' + (res?.error || 'Bilinmiyor'), 'error');
+      showToast(cevir('file.saveError', { hata: res?.error || cevir('common.unknown') }), 'error');
       return false;
     }
   }, [code, openedFilePath, workspacePath, showToast]);
@@ -87,7 +88,7 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
     if (ipc) {
       const exists = await ipc.invoke('path-exists', path);
       if (!exists) {
-        showToast('Önceki çalışma klasörü bulunamadı. Lütfen yeni bir klasör seçin.', 'warning');
+        showToast(cevir('workspace.missing'), 'warning');
         // Geçersiz yolu temizle ki bir daha otomatik yüklenmeye çalışılmasın
         setLastWorkspacePath(null);
         setWorkspacePath(null);
@@ -157,11 +158,11 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
     if (!ipc) return;
     const result = await ipc.invoke('read-file', filePath, workspacePath);
     if (result?.error === 'unsupported') {
-      showToast('Bu dosya türü editörde açılamaz (binary).', 'warning');
+      showToast(cevir('file.unsupported'), 'warning');
       return;
     }
     if (result?.error === 'too-large') {
-      showToast('Dosya editörde açılamayacak kadar büyük (>8MB).', 'warning');
+      showToast(cevir('file.tooLarge'), 'warning');
       return;
     }
     if (result && result.content != null) {
@@ -182,7 +183,7 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
     // değiştirmek onay/güvenlik yüzeyine dokunan ayrı bir iş), o yüzden mesaj
     // TAHMİN ETMİYOR — ne bilmediğimizi söylüyor ve yolu gösteriyor ki
     // kullanıcı kendisi karar verebilsin.
-    showToast(`Dosya açılamadı: ${filePath}`, 'warning');
+    showToast(cevir('file.openFailed', { yol: filePath }), 'warning');
   }, [workspacePath, showToast]);
 
   const toggleDir = useCallback(async (dirPath: string) => {
@@ -201,7 +202,7 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
 
   const handleTreeDelete = useCallback(async (entry: FileEntry) => {
     setTreeContextMenu(null);
-    if (!(await confirmDialog(`"${entry.name}" silinsin mi?`))) return;
+    if (!(await confirmDialog(cevir('file.deleteConfirm', { ad: entry.name })))) return;
     await ipc.invoke('delete-entry', entry.path, workspacePath);
     refreshFileTree();
   }, [refreshFileTree, workspacePath]);
@@ -244,14 +245,14 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
     if (!ipc || !workspacePath) return;
     const res = await ipc.invoke('delete-file', relativePath, workspacePath);
     if (res.success) {
-      showToast('Dosya silindi', 'success');
+      showToast(cevir('file.deleted'), 'success');
       refreshFileTree();
       if (openedFilePath === relativePath) {
         setOpenedFilePath(null);
         setCode('');
       }
     } else {
-      showToast(`Silme hatası: ${res.error}`, 'error');
+      showToast(cevir('file.deleteError', { hata: res.error }), 'error');
     }
   }, [ipc, workspacePath, showToast, refreshFileTree, openedFilePath]);
 
@@ -343,11 +344,11 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
     const targetPath = `${exportModal.targetDir}/${fileName}`;
     const res = await ipc.invoke('write-file', targetPath, content, workspacePath);
     if (res?.success) {
-      setExportModal({ ...exportModal, exportResult: { success: true, message: `Başarıyla dışa aktarıldı: ${fileName}` } });
+      setExportModal({ ...exportModal, exportResult: { success: true, message: cevir('export.fileDone', { ad: fileName }) } });
       refreshFileTree();
-      showToast('Dosya Unity\'ye aktarıldı.', 'success');
+      showToast(cevir('export.toUnity'), 'success');
     } else {
-      setExportModal({ ...exportModal, exportResult: { success: false, message: 'Dosya yazılamadı!' } });
+      setExportModal({ ...exportModal, exportResult: { success: false, message: cevir('export.writeFailed') } });
     }
   }, [exportModal, refreshFileTree, showToast, workspacePath]);
 
@@ -359,9 +360,9 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
       const res = await ipc.invoke('write-file', targetPath, f.code, workspacePath);
       if (res?.success) successCount++;
     }
-    setExportModal({ ...exportModal, exportResult: { success: true, message: `${successCount} dosya başarıyla dışa aktarıldı.` } });
+    setExportModal({ ...exportModal, exportResult: { success: true, message: cevir('export.multiDone', { sayi: successCount }) } });
     refreshFileTree();
-    showToast(`${successCount} dosya Unity'ye aktarıldı.`, 'success');
+    showToast(cevir('export.multiToUnity', { sayi: successCount }), 'success');
   }, [exportModal, refreshFileTree, showToast, workspacePath]);
 
   return {

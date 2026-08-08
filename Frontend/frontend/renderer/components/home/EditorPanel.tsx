@@ -227,7 +227,7 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
         <div className="flex-1 flex flex-col z-20 bg-black">
           <div className="h-9 flex items-center px-4 bg-blue-600/10 border-b border-blue-500/20">
             <Sparkles size={14} className="text-blue-400 mr-2" />
-            <span className="text-[11px] font-bold text-blue-300 uppercase tracking-wider">Değişiklik İnceleme: {diffFile.name}</span>
+            <span className="text-[11px] font-bold text-blue-300 uppercase tracking-wider">{t('editor.diffReview', { ad: diffFile.name })}</span>
           </div>
           <div className="flex-1 relative">
             <DiffEditor

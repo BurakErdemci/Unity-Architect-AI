@@ -7,7 +7,7 @@ import {
   Code2, Activity, X, PanelRightClose,
   Zap, Code, Layout, MessageSquare
 } from 'lucide-react';
-import { LangContext, osDilindenDil, translations, type Lang } from '../lib/i18n';
+import { LangContext, aktifDilAyarla, ceviriUygula, osDilindenDil, type Lang, type TValues } from '../lib/i18n';
 import { sohbetKilitliMi } from '../lib/providerGate';
 import { getUnsavedEditorContext } from '../lib/editor-context';
 
@@ -129,7 +129,7 @@ export default function Home() {
   // bu durumda backend'e giden her istek 401/503 alıyor ve ürün "çalışıyor ama
   // hiçbir şey olmuyor" haline geliyor — onay kartı yolu dahil.
   useEffect(() => {
-    if (auth.tokenError) showToast(`${auth.tokenError} — backend istekleri reddedilecek.`, 'error' as any);
+    if (auth.tokenError) showToast(`${auth.tokenError} ${t('home.tokenErrorSuffix')}`, 'error' as any);
   }, [auth.tokenError]);
 
   // --- Initialization ---
@@ -175,7 +175,7 @@ export default function Home() {
       const handleToggleTerminal = () => setIsTerminalOpen(prev => !prev);
       const handleOpenTerminal = () => setIsTerminalOpen(true);
       const handleClearTerminal = () => {
-        showToast("Terminal temizlendi", "info");
+        showToast(t('home.terminalCleared'), "info");
       };
 
       const off1 = ipc.on('menu-toggle-terminal', handleToggleTerminal);
@@ -206,7 +206,13 @@ export default function Home() {
     setLangState(osDilindenDil(typeof navigator !== 'undefined' ? navigator.language : null));
   }, []);
   const setLang = (l: Lang) => { setLangState(l); localStorage.setItem('app-lang', l); };
-  const t = (key: string) => translations[lang][key] ?? key;
+  const t = (key: string, degerler?: TValues) => ceviriUygula(lang, key, degerler);
+  // React ağacı DIŞINDAKİ tüketicilere (hook'lar, `gateResponse`, `ErrorBoundary`)
+  // aktif dili duyur. Gerekçesi `lib/i18n.tsx` → `aktifDil`: localStorage tek
+  // başına yetmiyor, çünkü işletim sistemi dilinden türetilen dil bilerek
+  // kaydedilmiyor. Render sırasında çağrılıyor (effect'te değil) çünkü ilk
+  // boyamadan önce bir toast üretilirse o da doğru dilde olmalı.
+  aktifDilAyarla(lang);
 
   // Sohbet kapısı — karar `providerGate`'te, burada DEĞİL: aynı koşul composer'ın
   // `disabled`'ı ve gönderme kapısı tarafından tüketiliyor ve iki kopya ayrışır.
@@ -375,7 +381,7 @@ export default function Home() {
               const fileContent = `\n\n--- FILE: ${path} ---\n${result.content}\n--- END FILE ---`;
               input = input.replace(match, fileContent);
             }
-          } catch (err) { input = input.replace(match, `(Dosya okunamadı: ${path})`); }
+          } catch (err) { input = input.replace(match, t('home.fileReadFailed', { yol: path })); }
         }
       }
     }
@@ -385,7 +391,7 @@ export default function Home() {
     chat.sendMessage(input, unsavedEditorContext, lang, chat.generationMode, thinkingLevel, fs.setPendingGenFiles, fs.setPendingDelete, images, ultracode, videos);
   };
 
-  const langCtxValue = { lang, setLang, t: (k: string) => translations[lang][k] ?? k };
+  const langCtxValue = { lang, setLang, t };
 
   // İmza ambient ışık: aktif modelin marka rengi
   const brandRgb = getBrandRgb(ai.aiConfig?.model_name, ai.effectiveProvider);
@@ -394,8 +400,8 @@ export default function Home() {
     return (
       <div className="h-screen bg-black flex flex-col items-center justify-center text-center p-6">
         <div className="text-red-500 text-5xl mb-4">⚠</div>
-        <h2 className="text-white text-xl font-bold mb-2">Backend Bağlantısı Başarısız</h2>
-        <p className="text-slate-400 max-w-md">Backend erişilemez durumda. Lütfen uygulamayı yeniden başlatın.</p>
+        <h2 className="text-white text-xl font-bold mb-2">{t('home.backendFailed')}</h2>
+        <p className="text-slate-400 max-w-md">{t('home.backendFailedHint')}</p>
       </div>
     );
   }
@@ -456,7 +462,7 @@ export default function Home() {
     <LangContext.Provider value={langCtxValue}>
     <div className="flex h-screen bg-[#0B0D12] text-slate-200 font-sans overflow-hidden">
       <Head>
-        <title>{`Gamachine | ${auth.user?.name || 'Giriş'}`}</title>
+        <title>{`Gamachine | ${auth.user?.name || t('home.signIn')}`}</title>
         <style>{globalStyles}</style>
       </Head>
 
@@ -529,7 +535,7 @@ export default function Home() {
             {lspStatus?.state === 'starting' && (
               <span className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-white/[0.08] bg-white/[0.03] text-[10px] font-semibold text-slate-400 whitespace-nowrap">
                 <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
-                C# analizi hazırlanıyor…
+                {t('home.csharpAnalyzing')}
               </span>
             )}
             {/* Unity MCP durum göstergesi + gerekçe şeritleri.
@@ -599,7 +605,7 @@ export default function Home() {
               {chat.conversations.length > 0 && (
                 <div className="w-full max-w-lg relative">
                   <div className="text-[10px] uppercase tracking-widest text-slate-600 font-semibold mb-2 text-left">
-                    {lang === 'tr' ? 'Son sohbetler' : 'Recent chats'}
+                    {t('chat.recent')}
                   </div>
                   <div className="space-y-1.5">
                     {chat.conversations.slice(0, 3).map((conv) => (

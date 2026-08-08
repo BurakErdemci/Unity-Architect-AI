@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { HelpCircle, Check } from 'lucide-react';
+import { useLang } from '../../lib/i18n';
 
 interface QuestionOption { label: string; description?: string; }
 interface QuestionItem {
@@ -21,6 +22,7 @@ interface QuestionApprovalProps {
  * Kullanıcı her soru için bir seçenek seçer; "Gönder" cevabı session'a iletir.
  */
 export const QuestionApproval: React.FC<QuestionApprovalProps> = ({ questions, onSubmit }) => {
+  const { t } = useLang();
   const [selected, setSelected] = useState<Record<string, string>>({});
   const allAnswered = questions.length > 0 && questions.every((q) => selected[q.question]);
 
@@ -33,7 +35,7 @@ export const QuestionApproval: React.FC<QuestionApprovalProps> = ({ questions, o
       <div className="flex items-center gap-2 px-4 py-2.5 bg-indigo-500/10 border-b border-indigo-500/20">
         <div className="flex items-center gap-2 text-indigo-300 font-bold text-[11px] uppercase tracking-wider">
           <HelpCircle size={14} />
-          Claude soruyor
+          {t('question.asking')}
         </div>
       </div>
 
@@ -90,7 +92,7 @@ export const QuestionApproval: React.FC<QuestionApprovalProps> = ({ questions, o
           }
         >
           <Check size={14} className="stroke-[3px]" />
-          Gönder
+          {t('question.send')}
         </button>
       </div>
     </motion.div>

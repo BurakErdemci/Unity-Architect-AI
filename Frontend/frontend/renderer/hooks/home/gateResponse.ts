@@ -21,13 +21,20 @@
  * atıyor (Backend/app/auth_utils.py:29) — yani non-2xx gerçek bir yol.
  */
 
+import { cevir, type TKey } from '../../lib/i18n';
+
 export type GateAction = 'command' | 'question' | 'mcp';
 
-/** Kullanıcıya "ne iletilmedi" diye söylerken kullanılacak ad. */
-const ACTION_LABELS: Record<GateAction, string> = {
-  command: 'Komut onayınız',
-  question: 'Cevabınız',
-  mcp: 'Onayınız',
+/** Kullanıcıya "ne iletilmedi" diye söylerken kullanılacak adın SÖZLÜK ANAHTARI.
+ *
+ * Metnin kendisi burada durmuyor: bu modül bir React bileşeni değil, dolayısıyla
+ * `useLang` çağıramıyor ve dili `cevir` üzerinden okuyor (gerekçesi
+ * `lib/i18n.tsx` → `aktifDil`). Tablo modül düzeyinde sabit olduğu için de
+ * çeviri ancak çağrı anında yapılabilir — anahtar saklanıyor, metin değil. */
+const ACTION_LABEL_KEYS: Record<GateAction, TKey> = {
+  command: 'gate.label.command',
+  question: 'gate.label.question',
+  mcp: 'gate.label.mcp',
 };
 
 /** Bir gate çağrısının ham sonucu. Transport'tan (fetch/axios) bağımsız. */
@@ -81,7 +88,7 @@ const readStatus = (body: unknown): string | null => {
  * sessizce başarı sayılırdı — düzelttiğimiz hatanın aynısı geri gelirdi.
  */
 export function gateFailure(action: GateAction, delivery: GateDelivery): GateFailure | null {
-  const label = ACTION_LABELS[action];
+  const label = cevir(ACTION_LABEL_KEYS[action]);
 
   // BELİRSİZ dal — üç durumun ortadakisi.
   //
@@ -101,10 +108,7 @@ export function gateFailure(action: GateAction, delivery: GateDelivery): GateFai
   // olmayan bir sonucu iddia etmenin görsel biçimi olurdu.
   if (delivery.error !== undefined && delivery.error !== null) {
     return {
-      message:
-        `${label} gönderildi ama sunucudan yanıt alınamadı (bağlantı hatası). ` +
-        `ULAŞIP ULAŞMADIĞI BİLİNMİYOR — işlem yapılmış olabilir. Tekrar ` +
-        `göndermeden önce durumu kontrol edin.`,
+      message: cevir('gate.deliver.uncertain', { etiket: label }),
       type: 'warning',
       uncertain: true,
     };
@@ -120,7 +124,7 @@ export function gateFailure(action: GateAction, delivery: GateDelivery): GateFai
   if (!delivery.httpOk) {
     const code = delivery.httpStatus ? ` (HTTP ${delivery.httpStatus})` : '';
     return {
-      message: `${label} sunucu tarafından reddedildi${code}. İşlem yapılmadı.`,
+      message: cevir('gate.deliver.rejected', { etiket: label, kod: code }),
       type: 'error',
     };
   }
@@ -133,13 +137,13 @@ export function gateFailure(action: GateAction, delivery: GateDelivery): GateFai
       // Sebebi de yazıyoruz: kullanıcı "bastım ama olmadı"yı bir hataya değil
       // süre aşımına bağlayabilsin, ve isteği yeniden tetiklemesi gerektiğini
       // bilsin. Backend gate'i düşürdüğünde işlem zaten REDDEDİLMİŞ durumda.
-      message: `${label} iletilemedi: istek zaman aşımına uğramış ve reddedilmiş. İşlem YAPILMADI — isteği yeniden gönderin.`,
+      message: cevir('gate.deliver.notFound', { etiket: label }),
       type: 'warning',
     };
   }
 
   if (status === 'invalid') {
-    return { message: `${label} geçersiz bulundu. İşlem yapılmadı.`, type: 'error' };
+    return { message: cevir('gate.deliver.invalid', { etiket: label }), type: 'error' };
   }
 
   // Onay süresi dolmuş: backend kartı geri çekmiş ve REDDEDİLDİ olarak
@@ -151,9 +155,7 @@ export function gateFailure(action: GateAction, delivery: GateDelivery): GateFai
   // eklediğimiz sebebi burada düşürmek, eklemeyi boşa çıkarırdı.
   if (status === 'gate_expired') {
     return {
-      message:
-        `${label} için onay süresi dolmuştu, işlem YAPILMADI. ` +
-        `İsteği yeniden çalıştırabilirsiniz.`,
+      message: cevir('gate.deliver.expired', { etiket: label }),
       type: 'error',
     };
   }
@@ -172,12 +174,11 @@ export function gateFailure(action: GateAction, delivery: GateDelivery): GateFai
   //   status === "..." → tanınmayan bir durum (backend yeni bir durum eklemiş)
   // İkincisi beyaz liste sözleşmesini BOZMAZ: tanınmayan durum hâlâ "başarı
   // değil" sayılıyor, yalnız "başarısız" da denmiyor.
-  const gorulen = status === null ? 'okunamadı' : `tanınmadı: ${status}`;
+  const gorulen = status === null
+    ? cevir('gate.seen.unreadable')
+    : cevir('gate.seen.unknown', { durum: status });
   return {
-    message:
-      `${label} gönderildi ve sunucu isteği aldı, ama sonuç ${gorulen}. ` +
-      `İŞLEMİN YAPILIP YAPILMADIĞI BİLİNMİYOR — tekrar göndermeden önce ` +
-      `durumu kontrol edin.`,
+    message: cevir('gate.deliver.unreadable', { etiket: label, gorulen }),
     type: 'warning',
     uncertain: true,
   };
@@ -223,9 +224,7 @@ export async function postMcpDecision(
   // boşuna durum kontrolüne yollardı.
   if (!gateId) {
     return {
-      message:
-        `${ACTION_LABELS.mcp} iletilemedi: bu karta ait onay kimliği (gate id) yok, ` +
-        `istek hiç gönderilmedi. İşlem YAPILMADI — isteği yeniden gönderin.`,
+      message: cevir('gate.deliver.noGateId', { etiket: cevir(ACTION_LABEL_KEYS.mcp) }),
       type: 'error',
     };
   }

@@ -1,6 +1,7 @@
 import React, { useMemo, useState, useRef, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Search, Sparkles, Terminal, Puzzle, X } from 'lucide-react';
+import { useLang } from '../../lib/i18n';
 
 export interface CommandMeta {
   name: string;
@@ -28,6 +29,7 @@ interface Group { key: string; label: string; icon: React.ReactNode; items: Comm
  * gönderilmez. Skill'ler ✨ ile en üstte; eklentiler prefix'e göre gruplanır.
  */
 export const SkillsGallery: React.FC<Props> = ({ meta, skills, provider, onSelect, onClose }) => {
+  const { t } = useLang();
   const [query, setQuery] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
   const isClaude = provider !== 'codex';  // Codex skill'leri '/' ile çağrılmaz (defaultPrompt/$ ile)
@@ -62,9 +64,12 @@ export const SkillsGallery: React.FC<Props> = ({ meta, skills, provider, onSelec
     Object.keys(pluginMap).sort().forEach(pfx =>
       out.push({ key: 'plugin:' + pfx, label: pfx, icon: <Puzzle size={12} className="text-sky-300" />, items: pluginMap[pfx] })
     );
-    if (general.length) out.push({ key: 'general', label: 'Komutlar', icon: <Terminal size={12} className="text-slate-400" />, items: general });
+    if (general.length) out.push({ key: 'general', label: t('skills.commands'), icon: <Terminal size={12} className="text-slate-400" />, items: general });
     return out;
-  }, [meta, skillSet, query]);
+    // `t` bağımlılıkta: grup etiketi artık çeviriden geliyor ve dil değişince
+    // memo yeniden hesaplanmazsa etiket eski dilde asılı kalır. Maliyeti yok —
+    // `query` zaten her tuş vuruşunda memo'yu düşürüyor.
+  }, [meta, skillSet, query, t]);
 
   const total = useMemo(() => groups.reduce((n, g) => n + g.items.length, 0), [groups]);
 
@@ -78,14 +83,14 @@ export const SkillsGallery: React.FC<Props> = ({ meta, skills, provider, onSelec
       {/* Başlık + arama */}
       <div className="flex items-center gap-2 px-3 py-2 border-b border-white/10 bg-white/[0.02]">
         <Sparkles size={13} className="text-violet-300 shrink-0" />
-        <span className="text-[11px] font-semibold text-white/80 uppercase tracking-wider shrink-0">Skills & Komutlar</span>
+        <span className="text-[11px] font-semibold text-white/80 uppercase tracking-wider shrink-0">{t('skills.title')}</span>
         <div className="relative flex-1 ml-1">
           <Search size={11} className="absolute left-2 top-1/2 -translate-y-1/2 text-white/30" />
           <input
             ref={inputRef}
             value={query}
             onChange={e => setQuery(e.target.value)}
-            placeholder="Ara…"
+            placeholder={t('skills.search')}
             className="w-full bg-white/[0.04] border border-white/10 rounded-md pl-7 pr-2 py-1 text-[11px] text-white/80 placeholder:text-white/25 focus:outline-none focus:border-white/25"
           />
         </div>
@@ -96,7 +101,7 @@ export const SkillsGallery: React.FC<Props> = ({ meta, skills, provider, onSelec
 
       <div className="max-h-[340px] overflow-y-auto custom-scrollbar py-1">
         {total === 0 ? (
-          <div className="px-3 py-6 text-center text-[11px] text-white/30">Eşleşen komut yok</div>
+          <div className="px-3 py-6 text-center text-[11px] text-white/30">{t('skills.noMatch')}</div>
         ) : (
           groups.map(g => (
             <div key={g.key} className="px-1 py-1">

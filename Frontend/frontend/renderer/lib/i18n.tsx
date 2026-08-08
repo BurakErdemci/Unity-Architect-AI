@@ -184,6 +184,239 @@ const tr = {
   'provider.badge.local': 'yerel',
   'provider.subscriptionCli': 'Abonelik (CLI)',
   'models.apiKeyNeeded': "API anahtarı gerekli — Ayarlar'dan ekle.",
+  // --- Sohbet akışı (useChat) ---
+  'chat.deleteConfirm': 'Bu sohbet silinsin mi?',
+  'chat.errorOccurred': '❌ Hata oluştu.',
+  'chat.historyCleared': 'Sohbet geçmişi temizlendi',
+  'chat.historyClearFailed': 'Geçmiş temizlenemedi',
+  'chat.projectAnalysisTitle': 'Proje Analizi',
+  'chat.recent': 'Son sohbetler',
+  'chat.diffApplied': 'Değişiklik editöre uygulandı — dosyaya yazılmadı',
+  'chat.fileUpdated': '✅ Dosya güncellendi',
+  'chat.writeFailed': '{ad} yazılamadı: {hata}',
+  // Canlı aktivite göstergesi
+  'activity.working': 'Çalışıyor…',
+  'activity.thinking': '🧠 Düşünüyor…',
+  'activity.writing': '✍️ Yazıyor…',
+  // Hafıza / özetleme
+  'memory.learned': '🧠 Proje hafızaya alındı! ({sayi} dosya)',
+  'memory.analysisReport': '🧠 **Analiz Raporu**',
+  'memory.analysisError': 'Analiz hatası.',
+  'memory.none': 'Henüz hafıza yok.',
+  'memory.saved': 'Hafıza kaydedildi.',
+  'memory.saveFailed': 'Kaydedilemedi: {hata}',
+  'memory.exportError': 'Export hatası.',
+  'memory.imported': 'Hafıza aktarıldı!',
+  'memory.importedHeading': '📤 **Hafıza İçe Aktarıldı**',
+  'memory.importError': 'Import hatası.',
+  'memory.learnTitle': "Tüm projeyi tarar ve AI'nın mimariyi öğrenmesini sağlar",
+  'memory.usageTitle': 'Hafıza Kullanımı: %{yuzde} ({sayi} mesaj)\nTıkla ve özetle',
+  'compact.running': 'Sohbet özetleniyor…',
+  'compact.done': 'Sohbet özetlendi! Yeni turlar küçük bağlamla devam edecek.',
+  'compact.tooShort': 'Sohbet zaten kısa.',
+  'compact.error': 'Özetleme hatası — tekrar deneyin.',
+  'common.unknownError': 'bilinmeyen hata',
+  'common.unknown': 'Bilinmiyor',
+  // --- Onay kapısı teslimatı (gateResponse) ---
+  // Metinlerin GEREKÇESİ gateResponse.ts'in başlığında; burada yalnız sözcükleri
+  // duruyor. Her biri `{etiket}` ile başlıyor çünkü hangi kararın iletilmediğini
+  // söyleyen tek bilgi o.
+  'gate.label.command': 'Komut onayınız',
+  'gate.label.question': 'Cevabınız',
+  'gate.label.mcp': 'Onayınız',
+  'gate.deliver.uncertain': '{etiket} gönderildi ama sunucudan yanıt alınamadı (bağlantı hatası). ULAŞIP ULAŞMADIĞI BİLİNMİYOR — işlem yapılmış olabilir. Tekrar göndermeden önce durumu kontrol edin.',
+  'gate.deliver.rejected': '{etiket} sunucu tarafından reddedildi{kod}. İşlem yapılmadı.',
+  'gate.deliver.notFound': '{etiket} iletilemedi: istek zaman aşımına uğramış ve reddedilmiş. İşlem YAPILMADI — isteği yeniden gönderin.',
+  'gate.deliver.invalid': '{etiket} geçersiz bulundu. İşlem yapılmadı.',
+  'gate.deliver.expired': '{etiket} için onay süresi dolmuştu, işlem YAPILMADI. İsteği yeniden çalıştırabilirsiniz.',
+  'gate.deliver.unreadable': '{etiket} gönderildi ve sunucu isteği aldı, ama sonuç {gorulen}. İŞLEMİN YAPILIP YAPILMADIĞI BİLİNMİYOR — tekrar göndermeden önce durumu kontrol edin.',
+  'gate.seen.unreadable': 'okunamadı',
+  'gate.seen.unknown': 'tanınmadı: {durum}',
+  'gate.deliver.noGateId': '{etiket} iletilemedi: bu karta ait onay kimliği (gate id) yok, istek hiç gönderilmedi. İşlem YAPILMADI — isteği yeniden gönderin.',
+  // --- Dosya sistemi (useFileSystem) ---
+  'file.saved': 'Dosya kaydedildi',
+  'file.saveError': 'Kaydetme hatası: {hata}',
+  'file.deleted': 'Dosya silindi',
+  'file.deleteError': 'Silme hatası: {hata}',
+  'file.deleteConfirm': '"{ad}" silinsin mi?',
+  'file.unsupported': 'Bu dosya türü editörde açılamaz (binary).',
+  'file.tooLarge': 'Dosya editörde açılamayacak kadar büyük (>8MB).',
+  'file.openFailed': 'Dosya açılamadı: {yol}',
+  'workspace.missing': 'Önceki çalışma klasörü bulunamadı. Lütfen yeni bir klasör seçin.',
+  // --- Dışa aktarma (useFileSystem + ExportModal) ---
+  'export.fileDone': 'Başarıyla dışa aktarıldı: {ad}',
+  'export.toUnity': "Dosya Unity'ye aktarıldı.",
+  'export.writeFailed': 'Dosya yazılamadı!',
+  'export.multiDone': '{sayi} dosya başarıyla dışa aktarıldı.',
+  'export.multiToUnity': "{sayi} dosya Unity'ye aktarıldı.",
+  'export.success': 'Export Başarılı!',
+  'export.error': 'Export Hatası',
+  'export.ok': 'TAMAM',
+  'export.multiTitle': 'Çoklu Dosya Export',
+  'export.singleTitle': 'Unity Projesine Aktar',
+  'export.multiSubtitle': '{sayi} dosya oluşturulacak',
+  'export.singleSubtitle': 'Kodu .cs dosyası olarak kaydet',
+  'export.targetDir': 'Hedef Dizin',
+  'export.change': 'Değiştir',
+  'export.filesToCreate': 'Oluşturulacak Dosyalar',
+  'export.lines': '{sayi} satır',
+  'export.writeAll': "Tümünü Unity'ye Yaz ({sayi} dosya)",
+  'export.fileName': 'Dosya Adı',
+  'export.exists': 'Dosya zaten var!',
+  'export.existsHint': 'Bu isimde bir dosya mevcut. Üzerine yazmak isterseniz aşağıdaki butonu kullanın, veya dosya adını değiştirin.',
+  'export.preview': 'Kod Önizleme',
+  'export.overwrite': 'Üzerine Yaz',
+  'export.create': 'Dosyayı Oluştur',
+  'export.cancel': 'İptal',
+  // --- AI yapılandırması (useAIConfig) ---
+  'unity.editorClosed': "Unity Editor açık değil. Lütfen önce Unity'yi açın.",
+  'unity.toggleFailed': 'Unity MCP toggle başarısız.',
+  'settings.apiKeyMissingFor': '{saglayici} için API key eksik!',
+  'settings.saved': 'Ayarlar kaydedildi!',
+  'settings.saveFailed': 'Kaydedilemedi.',
+  'settings.keyDeleteError': 'Key silinirken bir hata oluştu.',
+  'models.select': 'Model Seçin',
+  // --- MCP onay kapısı (useMCPApproval + McpApprovalCards) ---
+  'mcp.circularRef': '(döngüsel referans — gösterilmedi)',
+  'mcp.emptyValue': '(boş)',
+  'mcp.charsHidden': '{sayi} karakter gizlendi',
+  'mcp.safetyOff': '⚠️ GÜVENLİK KONTROLLERİ KAPALI — dosya silme, süreç başlatma ve sonsuz döngü kontrolleri bu çağrıda ÇALIŞMAYACAK.',
+  'mcp.fieldsHidden': '… {sayi} alan daha gösterilmedi — kart sınırına ulaşıldı',
+  'mcp.updatingFile': 'MCP: {yol} güncelleniyor',
+  'mcp.pollUnreachable': 'MCP onay isteklerine ulaşılamıyor. Bir onay kartı beklediyseniz gelmeyecek ve istek zaman aşımıyla reddedilecek.',
+  'mcp.suppressedInFlight': 'Önceki kararınız gönderiliyor — bu isteğe ikinci bir karar verilemez. Sonucu birazdan göreceksiniz.',
+  'mcp.suppressedDecided': 'Bu istek için karar zaten gönderildi; geri alınamaz. Aksini istiyorsanız işlemi yeniden başlatın.',
+  'mcp.sentWriteFile': 'Onayınız gönderildi — {ad} yazılıyor',
+  'mcp.sentWriteFiles': 'Onayınız gönderildi — dosyalar yazılıyor',
+  'mcp.sentDelete': '🗑️ Onayınız gönderildi — dosya siliniyor',
+  'mcp.sentCommand': 'Onayınız gönderildi — komut başlatılıyor',
+  'mcp.commandCancelled': 'Komut iptal edildi',
+  'mcp.sentDiff': 'Onayınız gönderildi — değişiklik uygulanıyor',
+  'mcp.otherProject': '⚠ BAŞKA PROJE',
+  'mcp.sourceUnknown': 'Kaynak proje bildirilmedi',
+  'mcp.openWorkspace': 'açık olan:',
+  // --- Araç rozetleri (ToolBlock) ---
+  'tool.read': 'Dosya okuyor',
+  'tool.glob': 'Dosya arıyor',
+  'tool.grep': 'Kod içinde arıyor',
+  'tool.bash': 'Komut çalıştırıyor',
+  'tool.edit': 'Dosya düzenliyor',
+  'tool.write': 'Dosya yazıyor',
+  'tool.todo': 'Plan yapıyor',
+  'tool.webSearch': "Web'de arıyor",
+  'tool.webFetch': 'Sayfa getiriyor',
+  'tool.readFileDone': 'Dosya okundu',
+  'tool.searchProjectDone': 'Projede arandı',
+  'tool.listDirDone': 'Klasör listelendi',
+  'tool.writeFileDone': 'Dosya yazıldı',
+  'tool.findFilesDone': 'Dosyalar arandı',
+  'tool.unityPrefix': 'Unity aracı: ',
+  'tool.noDetail': 'Bu adım için detay kaydedilmedi.',
+  'tool.params': 'PARAMETRELER:',
+  'tool.output': 'ÇIKTI:',
+  // --- Effort seçici (ControlPanel) ---
+  'effort.label.auto': 'Auto',
+  'effort.label.off': 'Kapalı',
+  'effort.label.none': 'None',
+  'effort.label.minimal': 'Minimal',
+  'effort.label.low': 'Düşük',
+  'effort.label.medium': 'Orta',
+  'effort.label.high': 'Yüksek',
+  'effort.label.xhigh': 'XHigh',
+  'effort.label.max': 'Max',
+  'effort.desc.auto': 'Model kendi varsayılanıyla çalışır — parametre gönderilmez.',
+  'effort.desc.off': 'Düşünme/reasoning kapatılır.',
+  'effort.desc.none': 'Reasoning kapalı.',
+  'effort.desc.minimal': 'En sığ düşünme — en hızlı yanıt.',
+  'effort.desc.low': 'Hafif düşünme — rutin işler.',
+  'effort.desc.medium': 'Dengeli düşünme.',
+  'effort.desc.high': 'Derin düşünme — zor görevler.',
+  'effort.desc.xhigh': 'Çok derin düşünme — karmaşık mimari/debug.',
+  'effort.desc.max': 'Tek görevde mümkün olan en derin düşünme.',
+  'effort.ultracodeDesc': 'Ultracode: xhigh effort + çok-ajanlı workflow orkestrasyonu.',
+  // --- Model seçici (ModelSelector) ---
+  'models.doctorRefreshed': 'CLI durumları güncellendi.',
+  'models.doctorFailed': 'CLI durumları alınamadı.',
+  'models.installStarted': 'Kurulum penceresi açıldı — bittiğinde buradaki ↻ Yenile ile kontrol et.',
+  'models.installFailed': 'Kurulum başlatılamadı.',
+  'models.loginStarted': 'Giriş penceresi açıldı — tarayıcıda hesabınla giriş yap, sonra ↻ Yenile.',
+  'models.loginFailed': 'Giriş başlatılamadı.',
+  'models.planLocked': 'Aboneliğin "{model}" modelini desteklemiyor — {cli} Auto\'yu kullanabilirsin.',
+  'models.selected': '{model} seçildi.',
+  'models.cliNotFound': '{cli} bu bilgisayarda bulunamadı. Aşağıdaki Kur butonuyla kurabilirsin.',
+  'models.planLockedTitle': 'Planında kilitli görünüyor — yine de deneyebilirsin; model çalışırsa kilit otomatik kalkar',
+  'models.notInPlan': '🔒 planda yok',
+  'models.noKey': 'key yok',
+  'models.openrouterNoKey': "OpenRouter key yok — Ayarlar'dan ekle",
+  'models.viaOpenrouter': 'OpenRouter üzerinden çağır',
+  'models.refreshTitle': 'Kurulum/giriş durumlarını ve model listelerini yenile',
+  'models.installHint': '{cli} kurulu değil — tıkla, otomatik kuralım (terminal penceresi açılır).',
+  'models.loginHint': '{cli} kurulu ama giriş yapılmamış — tıkla, giriş penceresi açılsın.',
+  // --- Terminal / Unity konsolu (TerminalPanel) ---
+  'terminal.unityDisconnected': 'Unity MCP bağlı değil',
+  'terminal.unityWaiting': 'Unity logları bekleniyor...',
+  'terminal.unityNoConnection': 'Unity Bağlantısı Yok',
+  'terminal.unityNoConnectionHint': 'Unity MCP aktif değil. Canlı konsol akışını başlatmak için üst menüden Unity MCP bağlantısını açın.',
+  'terminal.entries': '{sayi} giriş',
+  'terminal.unityConsoleEmpty': 'Unity Console boş',
+  'terminal.unityMcpDesc': 'MCP Server · Unity Editor bağlantısı',
+  'terminal.activePorts': 'Aktif Portlar',
+  'terminal.processTerminated': '[İşlem sonlandırıldı]',
+  'terminal.unityConnected': 'Unity Bağlı',
+  'terminal.unityNotConnected': 'Unity Bağlı Değil',
+  // --- home.tsx ---
+  'home.backendFailed': 'Backend Bağlantısı Başarısız',
+  'home.backendFailedHint': 'Backend erişilemez durumda. Lütfen uygulamayı yeniden başlatın.',
+  'home.signIn': 'Giriş',
+  'home.terminalCleared': 'Terminal temizlendi',
+  'home.csharpAnalyzing': 'C# analizi hazırlanıyor…',
+  'home.tokenErrorSuffix': '— backend istekleri reddedilecek.',
+  'home.fileReadFailed': '(Dosya okunamadı: {yol})',
+  // --- Kalan bilesenler (4. oncelik) ---
+  'diff.fileFallback': 'Dosya',
+  'diff.updated': '{ad} güncellendi',
+  'diff.suggestionTitle': 'Düzeltme Önerisi',
+  'diff.badge': 'Düzeltme · ',
+  'diff.reject': 'Reddet',
+  'diff.acceptHint': 'kabul edersen dosya güncellenir',
+  'slash.context': 'Bağlam',
+  'slash.categoryBreakdown': 'Kategori dökümü',
+  'slash.usage': 'Kullanım',
+  'slash.resetsPrefix': 'sıfırlanır: ',
+  'slash.details': 'Ayrıntı ({sayi})',
+  'composer.compactDesc': 'Sohbeti özetle ve hafızaya al',
+  'composer.addVideo': 'Video Ekle (yerel dosya) — URL için linki doğrudan mesaja yapıştır',
+  'composer.stop': 'DURDUR',
+  'md.showCode': 'Kodu Göster',
+  'md.hide': 'Gizle',
+  'md.copy': 'Kopyala',
+  'md.exportUnity': 'Unity Projesine Aktar',
+  'git.untracked': 'Yeni (untracked)',
+  'git.modified': 'Değiştirildi',
+  'git.added': 'Eklendi (staged)',
+  'git.deleted': 'Silindi',
+  'git.dirDirty': 'Bu klasörde değişiklik var',
+  'confirm.delete': 'Sil',
+  'confirm.cancel': 'İptal',
+  'skills.search': 'Ara…',
+  'skills.noMatch': 'Eşleşen komut yok',
+  'thinking.seconds': '{sayi} saniye düşündü',
+  'thinking.done': 'Düşündü',
+  'auth.tokenShape': "Oturum token'ı beklenmeyen biçimde döndü ({tur})",
+  'auth.tokenFailed': "Oturum token'ı alınamadı: {hata}",
+  'editor.diffReview': 'Değişiklik İnceleme: {ad}',
+  'question.send': 'Gönder',
+  'settings.modelPlaceholder': 'model-adı-girin',
+  'tool.steps': '{sayi} adım',
+  'app.backendUrlFailed': 'Backend URL alınamadı.',
+  'chat.closeEsc': 'Kapat (Esc)',
+  'diff.old': 'eski',
+  'diff.new': 'yeni',
+  'diff.accept': 'Kabul Et',
+  'question.asking': 'Claude soruyor',
+  'skills.commands': 'Komutlar',
+  'skills.title': 'Skills & Komutlar',
+  'composer.addImage': 'Resim Ekle',
 } as const;
 
 const en: Record<keyof typeof tr, string> = {
@@ -358,9 +591,299 @@ const en: Record<keyof typeof tr, string> = {
   'provider.badge.local': 'local',
   'provider.subscriptionCli': 'Subscription (CLI)',
   'models.apiKeyNeeded': 'API key required — add it in Settings.',
+  // --- Chat flow (useChat) ---
+  'chat.deleteConfirm': 'Delete this chat?',
+  'chat.errorOccurred': '❌ Something went wrong.',
+  'chat.historyCleared': 'Chat history cleared',
+  'chat.historyClearFailed': 'Could not clear history',
+  'chat.projectAnalysisTitle': 'Project Analysis',
+  'chat.recent': 'Recent chats',
+  'chat.diffApplied': 'Change applied in the editor — not written to disk',
+  'chat.fileUpdated': '✅ File updated',
+  'chat.writeFailed': 'Could not write {ad}: {hata}',
+  // Live activity indicator
+  'activity.working': 'Working…',
+  'activity.thinking': '🧠 Thinking…',
+  'activity.writing': '✍️ Writing…',
+  // Memory / compaction
+  'memory.learned': '🧠 Project learned! ({sayi} files)',
+  'memory.analysisReport': '🧠 **Analysis Report**',
+  'memory.analysisError': 'Analysis failed.',
+  'memory.none': 'No memory yet.',
+  'memory.saved': 'Memory saved.',
+  'memory.saveFailed': 'Could not save: {hata}',
+  'memory.exportError': 'Export failed.',
+  'memory.imported': 'Memory imported!',
+  'memory.importedHeading': '📤 **Memory Imported**',
+  'memory.importError': 'Import failed.',
+  'memory.learnTitle': 'Scans the whole project so the AI learns its architecture',
+  'memory.usageTitle': 'Memory usage: {yuzde}% ({sayi} messages)\nClick to summarize',
+  'compact.running': 'Summarizing chat…',
+  'compact.done': 'Chat summarized! New turns continue with a smaller context.',
+  'compact.tooShort': 'Chat is already short.',
+  'compact.error': 'Summarizing failed — please try again.',
+  'common.unknownError': 'unknown error',
+  'common.unknown': 'Unknown',
+  // --- Approval gate delivery (gateResponse) ---
+  'gate.label.command': 'Your command approval',
+  'gate.label.question': 'Your answer',
+  'gate.label.mcp': 'Your approval',
+  'gate.deliver.uncertain': '{etiket} was sent but the server did not respond (connection error). WHETHER IT ARRIVED IS UNKNOWN — the operation may have run. Check the state before sending again.',
+  'gate.deliver.rejected': '{etiket} was rejected by the server{kod}. Nothing was done.',
+  'gate.deliver.notFound': '{etiket} could not be delivered: the request timed out and was rejected. Nothing was done — send the request again.',
+  'gate.deliver.invalid': '{etiket} was found invalid. Nothing was done.',
+  'gate.deliver.expired': '{etiket} arrived after the approval window closed, so nothing was done. You can run the request again.',
+  'gate.deliver.unreadable': '{etiket} was sent and the server received it, but the result {gorulen}. WHETHER THE OPERATION RAN IS UNKNOWN — check the state before sending again.',
+  'gate.seen.unreadable': 'could not be read',
+  'gate.seen.unknown': 'was not recognized: {durum}',
+  'gate.deliver.noGateId': '{etiket} could not be delivered: this card has no approval id (gate id), so no request was sent. Nothing was done — send the request again.',
+  // --- File system (useFileSystem) ---
+  'file.saved': 'File saved',
+  'file.saveError': 'Save failed: {hata}',
+  'file.deleted': 'File deleted',
+  'file.deleteError': 'Delete failed: {hata}',
+  'file.deleteConfirm': 'Delete "{ad}"?',
+  'file.unsupported': 'This file type cannot be opened in the editor (binary).',
+  'file.tooLarge': 'File is too large to open in the editor (>8MB).',
+  'file.openFailed': 'Could not open file: {yol}',
+  'workspace.missing': 'The previous workspace folder was not found. Please pick a new one.',
+  // --- Export (useFileSystem + ExportModal) ---
+  'export.fileDone': 'Exported successfully: {ad}',
+  'export.toUnity': 'File exported to Unity.',
+  'export.writeFailed': 'Could not write the file!',
+  'export.multiDone': '{sayi} files exported successfully.',
+  'export.multiToUnity': '{sayi} files exported to Unity.',
+  'export.success': 'Export Successful!',
+  'export.error': 'Export Failed',
+  'export.ok': 'OK',
+  'export.multiTitle': 'Multi-File Export',
+  'export.singleTitle': 'Export to Unity Project',
+  'export.multiSubtitle': '{sayi} files will be created',
+  'export.singleSubtitle': 'Save the code as a .cs file',
+  'export.targetDir': 'Target Folder',
+  'export.change': 'Change',
+  'export.filesToCreate': 'Files To Create',
+  'export.lines': '{sayi} lines',
+  'export.writeAll': 'Write All To Unity ({sayi} files)',
+  'export.fileName': 'File Name',
+  'export.exists': 'File already exists!',
+  'export.existsHint': 'A file with this name already exists. Use the button below to overwrite it, or change the file name.',
+  'export.preview': 'Code Preview',
+  'export.overwrite': 'Overwrite',
+  'export.create': 'Create File',
+  'export.cancel': 'Cancel',
+  // --- AI configuration (useAIConfig) ---
+  'unity.editorClosed': 'Unity Editor is not open. Please open Unity first.',
+  'unity.toggleFailed': 'Unity MCP toggle failed.',
+  'settings.apiKeyMissingFor': 'API key missing for {saglayici}!',
+  'settings.saved': 'Settings saved!',
+  'settings.saveFailed': 'Could not save.',
+  'settings.keyDeleteError': 'Something went wrong while deleting the key.',
+  'models.select': 'Select Model',
+  // --- MCP approval gate (useMCPApproval + McpApprovalCards) ---
+  'mcp.circularRef': '(circular reference — not shown)',
+  'mcp.emptyValue': '(empty)',
+  'mcp.charsHidden': '{sayi} characters hidden',
+  'mcp.safetyOff': '⚠️ SAFETY CHECKS ARE OFF — file deletion, process spawning and infinite-loop checks will NOT run for this call.',
+  'mcp.fieldsHidden': '… {sayi} more fields not shown — card limit reached',
+  'mcp.updatingFile': 'MCP: updating {yol}',
+  'mcp.pollUnreachable': 'MCP approval requests are unreachable. If you were expecting an approval card it will not arrive, and the request will be rejected on timeout.',
+  'mcp.suppressedInFlight': 'Your previous decision is still being sent — this request cannot take a second one. You will see the result shortly.',
+  'mcp.suppressedDecided': 'A decision was already sent for this request and cannot be undone. If you want the opposite, start the operation again.',
+  'mcp.sentWriteFile': 'Approval sent — writing {ad}',
+  'mcp.sentWriteFiles': 'Approval sent — writing the files',
+  'mcp.sentDelete': '🗑️ Approval sent — deleting the file',
+  'mcp.sentCommand': 'Approval sent — starting the command',
+  'mcp.commandCancelled': 'Command cancelled',
+  'mcp.sentDiff': 'Approval sent — applying the change',
+  'mcp.otherProject': '⚠ DIFFERENT PROJECT',
+  'mcp.sourceUnknown': 'Source project not reported',
+  'mcp.openWorkspace': 'currently open:',
+  // --- Tool chips (ToolBlock) ---
+  'tool.read': 'Reading a file',
+  'tool.glob': 'Looking for files',
+  'tool.grep': 'Searching the code',
+  'tool.bash': 'Running a command',
+  'tool.edit': 'Editing a file',
+  'tool.write': 'Writing a file',
+  'tool.todo': 'Planning',
+  'tool.webSearch': 'Searching the web',
+  'tool.webFetch': 'Fetching a page',
+  'tool.readFileDone': 'File read',
+  'tool.searchProjectDone': 'Searched the project',
+  'tool.listDirDone': 'Folder listed',
+  'tool.writeFileDone': 'File written',
+  'tool.findFilesDone': 'Files found',
+  'tool.unityPrefix': 'Unity tool: ',
+  'tool.noDetail': 'No details were recorded for this step.',
+  'tool.params': 'PARAMETERS:',
+  'tool.output': 'OUTPUT:',
+  // --- Effort selector (ControlPanel) ---
+  'effort.label.auto': 'Auto',
+  'effort.label.off': 'Off',
+  'effort.label.none': 'None',
+  'effort.label.minimal': 'Minimal',
+  'effort.label.low': 'Low',
+  'effort.label.medium': 'Medium',
+  'effort.label.high': 'High',
+  'effort.label.xhigh': 'XHigh',
+  'effort.label.max': 'Max',
+  'effort.desc.auto': 'The model runs with its own default — no parameter is sent.',
+  'effort.desc.off': 'Thinking/reasoning is turned off.',
+  'effort.desc.none': 'Reasoning off.',
+  'effort.desc.minimal': 'Shallowest thinking — fastest answer.',
+  'effort.desc.low': 'Light thinking — routine work.',
+  'effort.desc.medium': 'Balanced thinking.',
+  'effort.desc.high': 'Deep thinking — hard tasks.',
+  'effort.desc.xhigh': 'Very deep thinking — complex architecture/debugging.',
+  'effort.desc.max': 'The deepest thinking possible in a single task.',
+  'effort.ultracodeDesc': 'Ultracode: xhigh effort + multi-agent workflow orchestration.',
+  // --- Model selector (ModelSelector) ---
+  'models.doctorRefreshed': 'CLI status refreshed.',
+  'models.doctorFailed': 'Could not read CLI status.',
+  'models.installStarted': 'Installer window opened — when it finishes, check with ↻ Refresh here.',
+  'models.installFailed': 'Could not start the installer.',
+  'models.loginStarted': 'Sign-in window opened — sign in with your account in the browser, then hit ↻ Refresh.',
+  'models.loginFailed': 'Could not start sign-in.',
+  'models.planLocked': 'Your plan does not include "{model}" — you can use {cli} Auto instead.',
+  'models.selected': '{model} selected.',
+  'models.cliNotFound': '{cli} was not found on this computer. You can install it with the Install button below.',
+  'models.planLockedTitle': 'Looks locked on your plan — you can still try it; if the model runs, the lock clears automatically',
+  'models.notInPlan': '🔒 not in plan',
+  'models.noKey': 'no key',
+  'models.openrouterNoKey': 'No OpenRouter key — add it in Settings',
+  'models.viaOpenrouter': 'Call via OpenRouter',
+  'models.refreshTitle': 'Refresh install/sign-in status and model lists',
+  'models.installHint': '{cli} is not installed — click and we will install it (a terminal window opens).',
+  'models.loginHint': '{cli} is installed but not signed in — click to open the sign-in window.',
+  // --- Terminal / Unity console (TerminalPanel) ---
+  'terminal.unityDisconnected': 'Unity MCP not connected',
+  'terminal.unityWaiting': 'Waiting for Unity logs...',
+  'terminal.unityNoConnection': 'No Unity Connection',
+  'terminal.unityNoConnectionHint': 'Unity MCP is not active. Turn on the Unity MCP connection from the top menu to start the live console stream.',
+  'terminal.entries': '{sayi} entries',
+  'terminal.unityConsoleEmpty': 'Unity Console is empty',
+  'terminal.unityMcpDesc': 'MCP Server · Unity Editor connection',
+  'terminal.activePorts': 'Active Ports',
+  'terminal.processTerminated': '[Process terminated]',
+  'terminal.unityConnected': 'Unity Connected',
+  'terminal.unityNotConnected': 'Unity Not Connected',
+  // --- home.tsx ---
+  'home.backendFailed': 'Backend Connection Failed',
+  'home.backendFailedHint': 'The backend is unreachable. Please restart the app.',
+  'home.signIn': 'Sign In',
+  'home.terminalCleared': 'Terminal cleared',
+  'home.csharpAnalyzing': 'Preparing C# analysis…',
+  'home.tokenErrorSuffix': '— backend requests will be rejected.',
+  'home.fileReadFailed': '(Could not read file: {yol})',
+  // --- Remaining components (priority 4) ---
+  'diff.fileFallback': 'File',
+  'diff.updated': '{ad} updated',
+  'diff.suggestionTitle': 'Suggested Fix',
+  'diff.badge': 'Fix · ',
+  'diff.reject': 'Reject',
+  'diff.acceptHint': 'accepting this updates the file',
+  'slash.context': 'Context',
+  'slash.categoryBreakdown': 'Category breakdown',
+  'slash.usage': 'Usage',
+  'slash.resetsPrefix': 'resets: ',
+  'slash.details': 'Details ({sayi})',
+  'composer.compactDesc': 'Summarize the chat and store it in memory',
+  'composer.addVideo': 'Add video (local file) — for a URL, paste the link straight into the message',
+  'composer.stop': 'STOP',
+  'md.showCode': 'Show Code',
+  'md.hide': 'Hide',
+  'md.copy': 'Copy',
+  'md.exportUnity': 'Export To Unity Project',
+  'git.untracked': 'New (untracked)',
+  'git.modified': 'Modified',
+  'git.added': 'Added (staged)',
+  'git.deleted': 'Deleted',
+  'git.dirDirty': 'This folder has changes',
+  'confirm.delete': 'Delete',
+  'confirm.cancel': 'Cancel',
+  'skills.search': 'Search…',
+  'skills.noMatch': 'No matching commands',
+  'thinking.seconds': 'thought for {sayi}s',
+  'thinking.done': 'Thought',
+  'auth.tokenShape': 'The session token came back in an unexpected shape ({tur})',
+  'auth.tokenFailed': 'Could not get the session token: {hata}',
+  'editor.diffReview': 'Reviewing changes: {ad}',
+  'question.send': 'Send',
+  'settings.modelPlaceholder': 'enter-model-name',
+  'tool.steps': '{sayi} steps',
+  'app.backendUrlFailed': 'Could not get the backend URL.',
+  'chat.closeEsc': 'Close (Esc)',
+  'diff.old': 'old',
+  'diff.new': 'new',
+  'diff.accept': 'Accept',
+  'question.asking': 'Claude is asking',
+  'skills.commands': 'Commands',
+  'skills.title': 'Skills & Commands',
+  'composer.addImage': 'Add image',
 };
 
 export const translations: Record<Lang, Record<string, string>> = { tr, en };
+
+export type TKey = keyof typeof tr;
+
+/** Sözlük değerleri `{ad}` biçiminde yer tutucu taşıyabilir. */
+export type TValues = Record<string, string | number>;
+
+/**
+ * Çeviri + yer tutucu doldurma. Sözlükte olmayan anahtar KENDİSİNİ döndürüyor:
+ * çeviri eksikse ekranda ham anahtar görünür, boş bir alan değil — eksikliği
+ * gizlemek onu düzeltilemez kılardı.
+ */
+export function ceviriUygula(lang: Lang, key: string, degerler?: TValues): string {
+  let metin = translations[lang][key] ?? key;
+  if (degerler) {
+    for (const [ad, deger] of Object.entries(degerler)) {
+      metin = metin.split(`{${ad}}`).join(String(deger));
+    }
+  }
+  return metin;
+}
+
+/**
+ * REACT AĞACI DIŞINDAN dil okumak için. `useLang` çağıramayan üç tür tüketici var:
+ * hook'lar (`useChat`, `useFileSystem`, …), saf yardımcı modüller
+ * (`gateResponse.ts`) ve class bileşenleri (`ErrorBoundary`).
+ *
+ * ⚠️ Neden modül düzeyinde bir değer ve neden doğrudan `localStorage` okumuyor:
+ * dilin TEK doğruluk kaynağı `home.tsx`'teki `lang` state'i ve o state
+ * localStorage'ta karşılığı OLMAYAN bir durumu da temsil edebiliyor — kayıtlı
+ * tercih yokken işletim sistemi dilinden türetilen dil BİLEREK kaydedilmiyor
+ * (gerekçe `osDilindenDil`'in başlığında). Burada localStorage'ı tek başına
+ * okusaydık İngilizce arayüz gören bir kullanıcı Türkçe toast'lar alırdı: aynı
+ * anda iki dil, yani hiç çevirmemekten kötü.
+ *
+ * Kayıt yapılmadan önceki ilk anlar için yedek yol yine localStorage; o da yoksa
+ * `'tr'`. Hooks'ların ilk render'ında metin üretmesi olağan değil, ama olursa
+ * sessizce patlamak yerine bir dil seçilmiş olmalı.
+ */
+let aktifDilDegeri: Lang | null = null;
+
+/** `home.tsx` dili her değiştirdiğinde çağırır — bkz `aktifDil`. */
+export function aktifDilAyarla(l: Lang): void {
+  aktifDilDegeri = l;
+}
+
+export function aktifDil(): Lang {
+  if (aktifDilDegeri) return aktifDilDegeri;
+  try {
+    const kayitli = localStorage.getItem('app-lang');
+    if (kayitli === 'tr' || kayitli === 'en') return kayitli;
+  } catch {
+    /* localStorage yok (SSR/test) — aşağıdaki varsayılana düş */
+  }
+  return 'tr';
+}
+
+/** React dışı bağlamlarda `t()`nin karşılığı. */
+export function cevir(key: TKey, degerler?: TValues): string {
+  return ceviriUygula(aktifDil(), key, degerler);
+}
 
 /** İşletim sistemi / tarayıcı yerel ayarından uygulama dilini türetir.
  *
@@ -381,13 +904,15 @@ export function osDilindenDil(navigatorLanguage: string | undefined | null): Lan
 export interface LangContextValue {
   lang: Lang;
   setLang: (l: Lang) => void;
-  t: (key: keyof typeof tr) => string;
+  t: (key: TKey, degerler?: TValues) => string;
 }
 
 export const LangContext = createContext<LangContextValue>({
   lang: 'tr',
   setLang: () => {},
-  t: (k) => tr[k],
+  // Provider'sız çizilen bileşenler (testler, workspace dışı dallar) de yer
+  // tutucu doldurabilmeli; ham `tr[k]` döndürmek `{ad}` bırakırdı.
+  t: (k, v) => ceviriUygula('tr', k, v),
 });
 
 export const useLang = () => useContext(LangContext);

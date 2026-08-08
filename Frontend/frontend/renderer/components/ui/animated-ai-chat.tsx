@@ -17,6 +17,7 @@ import {
 import { motion, AnimatePresence } from "framer-motion";
 import * as React from "react"
 import { SkillsGallery, CommandMeta } from "../home/SkillsGallery";
+import { useLang } from "../../lib/i18n";
 
 interface UseAutoResizeTextareaProps {
     minHeight: number;
@@ -171,6 +172,7 @@ export function AnimatedChatInput({
     // Typing state is INTERNAL — does not propagate to parent on every keystroke.
     const [internalValue, setInternalValue] = useState(value);
     const [attachments, setAttachments] = useState<{ name: string, data: string, type: 'image' | 'file' | 'video', path?: string, url?: string }[]>([]);
+    const { t } = useLang();
     const [activeSuggestion, setActiveSuggestion] = useState<number>(-1);
     const [showCommandPalette, setShowCommandPalette] = useState(false);
     const { textareaRef, adjustHeight } = useAutoResizeTextarea({
@@ -276,7 +278,7 @@ export function AnimatedChatInput({
     // Built-in (app) komutu + backend'den gelen Claude Code slash komutları
     const commandSuggestions: CommandSuggestion[] = useMemo(() => {
         const builtin: CommandSuggestion[] = [
-            { icon: <span>🧠</span>, label: 'Compact', description: 'Sohbeti özetle ve hafızaya al', prefix: '/compact' },
+            { icon: <span>🧠</span>, label: 'Compact', description: t('composer.compactDesc'), prefix: '/compact' },
         ];
         const skillSet = new Set(skills || []);
         const dynamic: CommandSuggestion[] = (slashCommands || []).map(name => ({
@@ -527,7 +529,7 @@ export function AnimatedChatInput({
                         type="button"
                         onClick={() => fileInputRef.current?.click()}
                         className="p-2 rounded-lg text-white/40 hover:text-white/90 hover:bg-white/5 transition-colors"
-                        title="Resim Ekle"
+                        title={t('composer.addImage')}
                     >
                         <PlusIcon className="w-3.5 h-3.5" />
                     </button>
@@ -535,7 +537,7 @@ export function AnimatedChatInput({
                         type="button"
                         onClick={pickVideoFile}
                         className="p-2 rounded-lg text-white/40 hover:text-white/90 hover:bg-white/5 transition-colors text-sm leading-none"
-                        title="Video Ekle (yerel dosya) — URL için linki doğrudan mesaja yapıştır"
+                        title={t('composer.addVideo')}
                     >🎬</button>
                     {commandMeta.length > 0 && (
                         <button
@@ -546,7 +548,7 @@ export function AnimatedChatInput({
                                 "p-2 rounded-lg transition-colors",
                                 showSkillsGallery ? "text-violet-300 bg-violet-500/10" : "text-white/40 hover:text-white/90 hover:bg-white/5"
                             )}
-                            title="Skills & Komutlar"
+                            title={t('skills.title')}
                         >
                             <Sparkles className="w-3.5 h-3.5" />
                         </button>
@@ -560,7 +562,7 @@ export function AnimatedChatInput({
                         className="px-4 py-1.5 rounded-lg text-[10px] font-bold transition-all flex items-center gap-2 bg-red-500 text-white hover:bg-red-600 shadow-[0_0_15px_rgba(239,68,68,0.3)] animate-pulse"
                     >
                         <Square className="w-3 h-3 fill-current" />
-                        <span>DURDUR</span>
+                        <span>{t('composer.stop')}</span>
                     </button>
                 ) : (
                     <button 

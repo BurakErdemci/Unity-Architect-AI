@@ -1,7 +1,7 @@
 import React from 'react';
 import { AlertTriangle } from 'lucide-react';
 
-import { translations, type Lang } from '../../lib/i18n';
+import { aktifDil, ceviriUygula } from '../../lib/i18n';
 
 /**
  * Render sırasındaki bir hatayı yakalayıp BEYAZ EKRAN yerine okunabilir bir
@@ -27,20 +27,12 @@ import { translations, type Lang } from '../../lib/i18n';
  *   • `LangContext.Provider` `_app.tsx`'te değil `home.tsx` İÇİNDE kuruluyor.
  *     Bu bileşen `home.tsx`'i saran katmanda duruyor, yani `contextType` ile
  *     bağlansa provider'ı göremez ve dil her zaman `tr` kalırdı — sessizce
- *     yanlış, ki bu hiç çevirmemekten kötü. `app-lang` anahtarı dilin zaten
- *     tek kalıcı kaynağı (`home.tsx` de oradan okuyor).
+ *     yanlış, ki bu hiç çevirmemekten kötü. Dil bu yüzden `aktifDil()`'den
+ *     geliyor: `home.tsx` aktif dili her render'da oraya duyuruyor, kayıt
+ *     yoksa `app-lang` anahtarına, o da yoksa `'tr'`e düşülüyor. Buraya ayrı
+ *     bir okuyucu yazmak dilin ikinci bir kaynağını üretirdi — bu depodaki
+ *     arızaların ortak biçimi tam olarak "uyuşması gereken iki yer uyuşmuyor".
  */
-
-function dilOku(): Lang {
-  // localStorage Electron dışı bir bağlamda (SSR, test) yoksa patlamamalı:
-  // hata gösteren bir bileşenin kendi kendine hata üretmesi, kullanıcıyı
-  // yakalanamayan ikinci bir beyaz ekrana götürürdü.
-  try {
-    return localStorage.getItem('app-lang') === 'en' ? 'en' : 'tr';
-  } catch {
-    return 'tr';
-  }
-}
 
 interface ErrorBoundaryProps {
   children: React.ReactNode;
@@ -126,7 +118,10 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
     const { error } = this.state;
     if (!error) return this.props.children;
 
-    const t = (k: string) => translations[dilOku()][k] ?? k;
+    // Dili `aktifDil` veriyor: `home.tsx` her render'da onu güncelliyor, kayıt
+    // yoksa localStorage'a, o da yoksa `'tr'`e düşüyor (gerekçe lib/i18n.tsx).
+    // Kendi okuyucumuzu tutmak, dilin ikinci bir kaynağı olurdu.
+    const t = (k: string) => ceviriUygula(aktifDil(), k);
 
     return (
       <div

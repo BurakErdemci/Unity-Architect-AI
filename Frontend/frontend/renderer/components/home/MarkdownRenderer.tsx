@@ -6,8 +6,10 @@ import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/cjs/styles/prism";
 
 import { linkTuru, chatUrlTransform, yerelYolaCevir } from "../../lib/chatLink";
+import { useLang } from "../../lib/i18n";
 
 const CodeBlock = ({ match, codeString, workspacePath, onExportToUnity, handleCopy, copiedBlock }: any) => {
+  const { t } = useLang();
   const isAgentFile = codeString.trim().startsWith("// path:");
   const [isCollapsed, setIsCollapsed] = useState(isAgentFile); // Ajan dosyaları varsayılan kapalı
 
@@ -36,13 +38,13 @@ const CodeBlock = ({ match, codeString, workspacePath, onExportToUnity, handleCo
                 onClick={() => setIsCollapsed(!isCollapsed)}
                 className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-all text-[10px] font-semibold"
               >
-                {isCollapsed ? <><Eye size={12} /> Kodu Göster</> : <><EyeOff size={12} /> Gizle</>}
+                {isCollapsed ? <><Eye size={12} /> {t('md.showCode')}</> : <><EyeOff size={12} /> {t('md.hide')}</>}
               </button>
               {!isCollapsed && (
                 <button
                   onClick={() => handleCopy(codeString)}
                   className="p-1.5 rounded-md bg-slate-800/80 hover:bg-slate-700 border border-slate-700/50 text-slate-400 hover:text-slate-200 transition-all"
-                  title="Kopyala"
+                  title={t('md.copy')}
                 >
                   {copiedBlock === codeString ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
                 </button>
@@ -69,7 +71,7 @@ const CodeBlock = ({ match, codeString, workspacePath, onExportToUnity, handleCo
               <button
                 onClick={() => onExportToUnity(codeString)}
                 className="p-1.5 rounded-md bg-emerald-900/80 hover:bg-emerald-700 border border-emerald-700/50 text-emerald-400 hover:text-emerald-200 transition-all opacity-0 group-hover:opacity-100"
-                title="Unity Projesine Aktar"
+                title={t('md.exportUnity')}
               >
                 <FileDown size={13} />
               </button>
@@ -77,7 +79,7 @@ const CodeBlock = ({ match, codeString, workspacePath, onExportToUnity, handleCo
             <button
               onClick={() => handleCopy(codeString)}
               className="p-1.5 rounded-md bg-slate-800/80 hover:bg-slate-700 border border-slate-700/50 text-slate-400 hover:text-slate-200 transition-all opacity-0 group-hover:opacity-100"
-              title="Kopyala"
+              title={t('md.copy')}
             >
               {copiedBlock === codeString ? <Check size={13} className="text-emerald-400" /> : <Copy size={13} />}
             </button>

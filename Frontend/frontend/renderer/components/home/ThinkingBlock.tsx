@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from 'framer-motion';
 import { ChevronRight, Sparkles } from 'lucide-react';
 import { useState } from 'react';
+import { useLang } from '../../lib/i18n';
 
 interface ThinkingBlockProps {
   thinking: string;
@@ -8,10 +9,11 @@ interface ThinkingBlockProps {
 }
 
 export const ThinkingBlock = ({ thinking, durationMs }: ThinkingBlockProps) => {
+  const { t } = useLang();
   const [open, setOpen] = useState(false);
 
   const seconds = durationMs ? Math.round(durationMs / 1000) : null;
-  const label = seconds ? `${seconds} saniye düşündü` : 'Düşündü';
+  const label = seconds ? t('thinking.seconds', { sayi: seconds }) : t('thinking.done');
 
   return (
     <div className="mb-2.5">
