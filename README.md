@@ -22,6 +22,27 @@
 
 *Kod editöründe doğal dille geliştir, ardından Unity Editor'ü canlı olarak kontrol et — tek pencereden.*
 
+<br/>
+
+### İndir
+
+**[⬇ En son sürümü indir](https://github.com/BurakErdemci/Unity-Architect-AI/releases/latest)**
+
+| Platform | Dosya |
+|---|---|
+| **Windows 10/11** (x64) | `Unity-Architect-AI-Setup-<sürüm>.exe` |
+| **macOS** (Apple Silicon) | `Unity-Architect-AI-<sürüm>-arm64.dmg` |
+
+Sonrası sana ait: bir API anahtarı gir ya da zaten kullandığın bir CLI ajanını
+göster. Bir sağlayıcı bağlanana kadar sohbet kilitli kalıyor — **sana habersiz
+üçüncü taraf bir AI aracı kurmuyoruz.**
+
+<sub>Derlemeler henüz imzalı değil, o yüzden ilk açılışta işletim sistemi uyarı
+veriyor: Windows SmartScreen → *Daha fazla bilgi* → *Yine de çalıştır*;
+macOS → sağ tık → *Aç*, ya da
+`xattr -cr "/Applications/Unity Architect AI.app"`. Intel Mac desteklenmiyor.
+Kaynaktan derlemeyi tercih ediyorsan: [Kurulum](#-kurulum).</sub>
+
 </div>
 
 ---
@@ -807,4 +828,21 @@ Bu proje **her zaman ücretsiz** kalacak şekilde lisanslanmıştır:
 - ❌ **Uygulamanın kendisini satamazsın** — fork'layıp ücretli bir ürün/servis olarak sunmak yasaktır
 
 Üçüncü parti bileşenlerin lisansları için: [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)
-(Dağıtılan kurulumlardaki FFmpeg GPL-3.0 lisanslıdır ve ayrı bir süreç olarak çağrılır.)
+(Gömülü FFmpeg'in lisansı **platforma göre değişiyor** — Windows'ta LGPL-3.0,
+macOS/Linux'ta GPL-3.0 — ve her durumda yalnızca ayrı bir süreç olarak çağrılıyor.)
+
+Güvenlik açığı bildirimi: [SECURITY.md](SECURITY.md) ·
+Katkı rehberi: [CONTRIBUTING.md](CONTRIBUTING.md)
+
+---
+
+## Markalar
+
+Bu proje Unity Technologies ile **bağlantılı değildir**, onun tarafından
+desteklenmiyor ve onaylanmıyor. "Unity" ve "Unity Technologies", Unity
+Technologies veya bağlı kuruluşlarının ABD'de ve diğer ülkelerdeki ticari
+markaları ya da tescilli ticari markalarıdır. Aynı şekilde "Unreal Engine" Epic
+Games'in, "Godot" Godot Foundation'ın, "Claude" Anthropic'in, "Codex" ve "GPT"
+OpenAI'ın, "Gemini" ve "Antigravity" Google'ın, "GitHub Copilot" GitHub'ın,
+"Cursor" Anysphere'in markalarıdır. Bu adlar yalnızca uyumluluğu **tanımlamak**
+için kullanılıyor.

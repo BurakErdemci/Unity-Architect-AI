@@ -22,6 +22,26 @@
 
 *Develop with natural language in the code editor, then control the Unity Editor live — all from a single window.*
 
+<br/>
+
+### Download
+
+**[⬇ Download the latest release](https://github.com/BurakErdemci/Unity-Architect-AI/releases/latest)**
+
+| Platform | File |
+|---|---|
+| **Windows 10/11** (x64) | `Unity-Architect-AI-Setup-<version>.exe` |
+| **macOS** (Apple Silicon) | `Unity-Architect-AI-<version>-arm64.dmg` |
+
+Then bring your own AI: add an API key, or point it at a CLI agent you already
+use. The chat stays locked until one is connected — **we do not install a
+third-party AI tool on your machine without telling you.**
+
+<sub>The builds are not code-signed yet, so the OS will warn you on first run:
+Windows SmartScreen → *More info* → *Run anyway*; macOS → right-click → *Open*,
+or `xattr -cr "/Applications/Unity Architect AI.app"`. Intel Macs are not
+supported. Prefer building from source? See [Installation](#-installation).</sub>
+
 </div>
 
 ---
@@ -793,4 +813,20 @@ This project is licensed to stay **free forever**:
 - ❌ **You may not sell the application itself** — forking it into a paid product or service is not permitted
 
 For third-party component licenses, see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)
-(FFmpeg, shipped in released installers, is GPL-3.0 licensed and is invoked only as a separate process.)
+(The bundled FFmpeg's licence **differs per platform** — LGPL-3.0 on Windows,
+GPL-3.0 on macOS/Linux — and in every case it is invoked only as a separate process.)
+
+Reporting a vulnerability: [SECURITY.md](SECURITY.md) ·
+Contributing: [CONTRIBUTING.md](CONTRIBUTING.md)
+
+---
+
+## Trademarks
+
+This project is **not affiliated with, sponsored by, or endorsed by** Unity
+Technologies. "Unity" and "Unity Technologies" are trademarks or registered
+trademarks of Unity Technologies or its affiliates in the U.S. and elsewhere.
+Likewise "Unreal Engine" is a trademark of Epic Games, "Godot" of the Godot
+Foundation, "Claude" of Anthropic, "Codex" and "GPT" of OpenAI, "Gemini" and
+"Antigravity" of Google, "GitHub Copilot" of GitHub, and "Cursor" of Anysphere.
+These names are used only to **describe** compatibility.
