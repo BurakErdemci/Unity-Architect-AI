@@ -14,6 +14,19 @@ extraResources:
   # Exe/installer ikonu zaten buildResources/resources/icon.ico'dan otomatik gömülür.
   - from: resources/icon.ico
     to: icon.ico
+  # Lisans metinleri kurulan uygulamanın İÇİNDE olmak zorunda — bu bir tercih değil
+  # dağıtım koşulu: gömülü ffmpeg (LGPL) lisans metninin ikiliyle birlikte
+  # verilmesini, MIT bileşenler ise telif+izin bildiriminin "tüm kopyalarda" yer
+  # almasını şart koşuyor. 8 Ağu 2026'da paketlenmiş çıktıdan ölçüldü: içeride
+  # yalnızca Electron'un kendi lisansları vardı, bu iki dosya HİÇ girmiyordu.
+  - from: ../../LICENSE
+    to: LICENSE
+  - from: ../../THIRD-PARTY-NOTICES.md
+    to: THIRD-PARTY-NOTICES.md
+  # unity-mcp fork'unun kökündeki MIT lisansı (CoplayDev). Aşağıda Server/ ve
+  # MCPForUnity/ ayrı ayrı kopyalandığı için kök LICENSE arada kaynıyordu.
+  - from: ../../unity-mcp/LICENSE
+    to: unity-mcp/LICENSE
   - from: ../../Backend/dist/backend
     to: Backend
     filter:

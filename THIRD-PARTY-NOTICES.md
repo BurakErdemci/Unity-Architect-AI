@@ -22,21 +22,43 @@ the project history.
 
 ## Bundled runtime components
 
-### FFmpeg — **[bundled] [fetched]** — ⚠️ GPL
-Licensed under the **GNU General Public License version 3 or later (GPL-3.0-or-later)**.
-The binaries used are third-party builds configured with `--enable-gpl`
-`--enable-version3` and GPL components (including libx264 and libx265).
+### FFmpeg — **[bundled] [fetched]** — ⚠️ the license differs per platform
+The bundled FFmpeg build is **not under the same license on every platform**. The
+exact builds are pinned in `scripts/pinned_assets.json`; the table reflects those
+pins. Do not collapse these rows into a single claim — each platform ships a
+different binary, and pointing a recipient at the wrong license also points them
+at the wrong corresponding source.
 
+| Platform | Pinned build | License |
+|---|---|---|
+| Windows | BtbN `ffmpeg-n8.1.2-…-win64-**lgpl**-8.1.zip` | **LGPL-3.0-or-later** |
+| macOS | evermeet.cx `ffmpeg-8.1.2` | **GPL-3.0-or-later** |
+| Linux | johnvansickle `ffmpeg-7.0.2-amd64-static` | **GPL-3.0-or-later** |
+
+The Windows binary carries `--enable-version3` **without** `--enable-gpl`, which is
+why it is LGPL rather than GPL (verified 2026-08-08 by reading the configuration
+string out of the shipped `ffmpeg.exe`). The macOS and Linux rows reflect the
+upstream publishers' stated build configuration (`--enable-gpl --enable-version3`,
+including libx264/libx265); those two binaries were **not** re-verified from a
+packaged artifact on this machine.
+
+- Windows builds: https://github.com/BtbN/FFmpeg-Builds/releases
 - macOS builds: https://evermeet.cx/ffmpeg/
 - Linux builds: https://johnvansickle.com/ffmpeg/
 - FFmpeg project and complete corresponding source: https://ffmpeg.org/download.html
-- License text: https://www.gnu.org/licenses/gpl-3.0.html
+- License texts: https://www.gnu.org/licenses/gpl-3.0.html and
+  https://www.gnu.org/licenses/lgpl-3.0.html
 
 FFmpeg is redistributed **unmodified**, as a standalone executable, and is invoked
 by this application only as a separate process (no linking against FFmpeg
 libraries). This constitutes mere aggregation; it does not place Unity Architect
-AI's own code under the GPL. Recipients of a build containing FFmpeg are entitled
-to the corresponding source of FFmpeg, available at the links above.
+AI's own code under the GPL or LGPL. Recipients of a build containing FFmpeg are
+entitled to the corresponding source of FFmpeg for **their** platform's build,
+available at the links above.
+
+⚠️ This reasoning depends on all three conditions holding — unmodified, standalone,
+separate process. Linking against the `libav*` libraries would break it and place
+this project's own code under the FFmpeg build's license.
 
 ### yt-dlp — **[bundled] [fetched]**
 **The Unlicense** (public domain dedication) — https://github.com/yt-dlp/yt-dlp
@@ -44,8 +66,20 @@ to the corresponding source of FFmpeg, available at the links above.
 ### OmniSharp-Roslyn — **[bundled] [fetched]**
 Copyright (c) OmniSharp — **MIT License** — https://github.com/OmniSharp/omnisharp-roslyn
 
-### .NET Runtime — **[bundled] [fetched]**
-Copyright (c) .NET Foundation and Contributors — **MIT License** — https://github.com/dotnet/runtime
+### .NET SDK — **[bundled] [fetched]** — ⚠️ Microsoft proprietary terms, not MIT
+OmniSharp needs a .NET toolchain, and what ships is the **SDK**, not merely the
+runtime — measured 2026-08-08: `third_party/omnisharp/dotnet-win-x64/sdk/10.0.100/`.
+Its root `LICENSE.txt` reads **"MICROSOFT SOFTWARE LICENSE TERMS — MICROSOFT .NET
+LIBRARY"**. That is *not* the MIT license under which the `dotnet/runtime` **source**
+is published, and this entry previously claimed MIT in error.
+
+The license text ships alongside the binary at
+`resources/omnisharp/dotnet-win-x64/LICENSE.txt`. Individual SDK components remain
+under their own licenses (many of them MIT).
+
+- Applicable terms: the bundled `LICENSE.txt`
+- Source repository (MIT — covers the source, not these binaries):
+  https://github.com/dotnet/runtime
 
 ### Electron — **[bundled]**
 Copyright (c) Electron contributors / OpenJS Foundation — **MIT License** — https://github.com/electron/electron
