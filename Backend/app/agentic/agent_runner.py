@@ -1984,7 +1984,15 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                 yield AgentEvent(etype, ev)
         except Exception as e:
             logger.exception("[CodexSession] stream hatası")
-            yield AgentEvent("error", {"message": f"Codex session hatası: {e}"})
+            # ⚠️ `redact_secrets` ŞART — gerekçe Claude yolundaki ikiziyle (bkz.
+            # `_run_claude_session` istisna dalı) birebir aynı: bu metin SSE ile
+            # tarayıcıya gidiyor ve oturum yapılandırması unityMCP `X-API-Key`'ini
+            # taşıyor. Claude yolu bunu yapıyordu, Codex yolu YAPMIYORDU — yani
+            # sınıf kapatılmış sanılıyordu ama yalnız raporun adını verdiği yol
+            # kapanmıştı. İki yolu birden koruyan test:
+            # `tests/test_session_hata_redaksiyonu.py`.
+            from secret_redaction import redact_secrets as _redact
+            yield AgentEvent("error", {"message": f"Codex session hatası: {_redact(str(e))}"})
         finally:
             cleanup_dir(_att_dir)
 
