@@ -7,6 +7,54 @@ Bu dosya kullanıcıya görünen değişiklikleri taşır. Tam geçmiş için `g
 > kullanıcının indirme anında gördüğü sayfa. Eski girdiler olduğu gibi bırakıldı —
 > geçmişi yarım çevirmek, tek dilde bırakmaktan da iki dilde bırakmaktan da kötü.
 
+## v3.0.2 — 9 Ağustos 2026
+
+### The agent can now play a game it is not looking at
+
+`manage_input` — the tool that hands your game to the agent — worked in demos
+and failed in real use. The difference was never the input path. While you are
+in the chat window Unity sits fully unfocused, and two separate things happen
+there. Both were measured live against a running editor, with the window in the
+background the whole time.
+
+**The engine stops.** Play mode enters, `timeScale` reads 1, and the game sits
+frozen at frame 2. Every key we sent was correct and no frame ever processed it.
+The project's own *Run In Background* setting was already on and did not help —
+the runtime value is separate and starts off.
+
+**The devices get switched off.** The Input System's default behaviour disables
+every device when the application loses focus, the real keyboard and mouse
+included. The key arrives at a device nobody is listening to.
+
+Both are now handled on the input path, so pressing Play by hand does not
+quietly change how your editor behaves. Nothing is written to your project: the
+settings we take over are handed back when play mode exits.
+
+`describe` now reports whether the game is actually running. It used to answer
+"can input reach the game" by listing resolved members and said yes while the
+engine was frozen — and no focus flag can catch that, because during the freeze
+Unity still reports itself as focused. It now returns a frame counter: call it
+twice and compare.
+
+### Documentation honesty
+
+- The project is described as **source-available**, not open-source. It is
+  MIT + Commons Clause, which restricts commercial use and therefore is not
+  open-source under the OSI definition. The licence section was already correct;
+  a one-line summary elsewhere contradicted it.
+- Our own clarifying paragraph in `LICENSE` moved out of the Commons Clause text
+  and is now labelled as a clarification, so the standard condition reads
+  verbatim.
+- The `~/.unity_architect_ai` paths now state why the old name survives: they are
+  the address of your existing encryption key and database, and renaming them
+  would make already-saved API keys undecryptable.
+
+### New demo
+
+The README recording is current again — one prompt builds a course in Unity, a
+second hands the game to the agent, and the player cube walks and jumps its way
+to the top step. 8.16 MB → 1.12 MB.
+
 ## v3.0.1 — 8 Ağustos 2026
 
 Three fixes on top of v3.0.0; the first one blocked the Claude path entirely on

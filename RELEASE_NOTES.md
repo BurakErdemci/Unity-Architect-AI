@@ -9,49 +9,54 @@
   moment they download. (This comment is invisible on GitHub.)
 -->
 
-## Gamachine v3.0.1
+## Gamachine v3.0.2
 
-Three fixes on top of v3.0.0. **If you installed v3.0.0, update** — the first one
-prevented Claude Code from starting at all on most Windows installs.
+The agent can now play a game it is not looking at.
 
-> 🍎 **macOS (Apple Silicon):** `Gamachine-3.0.1-arm64.dmg`
-> · 🪟 **Windows:** `Gamachine-Setup-3.0.1.exe`
+> 🍎 **macOS (Apple Silicon):** `Gamachine-3.0.2-arm64.dmg`
+> · 🪟 **Windows:** `Gamachine-Setup-3.0.2.exe`
 
-### 🔧 Claude Code would not start on Windows
+### 🎮 Input reaches the game again
 
-v3.0.0 stopped shipping a copy of the Claude Code CLI, so the app looks for the
-one you installed. But `npm install -g @anthropic-ai/claude-code` puts only a
-`claude.cmd` shim on PATH, and the SDK refuses to run `.cmd` files — a real
-precaution, since `cmd.exe` can execute commands injected through arguments. The
-result was a session that never opened, with Claude Code installed:
+`manage_input` hands your running game to the agent — it injects keyboard, mouse
+and gamepad events straight into Unity's Input System, so the game receives real
+input while nobody is at the keyboard. It worked in demos and failed in real use,
+and the difference was never the input path.
 
-```
-Refusing to execute batch script '...\claude.CMD'
-```
+While you are in the chat window, Unity sits fully unfocused. Two separate things
+happen there, and both were measured against a live editor with the window in the
+background the whole time.
 
-The shim names its target in plain text, so the app now reads it and uses the real
-executable. Nothing to install or configure.
+**The engine stops.** Play mode enters, `timeScale` reads 1, and the game sits
+frozen at frame 2. Every key we sent was correct; no frame ever processed it. The
+project's own *Run In Background* setting was already on and did not help — the
+runtime value is separate and starts off.
 
-### 🧠 The chat no longer forgets silently
+**The devices get switched off.** The Input System disables every device when the
+application loses focus, the real keyboard and mouse included. The key arrives at
+a device nobody is listening to.
 
-When history was too long to fit into the context, the oldest messages were
-dropped without a word. The model received a conversation that began in the
-middle and had no way to know anything was missing — so instead of saying "I don't
-have that part", it answered as if those messages never existed. On a real
-conversation this was measured at 17 of 48 messages surviving: **71% of the text
-gone, silently.**
+Both are handled now, on the input path only — pressing Play by hand does not
+quietly change how your editor behaves. Nothing is written to your project: the
+settings we take over are handed back when play mode exits.
 
-Two changes:
+### 🩺 `describe` tells the truth
 
-- **The CLI's own session is resumed** where possible. It keeps the full
-  transcript on disk; the app now remembers the session id and calls it back
-  instead of re-sending a truncated summary. History survives closing the app.
-- When a summary *is* still needed — after switching agents, or if the session is
-  gone — the cut is now stated. The model is told how many earlier messages are
-  missing and asked to say so rather than guess.
+Ask it why input seems ignored and it used to answer by listing the members it
+had resolved — saying yes while the engine was frozen. No focus flag catches
+this: during the freeze Unity still reports itself as focused. It now returns a
+frame counter. Call it twice; if the number does not move, the game is not
+running and the input path is not your problem.
 
-The session id is tied to the project folder. Open a different workspace and it is
-ignored, so a resumed session can never show you another project's history.
+### 📄 Wording corrections
+
+The project is **source-available**, not open-source — MIT + Commons Clause
+restricts commercial use, so it does not meet the OSI definition. The licence
+section always said this correctly; one summary line did not. Our own clarifying
+paragraph in `LICENSE` has also moved out of the Commons Clause text so the
+standard condition reads verbatim, and the `~/.unity_architect_ai` paths now
+explain themselves: they hold your existing encryption key and database, and
+renaming them would make already-saved API keys undecryptable.
 
 ---
 
