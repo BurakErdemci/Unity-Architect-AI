@@ -422,6 +422,7 @@ Her HTTP isteği X-Session-Token header'ı ile gelir
 ```
 
 - **API anahtarı şifrelemesi**: Fernet ile şifrelenir; anahtar `~/.unity_architect_ai/api_key_fernet.key` dosyasında deterministik tutulur (paketlenmiş imzasız binary Keychain'i güvenilir okuyamadığı için dosya-tabanlı çözüldü). `api_keys` tablosu yalnızca şifreli veri tutar.
+  > **Bu yolda neden eski ad var?** `~/.unity_architect_ai/` ve keyring servis adı **bilerek korunmuş eski yollardır** (geriye dönük uyumluluk). Bunlar kullanıcının mevcut şifreleme anahtarının ve veritabanının adresi; Gamachine'e geçerken yeniden adlandırılsalardı kurulu her kullanıcının kayıtlı API anahtarları çözülemez hale gelirdi. Yeniden adlandırma, kullanıcı veri dizininde bilerek duruyor.
 
 ### 5. Arayüz dışarıya bağlanmaz (CSP)
 
@@ -812,7 +813,7 @@ CI'da (`.github/workflows/test.yml`) dört job birden koşar: **Backend testleri
 
 **Burak Emre Erdemci**
 
-Unity geliştirme sürecini AI ile kökten dönüştürmek isteyen geliştiriciler için açık kaynaklı bir portfolyo ve araştırma çalışması.
+Unity geliştirme sürecini AI ile kökten dönüştürmek isteyen geliştiriciler için kaynağı açık (source-available) bir portfolyo ve araştırma çalışması.
 
 ---
 

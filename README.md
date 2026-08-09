@@ -239,7 +239,7 @@ AI tools in the Unity ecosystem usually land at one of two extremes: they either
 ### Directory Layout
 
 ```
-unityaıPython/
+gamachine/
 ├── Backend/
 │   ├── app/
 │   │   ├── agentic/             # AgentRunner (agentic loop), approval gates
@@ -415,6 +415,7 @@ Every HTTP request carries an X-Session-Token header
 ```
 
 - **API key encryption**: keys are encrypted with Fernet; the key lives deterministically at `~/.unity_architect_ai/api_key_fernet.key` (file-based because an unsigned packaged binary can't reliably read the Keychain). The `api_keys` table holds only encrypted data.
+  > **Why the old name in that path?** `~/.unity_architect_ai/` and the keyring service name are **legacy paths, deliberately kept for backward compatibility**. They are the address of your existing encryption key and database — renaming them during the move to Gamachine would have made every already-installed user's saved keys undecryptable. The rename stops at the user's data directory on purpose.
 
 ---
 
@@ -797,7 +798,7 @@ CI (`.github/workflows/test.yml`) runs four jobs: **Backend tests**, **unity-mcp
 
 **Burak Emre Erdemci**
 
-An open-source portfolio and research project for developers who want to fundamentally transform Unity development with AI.
+A source-available portfolio and research project for developers who want to fundamentally transform Unity development with AI.
 
 ---
 

@@ -15,14 +15,18 @@ value derives, entirely or substantially, from the functionality of the Software
 Any license notice or attribution required by the License must also include this
 Commons Clause License Condition notice.
 
-For the avoidance of doubt: applications, games, or other works that you create
-*using* the Software are yours, and you may distribute and sell them freely. The
-restriction above applies only to selling the Software itself (or a service whose
-value derives substantially from it).
-
 Software: Gamachine
 License: MIT
 Licensor: Burak Emre Erdemci
+
+---
+
+Clarification by the Licensor (not part of the Commons Clause text)
+
+Applications, games, or other works that you create *using* the Software are
+yours, and you may distribute and sell them freely. The restriction above
+applies only to selling the Software itself, or a service whose value derives
+substantially from it.
 
 ---
 
