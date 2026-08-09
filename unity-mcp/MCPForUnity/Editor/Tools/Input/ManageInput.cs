@@ -42,10 +42,49 @@ namespace MCPForUnity.Editor.Tools.Input
                 // unutup cihazı bırakmak, "describe hiçbir şey basılı değil derken
                 // cihazda W basılı" ayrışmasını üretebilirdi. Cihazları da
                 // kaldırıyoruz: bir sonraki çağrı zaten temizini yaratır.
+                // Girdi gönderirken üstlendiğimiz Input System ayarlarını geri koy.
+                // Değer editör oturumu boyunca yaşıyor; bırakılırsa kullanıcının
+                // KENDİ oynayışı da odak kuralını yok saymaya devam ederdi.
+                InputSystemBridge.RestoreBackgroundInputSettings();
+
                 var error = InputSystemBridge.RemoveAllVirtualDevices();
                 if (error != null)
                     Debug.LogWarning($"[manage_input] Play mode çıkışında temizlik eksik kaldı: {error}");
             };
+        }
+
+        /// <summary>
+        /// Girdinin görülebilmesinin ÖN KOŞULU: motorun gerçekten kare işlemesi.
+        ///
+        /// ⭐ Ölçüldü 9 Ağu 2026, Unity arka plandayken uçtan uca: play mode
+        /// açılıyor, `timeScale` 1, ama motor HİÇ tıklamıyor — oyun `frame=2`'de
+        /// ve `Time.time` 0.020'de donuyor. Kare işlenmediği için hangi tuşa
+        /// basılırsa basılsın oyun kodu görmüyor. Arıza girdi hattında sanılıyor;
+        /// gerçekte durmuş bir arabanın direksiyonu çevriliyor. Atama yapılınca
+        /// oyun anında canlandı (frame 2 → 3486 → 5507).
+        ///
+        /// Bu, araçla oynanan her oyunun VARSAYILAN hâli: ajan sohbet
+        /// penceresindeyken Unity daima arka plandadır.
+        ///
+        /// ⚠️ `PlayerSettings.runInBackground`'a bakmak YETMEZ — aynı ölçümde
+        /// proje ayarı True'yken çalışma zamanı değeri False geldi ve oyun yine
+        /// dondu. Bu yüzden proje ayarı okunmuyor, çalışma zamanı değeri
+        /// koşulsuz yazılıyor; ve atama play mode BAŞLADIKTAN sonra yapılmak
+        /// zorunda, öncesinde yapılırsa taşınmıyor.
+        ///
+        /// ⚠️ Kasten `playModeStateChanged` ile HER play mode girişinde değil,
+        /// yalnız girdi gönderme yolunda çağrılıyor. Elle Play'e basan
+        /// kullanıcının motor davranışını, o ajanla oynamıyorken değiştirmek
+        /// istemediğimiz için.
+        ///
+        /// Geri alma gerekmiyor: ölçümde bu atamadan sonra
+        /// `ProjectSettings.asset`'in mtime'ı değişmedi — değer yalnız bellekte,
+        /// play mode bitince kendiliğinden düşüyor.
+        /// </summary>
+        private static void EnsureGameTicksWhileUnfocused()
+        {
+            if (!Application.runInBackground)
+                Application.runInBackground = true;
         }
 
         // Tek bir MCP çağrısının Unity'yi süresiz bloke etmesini engelleyen tavan.
@@ -99,6 +138,16 @@ namespace MCPForUnity.Editor.Tools.Input
                     {
                         isPlaying = EditorApplication.isPlaying,
                         isPaused = EditorApplication.isPaused,
+                        // ⭐ Nabız. Motor arka planda donabiliyor (gerekçe:
+                        // EnsureGameTicksWhileUnfocused) ve ODAK BAYRAKLARI BUNU
+                        // GÖSTERMİYOR: 9 Ağu 2026 ölçümünde motor donmuşken
+                        // Application.isFocused True, EditorWindow.focusedWindow
+                        // ise GameView diyordu — ikisi de "her şey yolunda"
+                        // derken oyun frame=2'de duruyordu. O yüzden buraya bayrak
+                        // değil sayaç konuyor: describe'ı iki kez çağır, frameCount
+                        // ilerlemiyorsa oyun donuktur.
+                        runInBackground = Application.runInBackground,
+                        frameCount = Time.frameCount,
                     },
                     activeInputHandling = DescribeActiveInputHandling(),
                     validKeys = InputSystemBridge.KnownKeyNames(),
@@ -126,6 +175,11 @@ namespace MCPForUnity.Editor.Tools.Input
                 return new ErrorResponse(
                     "Oyun duraklatılmış durumda; girdi işlenmez. manage_editor(action='pause') ile devam ettir. " +
                     "⚠️ 'pause' bir toggle'dır, ikinci çağrı duraklatmayı KALDIRIR.");
+
+            // İki ayrı koşul, ikisi de ölçüldü ve ikisi de tek başına yetmiyor:
+            // motorun kare işlemesi VE cihazların açık kalması.
+            EnsureGameTicksWhileUnfocused();
+            InputSystemBridge.EnsureBackgroundInputAllowed();
 
             // ⚠️ ui_click, Input System kapısının ÖNÜNDE. Denetimde ölçüldü
             // (4 Ağu 2026): kapı switch'ten önce çalıştığı için, "girdi arka ucundan

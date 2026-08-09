@@ -653,6 +653,147 @@ namespace MCPForUnity.Editor.Tools.Input
         /// kendini sınaması: bir Unity/paket sürümünde imza değişirse arıza
         /// "çalışmıyor" diye değil, çözülemeyen üyenin ADIYLA görünür.
         /// </summary>
+        // Play mode boyunca üstlendiğimiz ayarların önceki değerleri.
+        // null = biz dokunmadık, geri koyacak bir şey yok.
+        private static object _savedBackgroundBehavior;
+        private static object _savedEditorInputBehavior;
+
+        /// <summary>
+        /// Girdinin oyuna ULAŞABİLMESİ için gereken editör tarafı koşulları kurar.
+        ///
+        /// ⭐ 9 Ağu 2026'da uçtan uca ölçüldü. Unity TAMAMEN odaksızken — yani
+        /// `EditorWindow.focusedWindow == null`, ki kullanıcı sohbet penceresine
+        /// geçtiğinde olan tam olarak budur — Input System `backgroundBehavior`
+        /// varsayılanı (`ResetAndDisableNonBackgroundDevices`) gereği BÜTÜN
+        /// cihazları devre dışı bırakıyor. Ölçümde birebir şu görüldü:
+        /// `[Keyboard enabled=False] [Mouse enabled=False] [MCPVirtualKeyboard
+        /// enabled=False]`. Tuş kuyruğa giriyor, cihaz kapalı olduğu için oyun
+        /// kodu hiç görmüyor; arıza "girdi gitmiyor" diye okunuyor.
+        ///
+        /// ⚠️⚠️ EN PAHALI DERS: ayar nesnesinin ALANINI yazmak tek başına HİÇBİR
+        /// ŞEY YAPMIYOR. `backgroundBehavior = IgnoreFocus` yazıldı, `describe`
+        /// da "IgnoreFocus" dedi — cihazlar yine kapalı kaldı, tuş yine silindi.
+        /// Değişiklik ancak ayarlar NESNE OLARAK yeniden atanınca uygulanıyor
+        /// (`InputSystem.settings = settings`). Bu satır bulunana kadar üç ayrı
+        /// deneme "ayar doğru görünüyor ama çalışmıyor" diye yanlış okundu.
+        ///
+        /// Kalıcılık ölçüldü: test projesinde InputSettings'in disk asset'i YOK
+        /// (gömülü varsayılan) ve değişiklikten sonra `ProjectSettings/` altında
+        /// tek dosya bile değişmedi — kullanıcının projesine yazmıyoruz. Yine de
+        /// play mode çıkışında geri konuyor, çünkü ayar editör oturumu boyunca
+        /// yaşıyor ve kullanıcının KENDİ oynayışını da etkilerdi.
+        ///
+        /// Eski Input System sürümlerinde bu iki özellik bulunmayabilir; yoksa
+        /// sessizce atlanıyor. Cihazları açmak tek başına da değer üretiyor,
+        /// o yüzden eksik bir özellik tüm işlemi başarısız saymıyor.
+        /// </summary>
+        internal static void EnsureBackgroundInputAllowed()
+        {
+            if (!Available) return;
+
+            var settingsProperty = _inputSystemType.GetProperty("settings",
+                BindingFlags.Public | BindingFlags.Static);
+            var settings = settingsProperty?.GetValue(null);
+            if (settings != null)
+            {
+                bool changed = false;
+                changed |= TrySetSettingsEnum(settings, "backgroundBehavior",
+                    "IgnoreFocus", ref _savedBackgroundBehavior);
+                changed |= TrySetSettingsEnum(settings, "editorInputBehaviorInPlayMode",
+                    "AllDeviceInputAlwaysGoesToGameView", ref _savedEditorInputBehavior);
+
+                // Asıl satır bu. Yukarıdaki yazmalar bu atama olmadan uygulanmıyor.
+                if (changed && settingsProperty.CanWrite)
+                    settingsProperty.SetValue(null, settings);
+            }
+
+            EnableDisabledDevices();
+        }
+
+        /// <summary>
+        /// Play mode çıkışında üstlendiğimiz ayarları geri koyar. Hiçbir şey
+        /// değiştirmediysek hiçbir şey yapmaz.
+        /// </summary>
+        internal static void RestoreBackgroundInputSettings()
+        {
+            if (_savedBackgroundBehavior == null && _savedEditorInputBehavior == null) return;
+
+            if (Available)
+            {
+                var settingsProperty = _inputSystemType.GetProperty("settings",
+                    BindingFlags.Public | BindingFlags.Static);
+                var settings = settingsProperty?.GetValue(null);
+                if (settings != null)
+                {
+                    RestoreSettingsEnum(settings, "backgroundBehavior", _savedBackgroundBehavior);
+                    RestoreSettingsEnum(settings, "editorInputBehaviorInPlayMode", _savedEditorInputBehavior);
+                    if (settingsProperty.CanWrite)
+                        settingsProperty.SetValue(null, settings);
+                }
+            }
+
+            _savedBackgroundBehavior = null;
+            _savedEditorInputBehavior = null;
+        }
+
+        private static bool TrySetSettingsEnum(object settings, string propertyName,
+            string valueName, ref object saved)
+        {
+            var property = settings.GetType().GetProperty(propertyName,
+                BindingFlags.Public | BindingFlags.Instance);
+            if (property == null || !property.CanRead || !property.CanWrite) return false;
+
+            object target;
+            try
+            {
+                target = Enum.Parse(property.PropertyType, valueName);
+            }
+            catch (ArgumentException)
+            {
+                // Sürüm bu enum değerini tanımıyor; ayarı atla, gerisi çalışsın.
+                return false;
+            }
+
+            var current = property.GetValue(settings);
+            if (Equals(current, target)) return false;
+
+            // Yalnız İLK değişimde kaydediyoruz: sonraki çağrılar kendi yazdığımız
+            // değeri "orijinal" diye kaydedip geri koymayı anlamsızlaştırırdı.
+            saved ??= current;
+            property.SetValue(settings, target);
+            return true;
+        }
+
+        private static void RestoreSettingsEnum(object settings, string propertyName, object saved)
+        {
+            if (saved == null) return;
+            var property = settings.GetType().GetProperty(propertyName,
+                BindingFlags.Public | BindingFlags.Instance);
+            if (property != null && property.CanWrite)
+                property.SetValue(settings, saved);
+        }
+
+        /// <summary>
+        /// Odak kaybında kapatılmış cihazları geri açar. Gerçek klavye/fare de
+        /// kapanıyor, o yüzden yalnız sanal cihazlarımızla sınırlı değil.
+        /// </summary>
+        private static void EnableDisabledDevices()
+        {
+            if (!(_devicesProperty?.GetValue(null) is IEnumerable devices)) return;
+
+            var enableDevice = _inputSystemType.GetMethod("EnableDevice",
+                BindingFlags.Public | BindingFlags.Static);
+            if (enableDevice == null) return;
+
+            foreach (var device in devices)
+            {
+                if (device == null) continue;
+                var enabledProperty = device.GetType().GetProperty("enabled");
+                if (enabledProperty?.GetValue(device) is bool enabled && !enabled)
+                    enableDevice.Invoke(null, new[] { device });
+            }
+        }
+
         internal static object Describe()
         {
             Resolve();
