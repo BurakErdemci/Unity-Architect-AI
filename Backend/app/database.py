@@ -357,6 +357,10 @@ class DatabaseManager:
         with closing(sqlite3.connect(self.db_path)) as conn, conn:
             conn.execute('PRAGMA foreign_keys = ON')
             conn.execute('DELETE FROM messages WHERE conversation_id = ?', (conv_id,))
+            # Kimlik de gitsin: sohbet yokken `cli_sessions` satırı yetim kalıyordu.
+            # `conversations.id` AUTOINCREMENT olduğu için id yeniden kullanılmıyor,
+            # yani yanlış geçmiş gösterme riski YOK — bu yalnız çöp temizliği.
+            conn.execute('DELETE FROM cli_sessions WHERE conversation_id = ?', (conv_id,))
             conn.execute('DELETE FROM conversations WHERE id = ?', (conv_id,))
             conn.commit()
 
@@ -404,6 +408,30 @@ class DatabaseManager:
             # Oturum kimliğini saklayamamak bir kolaylık kaybı; sohbeti kırmamalı.
             # Kaydedilemezse sonraki tur transcript enjeksiyonuna düşer (eski davranış).
             logger.warning(f"[cli_sessions] kimlik saklanamadı: {e}")
+
+    def clear_cli_session(self, conv_id: int) -> None:
+        """Bir sohbetin TÜM CLI oturum kimliklerini düşürür (compact'in yarısı).
+
+        ⚠️ Compact'ten sonra çağrılmak ZORUNDA. Kimlik kalırsa sonraki tur
+        `resume=` ile açılır ve CLI kendi diskindeki TAM transcript'i geri
+        yükler — yani kapattığımız oturum kapatılmamış gibi geri gelir ve
+        compact hiçbir şey küçültmemiş olur (9 Ağu 2026'da canlı ölçüldü:
+        compact sonrası bağlam 773k/1M'de sabit kaldı).
+
+        Tüm sağlayıcılar birden siliniyor, çünkü compact hepsinin canlı
+        session'ını kapatıyor; biri kalırsa o CLI'a geçildiğinde eski bağlam
+        tek başına dirilir.
+        """
+        if not conv_id:
+            return
+        try:
+            with closing(sqlite3.connect(self.db_path)) as conn, conn:
+                conn.execute('DELETE FROM cli_sessions WHERE conversation_id = ?',
+                             (conv_id,))
+        except sqlite3.Error as e:
+            # Fail-soft değil ama ölümcül de değil: silinemezse compact eksik
+            # kalır, o yüzden sessiz geçilmiyor — uyarı seviyesinde loglanıyor.
+            logger.warning(f"[cli_sessions] kimlik silinemedi (compact eksik kalır): {e}")
 
     def get_cli_session(self, conv_id: int, provider: str,
                         workspace: str = "") -> Optional[str]:

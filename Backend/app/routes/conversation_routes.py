@@ -87,6 +87,38 @@ def _build_handoff_context(memory: str, history_messages: list,
     return "\n\n".join(parts)
 
 
+async def _cli_bagalamini_sifirla(db, conv_id: int) -> None:
+    """Compact'in ASIL işi: CLI tarafındaki bağlamı gerçekten düşür.
+
+    İki adım ve ikisi de şart:
+    1. `clear_cli_session` — resume kimliği kalırsa sonraki tur `resume=` ile
+       açılır, CLI kendi diskindeki TAM transcript'i geri yükler ve kapattığımız
+       oturum kapatılmamış gibi geri gelir.
+    2. `close_session` — canlı (RAM'deki) oturumu kapat.
+
+    ⚠️ Bu, "özetlenecek mesaj var mı" sorusundan BAĞIMSIZ çalışmak zorunda.
+    Canlı ölçüm (9 Ağu 2026): bir önceki compact DB'yi zaten temizlemişti, geriye
+    tek özet mesajı kalmıştı — yani DB kısaydı, ama Claude Code oturumu %77
+    doluydu. Kısa-devre dalı erken dönünce kullanıcı compact'e basıyor,
+    "sohbet çok kısa" toast'ı görüyor ve bağlam hiç düşmüyordu.
+    ⭐ "Özetlenecek bir şey yok" ile "sıfırlanacak bir şey yok" AYNI ŞEY DEĞİL.
+    """
+    db.clear_cli_session(conv_id)
+    try:
+        from providers.claude_sdk_session import close_session as _close_claude
+        await _close_claude(conv_id)
+        from providers.codex_session import close_session as _close_codex
+        await _close_codex(conv_id)
+        from providers.agy_session import close_session as _close_agy
+        await _close_agy(conv_id)
+        from agentic.agent_runner import _LAST_SUB_PROVIDER
+        _LAST_SUB_PROVIDER.pop(conv_id, None)
+    except Exception as e:
+        # Canlı session kapanmasa bile kimlik düştüğü için sonraki tur temiz
+        # açılır; bu yüzden ölümcül değil.
+        logger.warning(f"[Compact] session reset hatası (kritik değil): {e}")
+
+
 def _oturum_saglayici_anahtari(provider_type: str, model_name: str) -> str:
     """`cli_sessions` tablosundaki `provider` sütununun değeri.
 
@@ -267,8 +299,15 @@ def create_conversation_router(db, progress_store):
         logger.info(f"[Compact] conv_id={conv_id} | {msg_count} mesaj bulundu")
 
         if msg_count <= 6:
-            logger.info(f"[Compact] Sohbet çok kısa ({msg_count} mesaj), atlandı.")
-            return {"status": "success", "message": "Sohbet çok kısa, özetlemeye gerek yok."}
+            # ⚠️ ERKEN DÖNMEDEN ÖNCE oturum yine de sıfırlanır. DB'nin kısa olması
+            # CLI bağlamının da küçük olduğu ANLAMINA GELMİYOR: bir önceki compact
+            # DB'yi temizlemiş olabilir ve CLI oturumu tıka basa dolu kalabilir —
+            # canlı ölçülen arıza tam buydu (bkz `_cli_bagalamini_sifirla`).
+            await _cli_bagalamini_sifirla(db, conv_id)
+            logger.info(f"[Compact] Sohbet çok kısa ({msg_count} mesaj), "
+                        "özet üretilmedi; CLI oturumu yine de sıfırlandı.")
+            return {"status": "success",
+                    "message": "Sohbet zaten kısaydı; özet üretilmedi ama bağlam sıfırlandı."}
 
         provider_type, model_name, _, _ = db.get_ai_config(user_id)
         api_key = (db.get_api_key(user_id, provider_type) or "")
@@ -325,20 +364,10 @@ SOHBET:
 
         db.compact_conversation(conv_id, summary)
 
-        # Canlı session'ları resetle → sonraki tur, özetlenmiş küçük bağlamla başlar.
-        try:
-            from providers.claude_sdk_session import close_session as _close_claude
-            await _close_claude(conv_id)
-            from providers.codex_session import close_session as _close_codex
-            await _close_codex(conv_id)
-            from providers.agy_session import close_session as _close_agy
-            await _close_agy(conv_id)
-            from agentic.agent_runner import _LAST_SUB_PROVIDER
-            _LAST_SUB_PROVIDER.pop(conv_id, None)
-        except Exception as e:
-            logger.warning(f"[Compact] session reset hatası (kritik değil): {e}")
+        # Sonraki tur, özetlenmiş küçük bağlamla ve TEMİZ bir CLI oturumuyla başlar.
+        await _cli_bagalamini_sifirla(db, conv_id)
 
-        logger.info("[Compact] DB güncellendi + canlı session'lar resetlendi.")
+        logger.info("[Compact] DB güncellendi + CLI bağlamı sıfırlandı.")
         return {"status": "success", "summary": summary}
 
     @router.post("/conversations/{conv_id}/analyze-project")

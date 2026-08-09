@@ -7,6 +7,43 @@ Bu dosya kullanıcıya görünen değişiklikleri taşır. Tam geçmiş için `g
 > kullanıcının indirme anında gördüğü sayfa. Eski girdiler olduğu gibi bırakıldı —
 > geçmişi yarım çevirmek, tek dilde bırakmaktan da iki dilde bırakmaktan da kötü.
 
+## v3.0.3 — 9 Ağustos 2026
+
+### Compact now actually shrinks the context
+
+Compact summarised the chat and left the model's context exactly where it was.
+You could press it, watch the conversation collapse into a summary, ask the CLI
+how much context it was holding, and get the same number back — 773k of 1M
+tokens, unchanged. Measured live, not inferred.
+
+Two things were wrong, and the first one hid the second.
+
+**The session was being revived.** Compact closed the live CLI session, which
+used to be enough. Since 3.0.1 the app also remembers each chat's CLI session id
+so it can resume where you left off — and nothing dropped that id on compact. The
+next message resumed the old session, the CLI reloaded its full transcript from
+disk, and the session we had just closed came back exactly as it was. Worse, on a
+resumed session the freshly written summary is deliberately *not* injected, so
+the old context returned and the new summary never arrived.
+
+**Short chats skipped the reset entirely.** Compact returned early when the chat
+had six messages or fewer — reasonable for summarising, wrong for resetting. After
+one compact the stored chat *is* short, while the CLI session is still full. So
+the second press reported "chat is already short" and reset nothing, which is the
+state most people would hit.
+
+Compact now drops the session id in both paths, so a short chat still gets a clean
+CLI session. The message you get in that case says what actually happened, and it
+now comes from the dictionary — English UI no longer shows a Turkish toast here.
+
+### Windows installer name is fixed at the source
+
+The installer has shipped as `Gamachine.Setup.X.Y.Z.exe` for three releases while
+the update feed asked for `Gamachine-Setup-X.Y.Z.exe`, and the gap was closed by
+hand every time. The dots come from NSIS's default name template, not from the
+product name. The template is now pinned, so the build and the update feed agree
+without anyone remembering to intervene.
+
 ## v3.0.2 — 9 Ağustos 2026
 
 ### The agent can now play a game it is not looking at

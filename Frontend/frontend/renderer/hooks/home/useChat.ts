@@ -395,7 +395,9 @@ export const useChat = (
           setContextUsage({ percent: 5, should_compact: false, message_count: 1 });
           showToast(cevir('compact.done'), 'success');
         } else {
-          showToast(res.data.message || cevir('compact.tooShort'), 'info');
+          // Backend'in `message`'ı sabit TÜRKÇE — İngilizce arayüzde Türkçe toast
+          // çıkıyordu. Metin sözlükten geliyor; backend yalnız hangi dal olduğunu söylüyor.
+          showToast(cevir('compact.tooShort'), 'info');
         }
       }
     } catch { showToast(cevir('compact.error'), 'error'); } finally { setIsCompacting(false); }

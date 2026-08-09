@@ -11,9 +11,10 @@
 # yorum yanlış bir olguyu belgeliyordu. Bir sonraki toplu değiştirmede bu bloğu
 # hariç tut.
 appId: com.gamachine.app
-# Tek kelime OLMASI bilinçli: electron-builder çıktı adındaki boşlukları GitHub
-# yüklerken noktaya çeviriyor ve `latest.yml` tireli ad beklediği için her sürümde
-# asset'leri elle yeniden adlandırmak gerekiyordu. Boşluk yoksa o tuzak yok.
+# ⚠️ "Ad tek kelime olunca noktalı-ad tuzağı biter" İDDİASI ÇÜRÜDÜ (8 Ağu 2026).
+# Ad `Gamachine` yapıldı, asset yine `Gamachine.Setup.3.0.0.exe` diye yüklendi:
+# boşluk üründen değil NSIS şablonundan (`${productName} Setup ${version}`)
+# geliyor. Kalıcı çözüm aşağıdaki `nsis.artifactName` (v3.0.3'te eklendi).
 productName: Gamachine
 copyright: Copyright © 2026 Burak Emre Erdemci
 directories:
@@ -100,6 +101,14 @@ win:
         - x64
   requestedExecutionLevel: asInvoker
 nsis:
+  # ⭐ ÜÇ SÜRÜM BOYUNCA (v2.3.1 · v3.0.0/3.0.1 · v3.0.2) her seferinde elle
+  # düzeltilen tuzağın kalıcı çözümü. NSIS varsayılan şablonu
+  # `${productName} Setup ${version}` — içindeki BOŞLUK'u GitHub yüklerken
+  # noktaya çeviriyor (`Gamachine.Setup.3.0.2.exe`), oysa `latest.yml` tireli
+  # ad bekliyor → güncelleyici dosyayı bulamıyor. Şablonu tireli sabitliyoruz,
+  # böylece çıktı ve `latest.yml` doğuştan aynı adı taşıyor.
+  # ⚠️ Bunu değiştirirsen `latest.yml`'deki `url:` alanıyla eşleştiğini ÖLÇ.
+  artifactName: ${productName}-Setup-${version}.${ext}
   # oneClick: kurulumda ÖNCEKİ sürümü otomatik kaldırır, yeniyi kurar ve açar →
   # sürümler üst üste binmez (kullanıcı eskiyi elle silmek zorunda kalmaz).
   oneClick: true

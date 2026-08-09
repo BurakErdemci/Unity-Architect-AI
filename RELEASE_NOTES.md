@@ -9,62 +9,60 @@
   moment they download. (This comment is invisible on GitHub.)
 -->
 
-## Gamachine v3.0.2
+## Gamachine v3.0.3
 
-The agent can now play a game it is not looking at.
+Compact now actually shrinks the context.
 
-> 🍎 **macOS (Apple Silicon):** `Gamachine-3.0.2-arm64.dmg`
-> · 🪟 **Windows:** `Gamachine-Setup-3.0.2.exe`
+> 🍎 **macOS (Apple Silicon):** `Gamachine-3.0.3-arm64.dmg`
+> · 🪟 **Windows:** `Gamachine-Setup-3.0.3.exe`
 
-### 🎮 Input reaches the game again
+### 🧠 Compact was summarising, not shrinking
 
-`manage_input` hands your running game to the agent — it injects keyboard, mouse
-and gamepad events straight into Unity's Input System, so the game receives real
-input while nobody is at the keyboard. It worked in demos and failed in real use,
-and the difference was never the input path.
+Pressing Compact collapsed the conversation into a summary and left the model's
+context exactly where it was. You could compact, then ask the CLI how much
+context it was holding, and get the same number back — **773k of 1M tokens,
+unchanged.** That was measured against a running session, not inferred from code.
 
-While you are in the chat window, Unity sits fully unfocused. Two separate things
-happen there, and both were measured against a live editor with the window in the
-background the whole time.
+Two faults, and the first one hid the second.
 
-**The engine stops.** Play mode enters, `timeScale` reads 1, and the game sits
-frozen at frame 2. Every key we sent was correct; no frame ever processed it. The
-project's own *Run In Background* setting was already on and did not help — the
-runtime value is separate and starts off.
+**The session was being revived.** Compact closes the live CLI session, which
+used to be enough on its own. Since 3.0.1 the app also remembers each chat's CLI
+session id so it can pick up where you left off — and nothing dropped that id
+when you compacted. The next message resumed the old session, the CLI reloaded
+its full transcript from disk, and the session that had just been closed came
+back exactly as it was. On a resumed session the new summary is deliberately not
+injected either, so the old context returned *and* the fresh summary never
+arrived.
 
-**The devices get switched off.** The Input System disables every device when the
-application loses focus, the real keyboard and mouse included. The key arrives at
-a device nobody is listening to.
+**Short chats skipped the reset.** Compact returned early when a chat had six
+messages or fewer — the right call for summarising, the wrong one for resetting.
+After a single compact the stored chat *is* short while the CLI session is still
+full, so the next press reported "chat is already short" and reset nothing. That
+is the state most people would actually run into.
 
-Both are handled now, on the input path only — pressing Play by hand does not
-quietly change how your editor behaves. Nothing is written to your project: the
-settings we take over are handed back when play mode exits.
+Compact now drops the session id on both paths, so even a short chat gets a clean
+CLI session. When there is nothing to summarise it says so and tells you the
+context was reset anyway — and that message now comes from the dictionary, so an
+English interface no longer shows a Turkish notification here.
 
-### 🩺 `describe` tells the truth
+### 🪟 The Windows installer name is fixed at the source
 
-Ask it why input seems ignored and it used to answer by listing the members it
-had resolved — saying yes while the engine was frozen. No focus flag catches
-this: during the freeze Unity still reports itself as focused. It now returns a
-frame counter. Call it twice; if the number does not move, the game is not
-running and the input path is not your problem.
-
-### 📄 Wording corrections
-
-The project is **source-available**, not open-source — MIT + Commons Clause
-restricts commercial use, so it does not meet the OSI definition. The licence
-section always said this correctly; one summary line did not. Our own clarifying
-paragraph in `LICENSE` has also moved out of the Commons Clause text so the
-standard condition reads verbatim, and the `~/.unity_architect_ai` paths now
-explain themselves: they hold your existing encryption key and database, and
-renaming them would make already-saved API keys undecryptable.
+For three releases the installer shipped as `Gamachine.Setup.X.Y.Z.exe` while the
+update feed asked for `Gamachine-Setup-X.Y.Z.exe`, and the difference was patched
+by hand each time. The dots come from the installer framework's default naming
+template rather than the product name, so renaming the product never helped. The
+template is now pinned, and the build and the update feed agree without anyone
+having to remember.
 
 ---
 
-**Installing:** on Windows, if you are coming from *Unity Architect AI* (v2.x),
-remove it yourself first — the rename changed the application id, so it is not
-replaced automatically. On macOS, if the unsigned dmg is reported as "damaged":
-`xattr -cr "/Applications/Gamachine.app"`
+### 📥 Install
 
-⚠️ Only **Apple Silicon (arm64)** is published for macOS, and the builds are **not
-code-signed**: Windows SmartScreen → *More info* → *Run anyway*; macOS →
-right-click → *Open*.
+Download the file for your platform above. Windows removes the previous version
+automatically. Updates are notify-only: Gamachine tells you a new version exists
+and opens this page — it never installs anything by itself.
+
+### ⚠️ Known limits
+
+- **Intel Macs are not supported.** Only an Apple Silicon build is published.
+- The app is unsigned, so both operating systems will warn you on first launch.
