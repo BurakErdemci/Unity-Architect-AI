@@ -19,13 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-THIRD-PARTY COMPONENTS
-
-This project bundles or depends on third-party software under their own
-licenses. See THIRD-PARTY-NOTICES.md for details and attributions. Notably, the
-`unity-mcp/` directory is derived from MCP for Unity (Copyright (c) 2025
-CoplayDev), licensed under the MIT License; its original license is retained at
-`unity-mcp/LICENSE` and continues to govern that code.
