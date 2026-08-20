@@ -4,7 +4,7 @@
   "description": "AI-powered Unity script generation and analysis tool",
   "version": "3.0.3",
   "author": "Burak Emre Erdemci",
-  "license": "SEE LICENSE IN LICENSE",
+  "license": "MIT",
   "main": "app/background.js",
   "scripts": {
     "predev": "node scripts/copy-monaco.js",

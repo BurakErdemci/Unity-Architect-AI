@@ -10,7 +10,7 @@
 [![React](https://img.shields.io/badge/React-18-61DAFB?style=for-the-badge&logo=react&logoColor=black)](https://react.dev)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://typescriptlang.org)
 [![Unity MCP](https://img.shields.io/badge/Unity_MCP-Embedded-7B2FBE?style=for-the-badge&logo=unity&logoColor=white)](./unity-mcp)
-[![License](https://img.shields.io/badge/License-MIT%20%2B%20Commons%20Clause-green?style=for-the-badge)](LICENSE)
+[![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](LICENSE)
 
 *Claude Code, Codex, Antigravity (agy), cloud APIs and live Unity Editor control — all in the same chat window, behind the same approval system, aware of the same project.*
 
@@ -798,20 +798,17 @@ CI (`.github/workflows/test.yml`) runs four jobs: **Backend tests**, **unity-mcp
 
 **Burak Emre Erdemci**
 
-A source-available portfolio and research project for developers who want to fundamentally transform Unity development with AI.
+An open-source portfolio and research project for developers who want to fundamentally transform Unity development with AI.
 
 ---
 
 ## 📄 License
 
-**MIT + [Commons Clause](https://commonsclause.com/)** — see [LICENSE](LICENSE)
-
-This project is licensed to stay **free forever**:
+**[MIT](LICENSE)** — open source, with no strings attached:
 
 - ✅ **Use it** — personal, educational, research, or commercial settings
-- ✅ **Study, modify and fork it**
+- ✅ **Study, modify, fork and redistribute it**
 - ✅ **Sell the games you make with it** — whatever you create is entirely yours
-- ❌ **You may not sell the application itself** — forking it into a paid product or service is not permitted
 
 For third-party component licenses, see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)
 (The bundled FFmpeg's licence **differs per platform** — LGPL-3.0 on Windows,

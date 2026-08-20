@@ -91,7 +91,6 @@ because they assert `HOME`, which Windows does not set.
 
 ## Licence
 
-Contributions are accepted under the project's licence: **MIT with the Commons
-Clause**. In short: the source is open and free to use, and you may sell games you
-build with it — you may not sell the application itself. If that does not work for
-you, please don't submit a patch.
+Contributions are accepted under the project's licence: **MIT**. By submitting a
+patch you agree that your contribution is released under those terms. If that does
+not work for you, please don't submit a patch.

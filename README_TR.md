@@ -813,20 +813,17 @@ CI'da (`.github/workflows/test.yml`) dört job birden koşar: **Backend testleri
 
 **Burak Emre Erdemci**
 
-Unity geliştirme sürecini AI ile kökten dönüştürmek isteyen geliştiriciler için kaynağı açık (source-available) bir portfolyo ve araştırma çalışması.
+Unity geliştirme sürecini AI ile kökten dönüştürmek isteyen geliştiriciler için açık kaynak bir portfolyo ve araştırma çalışması.
 
 ---
 
 ## 📄 Lisans
 
-**MIT + [Commons Clause](https://commonsclause.com/)** — bkz. [LICENSE](LICENSE)
-
-Bu proje **her zaman ücretsiz** kalacak şekilde lisanslanmıştır:
+**[MIT](LICENSE)** — açık kaynak, hiçbir ek koşul yok:
 
 - ✅ **Kullanabilirsin** — kişisel, eğitim, araştırma, kurumsal, her amaçla
-- ✅ **İnceleyebilir, değiştirebilir, fork'layabilirsin**
+- ✅ **İnceleyebilir, değiştirebilir, fork'layabilir, yeniden dağıtabilirsin**
 - ✅ **Yaptığın oyunları satabilirsin** — bu uygulamayla ürettiğin işler tamamen senindir
-- ❌ **Uygulamanın kendisini satamazsın** — fork'layıp ücretli bir ürün/servis olarak sunmak yasaktır
 
 Üçüncü parti bileşenlerin lisansları için: [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)
 (Gömülü FFmpeg'in lisansı **platforma göre değişiyor** — Windows'ta LGPL-3.0,

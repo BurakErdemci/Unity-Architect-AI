@@ -7,6 +7,23 @@ Bu dosya kullanıcıya görünen değişiklikleri taşır. Tam geçmiş için `g
 > kullanıcının indirme anında gördüğü sayfa. Eski girdiler olduğu gibi bırakıldı —
 > geçmişi yarım çevirmek, tek dilde bırakmaktan da iki dilde bırakmaktan da kötü.
 
+## Unreleased
+
+### The project is now plain MIT
+
+The Commons Clause condition has been removed; `LICENSE` is now the MIT licence
+alone. The project is therefore open source in the OSI sense, and the READMEs say
+so instead of "source-available".
+
+Why the change: Commons Clause bought a signal, not enforcement — it does not stop
+a determined closed fork, while it costs the OSI label, keeps the repository out of
+package directories, deters contributors, and (unintentionally) prohibited paid
+third-party support, which was never the intent. Selling a fork of the application
+is now permitted. Already-released versions keep the terms they shipped with.
+
+`unity-mcp/` remains MIT (c) 2025 CoplayDev under its own `LICENSE`, and the
+third-party notices are unchanged.
+
 ## v3.0.3 — 9 Ağustos 2026
 
 ### Compact now actually shrinks the context
