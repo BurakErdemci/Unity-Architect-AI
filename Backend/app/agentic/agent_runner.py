@@ -447,10 +447,20 @@ def provider_retry_code(err_msg: str) -> "str | None":
 
     Kod araması SINIR İLE: `"429" in err_msg` bir sayının içinde de eşleşiyor,
     yani "token count 4293" diyen alakasız bir hata kota sanılıp üç kez boşuna
-    yeniden deneniyor ve sonra kullanıcıya kota diye raporlanıyordu.
+    yeniden deneniyor ve sonra kullanıcıya kota diye raporlanıyordu. Aşağıya
+    eklenen METİN kalıpları bu sınırı gevşetmez; sayısal eşleşme çıpalı kalır.
+
+    `rate limit reached` OpenAI'ın kendi sözcükleri ("Rate limit reached for
+    requests") ve gövdesinde `429` sayısı ya da `too many requests` ifadesi
+    geçmiyor — 30 Ağu 2026 denetimi bu hatanın yeniden denenmeden doğrudan
+    genel hata olarak kullanıcıya çıktığını ölçtü. Daha geniş olan çıplak
+    `rate limit` BİLEREK alınmadı: "you can raise your rate limit" gibi bir
+    yönlendirme cümlesi kotayı ANLATIR ama kota hatası DEĞİLDİR, ve bu
+    fonksiyonun geçmişteki tek arızası tam olarak fazla geniş eşleşmeydi.
     """
     m = (err_msg or "").lower()
-    if re.search(r"(?<!\d)429(?!\d)", m) or "too many requests" in m or "resource_exhausted" in m:
+    if (re.search(r"(?<!\d)429(?!\d)", m) or "too many requests" in m
+            or "resource_exhausted" in m or "rate limit reached" in m):
         return "429"
     if re.search(r"(?<!\d)503(?!\d)", m) or "service unavailable" in m or "unavailable" in m:
         return "503"
@@ -539,6 +549,18 @@ def _canonical_blob(value: object) -> str:
     different. `default=str` keeps the signature from blowing up on a
     non-JSON-serializable value — this signature is a hint, not a security
     decision.
+
+    ⚠️ Callers pass the OBJECT, never a string they serialized themselves. An
+    audit (30 Aug 2026) found all three loops handing `record` the truncated
+    `result_str` they had just built for the transcript, and that one mistake
+    broke the guard in both directions at once:
+      · the string was cut at 8,000 characters, so two genuinely different
+        results sharing a long prefix looked identical and a healthy run was
+        stopped as stalled — the user lost work;
+      · the string was already serialized, so `sort_keys` had nothing left to
+        sort and a repeating result whose key order varied read as progress.
+    Over `_STALL_ARG_MAX` the value is HASHED here rather than cut, so length is
+    bounded without two different results collapsing into one signature.
     """
     try:
         blob = json.dumps(value, sort_keys=True, ensure_ascii=False, default=str)
@@ -1119,12 +1141,18 @@ Kullanıcıyla {'Türkçe' if self.language == 'tr' else 'İngilizce'} konuş.""
             _son_hata = ""          # son denemenin sebebi — tükenince kullanıcıya bu gidiyor
             for retry in range(3):
                 try:
-                    response = await asyncio.to_thread(
+                    # Bekleme SESSİZ olmamalı — kalp atışı üç sağlayıcı yolunda
+                    # da aynı yardımcıdan geliyor (bkz. `_await_provider`).
+                    _istek = asyncio.create_task(asyncio.to_thread(
                         client.models.generate_content,
                         model=self.model_name,
                         contents=contents,
                         config=config,
-                    )
+                    ))
+                    async for _kalp in self._await_provider(_istek,
+                                                            iptal_edilebilir=False):
+                        yield _kalp
+                    response = _istek.result()
                     break
                 except Exception as e:
                     err_msg = str(e).lower()
@@ -1204,7 +1232,13 @@ Kullanıcıyla {'Türkçe' if self.language == 'tr' else 'İngilizce'} konuş.""
                 _turn_out += getattr(_um, "candidates_token_count", 0) or 0
 
             candidate = response.candidates[0]
-            parts = candidate.content.parts
+            # `candidates` boşluğu YUKARIDA zaten kapalı; kapalı olmayan `parts`
+            # idi. Google bir adayı içeriksiz (`content=None`) ya da parçasız
+            # döndürebiliyor ve `for part in None` bir `TypeError`'ı generator'ın
+            # dışına taşırdı — OpenAI yolundaki `choices[0]` ile aynı sınıf,
+            # terminalsiz biten tur. Boş listeye düşmek turu doğal yoluna
+            # sokuyor: araç çağrısı yok → boş final yanıt → tek `done`.
+            parts = getattr(candidate.content, "parts", None) or []
 
             # Thinking varsa yield et
             for part in parts:
@@ -1289,10 +1323,12 @@ Kullanıcıyla {'Türkçe' if self.language == 'tr' else 'İngilizce'} konuş.""
                         response={"result": result_str},
                     ))
                 )
-                # Recorded with the RESULT, and checked per call rather than at
-                # the end of the batch: a response carrying A,A,A,B used to reset
-                # the streak before it was ever inspected.
-                _progress.record(tool_name, tool_args, result_str)
+                # Recorded with the RESULT OBJECT — never `result_str`, which is
+                # the truncated copy built for the transcript (see
+                # `_canonical_blob`) — and checked per call rather than at the
+                # end of the batch: a response carrying A,A,A,B used to reset the
+                # streak before it was ever inspected.
+                _progress.record(tool_name, tool_args, result)
                 if _progress.stalled:
                     break
                 if screenshot_b64:
@@ -1450,14 +1486,18 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                 _eff_body = _map_effort("anthropic", self.model_name,
                                         self.effort_level or self.thinking_level or "auto"
                                         ).get("anthropic_extra_body")
-                response = await client.messages.create(
+                # Kalp atışı: OpenAI ve Gemini yollarıyla aynı yardımcı.
+                _istek = asyncio.create_task(client.messages.create(
                     model=self.model_name,
                     max_tokens=4096,
                     system=_sys_blocks,
                     messages=messages,
                     tools=anthropic_tools,
                     **({"extra_body": _eff_body} if _eff_body else {}),
-                )
+                ))
+                async for _kalp in self._await_provider(_istek):
+                    yield _kalp
+                response = _istek.result()
             except Exception as e:
                 yield AgentEvent("error", {"message": f"Claude hatası: {str(e)}"})
                 return
@@ -1467,10 +1507,14 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                 _turn_in += getattr(_u, "input_tokens", 0) or 0
                 _turn_out += getattr(_u, "output_tokens", 0) or 0
 
-            messages.append({"role": "assistant", "content": response.content})
+            # OpenAI'daki `choices[0]` ile aynı sınıf: bloklar üzerinde koşulmadan
+            # önce gerçekten bir dizi olduğu doğrulanıyor. `None` gelirse eskiden
+            # `TypeError` generator'ın dışına taşınır ve tur terminalsiz biterdi.
+            _bloklar = getattr(response, "content", None) or []
+            messages.append({"role": "assistant", "content": _bloklar})
 
-            tool_calls = [block for block in response.content if block.type == "tool_use"]
-            text_blocks = [block for block in response.content if block.type == "text"]
+            tool_calls = [block for block in _bloklar if block.type == "tool_use"]
+            text_blocks = [block for block in _bloklar if block.type == "text"]
             
             for text_block in text_blocks:
                 if text_block.text:
@@ -1502,12 +1546,13 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                         yield _gate_event
                         _decision = await self._await_approval(_gate_id)
                     if not _decision.approved:
-                        result_str = json.dumps({"success": False, "summary": _decision.summary},
-                                                ensure_ascii=False)
+                        _red = {"success": False, "summary": _decision.summary}
+                        result_str = json.dumps(_red, ensure_ascii=False)
                         tool_results.append({"type": "tool_result", "tool_use_id": tool_call.id, "content": result_str})
                         # Re-asking for a call the user keeps refusing is a stall
-                        # like any other, so it is recorded rather than skipped.
-                        _progress.record(tool_call.name, tool_call.input, result_str)
+                        # like any other, so it is recorded rather than skipped —
+                        # as the OBJECT, like every other `record` call site.
+                        _progress.record(tool_call.name, tool_call.input, _red)
                         if _progress.stalled:
                             break
                         continue
@@ -1542,10 +1587,12 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                     "tool_use_id": tool_call.id,
                     "content": content
                 })
-                # Recorded with the RESULT, and checked per call rather than at
-                # the end of the batch: a response carrying A,A,A,B used to reset
-                # the streak before it was ever inspected.
-                _progress.record(tool_call.name, tool_call.input, result_str)
+                # Recorded with the RESULT OBJECT — never `result_str`, which is
+                # the truncated copy built for the transcript (see
+                # `_canonical_blob`) — and checked per call rather than at the
+                # end of the batch: a response carrying A,A,A,B used to reset the
+                # streak before it was ever inspected.
+                _progress.record(tool_call.name, tool_call.input, result)
                 if _progress.stalled:
                     break
 
@@ -1667,16 +1714,8 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                         **_effort_params,
                         **({"extra_body": _effort_extra_body} if _effort_extra_body else {}),
                     ))
-                    _gecen = 0
-                    while True:
-                        _biten, _ = await asyncio.wait({_istek}, timeout=_KALP_ATISI_SN)
-                        if _biten:
-                            break
-                        _gecen += _KALP_ATISI_SN
-                        yield AgentEvent("status", {"detail": (
-                            f"⏳ {self.model_name} {_gecen} sn'dir yanıt vermedi — sağlayıcı "
-                            f"hâlâ işliyor (Durdur ile iptal edebilirsin)"
-                        )})
+                    async for _kalp in self._await_provider(_istek):
+                        yield _kalp
                     response = _istek.result()
                     break
                 except Exception as e:
@@ -1719,7 +1758,23 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                 _turn_in += getattr(_u, "prompt_tokens", 0) or 0
                 _turn_out += getattr(_u, "completion_tokens", 0) or 0
 
-            message = response.choices[0].message
+            # `choices[0]` KONTROLSÜZ indekslenemez. Sözdizimsel olarak geçerli
+            # ama `choices=[]` olan bir sağlayıcı cevabı `IndexError`'ı
+            # generator'ın DIŞINA taşıyordu ve tur HİÇBİR terminal olay
+            # üretmeden bitiyordu (denetim, 30 Ağu 2026) — sözleşme her turun
+            # tam olarak bir `done` ya da bir `error` ile bitmesi. Bozuk cevap
+            # bir arıza, o yüzden tek `error`.
+            _secenekler = getattr(response, "choices", None) or []
+            if not _secenekler:
+                yield AgentEvent("error", {
+                    "code": "provider_malformed_response",
+                    "message": (
+                        f"`{self.model_name}` boş bir yanıt döndürdü (hiç seçenek yok). "
+                        "Bu sağlayıcı tarafında bir arıza; tekrar dene ya da başka bir "
+                        "modele geç."
+                    )})
+                return
+            message = _secenekler[0].message
 
             # API formatında mesaja ekle
             msg_dict = {"role": "assistant"}
@@ -1797,10 +1852,12 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                     "name": tool_name,
                     "content": result_str
                 })
-                # Recorded with the RESULT, and checked per call rather than at
-                # the end of the batch: a response carrying A,A,A,B used to reset
-                # the streak before it was ever inspected.
-                _progress.record(tool_name, tool_args, result_str)
+                # Recorded with the RESULT OBJECT — never `result_str`, which is
+                # the truncated copy built for the transcript (see
+                # `_canonical_blob`) — and checked per call rather than at the
+                # end of the batch: a response carrying A,A,A,B used to reset the
+                # streak before it was ever inspected.
+                _progress.record(tool_name, tool_args, result)
                 if _progress.stalled:
                     break
                 if screenshot_b64:
@@ -1982,7 +2039,15 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                     final_text = event.get("text", "")
                 elif etype == "error":
                     got_error = True
-                    yield AgentEvent("error", {"message": event.get("content", "")})
+                    # İKİ alan da okunuyor. `cli_base` agy'nin zaman aşımını bir
+                    # JSON content event'inden üretiyor ve mesajı `text` altına
+                    # koyuyor; yalnız `content` okunduğu için kullanıcıya BOŞ
+                    # mesajlı bir `error` gidiyordu (denetim, 30 Ağu 2026) —
+                    # terminal olay vardı ama hiçbir şey anlatmıyordu.
+                    _detay = event.get("content") or event.get("text") or ""
+                    yield AgentEvent("error", {"message": _detay or (
+                        "agy oturumu bir hata ile sonlandı ama ayrıntı bildirmedi."
+                    )})
                     break
         except (asyncio.CancelledError, GeneratorExit):
             # Durdur/SSE kopması sonrası yarım agy disk conversation'ını resume etme.
