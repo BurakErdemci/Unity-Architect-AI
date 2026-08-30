@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useLang } from '../../lib/i18n';
+import { useAutoScroll } from '../../hooks/home/useAutoScroll';
 
 interface TerminalPanelProps {
   id: string;
@@ -31,8 +32,7 @@ const OutputTab: React.FC<{ apiUrl?: string; sessionToken?: string; unityConnect
   // diye bir değişken tanımlıyor ve aynı adı kullanmak onu gölgelerdi.
   const { t: ceviri } = useLang();
   const [entries, setEntries] = useState<any[]>([]);
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const autoScrollRef = useRef(true);
+  const autoScroll = useAutoScroll();
 
   useEffect(() => {
     if (!apiUrl || !sessionToken || !unityConnected) { setEntries([]); return; }
@@ -52,8 +52,8 @@ const OutputTab: React.FC<{ apiUrl?: string; sessionToken?: string; unityConnect
   }, [apiUrl, sessionToken, unityConnected]);
 
   useEffect(() => {
-    if (autoScrollRef.current) bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [entries]);
+    autoScroll.followIfPinned();
+  }, [entries, autoScroll.followIfPinned]);
 
   const typeColor = (type: string) => {
     const t = (type || '').toLowerCase();
@@ -64,10 +64,7 @@ const OutputTab: React.FC<{ apiUrl?: string; sessionToken?: string; unityConnect
 
   return (
     <div className="flex-1 overflow-y-auto font-mono text-[11px] bg-[#0a0a0a] p-2 custom-scrollbar"
-      onScroll={e => {
-        const el = e.currentTarget;
-        autoScrollRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-      }}>
+      onScroll={autoScroll.onScroll}>
       {!unityConnected ? (
         <div className="h-full flex items-center justify-center text-slate-700 text-xs">{ceviri('terminal.unityDisconnected')}</div>
       ) : entries.length === 0 ? (
@@ -77,7 +74,7 @@ const OutputTab: React.FC<{ apiUrl?: string; sessionToken?: string; unityConnect
           <span className="text-slate-300 break-all">{entry.message || entry.text || JSON.stringify(entry)}</span>
         </div>
       ))}
-      <div ref={bottomRef} />
+      <div ref={autoScroll.endRef} />
     </div>
   );
 };
@@ -87,7 +84,7 @@ const DebugConsoleTab: React.FC<{ apiUrl?: string; sessionToken?: string; unityC
   const { t: ceviri } = useLang();
   const [entries, setEntries] = useState<any[]>([]);
   const [filter, setFilter] = useState<'all' | 'log' | 'warning' | 'error'>('all');
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const autoScroll = useAutoScroll();
 
   useEffect(() => {
     if (!apiUrl || !sessionToken || !unityConnected) return;
@@ -98,7 +95,6 @@ const DebugConsoleTab: React.FC<{ apiUrl?: string; sessionToken?: string; unityC
         });
         if (res.data.connected && Array.isArray(res.data.logs)) {
           setEntries(res.data.logs.slice(-200));
-          bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
         }
       } catch { /* Unity bağlı değil */ }
     };
@@ -106,6 +102,13 @@ const DebugConsoleTab: React.FC<{ apiUrl?: string; sessionToken?: string; unityC
     const interval = setInterval(fetch, 3000);
     return () => clearInterval(interval);
   }, [apiUrl, sessionToken, unityConnected]);
+
+  // The scroll moved out of the poll callback: it fired on every 3 s poll whether
+  // or not anything new arrived, and unconditionally — reading an older error in
+  // this tab was impossible, the view jumped back down three seconds later.
+  useEffect(() => {
+    autoScroll.followIfPinned();
+  }, [entries, autoScroll.followIfPinned]);
 
   const filtered = filter === 'all' ? entries : entries.filter(e => {
     const t = (e.type || e.logType || '').toLowerCase();
@@ -141,7 +144,7 @@ const DebugConsoleTab: React.FC<{ apiUrl?: string; sessionToken?: string; unityC
         ))}
         <span className="ml-auto text-[9px] text-slate-700">{ceviri('terminal.entries', { sayi: filtered.length })}</span>
       </div>
-      <div className="flex-1 overflow-y-auto font-mono text-[11px] p-2 custom-scrollbar">
+      <div className="flex-1 overflow-y-auto font-mono text-[11px] p-2 custom-scrollbar" onScroll={autoScroll.onScroll}>
         {filtered.length === 0 ? (
           <div className="h-full flex items-center justify-center text-slate-700 text-xs">{ceviri('terminal.unityConsoleEmpty')}</div>
         ) : filtered.map((entry, i) => (
@@ -150,7 +153,7 @@ const DebugConsoleTab: React.FC<{ apiUrl?: string; sessionToken?: string; unityC
             <span className="text-slate-300 break-all">{entry.message || entry.text || JSON.stringify(entry)}</span>
           </div>
         ))}
-        <div ref={bottomRef} />
+        <div ref={autoScroll.endRef} />
       </div>
     </div>
   );

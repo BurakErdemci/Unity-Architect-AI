@@ -5,7 +5,7 @@ import { motion } from 'framer-motion';
 import {
   ChevronLeft, ChevronRight, Terminal as TerminalIcon,
   Code2, Activity, X, PanelRightClose,
-  Zap, Code, Layout, MessageSquare
+  Zap, Code, Layout, MessageSquare, ArrowDown
 } from 'lucide-react';
 import { LangContext, aktifDilAyarla, ceviriUygula, osDilindenDil, type Lang, type TValues } from '../lib/i18n';
 import { sohbetKilitliMi } from '../lib/providerGate';
@@ -30,6 +30,7 @@ import { useFileSystem } from '../hooks/home/useFileSystem';
 import { useChat } from '../hooks/home/useChat';
 import { useAIConfig } from '../hooks/home/useAIConfig';
 import { useMCPApproval } from '../hooks/home/useMCPApproval';
+import { useAutoScroll } from '../hooks/home/useAutoScroll';
 import { McpApprovalCards } from '../components/home/McpApprovalCards';
 
 const ipc = typeof window !== 'undefined' ? (window as any).ipc : null;
@@ -270,7 +271,12 @@ export default function Home() {
       .then(r => { setSlashCommands(r.data?.commands || []); setSkills(r.data?.skills || []); setCommandMeta(r.data?.meta || []); })
       .catch(() => {});
   }, [API, chat.loading, slashProvider]);  // mesaj bitince session dolar + provider değişince yeniden çek
-  const chatEndRef = useRef<HTMLDivElement>(null);
+  const chatScroll = useAutoScroll();
+  const chatEndRef = chatScroll.endRef;
+  // "There is something new below" badge. Separate from `isPinned`: the button
+  // is only worth showing when content actually arrived while the user was up
+  // there — scrolling up in an idle chat should not pop a call to action.
+  const [hasUnreadBelow, setHasUnreadBelow] = useState(false);
   const lintTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const openedFileRef = useRef<string | null>(null);
 
@@ -310,14 +316,47 @@ export default function Home() {
 
   const [diffFile, setDiffFile] = useState<any>(null);
 
-  // `mcp.activeGate` bağımlılığa EKLENDİ: onay kartı mesaj listesinin dışında
-  // duruyor, yani kart geldiğinde `messages`/`loading` değişmiyordu ve hiçbir
-  // şey ona kaydırmıyordu. Uzun bir sohbette kart ekranın altında kalıyor,
-  // kullanıcı hiçbir şey görmeden istek 180 sn'de reddediliyordu (dış denetim:
-  // `approval-card-hidden-by-view-state`, üç bacağından biri).
+  // New chat content follows the user's reading position: it scrolls only while
+  // the user is at the bottom. This used to be unconditional and yanked the view
+  // down mid-read on every streamed chunk.
+  //
+  // Approval/question cards are deliberately NOT in this effect — see the forced
+  // scroll below.
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [chat.messages, chat.loading, mcp.activeGate]);
+    if (!chatScroll.followIfPinned()) setHasUnreadBelow(true);
+  }, [chat.messages, chat.loading, chatScroll.followIfPinned]);
+
+  // Decision cards are FORCED into view, whatever the user was reading.
+  //
+  // `mcp.activeGate` was added to this dependency list because the card lives
+  // outside the message list: when it arrived `messages`/`loading` did not change
+  // and nothing scrolled to it. In a long chat the card stayed below the fold and
+  // the request was rejected after 180 s without the user ever seeing it (external
+  // audit: `approval-card-hidden-by-view-state`, one of its three legs).
+  //
+  // The other three gates are here for the same reason, one level down: they are
+  // rendered inside the message list, but an unanswered card the user cannot see
+  // is the same failure — a request nobody can answer. Being scrolled up is not
+  // consent to miss it, so this branch ignores the pin and re-arms following.
+  useEffect(() => {
+    if (!mcp.activeGate && !chat.pendingCommand && !chat.pendingQuestion && !fs.pendingDelete) return;
+    chatScroll.scrollToBottom();
+    setHasUnreadBelow(false);
+  }, [mcp.activeGate, chat.pendingCommand, chat.pendingQuestion, fs.pendingDelete, chatScroll.scrollToBottom]);
+
+  // Reaching the bottom by hand clears the badge and re-arms following on its
+  // own — the user does not have to press the button to get auto-scroll back.
+  useEffect(() => {
+    if (chatScroll.isPinned) setHasUnreadBelow(false);
+  }, [chatScroll.isPinned]);
+
+  // Switching conversations starts a fresh read: a pin left `false` by the
+  // previous chat would open the new one scrolled to the top with a stale
+  // "new messages" badge.
+  useEffect(() => {
+    chatScroll.repin();
+    setHasUnreadBelow(false);
+  }, [chat.activeConvId, chatScroll.repin]);
 
   // Sohbet paneli KAPALIYKEN kart 0 piksel genişlikte çiziliyor: state'te var,
   // ekranda yok. Aynı bulgunun ikinci bacağı. Onay isteği kullanıcının panelde
@@ -655,8 +694,14 @@ export default function Home() {
             <button onClick={() => setIsChatOpen(false)} className="p-1 hover:bg-white/[0.06] rounded transition-all text-slate-500 hover:text-slate-300"><PanelRightClose size={16} /></button>
           </div>
 
-          <div className="flex-1 overflow-y-auto custom-scrollbar relative">
-            <ChatPanel 
+          {/* The scroll listener sits HERE, not on `ChatPanel`'s own root. Measured:
+              ChatPanel's root carries `flex-1 overflow-y-auto`, but its parent is a
+              block box, so `flex-1` does nothing, its height stays `auto` and it
+              never overflows — the element that actually scrolls is this one, and a
+              handler on the inner div would never fire. */}
+          <div className="flex-1 relative flex flex-col min-h-0">
+          <div className="flex-1 overflow-y-auto custom-scrollbar relative" onScroll={chatScroll.onScroll}>
+            <ChatPanel
               messages={chat.messages} activeConvId={chat.activeConvId} user={auth.user} loading={chat.loading} clearHistory={chat.clearHistory} lang={lang}
               effectiveProvider={ai.effectiveProvider}
               modelName={ai.aiConfig?.model_name}
@@ -670,6 +715,17 @@ export default function Home() {
               mcpGate={mcp.activeGate} mcpWorkspaceMismatch={mcp.gateWorkspaceMismatch}
               mcpOpenWorkspacePath={mcp.openWorkspacePath} onMcpResolved={mcp.resolveActiveGate}
             />
+          </div>
+            {hasUnreadBelow && (
+              <button
+                type="button"
+                onClick={() => { chatScroll.scrollToBottom(); setHasUnreadBelow(false); }}
+                className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-blue-600/90 hover:bg-blue-600 text-white text-[11.5px] font-medium shadow-lg shadow-black/40 border border-white/10 transition-colors"
+              >
+                <ArrowDown size={13} />
+                {t('chat.newBelow')}
+              </button>
+            )}
           </div>
 
           <div className="p-4 border-t border-white/[0.06] bg-white/[0.015] relative">

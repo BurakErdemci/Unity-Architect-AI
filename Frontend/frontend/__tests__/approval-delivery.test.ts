@@ -929,7 +929,13 @@ describe('kablolama · çağrı yeri kartı sağlayıcıya geri bağlamaz', () =
     }
     visit(sf)
 
-    expect(gateEffektleri.some(b => b.includes('scrollIntoView')),
+    // `scrollIntoView` is no longer called here directly: all three copies of
+    // the auto-scroll pattern moved into `useAutoScroll`, and the gate branch
+    // uses its FORCED variant (`scrollToBottom`) — the one that ignores whether
+    // the user has scrolled up. `followIfPinned` deliberately does not count:
+    // it would leave the card unscrolled-to exactly when the user is reading
+    // higher up, which is the fault this tripwire exists for.
+    expect(gateEffektleri.some(b => b.includes('scrollIntoView') || b.includes('scrollToBottom(')),
       'kart geldiğinde kaydırma yapan effect yok').toBe(true)
     expect(gateEffektleri.some(b => b.includes('setIsChatOpen(true)')),
       'kart geldiğinde sohbet panelini açan effect yok').toBe(true)
