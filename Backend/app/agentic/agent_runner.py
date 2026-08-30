@@ -86,6 +86,19 @@ _STALL_LIMIT = 5
 # repeats arrived batched inside single responses.
 _STALL_WINDOW = 24
 
+# Sağlayıcı isteği için zaman aşımı ve bekleme sırasındaki kalp atışı aralığı.
+#
+# Zaman aşımı bir TAVAN değil bir SIGORTA: openai SDK'sının varsayılanı 600 sn
+# ve o süre boyunca hiçbir şey söylenmiyordu. 300 sn, yavaş bir akıl yürütme
+# modeline yer bırakırken sonsuza kadar asılı kalmayı engelliyor; asıl çözüm
+# zaten kalp atışı, çünkü kullanıcı beklemeyi kendisi kesebiliyor (Durdur).
+#
+# Kalp atışı 15 sn: Burak 30 Ağu 2026'da iki dakika boyunca yalnız
+# "düşünüyor..." gördü ve uygulamanın mı sağlayıcının mı takıldığını
+# ayırt edemedi. Sessizlik burada bir arıza gibi okunuyor.
+_SAGLAYICI_ZAMAN_ASIMI = 300.0
+_KALP_ATISI_SN = 15.0
+
 # Above this many characters a canonical argument or result string is hashed
 # instead of kept: a single `write_file` call can carry a whole source file, and
 # the guard compares signatures rather than reading them.
@@ -422,6 +435,26 @@ _STOP_TEXTS = {
         "deneyebilirim."
     ),
 }
+
+
+def provider_retry_code(err_msg: str) -> "str | None":
+    """Sağlayıcı hatası yeniden denenmeli mi: `"429"` · `"503"` · `None`.
+
+    TEK kopya olması bilinçli. İki sağlayıcı döngüsü (Gemini, OpenAI-uyumlu)
+    aynı sınıflandırmayı ayrı ayrı yazıyordu ve 30 Ağu 2026'da biri düzeltilip
+    diğeri unutuldu — bu depoda en sık ödenen bedel tam olarak bu: kapı bir
+    dala konuyor, diğeri açık kalıyor.
+
+    Kod araması SINIR İLE: `"429" in err_msg` bir sayının içinde de eşleşiyor,
+    yani "token count 4293" diyen alakasız bir hata kota sanılıp üç kez boşuna
+    yeniden deneniyor ve sonra kullanıcıya kota diye raporlanıyordu.
+    """
+    m = (err_msg or "").lower()
+    if re.search(r"(?<!\d)429(?!\d)", m) or "too many requests" in m or "resource_exhausted" in m:
+        return "429"
+    if re.search(r"(?<!\d)503(?!\d)", m) or "service unavailable" in m or "unavailable" in m:
+        return "503"
+    return None
 
 
 def _no_progress_text(tool_name: "str | None") -> str:
@@ -1036,12 +1069,8 @@ Kullanıcıyla {'Türkçe' if self.language == 'tr' else 'İngilizce'} konuş.""
                     # sanıp üç kez yeniden deniyordu — sonra da onu kullanıcıya
                     # "kota" diye raporluyordu. Yanlış sınıflandırma, yanlış
                     # teşhis ve 60 saniye boşa bekleme, hepsi tek `in` yüzünden.
-                    _kota = bool(re.search(r"(?<!\d)429(?!\d)", err_msg)) or "too many requests" in err_msg \
-                        or "resource_exhausted" in err_msg
-                    _kesinti = bool(re.search(r"(?<!\d)503(?!\d)", err_msg)) or "service unavailable" in err_msg \
-                        or "unavailable" in err_msg
-                    if _kota or _kesinti:
-                        _kod = "429" if _kota else "503"
+                    _kod = provider_retry_code(err_msg)
+                    if _kod:
                         _son_hata = _kod
                         wait_time = (retry + 1) * 10
                         logger.warning(f"  ⚠️ Google API Hatası ({_kod}). {wait_time}s bekleniyor... (Deneme {retry+1}/3)")
@@ -1553,23 +1582,50 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
 
             # Retry mekanizması
             response = None
+            _son_hata = ""
             for retry in range(3):
                 try:
-                    response = await client.chat.completions.create(
+                    # İstek bir göreve alınıyor ki BEKLERKEN konuşabilelim.
+                    # Ölçüldü 30 Ağu 2026 (Burak, NVIDIA NIM üzerinde bir
+                    # DeepSeek modeli): iki dakika boyunca ekranda yalnız
+                    # "düşünüyor..." vardı ve kullanıcı uygulamanın mı yoksa
+                    # sağlayıcının mı takıldığını bilemiyordu. openai SDK'sının
+                    # varsayılan zaman aşımı 600 sn, yani hiçbir şey söylemeden
+                    # on dakika beklenebiliyordu.
+                    _istek = asyncio.create_task(client.chat.completions.create(
                         model=self.model_name,
                         messages=messages,
                         tools=openai_tools,
                         tool_choice="auto",
+                        timeout=_SAGLAYICI_ZAMAN_ASIMI,
                         **_effort_params,
                         **({"extra_body": _effort_extra_body} if _effort_extra_body else {}),
-                    )
+                    ))
+                    _gecen = 0
+                    while True:
+                        _biten, _ = await asyncio.wait({_istek}, timeout=_KALP_ATISI_SN)
+                        if _biten:
+                            break
+                        _gecen += _KALP_ATISI_SN
+                        yield AgentEvent("status", {"detail": (
+                            f"⏳ {self.model_name} {_gecen} sn'dir yanıt vermedi — sağlayıcı "
+                            f"hâlâ işliyor (Durdur ile iptal edebilirsin)"
+                        )})
+                    response = _istek.result()
                     break
                 except Exception as e:
                     err_msg = str(e).lower()
                     logger.error(f"  ❌ OpenAI/OpenRouter API hatası [{self.provider_type} / {self.model_name}]: {str(e)}", exc_info=True)
-                    if any(code in err_msg for code in ["429", "503", "too many requests", "service unavailable"]):
+                    _kod = provider_retry_code(err_msg)
+                    if _kod:
+                        _son_hata = _kod
                         wait_time = (retry + 1) * 10
-                        logger.warning(f"  ⚠️ OpenAI/OpenRouter Hatası. {wait_time}s bekleniyor... (Deneme {retry+1}/3)")
+                        logger.warning(f"  ⚠️ OpenAI/OpenRouter Hatası ({_kod}). {wait_time}s bekleniyor... (Deneme {retry+1}/3)")
+                        yield AgentEvent("status", {"detail": (
+                            f"🚦 Sağlayıcı {_kod} döndü "
+                            f"({'kota/hız sınırı' if _kod == '429' else 'servis meşgul'}) — "
+                            f"{wait_time} sn bekleniyor, deneme {retry + 1}/3"
+                        )})
                         await asyncio.sleep(wait_time)
                         continue
                     else:
@@ -1577,7 +1633,19 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                         return
             
             if not response:
-                yield AgentEvent("error", {"message": "AI yanıt vermeyi reddetti (Rate Limit/API)."})
+                # Gemini yolundaki ile AYNI sözleşme: reddeden model değil
+                # sağlayıcı, ve 429 ile 503 aynı cümleye sıkıştırılmıyor.
+                _kodlar = {"429": "provider_quota", "503": "provider_unavailable"}
+                _aciklama = {
+                    "429": "Sağlayıcı kota/hız sınırı nedeniyle üç denemede de isteği reddetti. "
+                           "Bir süre bekleyip tekrar dene ya da başka bir modele geç.",
+                    "503": "Sağlayıcı üç denemede de meşgul döndü (503). Bu geçici; "
+                           "birazdan tekrar dene.",
+                }.get(_son_hata, "Sağlayıcıya üç denemede de ulaşılamadı.")
+                yield AgentEvent("error", {
+                    "code": _kodlar.get(_son_hata, "provider_unreachable"),
+                    "message": _aciklama,
+                })
                 return
 
             _u = getattr(response, "usage", None)
