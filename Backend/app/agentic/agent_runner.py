@@ -822,6 +822,58 @@ class AgentRunner:
                 f"model olduğun sorulursa BUNU söyle; farklı bir model (Claude/GPT/Gemini vb.) "
                 f"olduğunu İDDİA ETME.")
 
+    async def _await_provider(
+        self, istek: "asyncio.Task", *, iptal_edilebilir: bool = True
+    ) -> AsyncGenerator[AgentEvent, None]:
+        """Sağlayıcı isteği beklenirken kalp atışı yayar; tur ölürse isteği iptal eder.
+
+        ÜÇ döngünün de buradan geçmesi kasıtlı. Kalp atışı ilk yazımında yalnız
+        OpenAI-uyumlu isteğin etrafına konmuştu; Gemini bloklayan SDK çağrısını
+        `asyncio.to_thread` ile, Anthropic `messages.create`'i doğrudan bekliyor
+        ve ikisi de sessiz kalıyordu (denetim, 30 Ağu 2026). Bu deponun adı
+        konmuş yinelenen arızası tam olarak bu: kapı bir dala konuyor, diğerleri
+        açık kalıyor — o yüzden bekleme mantığı üç yerde değil, burada.
+
+        `finally` iptali ikinci bir bulgunun cevabı: tüketici generator'ı
+        kapattığında (kullanıcı "Durdur"a bastığında oluyor) isteği kimse
+        iptal etmiyordu ve sağlayıcı çağrısı sahipsiz olarak 300 sn'lik zaman
+        aşımına kadar koşmaya devam ediyordu. Art arda durdurulan turlar bu
+        istekleri biriktiriyordu.
+
+        `iptal_edilebilir=False` Gemini için: iş `asyncio.to_thread` ile havuz
+        thread'inde ve `Task.cancel()` o thread'e ULAŞMIYOR — iptal etmek
+        bloklayan çağrıyı durdurmaz, yalnız sonucunu hiç kimsenin okumadığı bir
+        `CancelledError`'a çevirir. İptal etmiyoruz ki thread'in istisnası
+        sessizce yutulmuş olmasın; beklemenin sesli olması yine de kazanılıyor.
+        """
+        gecen = 0.0
+        try:
+            while True:
+                biten, _ = await asyncio.wait({istek}, timeout=_KALP_ATISI_SN)
+                if biten:
+                    return
+                gecen += _KALP_ATISI_SN
+                yield AgentEvent("status", {"detail": (
+                    f"⏳ {self.model_name} {gecen:g} sn'dir yanıt vermedi — sağlayıcı "
+                    f"hâlâ işliyor (Durdur ile iptal edebilirsin)"
+                )})
+        finally:
+            # `done()` ise DOKUNULMAZ: biten bir isteğin sonucunu (ya da
+            # istisnasını) çağıran `result()` ile okuyor, burada beklemek onu
+            # yutardı. Yalnız gerçekten askıda kalmış bir istek iptal edilir.
+            if iptal_edilebilir and not istek.done():
+                istek.cancel()
+                try:
+                    await istek
+                except asyncio.CancelledError:
+                    pass
+                except Exception:
+                    # Tur artık yok; bu istisnayı anlatacak bir kullanıcı da yok.
+                    # Yine de kayda geçiyor — sessizce yutulan hata bu depoda
+                    # ayrı bir bulgu sınıfı.
+                    logger.debug("[provider] iptal edilen istek hata ile bitti",
+                                 exc_info=True)
+
     async def _prepare_videos(self, user_message: str) -> "tuple[str, list[dict]]":
         """Videoları (yerel dosya + mesaja YAPIŞTIRILAN URL) kare data-URI'leri + transkripte
         çevirip mevcut görsel hattına enjekte eder. Kareler self.images'a katılır (sağlayıcı
@@ -842,12 +894,26 @@ class AgentRunner:
             return user_message, []
         blocks, all_uris, warnings = [], [], []
         for src in videos:
+            # One stop switch per video. `asyncio.to_thread` hands the work to a
+            # pool thread, and cancelling the AWAIT does not reach that thread:
+            # the audit (30 Aug 2026) measured a stopped chat leaving yt-dlp
+            # downloading and its temp directory live until the 600-second
+            # subprocess timeout, so repeated cancelled turns kept consuming
+            # executor threads, bandwidth and workspace disk.
+            cancel = video_extract.ExtractionCancel()
             try:
                 res = await asyncio.to_thread(
                     video_extract.extract, src, self.workspace_path,
-                    f"vid_conv{self.conversation_id}")
+                    f"vid_conv{self.conversation_id}", cancel)
                 all_uris.extend(res.frame_data_uris)
                 blocks.append(video_extract.build_video_block(res.meta, res.transcript))
+            except asyncio.CancelledError:
+                # Kills the live ffmpeg/yt-dlp child and drops the per-video temp
+                # directory BEFORE the cancellation continues upward — leaving an
+                # orphaned subprocess behind would only move the leak. Cancelling
+                # the turn is not a video failure, so no warning is emitted.
+                cancel.cancel()
+                raise
             # The raw detail stays in the log on both branches. What leaves the
             # backend — to the renderer, to the stored history, and into the
             # model's own prompt — is the stage and the error kind: a subprocess

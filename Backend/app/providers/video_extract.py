@@ -7,10 +7,14 @@ import os
 import re
 import sys
 import glob
+import time
 import uuid
 import base64
 import shutil
 import logging
+import tempfile
+import threading
+import contextvars
 import subprocess
 from urllib.parse import urlparse
 from typing import List, Optional
@@ -35,6 +39,36 @@ _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 _TMP_SUBDIR = os.path.join(".gamachine_tmp", "video")
 _FRAME_CAP = 60
+
+# ── Kaynak tavanları. Hepsi bir denetim bulgusundan doğdu (30 Ağu 2026): bu
+#    boru hattının tek girdisi kullanıcının yapıştırdığı bir URL, ve o URL'nin
+#    host'u yanıt gövdesinin BOYUTUNU seçen taraf. Tek sınır 600 sn'lik duvar
+#    saatiydi; hızlı bir host o süre içinde diski doldurabiliyordu.
+
+# İndirilen video için bayt tavanı. 1 GiB seçildi çünkü yt-dlp'nin ≤1080p
+# seçimi sahada ~5 Mbit/s civarında geliyor, yani 1 GiB kabaca yarım saatlik
+# video demek — bu boru hattının kare bütçesi (≤60 kare) zaten bundan uzun
+# videoları seyrekleştirerek örnekliyor. BEDELİ açık: daha uzun/daha yüksek
+# bit hızlı bir video hiç indirilmez ve tur metne düşer; karşılığında bir URL
+# ile diski doldurmak imkânsız hale gelir.
+_MAX_DOWNLOAD_BYTES = 1024 * 1024 * 1024
+
+# Altyazı dosyasından okunacak KARAKTER tavanı. 512 Ki karakter, yoğun bir
+# WebVTT'de birkaç saatlik konuşmaya denk; bunun ötesi transkript değil yüktür.
+# BEDELİ: çok uzun bir videonun altyazısı sondan kırpılır (kareler etkilenmez).
+_SUBTITLE_CHAR_CAP = 512 * 1024
+
+# Modele giden transkript tavanı. Ayrı bir sayı, çünkü ayrı bir bütçeyi
+# koruyor: dosya okuması diski/belleği, bu ise İSTEM bağlamını sınırlıyor.
+# 200 Ki karakter ≈ 50 K token, yani en dar bağlam pencerelerinde bile turu
+# tek başına doldurmaz. BEDELİ: çok uzun videoda transkriptin kuyruğu kesilir.
+_TRANSCRIPT_CHAR_CAP = 200 * 1024
+
+# Süpürmenin "artık kimse kullanmıyor" eşiği. 6 saat, en uzun tek çağrının
+# (600 sn indirme + 300 sn kare çıkarma) bir düzine katı: canlı bir turun
+# dizinini silmemek için geniş bırakıldı. BEDELİ: çöken bir süreçten kalan
+# dizin en fazla 6 saat + bir sonraki video turuna kadar diskte durur.
+_STALE_TEMP_AGE_S = 6 * 3600
 
 
 class VideoPipelineError(RuntimeError):
@@ -74,6 +108,81 @@ class VideoPipelineError(RuntimeError):
         if not kind.isidentifier():
             kind = ""
         return f"aşama: {self.stage}" + (f" · {kind}" if kind else "")
+
+
+class ExtractionCancelled(RuntimeError):
+    """The caller abandoned this extraction; the worker unwinds instead of
+    finishing work whose result nobody is waiting for."""
+
+
+class ExtractionCancel:
+    """One in-flight `extract()`'s stop switch, held by the ASYNC caller.
+
+    Why the caller needs one (audit, 30 Aug 2026): extraction is blocking work
+    handed to `asyncio.to_thread`, and cancelling the awaiting coroutine does
+    not reach the thread. The worker stayed parked inside `subprocess.run`
+    with its temp directory live until yt-dlp's own 600-second timeout expired,
+    so a user who stopped the chat kept paying for the download; repeated
+    cancelled turns pile up executor threads, bandwidth and temp trees.
+
+    The handle carries the LIVE child processes, and that is the whole point:
+    a cancellation that returns to the caller while an orphaned yt-dlp keeps
+    downloading has moved the leak, not closed it.
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._cancelled = False
+        self._procs = set()
+        self.tmp_root: Optional[str] = None
+
+    @property
+    def cancelled(self) -> bool:
+        with self._lock:
+            return self._cancelled
+
+    def _attach_process(self, proc) -> bool:
+        """Registers a just-started child; False means cancel already won."""
+        with self._lock:
+            if self._cancelled:
+                return False
+            self._procs.add(proc)
+            return True
+
+    def _detach_process(self, proc) -> None:
+        with self._lock:
+            self._procs.discard(proc)
+
+    def raise_if_cancelled(self, stage: str) -> None:
+        if self.cancelled:
+            raise ExtractionCancelled(f"video çıkarımı iptal edildi (aşama: {stage})")
+
+    def cancel(self) -> None:
+        """Stops the extraction. Safe to call from the event-loop thread."""
+        with self._lock:
+            self._cancelled = True
+            procs, tmp_root = list(self._procs), self.tmp_root
+        for p in procs:
+            try:
+                p.kill()
+            except Exception:
+                pass
+        # The directory is dropped HERE and not left to the worker's own
+        # `finally`: that block only runs once the killed child has been
+        # reaped and the stack unwound, and on a stuck child that is the very
+        # wait we are cancelling out of. `ignore_errors` covers the Windows
+        # case where a dying child still holds a file open — the worker's
+        # `finally` is the second, idempotent pass over the same path.
+        if tmp_root:
+            shutil.rmtree(tmp_root, ignore_errors=True)
+
+
+# The handle of the extraction running on THIS thread. A ContextVar rather than
+# a parameter threaded through `_run`: `_run`'s signature is monkeypatched by
+# several tests, and `asyncio.to_thread` copies the context per call, so a
+# worker cannot see a previous turn's handle through the reused pool thread.
+_CANCEL: "contextvars.ContextVar[Optional[ExtractionCancel]]" = contextvars.ContextVar(
+    "video_extract_cancel", default=None)
 
 
 class ExtractResult:
@@ -200,8 +309,61 @@ def detect_video_urls(text: str, cap: int = 4) -> List[str]:
 
 # ── Orkestrasyon (ffmpeg / yt-dlp subprocess) ───────────────────────────────
 def _attach_root(workspace: Optional[str]) -> str:
-    base = workspace if (workspace and os.path.isdir(workspace)) else "."
-    return os.path.join(base, _TMP_SUBDIR)
+    """Per-video temp files go under the workspace; the fallback is the OS temp
+    directory, never the process current directory.
+
+    Audit finding (30 Aug 2026): the fallback used to be the literal `"."`.
+    With a saved workspace that is empty, gone or no longer a directory, a
+    pasted URL therefore wrote into whatever directory the backend happened to
+    be started from — the install directory in a packaged build (often
+    unwritable, so the video path failed for a reason the message never named)
+    and the source tree in development. The OS temp directory is the one
+    location that is writable by definition and that the OS itself sweeps.
+
+    The rejection is logged rather than swallowed: silently writing somewhere
+    else than the caller asked for is what made this hard to see.
+    """
+    if workspace and os.path.isdir(workspace):
+        return os.path.join(workspace, _TMP_SUBDIR)
+    if workspace:
+        logger.warning(
+            "[video_extract] çalışma alanı kullanılamadı (%r bir dizin değil); "
+            "geçici dosyalar işletim sistemi temp dizinine yazılıyor", workspace)
+    return os.path.join(tempfile.gettempdir(), _TMP_SUBDIR)
+
+
+def sweep_stale_temp(workspace: Optional[str] = None,
+                     max_age_s: float = _STALE_TEMP_AGE_S) -> int:
+    """Removes per-video temp directories an EARLIER run left behind.
+
+    Audit finding (30 Aug 2026): cleanup lived only in `extract()`'s `finally`,
+    which a crash, a `kill`, or a power loss walks straight past — the measured
+    result was a `<workspace>/.gamachine_tmp/video/<tag>_<uuid>` tree, with
+    whatever media had already been written into it, surviving the backend
+    forever. Nothing swept it, so repeated crashes consumed workspace disk with
+    no upper bound.
+
+    Age-gated instead of "delete everything in there": a second backend process
+    (or another turn in this one) may be mid-extraction, and taking its
+    directory away would break a live turn to reclaim a few megabytes.
+    Returns how many directories were removed, so callers can log it.
+    """
+    root = _attach_root(workspace)
+    try:
+        names = os.listdir(root)
+    except OSError:
+        return 0
+    now, removed = time.time(), 0
+    for name in names:
+        path = os.path.join(root, name)
+        try:
+            if not os.path.isdir(path) or (now - os.path.getmtime(path)) < max_age_s:
+                continue
+        except OSError:
+            continue
+        shutil.rmtree(path, ignore_errors=True)
+        removed += 1
+    return removed
 
 
 def _run(cmd: list, timeout: int, check: bool = True):
@@ -243,9 +405,39 @@ def _run(cmd: list, timeout: int, check: bool = True):
     `*_API_KEY`/`*_TOKEN`/`*_SECRET` adları (bkz. spawn_env.py'deki kütük).
     Kırılma yönü ölçüldü: tests/test_video_extract_integration.py hem sızıntıyı
     hem de PATH/HOME'un GEÇTİĞİNİ aynı çağrıda ölçüyor.
+
+    Neden `subprocess.run` DEĞİL (30 Ağu 2026 denetimi, iptal bulgusu): `run`
+    kendi `Popen`'ını gizliyor, yani çağıran turu iptal ettiğinde öldürülecek
+    bir tutamak KALMIYORDU. Semantik birebir korunuyor (timeout → öldür ve
+    `TimeoutExpired`, check → `CalledProcessError`, dönüş `CompletedProcess`);
+    tek fark, çocuğun `ExtractionCancel`'a kaydedilmesi.
     """
-    return subprocess.run(cmd, capture_output=True, timeout=timeout, check=check,
-                          creationflags=_NO_WINDOW, env=build_spawn_env())
+    handle = _CANCEL.get()
+    if handle is not None:
+        handle.raise_if_cancelled("alt süreç başlatma")
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            creationflags=_NO_WINDOW, env=build_spawn_env())
+    if handle is not None and not handle._attach_process(proc):
+        # İptal, Popen ile kayıt arasına sıkıştı: bu çocuğu kimse öldürmeyecek.
+        proc.kill()
+        proc.communicate()
+        handle.raise_if_cancelled("alt süreç başlatma")
+    try:
+        out, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        out, err = proc.communicate()
+        raise subprocess.TimeoutExpired(cmd, timeout, output=out, stderr=err)
+    finally:
+        if handle is not None:
+            handle._detach_process(proc)
+    if handle is not None:
+        # İptal çocuğu öldürmüş olabilir; o zaman çıkış kodu bir ARIZA değil,
+        # kullanıcının kararıdır ve "indirilemedi" diye raporlanmamalı.
+        handle.raise_if_cancelled("alt süreç bitişi")
+    if check and proc.returncode:
+        raise subprocess.CalledProcessError(proc.returncode, cmd, output=out, stderr=err)
+    return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
 
 
 def _subprocess_stderr(e: Exception) -> str:
@@ -353,6 +545,10 @@ def _download_url(url: str, out_dir: str):
     if p.scheme not in ("http", "https") or not p.netloc:
         raise ValueError("desteklenmeyen video URL'si (yalnız http/https)")
     logger.info(f"[video_extract] aşama=indirme başlıyor ({p.netloc})")
+    # Dizin BURADA açılıyor, `extract`'in başında değil: ilk baytın yazılacağı
+    # ana kadar ortada silinecek bir dizin olmasın (süpürme, çöken bir süreçten
+    # kalanı topluyor — hiç yaratılmamış olan en ucuzu).
+    os.makedirs(out_dir, exist_ok=True)
     out_tmpl = os.path.join(out_dir, "dl.%(ext)s")
     # 1) VİDEO (kritik yol). Altyazı flag'i YOK — böylece altyazı hatası (429/yok/ağ)
     #    videoyu DÜŞÜRMEZ. Format yatay VE dikey (Shorts) için sağlam: 1080'i her iki
@@ -367,12 +563,24 @@ def _download_url(url: str, out_dir: str):
     # kaybetti ("link indirilemedi"). İki URL'de yeniden üretildi ve bu satırla
     # ikisi de düzeldi. Yan kazanç: indirilen bayt yarıya iniyor ve ayrı akış
     # kalmadığı için ffmpeg birleştirme adımı tamamen ortadan kalkıyor.
+    #
+    # `--max-filesize`: tek sınır 600 sn duvar saatiydi ve boyutu seçen taraf
+    # uzaktaki host'tu — yeterince hızlı bir yanıt o süre içinde diski
+    # doldurabiliyordu (denetim, 30 Ağu 2026). Bayrak boyutu ÖNCEDEN bilinen
+    # akışları hiç başlatmadan reddeder; bilinmeyenler için aşağıdaki
+    # uygulama-tarafı ölçüm var, çünkü Content-Length'i olmayan bir akışta
+    # yt-dlp'nin de karşılaştıracağı bir sayı yok.
     _run([ytdlp_path(), "--no-playlist", "--no-warnings",
           "-f", "bestvideo[height<=1080]/bestvideo[width<=1080]/bestvideo/best[height<=1080]/best",
+          "--max-filesize", str(_MAX_DOWNLOAD_BYTES),
           "-o", out_tmpl, "--", url], timeout=600)
     vids = [q for q in glob.glob(os.path.join(out_dir, "dl.*")) if not q.endswith(".vtt")]
     if not vids:
         raise RuntimeError("video indirilemedi (yt-dlp çıktısı yok)")
+    _size = sum(os.path.getsize(q) for q in vids)
+    if _size > _MAX_DOWNLOAD_BYTES:
+        raise RuntimeError(
+            f"video boyut sınırını aştı ({_size} bayt > {_MAX_DOWNLOAD_BYTES})")
     # 2) ALTYAZI (best-effort, AYRI çağrı). check=False + try/except: 429/eksik/ağ
     #    hatası yutulur → transkript alınamasa bile kareler yine döner.
     transcript = ""
@@ -383,8 +591,17 @@ def _download_url(url: str, out_dir: str):
               "--convert-subs", "vtt", "-o", out_tmpl, "--", url], timeout=120, check=False)
         subs = glob.glob(os.path.join(out_dir, "dl*.vtt"))
         if subs:
+            # SINIRLI okuma. Eskiden `f.read()` idi ve altyazının içeriğini de,
+            # boyutunu da uzaktaki host seçiyordu: tek URL dosyayı, çözülmüş
+            # dizgeyi, `splitlines()` ara ürünlerini ve büyümüş İSTEMİ birden
+            # ödetiyordu (denetim, 30 Ağu 2026 — 2 MiB'lık bir WebVTT ölçüldü).
+            # İki ayrı tavan, çünkü iki ayrı bütçe: biri belleği, diğeri modele
+            # giden bağlamı koruyor.
             with open(subs[0], encoding="utf-8", errors="ignore") as f:
-                transcript = parse_vtt(f.read())
+                raw = f.read(_SUBTITLE_CHAR_CAP)
+            transcript = parse_vtt(raw)[:_TRANSCRIPT_CHAR_CAP]
+    except ExtractionCancelled:
+        raise
     except Exception as e:
         # Deliberately swallowed (frames are useful without a transcript) but no
         # longer SILENT: which stage fell over is now readable from the log.
@@ -392,11 +609,31 @@ def _download_url(url: str, out_dir: str):
     return vids[0], transcript, os.path.basename(url) or "url-video"
 
 
-def extract(source: dict, workspace: Optional[str], tag: str) -> ExtractResult:
-    """Video kaynağını kare data-URI'leri + transkripte çevirir. Kendi temp'ini temizler."""
+def extract(source: dict, workspace: Optional[str], tag: str,
+            cancel: "Optional[ExtractionCancel]" = None) -> ExtractResult:
+    """Video kaynağını kare data-URI'leri + transkripte çevirir. Kendi temp'ini temizler.
+
+    `cancel`: the async caller's stop switch (see `ExtractionCancel`). Optional
+    so the synchronous call sites and tests stay unchanged; when it is absent a
+    private one is used, which keeps `_run`'s cancellation path on a single
+    code path instead of two.
+    """
     kind = (source or {}).get("kind")
+    # Süpürme HER çıkarımın başında: çöken bir sürecin bıraktığı dizin ancak
+    # bir sonraki koşuda toplanabilir (kill edilen süreç hiçbir şey çalıştıramaz).
+    # Burada, çünkü bu modülün "bir sonraki koşusu" tam olarak burasıdır ve
+    # backend başlangıcına bağlamak hiç yeniden başlatılmayan bir süreçte
+    # süpürmeyi hiç çalıştırmaz.
+    try:
+        _swept = sweep_stale_temp(workspace)
+        if _swept:
+            logger.info(f"[video_extract] {_swept} bayat geçici dizin süpürüldü")
+    except Exception as e:                       # süpürme asıl işi DÜŞÜRMEZ
+        logger.warning(f"[video_extract] bayat temp süpürme başarısız: {e}")
     tmp_root = os.path.join(_attach_root(workspace), f"{tag}_{uuid.uuid4().hex[:8]}")
-    os.makedirs(tmp_root, exist_ok=True)
+    cancel = cancel or ExtractionCancel()
+    cancel.tmp_root = tmp_root
+    _token = _CANCEL.set(cancel)
     try:
         # Binary gate goes FIRST: diagnosing a missing ffmpeg/yt-dlp backwards
         # from the subprocess failure was near impossible (the error text is
@@ -429,6 +666,11 @@ def extract(source: dict, workspace: Optional[str], tag: str) -> ExtractResult:
                 video_path, transcript, name = _download_url(source.get("url") or "", tmp_root)
             except VideoPipelineError:
                 raise
+            except ExtractionCancelled:
+                # İptal bir indirme ARIZASI değil: kullanıcının kararı. Buradan
+                # geçerse "video indirilemedi" uyarısı üretilir ve iptal edilmiş
+                # bir tur kullanıcıya hata gibi görünür.
+                raise
             except Exception as e:
                 raise VideoPipelineError(
                     "video_download_failed",
@@ -439,12 +681,16 @@ def extract(source: dict, workspace: Optional[str], tag: str) -> ExtractResult:
                 "video_extract_failed", "Bu video kaynağı tanınmadı.",
                 stage="kaynak", detail=f"bilinmeyen video kaynağı: {kind!r}")
 
+        cancel.raise_if_cancelled("kare çıkarma öncesi")
         try:
             logger.info("[video_extract] aşama=süre ölçümü")
             duration = _probe_duration(video_path)
             fps, cap = budget_fps(duration)
             logger.info(f"[video_extract] aşama=kare çıkarma (süre≈{duration:.0f}s, fps={fps})")
+            os.makedirs(tmp_root, exist_ok=True)     # yerel dosya yolunda ilk yazım burası
             raw = _extract_frames(video_path, tmp_root, fps, cap)
+        except ExtractionCancelled:
+            raise
         except Exception as e:
             raise VideoPipelineError(
                 "video_extract_failed",
@@ -467,4 +713,5 @@ def extract(source: dict, workspace: Optional[str], tag: str) -> ExtractResult:
                 "frame_count": len(uris), "dropped": max(0, dropped)}
         return ExtractResult(uris, transcript, meta)
     finally:
+        _CANCEL.reset(_token)
         shutil.rmtree(tmp_root, ignore_errors=True)

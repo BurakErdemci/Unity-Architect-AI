@@ -25,6 +25,7 @@
 const { spawnSync } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
+const crypto = require('node:crypto');
 
 const repoRoot = path.resolve(__dirname, '..', '..', '..');
 const vendorDir = path.join(repoRoot, 'Backend', 'vendor');
@@ -59,11 +60,46 @@ function beklenenDamga() {
   }
 }
 
+// ── Damganın İKİ parçası var ve ikisi farklı soruyu cevaplıyor ──────────────
+//
+// Denetim bulgusu (30 Ağu 2026): eski damga yalnız KENDİ metnini doğruluyordu.
+// Pinlenmiş özet dizgeleriyle eşleşen bir `.fetched` yanına kurcalanmış bir
+// `ffmpeg.exe` konduğunda bu sarmalayıcı "zaten sabitlenmiş sürümde" deyip
+// doğrulayan fetch script'ini hiç çağırmıyor, `backend.spec` de kurcalanmış
+// exe'yi pakete gömüyordu. Kalıcı diskli bir build makinesinde (yerel
+// geliştirici, self-hosted runner) yeniden üretildi.
+//
+// Neden exe'nin özeti KÜTÜKTEKİ pinle karşılaştırılamıyor: ffmpeg bir ZIP
+// içinde geliyor, yani kütükteki pin arşivin özeti — çıkarılmış exe'ninki
+// değil (fetch_video_bins.ps1 başlığı aynı ayrımı yazıyor). O yüzden damga,
+// doğrulamayı GEÇMİŞ kurulumun baytlarını kendi kaydediyor; skip artık o
+// kaydı dosyaların bugünkü baytlarıyla karşılaştırıyor.
+//
+// İDEMPOTANLIK KORUNUYOR: dosyalar değişmediyse hash'ler tutar ve 126 MB
+// yeniden inmez. BEDELİ iki koşulda ödeniyor: her build'de ~126 MB sha256
+// (SSD'de ~0.3 sn) ve damgası eski BİÇİMDE olan bir dizinde bir kereye mahsus
+// yeniden indirme — bayt kaydı olmayan bir damga "doğrulanmadı" sayılıyor,
+// çünkü kaydın yokluğu kanıt değildir.
+function ikiliOzetleri() {
+  const satirlar = [];
+  for (const ad of IKILILER) {
+    const h = crypto.createHash('sha256');
+    h.update(fs.readFileSync(path.join(BIN_DIR, ad)));
+    satirlar.push(`${ad} sha256:${h.digest('hex')}`);
+  }
+  return satirlar;
+}
+
 function zatenGuncel(damga) {
   if (!damga) return false;
   if (!IKILILER.every(e => fs.existsSync(path.join(BIN_DIR, e)))) return false;
   try {
-    return fs.readFileSync(DAMGA, 'utf8').trim() === damga;
+    const satirlar = fs.readFileSync(DAMGA, 'utf8').trim().split(/\r?\n/);
+    if (satirlar[0].trim() !== damga) return false;
+    const kayitli = satirlar.slice(1).map(s => s.trim()).filter(Boolean).sort();
+    if (kayitli.length !== IKILILER.length) return false;   // eski biçim → indir
+    const simdi = ikiliOzetleri().sort();
+    return kayitli.every((s, i) => s === simdi[i]);
   } catch {
     return false;
   }
@@ -71,7 +107,7 @@ function zatenGuncel(damga) {
 
 function damgala(damga) {
   try {
-    if (damga) fs.writeFileSync(DAMGA, damga + '\n');
+    if (damga) fs.writeFileSync(DAMGA, [damga, ...ikiliOzetleri(), ''].join('\n'));
   } catch { /* damga yazılamazsa yalnız bir sonraki build tekrar iner */ }
 }
 
