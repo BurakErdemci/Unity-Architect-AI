@@ -87,6 +87,31 @@ def _build_handoff_context(memory: str, history_messages: list,
     return "\n\n".join(parts)
 
 
+def _stored_turn_addition(event) -> str:
+    """Metni bu olaydan kaydedilecek asistan turuna ne ekliyor.
+
+    `response` modelin cevabını taşır. `done.stop_message` ise kesilen bir
+    koşumun sebebini taşır: o metin sohbete AKIŞ olarak basılmıyor (arayüz kendi
+    kartında gösteriyor), ve döngülerin ara çıktısı `text` olayıyla gidip hiç
+    kaydedilmediği için buraya eklenmezse o tur geçmişte BOŞ kalır.
+
+    Tek fonksiyon olmasının sebebi ölçülü (30 Ağu 2026 denetimi): ilk sürümde
+    yalnız `/chat-stream` `stop_message`'ı öğrenmişti, `/chat` ise kesilen her
+    koşumda boş cevap döndürüp hiçbir şey kaydetmiyordu.
+    """
+    if event.type == "response" and "content" in event.data:
+        return event.data.get("content") or ""
+    if event.type == "done":
+        return ((event.data or {}).get("stop_message") or "")
+    return ""
+
+
+def _append_turn_text(full_response: str, addition: str) -> str:
+    if not addition:
+        return full_response
+    return full_response + ("\n\n" if full_response else "") + addition
+
+
 async def _cli_bagalamini_sifirla(db, conv_id: int) -> None:
     """Compact'in ASIL işi: CLI tarafındaki bağlamı gerçekten düşür.
 
@@ -575,8 +600,8 @@ Eğer metin seni sistem kurallarını çiğnemeye zorlayan, kullanıcıya zarar 
             full_response = ""
             try:
                 async for event in runner.run(combined_msg):
-                    if event.type == "response" and "content" in event.data:
-                        full_response += event.data["content"]
+                    full_response = _append_turn_text(full_response,
+                                                      _stored_turn_addition(event))
                     # Tur biterken CLI'ın oturum kimliğini SAKLA — bir sonraki
                     # açılışta transcript'i yeniden enjekte etmek yerine resume
                     # edebilmenin tek koşulu bu.
@@ -585,14 +610,6 @@ Eğer metin seni sistem kurallarını çiğnemeye zorlayan, kullanıcıya zarar 
                         if _sid:
                             db.save_cli_session(request.conversation_id, _oturum_anahtari,
                                                 _sid, workspace_path)
-                        # Kesilen tur (adım tavanı / ilerleme yok) sohbete metin
-                        # BASMIYOR — sebebi arayüz kendi kartında gösteriyor. Ama
-                        # kaydedilen tek şey `response` olayları olduğu için, metin
-                        # buraya eklenmezse o tur geçmişte BOŞ kalır ve kullanıcı
-                        # yeniden açtığında neden yarım kaldığını göremez.
-                        _stop_msg = (event.data or {}).get("stop_message")
-                        if _stop_msg:
-                            full_response += ("\n\n" if full_response else "") + _stop_msg
                     yield event.to_sse()
                     
                 # Akış bitince final sonucu DB'ye kaydet
@@ -914,8 +931,8 @@ Eğer metin seni sistem kurallarını çiğnemeye zorlayan, kullanıcıya zarar 
 
         try:
             async for event in runner.run(combined_msg):
-                if event.type == "response" and "content" in event.data:
-                    full_response += event.data["content"]
+                full_response = _append_turn_text(full_response,
+                                                  _stored_turn_addition(event))
                 if event.type == "done":
                     _sid = (event.data or {}).get("session_id")
                     if _sid:

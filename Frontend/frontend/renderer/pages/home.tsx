@@ -363,9 +363,16 @@ export default function Home() {
   // olup olmamasına bağlı olamaz — köprü paneli bilmiyor ve karar verilmezse
   // istek reddediliyor. Paneli açmak geri alınabilir bir müdahale; kaçırılan
   // onay değil.
+  //
+  // Dört kapının DÖRDÜ de burada: kapı yalnız `mcp.activeGate` için açılıyordu,
+  // oysa komut / soru / silme kartları da kapalı panelin içinde kalıyordu —
+  // 30 Ağu 2026 denetiminin bulgusu, ve bu deponun ölçülmüş en sık arıza
+  // biçimi (kapı yollardan yalnız birine konuyor).
   useEffect(() => {
-    if (mcp.activeGate) setIsChatOpen(true);
-  }, [mcp.activeGate]);
+    if (mcp.activeGate || chat.pendingCommand || chat.pendingQuestion || fs.pendingDelete) {
+      setIsChatOpen(true);
+    }
+  }, [mcp.activeGate, chat.pendingCommand, chat.pendingQuestion, fs.pendingDelete]);
 
   // --- Save Shortcut (Ctrl+S / Cmd+S) ---
   useEffect(() => {

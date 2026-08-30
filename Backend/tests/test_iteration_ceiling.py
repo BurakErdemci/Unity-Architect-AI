@@ -27,15 +27,20 @@ import agentic.agent_runner as ar
 # tools". `args_for(i)` decides whether the run makes progress or repeats.
 
 
-def _tool_args(i: int, repeat: bool) -> dict:
+def _tool_args(i: int, repeat: bool, cycle: bool = False) -> dict:
+    if cycle:
+        # A/B/A/B: never two identical calls in a row, and no progress either.
+        return {"file_path": "A.cs" if i % 2 == 0 else "B.cs"}
     return {"file_path": "same.cs"} if repeat else {"file_path": f"file_{i}.cs"}
 
 
 class _FakeAnthropic:
-    def __init__(self, repeat: bool, stop_after: int | None = None):
+    def __init__(self, repeat: bool, stop_after: int | None = None,
+                 cycle: bool = False):
         self.calls = 0
         self.messages = types.SimpleNamespace(create=self._create)
         self._repeat = repeat
+        self._cycle = cycle
         self._stop_after = stop_after
 
     async def _create(self, **kwargs):
@@ -50,19 +55,21 @@ class _FakeAnthropic:
         return types.SimpleNamespace(
             content=[types.SimpleNamespace(
                 type="tool_use", id=f"t{i}", name="read_file",
-                input=_tool_args(i, self._repeat),
+                input=_tool_args(i, self._repeat, self._cycle),
             )],
             usage=usage,
         )
 
 
 class _FakeOpenAI:
-    def __init__(self, repeat: bool, stop_after: int | None = None):
+    def __init__(self, repeat: bool, stop_after: int | None = None,
+                 cycle: bool = False):
         self.calls = 0
         self.base_url = None
         self.chat = types.SimpleNamespace(
             completions=types.SimpleNamespace(create=self._create))
         self._repeat = repeat
+        self._cycle = cycle
         self._stop_after = stop_after
 
     async def _create(self, **kwargs):
@@ -78,7 +85,7 @@ class _FakeOpenAI:
                     id=f"t{i}",
                     function=types.SimpleNamespace(
                         name="read_file",
-                        arguments=_json.dumps(_tool_args(i, self._repeat)),
+                        arguments=_json.dumps(_tool_args(i, self._repeat, self._cycle)),
                     ),
                 )])
         return types.SimpleNamespace(
@@ -88,10 +95,12 @@ class _FakeOpenAI:
 class _FakeGemini:
     """Gemini's loop consumes `response.candidates[0].content.parts`."""
 
-    def __init__(self, repeat: bool, stop_after: int | None = None):
+    def __init__(self, repeat: bool, stop_after: int | None = None,
+                 cycle: bool = False):
         self.calls = 0
         self.models = types.SimpleNamespace(generate_content=self._generate)
         self._repeat = repeat
+        self._cycle = cycle
         self._stop_after = stop_after
 
     def _generate(self, **kwargs):
@@ -102,7 +111,7 @@ class _FakeGemini:
         else:
             parts = [types.SimpleNamespace(
                 function_call=types.SimpleNamespace(
-                    name="read_file", args=_tool_args(i, self._repeat)),
+                    name="read_file", args=_tool_args(i, self._repeat, self._cycle)),
                 text=None, thought=False)]
         content = types.SimpleNamespace(parts=parts)
         return types.SimpleNamespace(
@@ -122,12 +131,26 @@ def _fake_tool(name, args, workspace, conversation_id):
     return {"success": True, "summary": "ok"}
 
 
-def _collect(provider_type, client, repeat=False, stop_after=None):
+def _polling_tool():
+    """A tool whose answer moves while its arguments do not — the documented
+    Unity flow: `run_tests` tells the caller to poll `get_test_job(job_id)`."""
+    state = {"n": 0}
+
+    def _call(name, args, workspace, conversation_id):
+        state["n"] += 1
+        return {"success": True, "summary": "ok",
+                "status": "complete" if state["n"] >= 8 else "pending",
+                "progress": state["n"]}
+
+    return _call
+
+
+def _collect(provider_type, client, repeat=False, stop_after=None, tool_fn=None):
     """Runs one loop end to end and returns the emitted events."""
     runner = ar.AgentRunner(provider_type=provider_type, api_key="k",
                             model_name="m", workspace_path=".")
     patches = [
-        mock.patch.object(ar, "execute_tool", _fake_tool),
+        mock.patch.object(ar, "execute_tool", tool_fn or _fake_tool),
         mock.patch.object(ar, "_all_tool_definitions",
                           lambda: [{"name": "read_file", "description": "d",
                                     "parameters": {"type": "object", "properties": {}}}]),
@@ -198,26 +221,72 @@ class TestProgressGuard(unittest.TestCase):
                 d = _done(ev)
                 self.assertEqual(d.data["stop_reason"], "no_progress")
                 self.assertTrue(d.data["max_reached"])
-                self.assertEqual(d.data["iterations"], 3)
-                self.assertEqual(len([e for e in ev if e.type == "tool_call"]), 3)
+                self.assertEqual(d.data["iterations"], ar._STALL_LIMIT)
+                self.assertEqual(len([e for e in ev if e.type == "tool_call"]),
+                                 ar._STALL_LIMIT)
                 self.assertEqual(d.data["stop_message"], ar._STOP_TEXTS["no_progress"])
                 self.assertEqual([e for e in ev if e.type == "response"
                                   and e.data.get("content") in ar._STOP_TEXTS.values()], [])
 
+    def test_a_poll_whose_answer_moves_is_progress(self):
+        """The audit's first finding: `run_tests` documents polling
+        `get_test_job`, and the earlier guard stopped the run on the third poll
+        — one call before the job reported `complete`."""
+        for name, factory in _PROVIDERS:
+            with self.subTest(provider=name):
+                ev = _collect(name, factory(repeat=True, stop_after=9),
+                              tool_fn=_polling_tool())
+                d = _done(ev)
+                self.assertEqual(d.data["stop_reason"], "complete")
+
+    def test_an_alternating_cycle_is_a_stall_too(self):
+        """A/B/A/B makes no progress either. The first guard only recognised a
+        one-node self-loop, so this ran to the ceiling."""
+        for name, factory in _PROVIDERS:
+            with self.subTest(provider=name):
+                ev = _collect(name, factory(repeat=False, cycle=True))
+                d = _done(ev)
+                self.assertEqual(d.data["stop_reason"], "no_progress")
+                self.assertLess(len([e for e in ev if e.type == "tool_call"]),
+                                ar.MAX_ITERATIONS)
+
     def test_key_order_does_not_hide_a_repeat(self):
         g = ar._ProgressGuard()
-        g.record("read_file", {"a": 1, "b": 2})
-        g.record("read_file", {"b": 2, "a": 1})
+        for i in range(ar._STALL_LIMIT - 1):
+            g.record("read_file", {"a": 1, "b": 2} if i % 2 else {"b": 2, "a": 1}, "r")
         self.assertFalse(g.stalled)
-        g.record("read_file", {"a": 1, "b": 2})
+        g.record("read_file", {"a": 1, "b": 2}, "r")
         self.assertTrue(g.stalled)
 
-    def test_a_different_call_in_between_resets_the_streak(self):
+    def test_the_same_call_with_a_new_answer_is_not_a_stall(self):
         g = ar._ProgressGuard()
-        g.record("read_file", {"p": "a"})
-        g.record("read_file", {"p": "a"})
-        g.record("read_file", {"p": "b"})
-        g.record("read_file", {"p": "a"})
+        for i in range(ar._STALL_LIMIT * 2):
+            g.record("get_test_job", {"job_id": "j1"}, {"progress": i})
+        self.assertFalse(g.stalled)
+
+    def test_a_call_in_between_no_longer_launders_the_repetition(self):
+        """Replaces an earlier test that asserted the opposite.
+
+        That test froze the first design — a streak reset by any different
+        signature — which is exactly the hole the audit walked through: a model
+        interleaving one other call kept the streak at one forever. Counting
+        inside a window is the fix, so an intervening call no longer hides it.
+        """
+        g = ar._ProgressGuard()
+        for _ in range(ar._STALL_LIMIT):
+            g.record("read_file", {"p": "a"}, "r")
+            g.record("read_file", {"p": "b"}, "r")
+        self.assertTrue(g.stalled)
+
+    def test_repetition_outside_the_window_is_forgotten(self):
+        """The window is what keeps a long, healthy run from accumulating a
+        stall out of calls that are minutes apart."""
+        g = ar._ProgressGuard()
+        g.record("read_file", {"p": "a"}, "r")
+        for i in range(ar._STALL_WINDOW):
+            g.record("read_file", {"p": f"other_{i}"}, "r")
+        for _ in range(ar._STALL_LIMIT - 1):
+            g.record("read_file", {"p": "a"}, "r")
         self.assertFalse(g.stalled)
 
     def test_huge_arguments_are_hashed_not_kept(self):
@@ -266,6 +335,37 @@ class TestExemptPathsCarryTheContract(unittest.TestCase):
                if 'AgentEvent("done"' in ln and not ln.strip().startswith("#")]
         # The only allowed occurrence is inside `_done_event` itself.
         self.assertEqual(raw, ['return AgentEvent("done", {'])
+
+    def test_terminal_event_is_exactly_one(self):
+        """A turn ends with `done` OR `error`, never both and never neither.
+
+        The audit measured the earlier claim ("stop_reason on every termination
+        path") against the code and found the error branches emit no `done` at
+        all. Rather than wrap a failure in a `done` - which would show the same
+        interruption twice, since the UI already renders `error` - the contract
+        was narrowed to what the code does, and this test is what keeps the two
+        from drifting apart again.
+        """
+        class _Boom:
+            def __init__(self):
+                self.messages = types.SimpleNamespace(create=self._create)
+
+            async def _create(self, **kw):
+                raise RuntimeError("saglayici patladi")
+
+        for name, _factory in _PROVIDERS:
+            with self.subTest(provider=name):
+                client = _Boom()
+                client.chat = types.SimpleNamespace(
+                    completions=types.SimpleNamespace(create=client._create))
+                client.base_url = None
+                client.models = types.SimpleNamespace(
+                    generate_content=lambda **kw: (_ for _ in ()).throw(
+                        RuntimeError("saglayici patladi")))
+                ev = _collect(name, client)
+                terminal = [e for e in ev if e.type in ("done", "error")]
+                self.assertEqual(len(terminal), 1, [e.type for e in ev])
+                self.assertEqual(terminal[0].type, "error")
 
     def test_sse_payload_carries_stop_reason(self):
         sse = ar._done_event(4, "no_progress").to_sse()

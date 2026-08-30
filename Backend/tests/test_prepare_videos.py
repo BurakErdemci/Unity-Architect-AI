@@ -55,8 +55,34 @@ class TestPrepareVideos(unittest.TestCase):
             _msg, warnings = asyncio.run(r._prepare_videos("devam"))
         self.assertEqual(len(warnings), 1)
         self.assertEqual(warnings[0]["code"], "video_binary_missing")
+        # Eksik programın adı KULLANICIYA GÖRÜNEN mesajda; `detail` yalnız aşama
+        # ve hata cinsi taşır (aşağıdaki sızıntı testinin gerekçesi).
         self.assertIn("yt-dlp", warnings[0]["message"])
-        self.assertIn("yt-dlp", warnings[0]["detail"])
+        self.assertIn("binary_resolve", warnings[0]["detail"])
+
+    def test_warning_detail_carries_no_paths_or_urls(self):
+        """Denetim bulgusu (30 Ağu 2026): alt süreç hatasının metni tüm argv'yi
+        taşıyor — çözülmüş binary yolu, Windows ev dizini (yani hesap adı),
+        çalışma alanı yolu ve sorgu dizesiyle birlikte hedef URL. Route katmanı
+        ham istisna metnini istemciye BİLEREK vermiyor; bu kanal onu atlıyordu.
+        """
+        secret_url = "https://youtu.be/x?access_token=gizli"
+        raw = ("Command '['C:\\\\Users\\\\burcu\\\\bin\\\\yt-dlp.exe', '--no-playlist', "
+               f"'--', '{secret_url}']' returned non-zero exit status 1.")
+
+        def boom(src, ws, tag):
+            raise ve.VideoPipelineError(
+                "video_download_failed", "Videonun linki indirilemedi.",
+                stage="download", detail=f"CalledProcessError: {raw}")
+
+        with mock.patch.object(ve, "extract", boom):
+            r = _runner([{"kind": "url", "url": secret_url}])
+            msg, warnings = asyncio.run(r._prepare_videos("devam"))
+
+        blob = warnings[0]["detail"] + warnings[0]["message"] + msg
+        for leaked in ("burcu", "yt-dlp.exe", "access_token", "C:\\\\Users", "--no-playlist"):
+            self.assertNotIn(leaked, blob)
+        self.assertIn("download", warnings[0]["detail"])
 
     def test_unclassified_error_also_becomes_a_warning(self):
         def boom(src, ws, tag):

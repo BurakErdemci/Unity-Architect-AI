@@ -10,13 +10,16 @@ import os
 import json
 import time
 import uuid
+import hashlib
 import logging
 import asyncio
+import contextlib
 import re
 import secrets
 import subprocess
 import tempfile
-from typing import Any, AsyncGenerator, Callable, Dict, List, Optional
+from collections import deque
+from typing import Any, AsyncGenerator, Callable, Dict, List, NamedTuple, Optional
 
 from agentic.command_gates import APPROVAL_GATES as _APPROVAL_GATES, APPROVAL_RESULTS as _APPROVAL_RESULTS
 from agentic.command_gates import APPROVAL_TIMEOUT_S
@@ -44,15 +47,34 @@ logger = logging.getLogger(__name__)
 # run that is still making progress but is unusually long.
 MAX_ITERATIONS = 60
 
-# How many times in a row the same (tool, arguments) pair may repeat before the
-# run is declared stalled. Three, not two: a legitimate retry of an identical
-# call happens (a flaky command, a file being written by another process), a
-# third identical call in a row does not.
-_STALL_LIMIT = 3
+# How many times the same (tool, arguments, RESULT) triple may occur inside the
+# window before the run is declared stalled.
+#
+# Both halves of this were bought by an audit (30 Aug 2026), and each closes a
+# hole the first version had:
+#
+# - The result is part of the signature because arguments alone cannot tell a
+#   poll from a spin. The bundled Unity MCP `run_tests` tool explicitly asks the
+#   caller to poll `get_test_job(job_id)`, so three identical calls returning
+#   pending / pending / complete are the documented HAPPY path — and the first
+#   version stopped the run on the third one, right before the model could read
+#   the finished result.
+# - Five, not three: a poll whose result genuinely does not move (a long Unity
+#   compile) needs headroom. Five identical answers still means nothing new has
+#   entered the context, and stopping to say so beats spinning to the ceiling.
+_STALL_LIMIT = 5
 
-# Above this many characters the canonical argument string is hashed instead of
-# kept: a single `write_file` call can carry a whole source file, and the guard
-# holds only the last signature, so the raw text buys nothing.
+# Repetitions are counted inside this window rather than requiring them to be
+# consecutive. The first version reset its streak whenever the previous
+# signature differed, so it recognised only a one-node self-loop: a model
+# alternating read_file(A) / read_file(B) forever never tripped it and ran to
+# the ceiling — measured at 60 provider calls, and 240 tool calls when the
+# repeats arrived batched inside single responses.
+_STALL_WINDOW = 24
+
+# Above this many characters a canonical argument or result string is hashed
+# instead of kept: a single `write_file` call can carry a whole source file, and
+# the guard compares signatures rather than reading them.
 _STALL_ARG_MAX = 2000
 
 # Onay bekleme süresi `command_gates`'ten gelir (tek kaynak, gerekçesi orada).
@@ -342,8 +364,16 @@ class AgentEvent:
 # |"no_progress", "max_reached": bool}. Before this contract the ceiling emitted
 # a `done` byte-identical to a normal finish apart from a `max_reached` flag
 # nothing read, so a truncated run was indistinguishable from a successful one.
-# `stop_reason` is emitted on EVERY path — the CLI/SDK paths included — so the
-# reader never has to treat a missing field as "probably fine".
+#
+# The invariant, stated exactly — an audit (30 Aug 2026) caught an earlier
+# version of this comment claiming more than the code delivers:
+#   * EVERY `done` carries `stop_reason`, the CLI/SDK paths included, so a
+#     reader never has to treat a missing field as "probably fine";
+#   * a run that FAILS terminates with `error` and no `done` at all. That is the
+#     older contract and the UI already reads it, so wrapping a failure in a
+#     `done` would put the same interruption on screen twice.
+# A turn therefore ends with exactly one of `done` or `error`, never both and
+# never neither — `test_terminal_event_is_exactly_one` holds that line.
 #
 # The two exit texts live here and only here; each of the three loops used to
 # carry its own wording, and none of the three said why the run had stopped.
@@ -357,13 +387,21 @@ class AgentEvent:
 #
 # Neither text promises a summary of the partial work: there is none to promise
 # while intermediate text stays unpersisted.
+# ⚠️ Neither text promises to pick up where the run left off. It cannot: the
+# intermediate output of a cut-short turn goes out as `text` events and is never
+# persisted, so the next turn's handoff context contains the original request and
+# this warning — nothing else. An audit (30 Aug 2026) drove exactly that path and
+# found the earlier wording ("kaldığım yerden sürdürmemi istersen") offering a
+# continuation the code has no state for. Persisting partial work is a separate
+# piece of work; until it exists, the text asks for a restart, not a resume.
 _STOP_TEXTS = {
     "max_iterations": (
         "⚠️ Bu istek için ayrılan adım sayısı doldu ve burada durdum. İş yarım "
-        "kalmış olabilir — kaldığım yerden sürdürmemi istersen \"devam et\" yaz."
+        "kalmış olabilir; ne kadarının bittiğini yazarsan kaldığı yerden yeni "
+        "bir istekle devam edebiliriz."
     ),
     "no_progress": (
-        "⚠️ Aynı işlemi arka arkaya tekrarlamaya başladım, yani artık ilerleme "
+        "⚠️ Aynı işlemi tekrarlamaya başladım, yani artık ilerleme "
         "kaydetmiyordum; boşuna dönmemek için durdum. Ne yapmamı istediğini "
         "biraz daha açarsan farklı bir yol deneyebilirim."
     ),
@@ -410,47 +448,67 @@ def _stop_events(iterations: int, stop_reason: str) -> "list[AgentEvent]":
                         stop_message=_STOP_TEXTS[stop_reason])]
 
 
-def _canonical_call(tool_name: str, tool_args: object) -> str:
-    """A comparable signature for a (tool, arguments) pair.
+class _ApprovalDecision(NamedTuple):
+    """The gate's answer, plus the sentence the model and the user are told.
+
+    `summary` exists so a refusal, a timeout and an internal failure stop being
+    the same sentence: they lead to the same fail-closed outcome, but only one
+    of them is a decision the user actually made.
+    """
+
+    approved: bool
+    summary: str
+
+
+def _canonical_blob(value: object) -> str:
+    """A comparable string for an argument dict or a tool result.
 
     `sort_keys` is required: providers can hand back the same argument dict in
     a different key order, and without sorting two identical calls would look
     different. `default=str` keeps the signature from blowing up on a
-    non-JSON-serializable argument — this signature is a hint, not a security
+    non-JSON-serializable value — this signature is a hint, not a security
     decision.
     """
     try:
-        blob = json.dumps(tool_args, sort_keys=True, ensure_ascii=False, default=str)
+        blob = json.dumps(value, sort_keys=True, ensure_ascii=False, default=str)
     except Exception:
-        blob = repr(tool_args)
+        blob = repr(value)
     if len(blob) > _STALL_ARG_MAX:
-        import hashlib
         blob = hashlib.sha256(blob.encode("utf-8", "replace")).hexdigest()
-    return f"{tool_name}::{blob}"
+    return blob
+
+
+def _canonical_call(tool_name: str, tool_args: object, result: object = None) -> str:
+    """Signature of one completed tool call: what was asked, and what came back."""
+    return f"{tool_name}::{_canonical_blob(tool_args)}=>{_canonical_blob(result)}"
 
 
 class _ProgressGuard:
-    """Counts consecutive identical tool calls; declares a stall at `_STALL_LIMIT`.
+    """Declares a stall when the same call keeps returning the same answer.
 
-    Why this and not a step count: a runaway loop shows itself by returning to
-    the same place, not by running long. The counter ceiling is a last resort.
+    Why this and not a step count: a runaway loop shows itself by learning
+    nothing new, not by running long. Counting steps cut healthy long runs short
+    and let a stuck one spin to the end anyway.
+
+    Two properties the first version lacked, both bought by an audit:
+    repetitions are counted over a WINDOW rather than consecutively (an A/B/A/B
+    cycle is a stall too), and the RESULT is part of the signature (a poll whose
+    answer changes is progress, not repetition).
     """
 
     def __init__(self):
-        self._last: Optional[str] = None
-        self._streak = 0
+        self._recent: "deque[str]" = deque(maxlen=_STALL_WINDOW)
+        self._stalled = False
 
-    def record(self, tool_name: str, tool_args: object) -> None:
-        sig = _canonical_call(tool_name, tool_args)
-        if sig == self._last:
-            self._streak += 1
-        else:
-            self._last = sig
-            self._streak = 1
+    def record(self, tool_name: str, tool_args: object, result: object = None) -> None:
+        sig = _canonical_call(tool_name, tool_args, result)
+        self._recent.append(sig)
+        if self._recent.count(sig) >= _STALL_LIMIT:
+            self._stalled = True
 
     @property
     def stalled(self) -> bool:
-        return self._streak >= _STALL_LIMIT
+        return self._stalled
 
 
 # conversation_id → son tur'u işleyen subscription CLI'ı ('claude'|'codex'|'agy').
@@ -585,44 +643,77 @@ class AgentRunner:
             return f"delete_file {tool_args.get('file_path', '?')}"
         return None
 
-    def _open_approval_gate(self, command_text: str) -> "tuple[AgentEvent, str]":
-        """Opens an approval gate; returns (event to yield, gate_id).
+    @contextlib.contextmanager
+    def _approval_gate(self, command_text: str):
+        """Owns one approval gate for as long as the caller is inside the block.
 
-        Why this is split in two (this + `_await_approval`) instead of one
-        helper: the caller must yield the approval event BEFORE blocking — the
-        approval arrives over a separate HTTP route only after the client has
-        seen that event. A single helper that waited before yielding would
-        deadlock.
+        Why a context manager rather than the open/await pair this replaced:
+        cleanup used to live in `_await_approval`'s `finally`, and the caller
+        has to YIELD the approval event before waiting — the answer arrives over
+        a separate HTTP route and cannot come before the client has seen the
+        card. A client that closed the stream while the generator was suspended
+        on that yield therefore never reached the wait, and both registry
+        entries stayed behind; a late answer could then flip an abandoned gate to
+        approved with nobody left to consume it. Wrapping the yield makes the
+        generator's own unwind run the cleanup.
 
-        `_APPROVAL_RESULTS` is seeded False here; of the three copies only the
-        Gemini one did that, the other two relied on the entry being absent.
+        The id is drawn until it is unused: the previous 10-hex-character id was
+        written into both registries without checking, so two concurrent turns
+        that drew the same value shared one slot and one turn could be resumed
+        by the other's answer.
+
+        `_APPROVAL_RESULTS` is seeded False; of the three copies this replaced
+        only the Gemini one did that, the other two relied on a missing key.
         """
-        gate_id = uuid.uuid4().hex[:10]
+        # Bounded on purpose: a `while taken: redraw` loop never ends if the id
+        # source keeps returning the same value, which is exactly what a test
+        # that pins `uuid4` does — a guard against collisions must not become a
+        # hang of its own.
+        gate_id = uuid.uuid4().hex
+        if gate_id in _APPROVAL_GATES:
+            for _suffix in range(1, 1000):
+                _candidate = f"{gate_id}-{_suffix}"
+                if _candidate not in _APPROVAL_GATES:
+                    gate_id = _candidate
+                    break
         _APPROVAL_GATES[gate_id] = asyncio.Event()
         _APPROVAL_RESULTS[gate_id] = False
-        return (AgentEvent("command_approval_needed",
-                           {"command": command_text, "gate_id": gate_id}), gate_id)
+        try:
+            yield (AgentEvent("command_approval_needed",
+                              {"command": command_text, "gate_id": gate_id}), gate_id)
+        finally:
+            _APPROVAL_GATES.pop(gate_id, None)
+            # RESULTS'ı da düşür: yazan taraf conversation_routes, temizleyen
+            # yoktu → gate_id başına kalıcı girdi birikiyordu.
+            _APPROVAL_RESULTS.pop(gate_id, None)
 
-    async def _await_approval(self, gate_id: str) -> bool:
-        """Waits for approval; timeout or error counts as refused (fail-closed).
+    async def _await_approval(self, gate_id: str) -> "_ApprovalDecision":
+        """Waits for the user's answer. Anything other than an explicit yes is a no.
+
+        Fail-closed, but it does not invent a decision the user never made: a
+        timeout and an internal failure each carry their own summary. The three
+        copies this replaced all told the model "user rejected" whatever
+        happened, so a waiter that crashed looked exactly like a refusal — and
+        the model then reasoned on a rejection that never occurred.
 
         `except Exception` is deliberately narrow: two of the copies used a bare
         `except:`, which also swallowed the CancelledError raised when the user
         presses Stop and let the run continue.
         """
         event = _APPROVAL_GATES.get(gate_id)
+        if event is None:
+            logger.warning("Onay kapısı kaydı bulunamadı: %s", gate_id)
+            return _ApprovalDecision(False, "❌ Onay kaydı bulunamadı, araç çalıştırılmadı.")
         try:
-            if event is None:
-                return False
             await asyncio.wait_for(event.wait(), timeout=APPROVAL_TIMEOUT_S)
-            return bool(_APPROVAL_RESULTS.get(gate_id, False))
+        except asyncio.TimeoutError:
+            return _ApprovalDecision(False, "❌ Onay süresi doldu, araç çalıştırılmadı.")
         except Exception:
-            return False
-        finally:
-            _APPROVAL_GATES.pop(gate_id, None)
-            # RESULTS'ı da düşür: yazan taraf conversation_routes, temizleyen
-            # yoktu → gate_id başına kalıcı girdi birikiyordu.
-            _APPROVAL_RESULTS.pop(gate_id, None)
+            logger.exception("Onay beklenirken hata")
+            return _ApprovalDecision(False, "❌ Onay alınamadı (iç hata), araç çalıştırılmadı.")
+        if bool(_APPROVAL_RESULTS.get(gate_id, False)):
+            return _ApprovalDecision(True, "")
+        return _ApprovalDecision(False, "❌ Kullanıcı tarafından reddedildi.")
 
     async def _execute_tool_with_approval(
         self, tool_name: str, tool_args: dict
@@ -679,20 +770,27 @@ class AgentRunner:
                     f"vid_conv{self.conversation_id}")
                 all_uris.extend(res.frame_data_uris)
                 blocks.append(video_extract.build_video_block(res.meta, res.transcript))
+            # The raw detail stays in the log on both branches. What leaves the
+            # backend — to the renderer, to the stored history, and into the
+            # model's own prompt — is the stage and the error kind: a subprocess
+            # failure's text is its whole argv, carrying the home directory, the
+            # workspace path and the URL with its query string.
             except video_extract.VideoPipelineError as e:
                 logger.warning(f"[video] aşama={e.stage} kod={e.code}: {e.detail}")
-                warnings.append({"code": e.code, "message": e.message, "detail": e.detail})
-                blocks.append(f"\n\n[VİDEO] Bir video işlenemedi ({e.detail}). Metinle devam et.\n")
+                warnings.append({"code": e.code, "message": e.message,
+                                 "detail": e.client_detail})
+                blocks.append(f"\n\n[VİDEO] Bir video işlenemedi ({e.message}). Metinle devam et.\n")
             except Exception as e:
                 # An unclassified error must be visible too, otherwise the silence
                 # comes back through exactly the hole we just closed.
                 logger.warning(f"[video] sınıflandırılmamış çıkarım hatası: {e}", exc_info=True)
+                _msg = "Video işlenemedi; video atlandı, sohbet metinle sürüyor."
                 warnings.append({
                     "code": "video_extract_failed",
-                    "message": "Video işlenemedi; video atlandı, sohbet metinle sürüyor.",
-                    "detail": f"{type(e).__name__}: {e}",
+                    "message": _msg,
+                    "detail": f"aşama: bilinmiyor · {type(e).__name__}",
                 })
-                blocks.append(f"\n\n[VİDEO] Bir video işlenemedi ({e}). Metinle devam et.\n")
+                blocks.append(f"\n\n[VİDEO] Bir video işlenemedi ({_msg}). Metinle devam et.\n")
         if all_uris:
             self.images = (self.images or []) + all_uris
         message = ("".join(blocks) + "\n" + user_message) if blocks else user_message
@@ -948,20 +1046,19 @@ Kullanıcıyla {'Türkçe' if self.language == 'tr' else 'İngilizce'} konuş.""
                     "iteration": iteration + 1,
                 })
 
-                _progress.record(tool_name, tool_args)
-
                 # Tehlikeli komut kontrolü ve onay yield'ı
                 _approval_text = self._approval_prompt(tool_name, tool_args)
                 if _approval_text:
-                    _gate_event, _gate_id = self._open_approval_gate(_approval_text)
-                    yield _gate_event
-                    if not await self._await_approval(_gate_id):
-                        result = {"success": False, "summary": "❌ Kullanıcı reddetti."}
+                    with self._approval_gate(_approval_text) as (_gate_event, _gate_id):
+                        yield _gate_event
+                        _decision = await self._await_approval(_gate_id)
+                    if not _decision.approved:
+                        result = {"success": False, "summary": _decision.summary}
                         # Tool result olarak ilet
                         yield AgentEvent("tool_result", {
                             "tool": tool_name,
                             "success": False,
-                            "summary": "❌ Kullanıcı tarafından reddedildi.",
+                            "summary": _decision.summary,
                         })
                         # AI'a tool sonucunu bildir (döngü devam etsin diye)
                         function_response_parts.append(
@@ -970,6 +1067,11 @@ Kullanıcıyla {'Türkçe' if self.language == 'tr' else 'İngilizce'} konuş.""
                                 response=result,
                             ))
                         )
+                        # Re-asking for a call the user keeps refusing is a stall
+                        # like any other, so it is recorded rather than skipped.
+                        _progress.record(tool_name, tool_args, result)
+                        if _progress.stalled:
+                            break
                         continue
 
                 # Normal tool execution
@@ -992,6 +1094,12 @@ Kullanıcıyla {'Türkçe' if self.language == 'tr' else 'İngilizce'} konuş.""
                         response={"result": result_str},
                     ))
                 )
+                # Recorded with the RESULT, and checked per call rather than at
+                # the end of the batch: a response carrying A,A,A,B used to reset
+                # the streak before it was ever inspected.
+                _progress.record(tool_name, tool_args, result_str)
+                if _progress.stalled:
+                    break
                 if screenshot_b64:
                     import base64 as _b64
                     raw_bytes = _b64.b64decode(screenshot_b64.split(",", 1)[1])
@@ -1181,16 +1289,21 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                     "iteration": iteration + 1,
                 })
 
-                _progress.record(tool_call.name, tool_call.input)
-
                 # Terminal Onay Katmanı
                 _approval_text = self._approval_prompt(tool_call.name, tool_call.input)
                 if _approval_text:
-                    _gate_event, _gate_id = self._open_approval_gate(_approval_text)
-                    yield _gate_event
-                    if not await self._await_approval(_gate_id):
-                        result_str = json.dumps({"success": False, "summary": "Reddedildi"})
+                    with self._approval_gate(_approval_text) as (_gate_event, _gate_id):
+                        yield _gate_event
+                        _decision = await self._await_approval(_gate_id)
+                    if not _decision.approved:
+                        result_str = json.dumps({"success": False, "summary": _decision.summary},
+                                                ensure_ascii=False)
                         tool_results.append({"type": "tool_result", "tool_use_id": tool_call.id, "content": result_str})
+                        # Re-asking for a call the user keeps refusing is a stall
+                        # like any other, so it is recorded rather than skipped.
+                        _progress.record(tool_call.name, tool_call.input, result_str)
+                        if _progress.stalled:
+                            break
                         continue
 
                 result, _ = await self._execute_tool_with_approval(tool_call.name, tool_call.input)
@@ -1223,7 +1336,13 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                     "tool_use_id": tool_call.id,
                     "content": content
                 })
-                
+                # Recorded with the RESULT, and checked per call rather than at
+                # the end of the batch: a response carrying A,A,A,B used to reset
+                # the streak before it was ever inspected.
+                _progress.record(tool_call.name, tool_call.input, result_str)
+                if _progress.stalled:
+                    break
+
             messages.append({"role": "user", "content": tool_results})
 
             if _progress.stalled:
@@ -1398,15 +1517,20 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                     "iteration": iteration + 1,
                 })
 
-                _progress.record(tool_name, tool_args)
-
                 # Terminal Onay Katmanı
                 _approval_text = self._approval_prompt(tool_name, tool_args)
                 if _approval_text:
-                    _gate_event, _gate_id = self._open_approval_gate(_approval_text)
-                    yield _gate_event
-                    if not await self._await_approval(_gate_id):
-                        messages.append({"role": "tool", "tool_call_id": tool_call.id, "name": tool_name, "content": "Reddedildi"})
+                    with self._approval_gate(_approval_text) as (_gate_event, _gate_id):
+                        yield _gate_event
+                        _decision = await self._await_approval(_gate_id)
+                    if not _decision.approved:
+                        messages.append({"role": "tool", "tool_call_id": tool_call.id,
+                                         "name": tool_name, "content": _decision.summary})
+                        # Re-asking for a call the user keeps refusing is a stall
+                        # like any other, so it is recorded rather than skipped.
+                        _progress.record(tool_name, tool_args, _decision.summary)
+                        if _progress.stalled:
+                            break
                         continue
 
                 result, _ = await self._execute_tool_with_approval(tool_name, tool_args)
@@ -1428,6 +1552,12 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                     "name": tool_name,
                     "content": result_str
                 })
+                # Recorded with the RESULT, and checked per call rather than at
+                # the end of the batch: a response carrying A,A,A,B used to reset
+                # the streak before it was ever inspected.
+                _progress.record(tool_name, tool_args, result_str)
+                if _progress.stalled:
+                    break
                 if screenshot_b64:
                     messages.append({
                         "role": "user",

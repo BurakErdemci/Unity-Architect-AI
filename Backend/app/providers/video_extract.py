@@ -54,6 +54,27 @@ class VideoPipelineError(RuntimeError):
         self.stage = stage
         self.detail = detail or message
 
+    @property
+    def client_detail(self) -> str:
+        """The detail that may leave the backend — stage and error kind only.
+
+        `detail` carries whatever the failing step raised, which for a
+        subprocess is the whole argv: the resolved binary path, the Windows home
+        directory (so the account name), the workspace path, the per-turn temp
+        path, and the target URL WITH its query string — an access token in a
+        share link lands in the renderer and in the chat history.
+
+        The route layer already refuses to send raw exception text to the client
+        for the same reason (`/chat-stream`'s error branch); an audit found this
+        new channel going around that decision, so the raw text stays in the log
+        and only this reaches the user.
+        """
+        kind = self.detail.split(":", 1)[0].strip() if ":" in self.detail else ""
+        # Only an exception class name is kept — anything else can carry a path.
+        if not kind.isidentifier():
+            kind = ""
+        return f"aşama: {self.stage}" + (f" · {kind}" if kind else "")
+
 
 class ExtractResult:
     def __init__(self, frame_data_uris: List[str], transcript: str, meta: dict):

@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { FileEntry, ExportModalState, UserData } from '../../components/home/types';
 import { PendingFile } from '../../components/home/FileCreationApproval';
@@ -71,7 +71,21 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
   
   // Pending Actions
   const [pendingGenFiles, setPendingGenFiles] = useState<{ files: PendingFile[]; messageId: number } | null>(null);
-  const [pendingDelete, setPendingDelete] = useState<{ path: string; messageId: number } | null>(null);
+  const [pendingDelete, _setPendingDelete] = useState<{ path: string; messageId: number } | null>(null);
+  // Tek slot, ama istek TEK gelmiyor: paralel araç çağrılarında ikinci silme
+  // isteği birincinin kartını ekrandan siliyordu ve birinci cevapsız kalıp
+  // zaman aşımına düşüyordu (30 Ağu 2026 denetimi; komut ve soru kartlarında
+  // aynı kuyruk zaten vardı, yalnız silmede yoktu).
+  const pendingDeleteQueueRef = useRef<Array<{ path: string; messageId: number }>>([]);
+
+  const setPendingDelete = useCallback((val: { path: string; messageId: number } | null) => {
+    _setPendingDelete(prev => {
+      // null = karar verildi (onay ya da iptal) → sıradakini göster
+      if (val === null) return pendingDeleteQueueRef.current.shift() || null;
+      if (prev) { pendingDeleteQueueRef.current.push(val); return prev; }
+      return val;
+    });
+  }, []);
 
   const fetchLastWorkspace = useCallback(async (userId: number) => {
     if (!API || !user?.sessionToken) return;
