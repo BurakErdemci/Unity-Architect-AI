@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import axios from 'axios';
-import { Message, Conversation, UserData, AIConfig, GenerationMode, ChatActivity } from '../../components/home/types';
+import { Message, Conversation, UserData, AIConfig, GenerationMode, ChatActivity, ContextUsage, SessionUsage } from '../../components/home/types';
 import { PendingFile } from '../../components/home/FileCreationApproval';
 import { Task } from '../../components/ui/agent-plan';
 import { confirmDialog } from '../../components/ui/ConfirmDialog';
@@ -24,7 +24,8 @@ export const useChat = (
   const [loading, setLoading] = useState(false);
   const [chatInput, setChatInput] = useState('');
   const [currentPlan, setCurrentPlan] = useState<Task[]>([]);
-  const [contextUsage, setContextUsage] = useState({ percent: 0, should_compact: false, message_count: 0 });
+  const [contextUsage, setContextUsage] = useState<ContextUsage>({ percent: 0, should_compact: false, message_count: 0, estimated: true });
+  const [sessionUsage, setSessionUsage] = useState<SessionUsage>({ input_tokens: 0, output_tokens: 0, cost_usd: null, turns: 0 });
   const [isCompacting, setIsCompacting] = useState(false);
   const [isAnalyzingProject, setIsAnalyzingProject] = useState(false);
   const [pendingFix, setPendingFix] = useState<{ data: any; messageId?: number; applied?: boolean } | null>(null);
@@ -67,24 +68,33 @@ export const useChat = (
     } catch (err) { console.error("Sohbet listesi hatası:", err); }
   }, [API]);
 
+  // Göstergeyi backend'den TAZELE. Burada bir kopya formül vardı (chars/200k) ve
+  // backend'deki asıl formülle sessizce ayrışabiliyordu — aynı kuralın iki
+  // bağımsız metni. Artık tek kaynak `GET .../context-usage`.
+  const refreshContextUsage = useCallback(async (convId: number) => {
+    if (!API) return;
+    try {
+      const res = await axios.get(`${API}/conversations/${convId}/context-usage`);
+      setContextUsage(res.data);
+    } catch (err) { console.error('Bağlam göstergesi hatası:', err); }
+  }, [API]);
+
   const fetchMessages = useCallback(async (convId: number) => {
     if (!API) return;
     try {
       const res = await axios.get(`${API}/conversations/${convId}/messages`);
       setMessages(res.data);
-      // Bağlam halkası/compact butonu eski sohbet açılınca da görünsün: backend'in
-      // tur sonunda gönderdiği context_usage ile aynı formül (total_chars / 200k).
-      const msgs: Message[] = res.data || [];
-      const totalChars = msgs.reduce((s, m) => s + (m.content?.length || 0), 0);
-      const pct = Math.min(100, Math.round((totalChars / 200000) * 100));
-      setContextUsage({ percent: pct, should_compact: pct >= 85, message_count: msgs.length });
+      await refreshContextUsage(convId);
     } catch (err) { console.error("Mesaj hatası:", err); }
-  }, [API]);
+  }, [API, refreshContextUsage]);
 
   const selectConversation = useCallback(async (conv: Conversation) => {
     if (editingId) return;
     setActiveConvId(conv.id);
-    setContextUsage({ percent: 0, should_compact: false, message_count: 0 });
+    setContextUsage({ percent: 0, should_compact: false, message_count: 0, estimated: true });
+    // Tur istatistikleri sohbete değil OTURUMA ait; başka bir sohbete geçince
+    // devretmeleri "bu sohbette şu kadar harcadın" diye okunurdu.
+    setSessionUsage({ input_tokens: 0, output_tokens: 0, cost_usd: null, turns: 0 });
     await fetchMessages(conv.id);
   }, [editingId, fetchMessages]);
 
@@ -316,7 +326,28 @@ export const useChat = (
               } else if (data.type === 'done' || data.type === 'error' || data.type === 'response') {
                 setActivity(null);
               }
-              if (data.type === 'context_usage') setContextUsage({ percent: data.percent, should_compact: data.should_compact, message_count: data.message_count });
+              // Biriktirme BURADA, `setMessages` güncelleyicisinin içinde değil:
+              // React bir state güncelleyicisini iki kez çağırabiliyor (StrictMode)
+              // ve sayaç sessizce ikiye katlanırdı.
+              if (data.type === 'turn_usage') {
+                setSessionUsage(prev => ({
+                  input_tokens: prev.input_tokens + (Number(data.input_tokens) || 0),
+                  output_tokens: prev.output_tokens + (Number(data.output_tokens) || 0),
+                  // `null` "bilmiyoruz", 0 "bedava". Maliyet bildiren tek yol
+                  // Claude Code; toplam ancak bir tur gerçekten sayı verirse doğuyor.
+                  cost_usd: typeof data.cost_usd === 'number'
+                    ? (prev.cost_usd ?? 0) + data.cost_usd
+                    : prev.cost_usd,
+                  turns: prev.turns + 1,
+                }));
+              }
+              if (data.type === 'context_usage') setContextUsage({
+                percent: data.percent,
+                should_compact: data.should_compact,
+                message_count: data.message_count,
+                estimated: data.estimated !== false,
+                last_turn: data.last_turn,
+              });
               if (data.type === 'command_approval_needed') {
                 const item = { command: data.command, gateId: data.gate_id, messageId: aiMsgId };
                 // Zaten gösterilen bir onay varsa sıraya al (paralel araçlarda ezilmesin)
@@ -437,7 +468,10 @@ export const useChat = (
         if (res.data.summary) {
           const msgRes = await axios.get(`${API}/conversations/${activeConvId}/messages`);
           setMessages(msgRes.data);
-          setContextUsage({ percent: 5, should_compact: false, message_count: 1 });
+          // Eskiden buraya sabit `percent: 5` yazılıyordu — sıkıştırmadan sonra
+          // doluluğun ne olduğu ölçülmeden, makul görünen bir sayıyla. Gösterge
+          // artık tek kaynaktan tazeleniyor.
+          await refreshContextUsage(activeConvId);
           showToast(cevir('compact.done'), 'success');
         } else {
           // Backend'in `message`'ı sabit TÜRKÇE — İngilizce arayüzde Türkçe toast
@@ -446,7 +480,7 @@ export const useChat = (
         }
       }
     } catch { showToast(cevir('compact.error'), 'error'); } finally { setIsCompacting(false); }
-  }, [API, activeConvId, showToast, user]);
+  }, [API, activeConvId, showToast, user, refreshContextUsage]);
 
   return {
     conversations, setConversations,
@@ -455,7 +489,7 @@ export const useChat = (
     loading, setLoading,
     chatInput, setChatInput,
     currentPlan, setCurrentPlan,
-    contextUsage, setContextUsage,
+    contextUsage, setContextUsage, sessionUsage,
     isCompacting, setIsCompacting,
     isAnalyzingProject, setIsAnalyzingProject,
     pendingFix, setPendingFix,

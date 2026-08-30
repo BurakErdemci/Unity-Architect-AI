@@ -1,0 +1,133 @@
+/**
+ * Kalıcı bağlam/kullanım göstergesi — GÖRÜNÜRLÜK ve DÜRÜSTLÜK.
+ *
+ * İki arıza kaydı bu testleri doğurdu (ölçüldü 30 Ağu 2026):
+ *
+ * 1. Gösterge `contextUsage.percent > 0` koşuluyla çiziliyordu, yani ilk tur
+ *    bitene kadar ekranda yoktu. İstenen şey "sürekli görünen kalıcı bir yer"
+ *    olduğu için bu koşul isteğin tam tersiydi.
+ * 2. Yüzde bir ÖLÇÜM değil: yalnız veritabanına yazılan yazışma metnini
+ *    sayıyor; araç çıktıları, sistem talimatı ve CLI oturumlarının kendi
+ *    diskteki geçmişi sayılmıyor. İşaretsiz bir "%12" onu ölçüm gibi gösterir.
+ *
+ * Ve gerçek token 8 çalıştırma yolunun yalnız 4'ünde var. Kalan 4'te (Codex,
+ * agy, cursor/copilot/opencode/kimi, basit yol) sıfır göstermek "hiç
+ * harcamadın" demek olurdu — bilgi yokluğu ile sıfır ölçüm aynı şey değil.
+ */
+import { describe, it, expect, vi, afterEach } from 'vitest'
+import React from 'react'
+import { render, screen, cleanup } from '@testing-library/react'
+
+import { ControlPanel } from '../renderer/components/home/ControlPanel'
+
+afterEach(() => cleanup())
+
+const temelProps = {
+  thinkingLevel: 'medium' as any,
+  setThinkingLevel: () => {},
+  generationMode: 'auto' as any,
+  setGenerationMode: () => {},
+  isAnalyzingProject: false,
+  analyzeProject: async () => {},
+  exportMemory: async () => {},
+  importMemory: async () => {},
+  compactConversation: async () => {},
+  isCompacting: false,
+}
+
+const ciz = (ekler: Record<string, any>) =>
+  render(<ControlPanel {...(temelProps as any)} activeConvId={7} {...ekler} />)
+
+describe('görünürlük', () => {
+  it('aktif sohbet varken ilk tur BİTMEDEN de görünüyor', () => {
+    ciz({ contextUsage: undefined, sessionUsage: undefined })
+    expect(screen.getByTestId('context-gauge')).toBeTruthy()
+  })
+
+  it('sohbet yokken hiç çizilmiyor', () => {
+    render(<ControlPanel {...(temelProps as any)} activeConvId={null} />)
+    expect(screen.queryByTestId('context-gauge')).toBeNull()
+  })
+
+  it('verisi yokken boş halka değil "veri yok" yazıyor', () => {
+    // Boş bir halka "doluluk sıfır" diye okunur; ikisi aynı şey değil.
+    ciz({ contextUsage: undefined })
+    expect(screen.getByTestId('context-percent').textContent).toBe('henüz veri yok')
+  })
+})
+
+describe('yüzdenin dürüstlüğü', () => {
+  it('yüzde tahmin işaretiyle gösteriliyor', () => {
+    ciz({ contextUsage: { percent: 12, should_compact: false, message_count: 4, estimated: true } })
+    expect(screen.getByTestId('context-percent').textContent).toBe('~%12')
+  })
+
+  it('başlık, neyin sayılmadığını açıkça yazıyor', () => {
+    ciz({ contextUsage: { percent: 12, should_compact: false, message_count: 4, estimated: true } })
+    const baslik = screen.getByTestId('context-gauge').getAttribute('title') || ''
+    expect(baslik).toContain('tahmin')
+    expect(baslik).toContain('araç çıktıları')
+  })
+})
+
+describe('gerçek token', () => {
+  it('hiç tur token bildirmediyse sayı değil çizgi gösteriliyor', () => {
+    ciz({
+      contextUsage: { percent: 3, should_compact: false, message_count: 2 },
+      sessionUsage: { input_tokens: 0, output_tokens: 0, cost_usd: null, turns: 0 },
+    })
+    expect(screen.queryByTestId('session-tokens')).toBeNull()
+    expect(screen.getByTestId('session-tokens-none').textContent).toContain('—')
+  })
+
+  it('bildirildiyse giriş ve çıkış toplanıp kısaltılarak gösteriliyor', () => {
+    ciz({
+      contextUsage: { percent: 3, should_compact: false, message_count: 2 },
+      sessionUsage: { input_tokens: 41_200, output_tokens: 800, cost_usd: null, turns: 2 },
+    })
+    expect(screen.getByTestId('session-tokens').textContent).toContain('42,0k tok')
+  })
+
+  it('tam sayılar ve tur sayısı başlıkta duruyor', () => {
+    ciz({
+      contextUsage: { percent: 3, should_compact: false, message_count: 2 },
+      sessionUsage: { input_tokens: 41_200, output_tokens: 800, cost_usd: null, turns: 2 },
+    })
+    const baslik = screen.getByTestId('session-tokens').getAttribute('title') || ''
+    expect(baslik).toContain('41.200')
+    expect(baslik).toContain('2 tur')
+  })
+
+  it('maliyet yalnız gerçekten bildirilmişse yazılıyor', () => {
+    // `cost_usd` yalnız Claude Code yolunda dolu; null "bilmiyoruz" demek ve
+    // "$0.00" olarak gösterilirse bedava sanılır.
+    ciz({
+      contextUsage: { percent: 3, should_compact: false, message_count: 2 },
+      sessionUsage: { input_tokens: 100, output_tokens: 10, cost_usd: null, turns: 1 },
+    })
+    expect(screen.getByTestId('session-tokens').textContent).not.toContain('$')
+
+    cleanup()
+    ciz({
+      contextUsage: { percent: 3, should_compact: false, message_count: 2 },
+      sessionUsage: { input_tokens: 100, output_tokens: 10, cost_usd: 0.21, turns: 1 },
+    })
+    expect(screen.getByTestId('session-tokens').textContent).toContain('$0.21')
+  })
+})
+
+describe('uyarı eşiği', () => {
+  it('sıkıştırma eşiği aşılınca nabız işareti çıkıyor', () => {
+    const { container } = ciz({
+      contextUsage: { percent: 91, should_compact: true, message_count: 40 },
+    })
+    expect(container.querySelector('.animate-ping')).toBeTruthy()
+  })
+
+  it('eşik altında nabız işareti yok', () => {
+    const { container } = ciz({
+      contextUsage: { percent: 40, should_compact: false, message_count: 10 },
+    })
+    expect(container.querySelector('.animate-ping')).toBeNull()
+  })
+})

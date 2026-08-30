@@ -10,6 +10,14 @@ import {
   Gauge,
   Rocket
 } from 'lucide-react';
+import { ContextUsage, SessionUsage } from './types';
+
+/** 41200 → "41,2k". Uzun sayı barı taşırıyor, tam değer başlıkta duruyor. */
+const kisaSayi = (n: number): string => {
+  if (n < 1000) return String(n);
+  const bin = n / 1000;
+  return (bin < 100 ? bin.toFixed(1).replace('.', ',') : String(Math.round(bin))) + 'k';
+};
 import { GenerationModeSelector, GenerationMode } from './GenerationModeSelector';
 
 // Kanonik effort skalası — hangi seviyelerin GÖSTERİLECEĞİ backend kayıtçısından
@@ -37,7 +45,8 @@ interface ControlPanelProps {
   importMemory: () => Promise<void>;
   compactConversation: () => Promise<void>;
   isCompacting: boolean;
-  contextUsage?: { percent: number; message_count: number; should_compact?: boolean };
+  contextUsage?: ContextUsage;
+  sessionUsage?: SessionUsage;
   // Claude-only (subscription + claude-* model). Diğer sağlayıcılarda gizlenir.
   isClaudeSubscription?: boolean;
   ultracode?: boolean;
@@ -58,6 +67,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
   compactConversation,
   isCompacting,
   contextUsage,
+  sessionUsage,
   isClaudeSubscription = false,
   ultracode = false,
   setUltracode
@@ -65,6 +75,11 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
   const { t } = useLang();
   const [showMemoryMenu, setShowMemoryMenu] = useState(false);
   const [showThinkingMenu, setShowThinkingMenu] = useState(false);
+
+  const yuzde = contextUsage?.percent ?? 0;
+  // `turns > 0` şart: sayaç sıfırdayken "0 tok" ile "bu model bildirmiyor"
+  // ekranda aynı görünür, oysa biri ölçüm diğeri bilgi yokluğu.
+  const tokenVar = !!sessionUsage && sessionUsage.turns > 0;
 
   // Seviye görselleri — hangi seviyelerin listeleneceğine backend kayıtçısı karar
   // verir (effortCaps.levels). Burada yalnız etiket/renk/açıklama eşlemesi var.
@@ -254,17 +269,24 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
         </AnimatePresence>
       </div>
 
-      {/* Circular Memory Compact Button */}
-      {activeConvId && contextUsage && contextUsage.percent > 0 && (
+      {/* Kalıcı bağlam + kullanım göstergesi.
+          Eskiden `contextUsage.percent > 0` koşuluyla çiziliyordu, yani ilk tur
+          bitene kadar hiç görünmüyordu — "sürekli görünen bir yer" isteğinin tam
+          tersi. Artık aktif sohbet varsa hep duruyor ve verisi yokken bunu
+          SÖYLÜYOR; boş bir halka "doluluk sıfır" diye okunurdu. */}
+      {activeConvId && (
         <>
           <div className="w-px h-3 bg-slate-800" />
           <button
+            data-testid="context-gauge"
             onClick={() => compactConversation()}
             disabled={isCompacting}
-            title={t('memory.usageTitle', { yuzde: contextUsage.percent, sayi: contextUsage.message_count })}
+            title={contextUsage
+              ? t('usage.estimateTitle', { yuzde: contextUsage.percent, sayi: contextUsage.message_count })
+              : t('usage.noData')}
             className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium transition-colors group relative ${
-              contextUsage.percent >= 90 ? 'bg-red-500/10 border border-red-500/30 text-red-400 hover:bg-red-500/20'
-              : contextUsage.percent >= 75 ? 'bg-amber-500/10 border border-amber-500/30 text-amber-400 hover:bg-amber-500/20'
+              yuzde >= 90 ? 'bg-red-500/10 border border-red-500/30 text-red-400 hover:bg-red-500/20'
+              : yuzde >= 75 ? 'bg-amber-500/10 border border-amber-500/30 text-amber-400 hover:bg-amber-500/20'
               : 'text-slate-500 hover:text-slate-300 border border-transparent hover:border-slate-800/50 hover:bg-slate-800/30'
             }`}
           >
@@ -278,23 +300,59 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
                   strokeWidth="4"
                 />
                 <path
-                  className={`${contextUsage.percent >= 90 ? 'text-red-500'
-                      : contextUsage.percent >= 75 ? 'text-amber-500'
+                  className={`${yuzde >= 90 ? 'text-red-500'
+                      : yuzde >= 75 ? 'text-amber-500'
                         : 'text-blue-500'
                     } transition-all duration-500`}
-                  strokeDasharray={`${contextUsage.percent}, 100`}
+                  strokeDasharray={`${yuzde}, 100`}
                   d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
                   fill="none"
                   stroke="currentColor"
                   strokeWidth="4"
                 />
               </svg>
-              {contextUsage.should_compact && (
+              {contextUsage?.should_compact && (
                 <span className="absolute -top-1 -right-1 w-1.5 h-1.5 bg-red-500 rounded-full animate-ping" />
               )}
             </div>
+            {/* Tahmin olduğunu "~" söylüyor: yüzde ölçülmüş bir sayı değil, ve
+                işaretsiz bir "%12" onu ölçüm gibi gösterir. */}
+            <span data-testid="context-percent">
+              {contextUsage ? `~%${yuzde}` : t('usage.noData')}
+            </span>
+            <span className="text-slate-600">·</span>
             <span>{isCompacting ? t('memory.compacting') : t('memory.compact')}</span>
           </button>
+
+          {/* GERÇEK token — yalnız sağlayıcı bildirdiyse. 8 çalıştırma yolunun
+              4'ü (Codex, agy, oneshot CLI'lar, basit yol) hiç bildirmiyor, ve
+              orada sıfır göstermek "hiç harcamadın" demek olurdu. */}
+          {tokenVar ? (
+            <span
+              data-testid="session-tokens"
+              title={t('usage.tokensTitle', {
+                giris: sessionUsage!.input_tokens.toLocaleString('tr-TR'),
+                cikis: sessionUsage!.output_tokens.toLocaleString('tr-TR'),
+                tur: sessionUsage!.turns,
+              })}
+              className="px-2 py-1 rounded-lg text-[11px] font-medium text-slate-500 border border-transparent"
+            >
+              {kisaSayi(sessionUsage!.input_tokens + sessionUsage!.output_tokens)} tok
+              {typeof sessionUsage!.cost_usd === 'number' && (
+                <span className="ml-1.5 text-slate-600" title={t('usage.costTitle', { tutar: `$${sessionUsage!.cost_usd.toFixed(2)}` })}>
+                  ${sessionUsage!.cost_usd.toFixed(2)}
+                </span>
+              )}
+            </span>
+          ) : (
+            <span
+              data-testid="session-tokens-none"
+              title={t('usage.noTokens')}
+              className="px-2 py-1 rounded-lg text-[11px] font-medium text-slate-700 border border-transparent"
+            >
+              — tok
+            </span>
+          )}
         </>
       )}
     </div>

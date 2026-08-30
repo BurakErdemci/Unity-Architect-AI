@@ -78,6 +78,31 @@ export interface Message {
   notices?: MessageNotice[];
 }
 
+// Kalıcı bağlam göstergesinin verisi. `percent` bir ÖLÇÜM DEĞİL: yalnız DB'ye
+// yazılan mesaj metnini sayıyor, araç çıktılarını ve sistem promptunu görmüyor.
+// `estimated` bu yüzden var ve arayüz onu gizlemiyor.
+//
+// `last_turn` yalnız gerçek token üreten yollarda dolu: doğrudan API çağıran üç
+// sağlayıcı ve Claude Code. Codex, agy, cursor, copilot, opencode ve kimi hiç
+// token bildirmiyor — orada alan BULUNMUYOR, sıfır değil.
+export interface ContextUsage {
+  percent: number;
+  should_compact: boolean;
+  message_count: number;
+  estimated?: boolean;
+  last_turn?: { input_tokens?: number; output_tokens?: number; cost_usd?: number | null };
+}
+
+// Sohbet açıldığından beri biriken GERÇEK token. Yeniden açılışta sıfırlanır:
+// tur istatistikleri DB'ye yazılmıyor, ve olmayan bir geçmişi varmış gibi
+// göstermektense sayacın kapsamını arayüzde söylemek dürüst olanı.
+export interface SessionUsage {
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number | null;
+  turns: number;
+}
+
 // Canlı aktivite göstergesi (backend status event'leri): Claude'un o an ne yaptığı +
 // tur boyunca üretilen token. loading sırasında ChatPanel'de spinner satırı olarak görünür.
 export interface ChatActivity {
