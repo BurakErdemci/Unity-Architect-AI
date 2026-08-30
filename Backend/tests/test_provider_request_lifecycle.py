@@ -465,6 +465,63 @@ class TestTerminalGuaranteeIsStructural(unittest.TestCase):
         self.assertEqual(ilk.type, "text")
         self.assertEqual(kapandi_ic, [True])
 
+    def test_a_second_terminal_event_never_reaches_the_consumer(self):
+        """The wrapper used to COUNT duplicates and forward them anyway: it
+        detected the violation after both had already escaped, so a consumer
+        could end or persist the same turn twice. Enforcement, not reporting —
+        the extra terminal is dropped at the moment it is seen."""
+
+        async def _cift_terminal():
+            yield ar.AgentEvent("response", {"content": "cevap"})
+            yield ar._done_event(1)
+            yield ar.AgentEvent("error", {"message": "geç gelen sağlayıcı hatası"})
+            yield ar.AgentEvent("text", {"content": "sonrası"})
+
+        with self.assertLogs(ar.logger, level="ERROR") as kayit:
+            olaylar = self._topla(_cift_terminal())
+
+        self.assertEqual([e.type for e in olaylar
+                          if e.type in ("done", "error")], ["done"])
+        # Dropping the duplicate must not turn into dropping the stream: a
+        # non-terminal event after it still reaches the consumer.
+        self.assertIn("sonrası", [e.data.get("content") for e in olaylar])
+        # Loud on the way out: a loop with two terminals stays findable.
+        self.assertTrue(any("terminal" in satir for satir in kayit.output))
+
+    def test_a_group_carrying_a_real_failure_becomes_one_error(self):
+        """`except Exception` excluded a `BaseExceptionGroup` too, because a
+        group is BaseException. Structured concurrency (TaskGroup/anyio, what
+        the provider SDKs sit on) puts a `CancelledError` next to the real
+        failure exactly like this, and the turn ended with zero terminals."""
+
+        async def _karisik_grup():
+            if False:
+                yield None
+            raise BaseExceptionGroup(
+                "sağlayıcı görevleri düştü",
+                [asyncio.CancelledError("iptal edilen görev"),
+                 RuntimeError("gerçek sağlayıcı hatası")])
+
+        terminal = [e for e in self._topla(_karisik_grup())
+                    if e.type in ("done", "error")]
+        self.assertEqual([e.type for e in terminal], ["error"])
+        self.assertEqual(terminal[0].data["code"], "provider_loop_crashed")
+
+    def test_a_group_of_only_cancellations_still_passes_through(self):
+        """The other side of the same gate: widening the catch must not start
+        answering a stopped turn with an invented `error`. A group whose every
+        leaf is a cancellation is a cancellation."""
+
+        async def _iptal_grubu():
+            if False:
+                yield None
+            raise BaseExceptionGroup(
+                "tur durduruldu",
+                [asyncio.CancelledError("a"), asyncio.CancelledError("b")])
+
+        with self.assertRaises(BaseExceptionGroup):
+            self._topla(_iptal_grubu())
+
     def test_every_api_loop_goes_through_the_guarantee(self):
         """Sınıfı kapatıyor, bir dalı değil — kapının bir dala konup
         diğerlerinin açık kalması bu deponun ölçülmüş en sık arızası."""

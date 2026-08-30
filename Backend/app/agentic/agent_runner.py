@@ -529,6 +529,31 @@ def _stop_events(iterations: int, stop_reason: str,
     return [_done_event(iterations, stop_reason, stop_message=metin, **ekstra)]
 
 
+_TURN_TEARDOWN = (asyncio.CancelledError, GeneratorExit,
+                  KeyboardInterrupt, SystemExit)
+
+
+def _is_turn_teardown(exc: BaseException) -> bool:
+    """True when `exc` means the turn was STOPPED, not that it failed.
+
+    A stopped turn owes nobody a terminal event: the consumer that would read
+    it is the one that walked away. That exclusion used to be expressed as
+    `except Exception`, which is too wide by exactly one shape: structured
+    concurrency (TaskGroup, anyio — what the provider SDKs sit on) reports a
+    sibling failure as a `BaseExceptionGroup`, so a real provider error
+    travelling next to a `CancelledError` was excluded too and the turn ended
+    with zero terminals (audit, 30 Aug 2026).
+
+    Hence the rule for groups: teardown only when EVERY leaf is teardown. One
+    real failure inside makes the whole group a failure, because that failure
+    is what the user needs told.
+    """
+    if isinstance(exc, BaseExceptionGroup):
+        return bool(exc.exceptions) and all(_is_turn_teardown(alt)
+                                            for alt in exc.exceptions)
+    return isinstance(exc, _TURN_TEARDOWN)
+
+
 async def _guarantee_terminal(events: "AsyncGenerator[AgentEvent, None]",
                               model_name: str) -> "AsyncGenerator[AgentEvent, None]":
     """Forwards a provider loop's events and GUARANTEES a terminal one.
@@ -542,10 +567,9 @@ async def _guarantee_terminal(events: "AsyncGenerator[AgentEvent, None]",
     This closes the CLASS rather than the case: a loop cannot end silently
     even when something nobody anticipated escapes it.
 
-    `CancelledError` and `GeneratorExit` are deliberately NOT caught — they are
-    BaseException, so plain `except Exception` lets them through. A stopped
-    turn owes no terminal event: the consumer that would read it is the one
-    that walked away.
+    Cancellation is deliberately NOT converted into an event — see
+    `_is_turn_teardown` for what counts as cancellation and why the test is
+    not simply `except Exception`.
     """
     terminal = 0
     try:
@@ -553,8 +577,23 @@ async def _guarantee_terminal(events: "AsyncGenerator[AgentEvent, None]",
             async for _ev in events:
                 if _ev.type in ("done", "error"):
                     terminal += 1
+                    if terminal > 1:
+                        # DROPPED, not forwarded. The contract is about what the
+                        # consumer sees, and a second terminal lets the same turn
+                        # be ended or persisted twice downstream — forwarding it
+                        # made this wrapper a reporter instead of a guarantee.
+                        # Still logged at error level: a loop emitting two
+                        # terminals is a defect that must stay visible, never be
+                        # quietly normalised.
+                        logger.error(f"[provider] {model_name} turu {terminal}. "
+                                     f"terminal olayı ({_ev.type}) yaydı — "
+                                     f"sözleşme tam olarak bir tane diyor, "
+                                     f"fazlası tüketiciye geçirilmedi")
+                        continue
                 yield _ev
-        except Exception as e:
+        except BaseException as e:
+            if _is_turn_teardown(e):
+                raise
             logger.error(f"[provider] {model_name} döngüsü beklenmedik bir hatayla "
                          f"bitti: {e}", exc_info=True)
             if terminal == 0:
@@ -574,11 +613,9 @@ async def _guarantee_terminal(events: "AsyncGenerator[AgentEvent, None]",
                     f"`{model_name}` turu nasıl bittiğini bildirmeden kapandı. "
                     "Bu backend tarafında bir arıza; turu tekrarla."
                 )})
-        elif terminal > 1:
-            # Not swallowed: a duplicate terminal is a real defect and hiding it
-            # here would only make it harder to find than it already is.
-            logger.error(f"[provider] {model_name} turu {terminal} terminal olay "
-                         f"yaydı — sözleşme tam olarak bir tane diyor")
+        # No duplicate branch here any more: an extra terminal is reported at
+        # the moment it is dropped, above. Reporting it after the fact was the
+        # bug — by then both had already reached the consumer.
     finally:
         # Closing the wrapper must close what it wraps, deterministically. The
         # inner loop's `finally` is what hands an abandoned provider request
