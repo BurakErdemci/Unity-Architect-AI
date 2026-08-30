@@ -45,7 +45,21 @@ logger = logging.getLogger(__name__)
 # call, not by taking many steps, so counting steps cut healthy long runs short
 # while letting a stuck one spin to the end anyway. This number only bounds a
 # run that is still making progress but is unusually long.
-MAX_ITERATIONS = 60
+#
+# RAISED 60 -> 300 on 30 Aug 2026, and the reason is a measurement rather than a
+# feeling. 60 was chosen when the fuse moved off step counting, and it was still
+# a step count: a plain MCP session — "list these sixty folders" — reached it and
+# stopped with `max_iterations`, which is exactly the failure the redesign was
+# meant to end. Burak reported it from a running build ("tool adımları 50 60
+# adımlı oluyor"), and `test_long_mcp_flow.py` reproduces it.
+#
+# What this number is for, stated plainly so the next person does not shrink it
+# back: it bounds COST in the pathological case where every step is genuinely
+# novel and the guard therefore never fires. It is not a judgement about how
+# long healthy work may be — the guard makes that judgement, five repeats deep.
+# A run that reaches 300 distinct, progressing steps is either extraordinary or
+# a fuse we have not thought of yet; either way stopping to say so is right.
+MAX_ITERATIONS = 300
 
 # How many times the same (tool, arguments, RESULT) triple may occur inside the
 # window before the run is declared stalled.
@@ -401,11 +415,32 @@ _STOP_TEXTS = {
         "bir istekle devam edebiliriz."
     ),
     "no_progress": (
-        "⚠️ Aynı işlemi tekrarlamaya başladım, yani artık ilerleme "
-        "kaydetmiyordum; boşuna dönmemek için durdum. Ne yapmamı istediğini "
-        "biraz daha açarsan farklı bir yol deneyebilirim."
+        "⚠️ Aynı çağrıyı aynı argümanlarla yapıp aynı cevabı almaya başladım "
+        "(5 kez), yani artık yeni bilgi üretmiyordum; boşuna dönmemek için "
+        "durdum. Adım sayısı yüzünden DEĞİL — farklı adımlar atsaydım devam "
+        "ederdim. Ne yapmamı istediğini biraz daha açarsan farklı bir yol "
+        "deneyebilirim."
     ),
 }
+
+
+def _no_progress_text(tool_name: "str | None") -> str:
+    """Duruş metnine tekrarlayan aracın adını koy.
+
+    "İlerleme kaydedemedim" bir teşhis değil; "`list_directory` aynı cevabı 5
+    kez döndürdü" kullanıcının üzerine hareket edebileceği bir cümle. Araç adı
+    bilinmiyorsa genel metne düşülüyor — uydurulmuş bir ad, hiç ad olmamasından
+    kötü olurdu.
+    """
+    if not tool_name:
+        return _STOP_TEXTS["no_progress"]
+    return (
+        f"⚠️ `{tool_name}` aracını aynı argümanlarla 5 kez çağırdım ve her "
+        "seferinde aynı cevabı aldım, yani artık yeni bilgi üretmiyordum; "
+        "boşuna dönmemek için durdum. Adım sayısı yüzünden DEĞİL — farklı "
+        "adımlar atsaydım devam ederdim. Ne yapmamı istediğini biraz daha "
+        "açarsan farklı bir yol deneyebilirim."
+    )
 
 
 def _done_event(iterations: int, stop_reason: str = "complete", **extra) -> "AgentEvent":
@@ -437,15 +472,18 @@ def _normalize_session_event(etype: str, payload: dict) -> "AgentEvent":
                        data.pop("stop_reason", "complete"), **data)
 
 
-def _stop_events(iterations: int, stop_reason: str) -> "list[AgentEvent]":
+def _stop_events(iterations: int, stop_reason: str,
+                 repeated_tool: "str | None" = None) -> "list[AgentEvent]":
     """The events a cut-short run sends to the user.
 
     One event, not two: the reason is shown by the UI's own notice, so a second
     copy as chat text was the same warning twice. `stop_message` keeps the text
     reaching the layer that persists the turn.
     """
-    return [_done_event(iterations, stop_reason,
-                        stop_message=_STOP_TEXTS[stop_reason])]
+    metin = (_no_progress_text(repeated_tool) if stop_reason == "no_progress"
+             else _STOP_TEXTS[stop_reason])
+    ekstra = {"repeated_tool": repeated_tool} if repeated_tool else {}
+    return [_done_event(iterations, stop_reason, stop_message=metin, **ekstra)]
 
 
 class _ApprovalDecision(NamedTuple):
@@ -499,12 +537,19 @@ class _ProgressGuard:
     def __init__(self):
         self._recent: "deque[str]" = deque(maxlen=_STALL_WINDOW)
         self._stalled = False
+        # Hangi aracın tekrarı sigortayı attırdı. Kullanıcıya "ilerleme yok"
+        # demek bir teşhis değil; "şu araç aynı cevabı beş kez döndürdü"
+        # eyleme çevrilebilir. Ölçüldü 30 Ağu 2026: kart "5 adım", teknik
+        # ayrıntı "iterations=1" diyordu ve ikisi de olanı anlatmıyordu.
+        self.repeated_tool: str | None = None
 
     def record(self, tool_name: str, tool_args: object, result: object = None) -> None:
         sig = _canonical_call(tool_name, tool_args, result)
         self._recent.append(sig)
         if self._recent.count(sig) >= _STALL_LIMIT:
             self._stalled = True
+            if self.repeated_tool is None:
+                self.repeated_tool = tool_name
 
     @property
     def stalled(self) -> bool:
@@ -1168,7 +1213,7 @@ Kullanıcıyla {'Türkçe' if self.language == 'tr' else 'İngilizce'} konuş.""
 
             if _progress.stalled:
                 logger.warning(f"  ⛔ Gemini loop {iteration + 1}. turda ilerlemeyi durdurdu")
-                for _ev in _stop_events(iteration + 1, "no_progress"):
+                for _ev in _stop_events(iteration + 1, "no_progress", _progress.repeated_tool):
                     yield _ev
                 return
 
@@ -1389,7 +1434,7 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
 
             if _progress.stalled:
                 logger.warning(f"  ⛔ Anthropic loop {iteration + 1}. turda ilerlemeyi durdurdu")
-                for _ev in _stop_events(iteration + 1, "no_progress"):
+                for _ev in _stop_events(iteration + 1, "no_progress", _progress.repeated_tool):
                     yield _ev
                 return
 
@@ -1611,7 +1656,7 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
 
             if _progress.stalled:
                 logger.warning(f"  ⛔ OpenAI loop {iteration + 1}. turda ilerlemeyi durdurdu")
-                for _ev in _stop_events(iteration + 1, "no_progress"):
+                for _ev in _stop_events(iteration + 1, "no_progress", _progress.repeated_tool):
                     yield _ev
                 return
 

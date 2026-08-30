@@ -224,7 +224,15 @@ class TestProgressGuard(unittest.TestCase):
                 self.assertEqual(d.data["iterations"], ar._STALL_LIMIT)
                 self.assertEqual(len([e for e in ev if e.type == "tool_call"]),
                                  ar._STALL_LIMIT)
-                self.assertEqual(d.data["stop_message"], ar._STOP_TEXTS["no_progress"])
+                # The message names the tool that repeated. "I stopped making
+                # progress" is not a diagnosis; "`read_file` returned the same
+                # answer five times" is something the user can act on. Measured
+                # 30 Aug 2026: the card said "5 adım" and the detail line said
+                # "iterations=1", and neither described what happened.
+                self.assertEqual(d.data["repeated_tool"], "read_file")
+                self.assertIn("read_file", d.data["stop_message"])
+                self.assertEqual(d.data["stop_message"],
+                                 ar._no_progress_text("read_file"))
                 self.assertEqual([e for e in ev if e.type == "response"
                                   and e.data.get("content") in ar._STOP_TEXTS.values()], [])
 
