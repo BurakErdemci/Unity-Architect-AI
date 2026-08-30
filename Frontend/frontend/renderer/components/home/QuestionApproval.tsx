@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { HelpCircle, Check } from 'lucide-react';
 import { useLang } from '../../lib/i18n';
@@ -47,7 +47,7 @@ interface QuestionApprovalProps {
  * still had no selection on screen. Only the payload keys stay textual, because
  * the SDK matches them against the text it sent (see WIRE SHAPE above).
  */
-export const QuestionApproval: React.FC<QuestionApprovalProps> = ({ questions, onSubmit }) => {
+const QuestionGateCard: React.FC<QuestionApprovalProps> = ({ questions, onSubmit }) => {
   const { t } = useLang();
   const [picks, setPicks] = useState<Record<number, string[]>>({});
   const [custom, setCustom] = useState<Record<number, string>>({});
@@ -233,4 +233,40 @@ export const QuestionApproval: React.FC<QuestionApprovalProps> = ({ questions, o
       </div>
     </motion.div>
   );
+};
+
+/**
+ * WHAT IDENTIFIES A GATE: the `questions` array itself (audit
+ * `question-gate-state-reuse`, 30 Aug 2026).
+ *
+ * Question gates are QUEUED (useChat.ts: a second `question_needed` while one
+ * is on screen is pushed onto `pendingQuestionQueueRef`, and answering shifts
+ * the next one into the same `pendingQuestion` slot). The chat renders the card
+ * at the same position for every gate, so React kept ONE component instance
+ * alive across the whole queue and the second gate inherited the first gate's
+ * picks, typed text and skip flags: Send was already enabled, and one click
+ * submitted an answer the user never chose under the next gate's question text.
+ *
+ * Each gate carries its own `questions` array — built once from that gate's
+ * payload and stored in state, never rebuilt per render — so array identity IS
+ * gate identity, and it stays distinct even when two gates ask literally the
+ * same thing. Serialising the contents would have merged those two into one
+ * key, which is the same bug wearing a hash.
+ *
+ * The reset is a REMOUNT rather than an effect that clears the three state
+ * buckets, because an effect has to be kept in step with the state it clears:
+ * a fourth bucket added later would silently leak across gates again. A `key`
+ * change discards whatever state the card holds, including state that does not
+ * exist yet.
+ */
+export const QuestionApproval: React.FC<QuestionApprovalProps> = ({ questions, onSubmit }) => {
+  // Array references cannot be React keys, so map each one to a number the
+  // first time it is seen. Compared by reference, so a re-render with the same
+  // gate keeps the same key and the user's half-filled answers survive.
+  const gate = useRef<{ questions: QuestionItem[]; key: number } | null>(null);
+  if (!gate.current || gate.current.questions !== questions) {
+    gate.current = { questions, key: (gate.current?.key ?? 0) + 1 };
+  }
+
+  return <QuestionGateCard key={gate.current.key} questions={questions} onSubmit={onSubmit} />;
 };

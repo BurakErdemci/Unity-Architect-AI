@@ -232,3 +232,91 @@ describe('model metni temizliği', () => {
     expect(onSubmit).toHaveBeenCalledWith({ 'Hangisi?': 'guvenli' })
   })
 })
+
+/**
+ * QUEUED GATES (audit `question-gate-state-reuse`, 30 Aug 2026).
+ *
+ * `useChat` queues question gates: a second `question_needed` arriving while a
+ * card is on screen is parked, and answering the first shifts the next one into
+ * the SAME `pendingQuestion` slot. The chat draws the card at the same position
+ * either way, so React reused one component instance for the whole queue and
+ * the second gate started out holding the first gate's picks, typed text and
+ * skip flags — Send already enabled, one click sending an answer the user never
+ * chose under a question they had only just been shown.
+ *
+ * These tests rerender the card with a DIFFERENT `questions` array, which is
+ * exactly what the queue does, and assert on the submitted payload rather than
+ * on the reset mechanism: the guarantee is "the model receives nothing the user
+ * did not choose for THIS gate", and it must hold however the reset is built.
+ *
+ * The last test is the counterweight: a rerender with the same gate must NOT
+ * wipe an answer in progress, otherwise any unrelated parent re-render would
+ * throw away what the user had typed.
+ */
+describe('queued gates', () => {
+  const BIRINCI = [{ question: 'First question?', options: [{ label: 'A' }] }]
+  const IKINCI = [{ question: 'Second question?', options: [{ label: 'B' }] }]
+
+  const kuyruklukartiCiz = (questions: any[]) => {
+    const onSubmit = vi.fn()
+    const view = render(<QuestionApproval questions={questions} onSubmit={onSubmit} />)
+    const sonraki = (next: any[]) =>
+      view.rerender(<QuestionApproval questions={next} onSubmit={onSubmit} />)
+    return { onSubmit, sonraki }
+  }
+
+  it('the next gate does not arrive pre-answered', () => {
+    const { sonraki } = kuyruklukartiCiz(BIRINCI)
+    fireEvent.click(secenekler()[0])
+    expect(gonder().disabled).toBe(false)
+
+    sonraki(IKINCI)
+    expect(screen.getByText('Second question?')).toBeTruthy()
+    expect(gonder().disabled).toBe(true)
+  })
+
+  // The next gate is multi-select on purpose. In a single-select gate a click
+  // REPLACES whatever is held, so leaked state would be overwritten by the
+  // user's own pick and the payload would look correct — the assertion would
+  // pass against the very defect it exists for. Multi-select APPENDS, so a
+  // leaked pick shows up in the payload as the extra answer it is.
+  const IKINCI_COKLU = [{
+    question: 'Second question?',
+    multiSelect: true,
+    options: [{ label: 'B' }],
+  }]
+
+  it('answering the next gate sends ONLY its own answer', () => {
+    const { onSubmit, sonraki } = kuyruklukartiCiz(BIRINCI)
+    fireEvent.click(secenekler()[0])
+    sonraki(IKINCI_COKLU)
+    fireEvent.click(secenekler()[0])
+    fireEvent.click(gonder())
+    expect(onSubmit).toHaveBeenCalledWith({ 'Second question?': 'B' })
+  })
+
+  it('free text typed into the previous gate does not carry over', () => {
+    const { sonraki } = kuyruklukartiCiz(BIRINCI)
+    fireEvent.change(serbestMetin(), { target: { value: 'valibot' } })
+    sonraki(IKINCI)
+    expect((serbestMetin() as HTMLInputElement).value).toBe('')
+    expect(gonder().disabled).toBe(true)
+  })
+
+  it('a skip on the previous gate does not skip the next one', () => {
+    const { sonraki } = kuyruklukartiCiz(BIRINCI)
+    fireEvent.click(atla())
+    expect(gonder().disabled).toBe(false)
+    sonraki(IKINCI)
+    expect(gonder().disabled).toBe(true)
+  })
+
+  it('rerendering the SAME gate keeps the answer in progress', () => {
+    const { onSubmit, sonraki } = kuyruklukartiCiz(BIRINCI)
+    fireEvent.change(serbestMetin(), { target: { value: 'valibot' } })
+    sonraki(BIRINCI)
+    expect((serbestMetin() as HTMLInputElement).value).toBe('valibot')
+    fireEvent.click(gonder())
+    expect(onSubmit).toHaveBeenCalledWith({ 'First question?': 'valibot' })
+  })
+})
