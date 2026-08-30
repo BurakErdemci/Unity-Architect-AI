@@ -51,10 +51,22 @@ const tr = {
   // --- Mesaj altı bildirimleri (hata DEĞİL) ---
   'notice.warningTitle': 'Uyarı',
   'notice.stoppedTitle': 'Koşum yarıda durdu',
-  'notice.maxIterations': 'Model adım sınırına ulaştığı için koşum burada bitti. Bu bir hata değil — işin bir kısmı yapılmış olabilir; "devam et" yazarak kaldığı yerden sürdürebilirsin.',
-  'notice.noProgress': 'Model art arda birkaç adımda ilerleme kaydedemedi, o yüzden koşum burada bitti. Bu bir hata değil — ne yapmasını istediğini biraz daha açık yazıp sürdürebilirsin.',
-  'notice.stoppedOther': 'Koşum tamamlanmadan durdu. Bu bir hata değil — işin bir kısmı yapılmış olabilir; "devam et" yazarak sürdürebilirsin.',
+  // ⚠️ Bu metinler arka uçtaki `_STOP_TEXTS` ile AYNI ŞEYİ anlatmak zorunda.
+  // 30 Ağu 2026'da ayrışmış bulundular: arka uçtaki metin "kaldığı yerden
+  // devam" sözünü vermeyecek şekilde düzeltilmişti (kesilen turun ara çıktısı
+  // kaydedilmiyor, yani o söz tutulamıyor), buradaki kopya sözü vermeye devam
+  // ediyordu — ve kullanıcının GÖRDÜĞÜ metin bu olduğu için yalan olan da buydu.
+  'notice.maxIterations': 'Bu istek için ayrılan adım sayısı doldu ve koşum burada bitti. Bu bir hata değil — işin bir kısmı yapılmış olabilir. Ne kadarının bittiğini yazarsan yeni bir istekle sürdürebiliriz.',
+  'notice.noProgress': 'Model aynı çağrıyı aynı argümanlarla yapıp aynı cevabı almaya başladı, yani yeni bilgi üretmiyordu; boşuna dönmemek için durdu. Adım sayısı yüzünden DEĞİL — farklı adımlar atsaydı devam ederdi.',
+  'notice.noProgressTool': '`{arac}` aracı aynı argümanlarla arka arkaya çağrıldı ve hep aynı cevabı döndürdü, yani yeni bilgi üretmiyordu; boşuna dönmemek için durdu. Adım sayısı yüzünden DEĞİL — farklı adımlar atılsaydı devam ederdi.',
+  'notice.stoppedOther': 'Koşum tamamlanmadan durdu. Bu bir hata değil — işin bir kısmı yapılmış olabilir; ne kadarının bittiğini yazarsan sürdürebiliriz.',
   'notice.detail': 'Teknik ayrıntı',
+  // Sağlayıcı hataları: backend `code` + hazır metin gönderiyor; kodu
+  // tanıyorsak burası kazanıyor, tanımıyorsak backend'in metni gösteriliyor.
+  'error.providerQuota': 'Sağlayıcı kota/hız sınırı nedeniyle üç denemede de isteği reddetti. Bir süre bekleyip tekrar dene ya da başka bir modele geç.',
+  'error.providerUnavailable': 'Sağlayıcı üç denemede de meşgul döndü (503). Bu geçici; birazdan tekrar dene.',
+  'error.providerUnreachable': 'Sağlayıcıya üç denemede de ulaşılamadı.',
+  'error.modelNoTools': '`{model}` modeli araç çağırmayı desteklemiyor, bu yüzden Unity ve dosya araçlarını kullanamıyor. Araç gerektiren işler için araç çağırabilen bir model seç.',
   // SettingsModal
   'settings.title': 'AI Yapılandırması',
   'settings.language': 'Dil',
@@ -499,10 +511,18 @@ const en: Record<keyof typeof tr, string> = {
   // --- Message notices (NOT errors) ---
   'notice.warningTitle': 'Warning',
   'notice.stoppedTitle': 'Run stopped early',
-  'notice.maxIterations': 'The run ended here because the model reached its step limit. This is not a failure — part of the work may be done; type "continue" to pick it up where it stopped.',
-  'notice.noProgress': 'The model made no progress over several steps in a row, so the run ended here. This is not a failure — describe what you want a bit more clearly and continue.',
-  'notice.stoppedOther': 'The run stopped before finishing. This is not a failure — part of the work may be done; type "continue" to carry on.',
+  // ⚠️ Keep these in step with the backend's `_STOP_TEXTS` — see the Turkish
+  // block; they were found diverged on 30 Aug 2026, this copy still promising
+  // a resume the product cannot perform.
+  'notice.maxIterations': 'The run used up the steps allotted to this request and ended here. This is not a failure — part of the work may be done. Tell me how far it got and we can carry on with a fresh request.',
+  'notice.noProgress': 'The model started making the same call with the same arguments and getting the same answer back, so it was no longer learning anything; it stopped rather than spin. This was NOT about the number of steps — different steps would have kept it going.',
+  'notice.noProgressTool': 'The `{arac}` tool was called repeatedly with the same arguments and kept returning the same answer, so nothing new was coming in; the run stopped rather than spin. This was NOT about the number of steps — different steps would have kept it going.',
+  'notice.stoppedOther': 'The run stopped before finishing. This is not a failure — part of the work may be done; tell me how far it got and we can carry on.',
   'notice.detail': 'Technical detail',
+  'error.providerQuota': 'The provider refused the request on all three attempts because of a quota or rate limit. Wait a while and try again, or switch to another model.',
+  'error.providerUnavailable': 'The provider came back busy on all three attempts (503). This is temporary; try again shortly.',
+  'error.providerUnreachable': 'The provider could not be reached on any of the three attempts.',
+  'error.modelNoTools': 'The `{model}` model does not support tool calling, so it cannot use the Unity or file tools. Pick a model that can call tools for work that needs them.',
   // SettingsModal
   'settings.title': 'AI Configuration',
   'settings.language': 'Language',

@@ -248,7 +248,24 @@ export const useChat = (
                   else if (data.type === 'response') updated.content = data.content || updated.content;
                   else if (data.type === 'error' && data.message) {
                     // Hata artık chat'te GÖRÜNÜR (eskiden sessizce yutuluyordu → "boş baloncuk")
-                    updated.content += (updated.content ? '\n\n' : '') + `❌ ${data.message}`;
+                    //
+                    // Kodu TANIYORSAK kendi dilimizde yazıyoruz, tanımıyorsak
+                    // backend'in metnine düşüyoruz. Backend mesajları sabit
+                    // Türkçe, yani İngilizce arayüzde Türkçe cümle çıkıyordu;
+                    // ama koda göre dallanıp bilinmeyeni YUTMAK da olmaz —
+                    // `warning` sözleşmesinin uyardığı tuzak tam olarak o.
+                    // Düşüş kuralı ikisini birden kapatıyor.
+                    const kodlu: Record<string, string> = {
+                      provider_quota: 'error.providerQuota',
+                      provider_unavailable: 'error.providerUnavailable',
+                      provider_unreachable: 'error.providerUnreachable',
+                      model_no_tools: 'error.modelNoTools',
+                    };
+                    const anahtar = typeof data.code === 'string' ? kodlu[data.code] : undefined;
+                    const metin = anahtar
+                      ? cevir(anahtar as any, { model: data.model || '' })
+                      : String(data.message);
+                    updated.content += (updated.content ? '\n\n' : '') + `❌ ${metin}`;
                   }
                   // Side-pipeline failure (video download/extract today). The run
                   // is NOT killed — the stream keeps going — but the user has to
@@ -283,14 +300,23 @@ export const useChat = (
                       const detail = [`stop_reason=${reason}`,
                         typeof data.iterations === 'number' ? `iterations=${data.iterations}` : null]
                         .filter(Boolean).join(' · ');
+                      // Tekrarlayan aracın adı varsa ONU söyle. "İlerleme
+                      // kaydedemedi" bir teşhis değil; hangi çağrının kısır
+                      // döndüğü kullanıcının üzerine hareket edebileceği tek
+                      // bilgi. Ad gelmiyorsa (eski backend) genel metne düşülür.
+                      const message = reason === 'max_iterations'
+                        ? cevir('notice.maxIterations')
+                        : reason === 'no_progress'
+                          ? (typeof data.repeated_tool === 'string' && data.repeated_tool
+                            ? cevir('notice.noProgressTool', { arac: data.repeated_tool })
+                            : cevir('notice.noProgress'))
+                          // An unrecognised reason still gets a notice: "we do not
+                          // know why, but it did not finish" beats silence.
+                          : cevir('notice.stoppedOther');
                       updated.notices = [...(updated.notices || []), {
                         kind: 'stopped',
                         title: cevir('notice.stoppedTitle'),
-                        // An unrecognised reason still gets a notice: "we do not
-                        // know why, but it did not finish" beats silence.
-                        message: cevir(reason === 'max_iterations' ? 'notice.maxIterations'
-                          : reason === 'no_progress' ? 'notice.noProgress'
-                          : 'notice.stoppedOther'),
+                        message,
                         detail,
                       }];
                     }

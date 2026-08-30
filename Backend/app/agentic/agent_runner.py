@@ -1063,11 +1063,19 @@ Kullanıcıyla {'Türkçe' if self.language == 'tr' else 'İngilizce'} konuş.""
                         # yüzüne basmak onu hata metnini çözmeye zorluyordu;
                         # yapılacak şey tek: araç çağırabilen bir model seç.
                         if "function calling is not enabled" in err_msg:
-                            yield AgentEvent("error", {"message": (
-                                f"`{self.model_name}` modeli araç çağırmayı desteklemiyor, "
-                                "bu yüzden Unity/dosya araçlarını kullanamıyor. Araç gerektiren "
-                                "işler için araç çağırabilen bir model seç."
-                            )})
+                            # `code` + hazır `message`: arayüz kodu tanıyorsa
+                            # kendi dilinde yazar, tanımıyorsa bu metni gösterir.
+                            # Sadece kod göndermek eski arayüzü boş bırakırdı,
+                            # sadece metin göndermek İngilizce arayüzde Türkçe
+                            # cümle bırakıyordu — ikisi birden ikisini de kapatıyor.
+                            yield AgentEvent("error", {
+                                "code": "model_no_tools",
+                                "model": self.model_name,
+                                "message": (
+                                    f"`{self.model_name}` modeli araç çağırmayı desteklemiyor, "
+                                    "bu yüzden Unity/dosya araçlarını kullanamıyor. Araç gerektiren "
+                                    "işler için araç çağırabilen bir model seç."
+                                )})
                             return
                         yield AgentEvent("error", {"message": f"AI hatası: {str(e)}"})
                         return
@@ -1078,13 +1086,17 @@ Kullanıcıyla {'Türkçe' if self.language == 'tr' else 'İngilizce'} konuş.""
                 # ve 503 (servis kesintisi) de aynı cümleyle "rate limit" diye
                 # raporlanıyordu. Hangi kodun geldiği loglarda vardı, kullanıcıda
                 # yoktu — yani teşhis için gereken tek bilgi atılıyordu.
+                _kodlar = {"429": "provider_quota", "503": "provider_unavailable"}
                 _aciklama = {
                     "429": "Google kota/hız sınırı nedeniyle üç denemede de isteği reddetti. "
                            "Bir süre bekleyip tekrar dene ya da başka bir modele geç.",
                     "503": "Google servisi üç denemede de meşgul döndü (503). Bu geçici; "
                            "birazdan tekrar dene.",
                 }.get(_son_hata, "Sağlayıcıya üç denemede de ulaşılamadı.")
-                yield AgentEvent("error", {"message": _aciklama})
+                yield AgentEvent("error", {
+                    "code": _kodlar.get(_son_hata, "provider_unreachable"),
+                    "message": _aciklama,
+                })
                 return
 
             if not response.candidates:
