@@ -4,12 +4,21 @@ export interface ModelInfo {
   provider: string;
   openrouter_id?: string;
   paid?: boolean;
+  // Hesabın gerçekten erişip erişmediği. TANIMSIZ üçüncü bir hâl: sağlayıcının
+  // listesi alınamadı. `false` ile karıştırılmamalı — ağı olmayan bir makinede
+  // çalışan her modeli "erişemiyorsun" diye göstermek yanlış kırmızıdır.
+  available?: boolean;
+  // 'catalog' elle küratörlenmiş satır, 'live' yalnız sağlayıcının listesinden
+  // gelen (görünen adı ham, OpenRouter karşılığı yok).
+  source?: 'catalog' | 'live';
 }
 
 export interface AvailableModels {
   local: ModelInfo[];
   cloud: ModelInfo[];
   subscription: ModelInfo[];
+  // saglayici -> 'live' | 'unknown' | 'no_key'
+  cloud_sources?: Record<string, string>;
 }
 
 export interface UserData {

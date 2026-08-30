@@ -293,10 +293,15 @@ export const useAIConfig = (API: string, user: UserData | null, showToast: (msg:
   //
   // Açık başlık `axios.defaults.headers.common`daki DOĞRU değeri de eziyor,
   // yani genel varsayılan burada kurtarıcı olamıyor.
-  const fetchAvailableModels = useCallback(async () => {
+  // `force`: sağlayıcı listelerinin 10 dakikalık önbelleğini atla. Kullanıcı
+  // "yenile" derken tam olarak bayat cevabı istemiyor.
+  const fetchAvailableModels = useCallback(async (force = false) => {
     if (!API) return;
     try {
-      const res = await axios.get(`${API}/available-models`, { headers: { 'X-Session-Token': user?.sessionToken ?? '' } });
+      const res = await axios.get(`${API}/available-models`, {
+        params: force ? { refresh: true } : undefined,
+        headers: { 'X-Session-Token': user?.sessionToken ?? '' },
+      });
       if (res.data) setAvailableModels(res.data);
     } catch (err) { console.error("Modeller alınamadı:", err); }
   }, [API, user?.sessionToken]);

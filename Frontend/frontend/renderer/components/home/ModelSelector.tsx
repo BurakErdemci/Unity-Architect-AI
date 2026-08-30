@@ -94,7 +94,7 @@ const CLI_GROUPS: CliGroupDef[] = [
   },
 ];
 
-type ModelItem = { id: string; name: string; provider?: string; openrouter_id?: string; disabled?: boolean; disabled_reason?: string };
+type ModelItem = { id: string; name: string; provider?: string; openrouter_id?: string; disabled?: boolean; disabled_reason?: string; available?: boolean; source?: 'catalog' | 'live' };
 type CliDoctor = Record<string, { installed: boolean; loggedIn: boolean | null }>;
 
 // Bulut API sağlayıcı grupları (abonelik CLI grupları gibi kategorize görünüm)
@@ -351,6 +351,20 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
               {hasKey
                 ? <Key size={9} className="text-blue-400/70 shrink-0" />
                 : <span className="text-[8px] text-amber-400/90 bg-amber-500/10 border border-amber-500/30 rounded px-1 leading-tight shrink-0">{t('models.noKey')}</span>}
+              {/* `=== false` şart: alan TANIMSIZ olduğunda sağlayıcının listesi
+                  hiç alınamamış demektir, "erişemiyorsun" demek değil. */}
+              {m.available === false && (
+                <span data-testid="model-unavailable" title={t('models.notInAccountTitle')}
+                  className="text-[8px] text-rose-300/90 bg-rose-500/10 border border-rose-500/30 rounded px-1 leading-tight shrink-0">
+                  {t('models.notInAccount')}
+                </span>
+              )}
+              {m.source === 'live' && (
+                <span data-testid="model-live" title={t('models.liveOnlyTitle')}
+                  className="text-[8px] text-emerald-300/90 bg-emerald-500/10 border border-emerald-500/30 rounded px-1 leading-tight shrink-0">
+                  {t('models.liveOnly')}
+                </span>
+              )}
             </span>
             <span className="text-[9.5px] text-slate-500 truncate">{orToggle ? 'via OpenRouter' : m.provider}</span>
           </span>
@@ -591,6 +605,16 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                                     transition={{ duration: 0.15 }}
                                     className="overflow-hidden pb-1 pl-6"
                                   >
+                                    {/* Listenin NEREDEN geldiğini söyle. Sessiz
+                                        kalırsak elle yazılı bir katalog canlı
+                                        sanılır ve eksikliği fark edilmez —
+                                        kaymış bir liste hiç liste olmamasından
+                                        kötü, çünkü güncel sanılıp okunuyor. */}
+                                    {availableModels.cloud_sources?.[provider] === 'unknown' && (
+                                      <div data-testid="cloud-source-unknown" className="px-3 pb-1.5 text-[10px] text-amber-400/80">
+                                        {t('models.listUnverified')}
+                                      </div>
+                                    )}
                                     {models.map(m => cloudModelRow(m))}
                                   </motion.div>
                                 )}
