@@ -10,6 +10,7 @@ import urllib.request
 from fastapi import APIRouter, Header, HTTPException
 
 from auth_utils import _check_token, get_current_user, require_user
+from providers import model_catalog
 from schemas import AIConfigRequest, APIKeySaveRequest
 
 
@@ -329,8 +330,61 @@ def create_config_router(db):
         db.delete_api_key(user_id, provider_type)
         return {"status": "success"}
 
+    def _merge_live_cloud(cloud: list, user_id: int, force: bool) -> dict:
+        """Elle yazılı bulut kataloğunu hesabın GERÇEK listesiyle karşılaştır.
+
+        Üç sonuç üretiliyor ve üçü birbirinden ayrı tutuluyor:
+          * katalogda var, canlı listede var  → `available: True`
+          * katalogda var, canlı listede yok  → `available: False`
+          * canlı liste alınamadı             → alan HİÇ konmuyor (bilinmiyor)
+
+        Üçüncüsü ayrı bir hâl olmasa, ağı olmayan bir makinede katalogdaki her
+        model "erişemiyorsun" diye görünürdü — yanlış kırmızının en pahalı
+        biçimi, çünkü kullanıcı çalışan bir modeli denemekten vazgeçer.
+
+        Canlı listede olup katalogda olmayanlar da ekleniyor: yeni bir model
+        çıktığında sürüm beklemeden görünmesinin tek yolu bu. Onlarda küratörlü
+        alanlar (openrouter karşılığı, ücretli işareti) YOK ve olmadığı
+        `source: "live"` ile söyleniyor.
+        """
+        durum: dict[str, str] = {}
+        canli: dict[str, dict] = {}
+        for saglayici in model_catalog.supported_providers():
+            anahtar = db.get_api_key(user_id, saglayici) or ""
+            if not anahtar:
+                durum[saglayici] = "no_key"
+                continue
+            liste = model_catalog.list_models(saglayici, anahtar, force=force)
+            if liste is None:
+                durum[saglayici] = "unknown"
+                continue
+            durum[saglayici] = "live"
+            canli[saglayici] = liste
+
+        for model in cloud:
+            liste = canli.get(model.get("provider", ""))
+            if liste is None:
+                continue
+            model["available"] = model["id"] in liste
+            model["source"] = "catalog"
+
+        katalogdakiler = {(m.get("provider"), m.get("id")) for m in cloud}
+        for saglayici, liste in canli.items():
+            for mid, ad in sorted(liste.items()):
+                if (saglayici, mid) in katalogdakiler:
+                    continue
+                cloud.append({
+                    "id": mid,
+                    "name": ad,
+                    "provider": saglayici,
+                    "available": True,
+                    "source": "live",
+                })
+        return durum
+
     @router.get("/available-models")
     async def get_available_models(
+        refresh: bool = False,
         x_session_token: str = Header(alias="X-Session-Token", default=""),
     ):
         # Kimliksizken de iş yapıyordu: yanıt üretmek için Ollama'yı
@@ -441,6 +495,18 @@ def create_config_router(db):
                     )
         except Exception as exc:
             logger.warning(f"Ollama list fetch failed: {exc}")
+
+        # Canlı bulut listesi: ağ çağrısı yapıyor, o yüzden hem önbellekli hem
+        # de asla yükseltmiyor. Burada patlamak, elle yazılı katalogla gayet iyi
+        # çalışan model seçicisini komple çökertirdi.
+        try:
+            _user_id, _ = get_current_user(db, x_session_token)
+            models["cloud_sources"] = await asyncio.to_thread(
+                _merge_live_cloud, models["cloud"], _user_id, refresh
+            )
+        except Exception as exc:
+            logger.warning(f"Canlı bulut model listesi birleştirilemedi: {exc}")
+            models["cloud_sources"] = {}
 
         return models
 
