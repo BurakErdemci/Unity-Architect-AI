@@ -938,6 +938,11 @@ def get_session(conversation_id: int, **kwargs) -> CodexSession:
     return sess
 
 
+def peek_session(conversation_id: int) -> "CodexSession | None":
+    """Canlı session'ı getir ama YOKSA KURMA — bkz. `claude_sdk_session.peek_session`."""
+    return _SESSIONS.get(conversation_id)
+
+
 async def close_session(conversation_id: int):
     sess = _SESSIONS.pop(conversation_id, None)
     if sess is not None:

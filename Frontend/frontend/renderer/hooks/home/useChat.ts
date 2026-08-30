@@ -6,6 +6,7 @@ import { Task } from '../../components/ui/agent-plan';
 import { confirmDialog } from '../../components/ui/ConfirmDialog';
 import { deliveryFromFetch, gateFailure } from './gateResponse';
 import { cevir } from '../../lib/i18n';
+import { parseContextReport } from '../../lib/contextReport';
 
 const ipc = typeof window !== 'undefined' ? (window as any).ipc : null;
 
@@ -78,6 +79,21 @@ export const useChat = (
       setContextUsage(res.data);
     } catch (err) { console.error('Bağlam göstergesi hatası:', err); }
   }, [API]);
+
+  // `/context` raporu geldiğinde göstergeyi TAHMİNDEN gerçek sayıya çevir.
+  // Kaba tahmin (harf/200k) modele giden bağlamın en hacimli parçalarını
+  // görmüyor; bu metin ise modelin kendi bildirdiği doluluk.
+  const applyContextReport = useCallback((text: string) => {
+    const r = parseContextReport(text);
+    if (!r) return;
+    setContextUsage(prev => ({
+      ...prev,
+      percent: Math.round(r.pct),
+      should_compact: r.pct >= 85,
+      estimated: false,
+      real: { used: r.used, total: r.total, model: r.model },
+    }));
+  }, []);
 
   const fetchMessages = useCallback(async (convId: number) => {
     if (!API) return;
@@ -489,7 +505,7 @@ export const useChat = (
     loading, setLoading,
     chatInput, setChatInput,
     currentPlan, setCurrentPlan,
-    contextUsage, setContextUsage, sessionUsage,
+    contextUsage, setContextUsage, sessionUsage, applyContextReport,
     isCompacting, setIsCompacting,
     isAnalyzingProject, setIsAnalyzingProject,
     pendingFix, setPendingFix,

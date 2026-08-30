@@ -62,6 +62,21 @@ describe('yüzdenin dürüstlüğü', () => {
     expect(screen.getByTestId('context-percent').textContent).toBe('~%12')
   })
 
+  it('GERÇEK veri gelince tahmin işareti kalkıyor ve asıl sayı yazılıyor', () => {
+    // `/context` raporu geldiğinde yüzde artık tahmin değil. "~" işaretini
+    // ölçülmüş bir sayının üstünde bırakmak da ters yönde bir yalan olurdu.
+    ciz({
+      contextUsage: {
+        percent: 7, should_compact: false, message_count: 12, estimated: false,
+        real: { used: '69.9k', total: '1m', model: 'claude-opus-5' },
+      },
+    })
+    const metin = screen.getByTestId('context-percent').textContent || ''
+    expect(metin).toContain('%7')
+    expect(metin).toContain('69.9k/1m')
+    expect(metin).not.toContain('~')
+  })
+
   it('başlık, neyin sayılmadığını açıkça yazıyor', () => {
     ciz({ contextUsage: { percent: 12, should_compact: false, message_count: 4, estimated: true } })
     const baslik = screen.getByTestId('context-gauge').getAttribute('title') || ''

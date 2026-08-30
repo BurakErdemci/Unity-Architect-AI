@@ -47,6 +47,9 @@ interface ControlPanelProps {
   isCompacting: boolean;
   contextUsage?: ContextUsage;
   sessionUsage?: SessionUsage;
+  /** Kullanım/bağlam panelini aç-kapa. Panelin kendisi home.tsx'te mount ediliyor. */
+  reportsOpen?: boolean;
+  onToggleReports?: () => void;
   // Claude-only (subscription + claude-* model). Diğer sağlayıcılarda gizlenir.
   isClaudeSubscription?: boolean;
   ultracode?: boolean;
@@ -68,6 +71,8 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
   isCompacting,
   contextUsage,
   sessionUsage,
+  reportsOpen = false,
+  onToggleReports,
   isClaudeSubscription = false,
   ultracode = false,
   setUltracode
@@ -318,10 +323,16 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
                 <span className="absolute -top-1 -right-1 w-1.5 h-1.5 bg-red-500 rounded-full animate-ping" />
               )}
             </div>
-            {/* Tahmin olduğunu "~" söylüyor: yüzde ölçülmüş bir sayı değil, ve
-                işaretsiz bir "%12" onu ölçüm gibi gösterir. */}
+            {/* "~" YALNIZ tahminde. Gerçek sayı geldiğinde (bkz. `/context`
+                raporu) işaret kalkıyor ve kullanılan/pencere olduğu gibi
+                yazılıyor — tahmin işaretini ölçülmüş bir sayının üstünde
+                bırakmak da bir yalan olurdu, ters yönde. */}
             <span data-testid="context-percent">
-              {contextUsage ? `~%${yuzde}` : t('usage.noData')}
+              {!contextUsage
+                ? t('usage.noData')
+                : contextUsage.real
+                  ? `%${yuzde} · ${contextUsage.real.used}/${contextUsage.real.total}`
+                  : `~%${yuzde}`}
             </span>
             <span>{isCompacting ? t('memory.compacting') : t('memory.compact')}</span>
           </button>
@@ -354,6 +365,25 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
             >
               — tok
             </span>
+          )}
+
+          {/* Kullanım/bağlam raporlarını SOHBETE YAZMADAN açan düğme. Bu iki
+              rapora bugüne kadar ancak sohbete `/usage` yazarak bakılabiliyordu,
+              yani her bakış geçmişe bir mesaj çifti bırakıyordu. */}
+          {onToggleReports && (
+            <button
+              data-testid="reports-toggle"
+              onClick={onToggleReports}
+              title={t('report.title')}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium transition-colors border ${
+                reportsOpen
+                  ? 'bg-blue-500/10 border-blue-500/30 text-blue-400'
+                  : 'text-slate-500 hover:text-slate-300 border-transparent hover:border-slate-800/50 hover:bg-slate-800/30'
+              }`}
+            >
+              <Gauge size={12} />
+              <span>{t('report.button')}</span>
+            </button>
           )}
         </>
       )}

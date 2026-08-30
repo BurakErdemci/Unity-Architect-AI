@@ -20,6 +20,7 @@ import { ExportModal } from '../components/home/ExportModal';
 import { ModelSelector } from '../components/home/ModelSelector';
 import { WorkspaceScreen } from '../components/home/WorkspaceScreen';
 import { ControlPanel, ThinkingLevel, EffortCaps } from '../components/home/ControlPanel';
+import { SessionReportPanel } from '../components/home/SessionReportPanel';
 import { UnityMcpToggle } from '../components/home/UnityMcpToggle';
 import { AnimatedChatInput } from '../components/ui/animated-ai-chat';
 import { ToastContainer } from '../components/ui/Toast';
@@ -245,6 +246,7 @@ export default function Home() {
   }, [API, auth.user, ai.effectiveProvider, ai.aiConfig?.model_name]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isChatOpen, setIsChatOpen] = useState(true);
+  const [reportsOpen, setReportsOpen] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<'chats' | 'files'>('chats');
   const [isEditorFocused, setIsEditorFocused] = useState(false);
   const [isTerminalOpen, setIsTerminalOpen] = useState(false);
@@ -736,10 +738,19 @@ export default function Home() {
           </div>
 
           <div className="p-4 border-t border-white/[0.06] bg-white/[0.015] relative">
+            <SessionReportPanel
+              open={reportsOpen}
+              onClose={() => setReportsOpen(false)}
+              API={API || ''}
+              sessionToken={auth.user?.sessionToken ?? ''}
+              convId={chat.activeConvId}
+              onContextText={chat.applyContextReport}
+            />
             <ControlPanel
               thinkingLevel={thinkingLevel} setThinkingLevel={setThinkingLevel} generationMode={chat.generationMode} setGenerationMode={chat.setGenerationMode}
               isAnalyzingProject={chat.isAnalyzingProject} activeConvId={chat.activeConvId} analyzeProject={chat.analyzeProject}
               exportMemory={chat.exportMemory} importMemory={chat.importMemory} compactConversation={chat.compactConversation} isCompacting={chat.isCompacting} contextUsage={chat.contextUsage} sessionUsage={chat.sessionUsage}
+              reportsOpen={reportsOpen} onToggleReports={() => setReportsOpen(v => !v)}
               isClaudeSubscription={isClaudeSub} ultracode={ultracode} setUltracode={setUltracode} effortCaps={effortCaps}
             />
             <div className="mt-3">

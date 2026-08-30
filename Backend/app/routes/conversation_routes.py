@@ -335,6 +335,73 @@ def create_conversation_router(db, progress_store):
         require_conversation_owner(db, x_session_token, conv_id)
         return _context_usage_payload(db, conv_id)
 
+    @router.get("/session-report/{conv_id}/{kind}")
+    async def session_report(conv_id: int, kind: str,
+                             x_session_token: str = Header(alias="X-Session-Token")):
+        """`/usage` ve `/context` raporunu SOHBETE YAZMADAN getir.
+
+        Var olma sebebi: bu iki rapor bugün ancak sohbete `/usage` yazılarak
+        alınabiliyor, yani her bakış geçmişe bir mesaj çifti bırakıyor. Kullanıcı
+        bunları akış sürerken, geçmişi kirletmeden görebilmek istiyor.
+
+        Dört ayrı sonuç ve hiçbiri diğerinin yerine geçmiyor:
+          ok         — metin geldi
+          no_session — bu sohbetin canlı bir CLI oturumu yok (henüz mesaj
+                       gönderilmemiş). Oturum BURADA KURULMUYOR: rapor isteyen
+                       bir uç, raporlayacağı süreci var etmemeli.
+          busy       — bir tur akıyor. `stream()` tur kilidini 10 sn bekleyip
+                       hata atıyor; kullanıcıyı 10 sn dondurmak yerine söylüyoruz.
+          unsupported— bu sağlayıcıda böyle bir rapor yok (Codex'te `/context`
+                       yok, Gemini/agy ve tek-atımlık CLI'larda ikisi de yok).
+        """
+        require_conversation_owner(db, x_session_token, conv_id)
+        if kind not in ("usage", "context"):
+            raise HTTPException(status_code=400, detail="kind: usage | context")
+
+        user_id, _ = get_current_user(db, x_session_token)
+        provider_type, model_name, _, _ = db.get_ai_config(user_id)
+        m = (model_name or "").lower()
+        if provider_type != "subscription":
+            return {"status": "unsupported", "reason": "cloud"}
+        is_codex = m.startswith("gpt-")
+        is_claude = not is_codex and not (m.startswith("gemini") or m.startswith("agy-"))
+
+        if is_codex:
+            if kind == "context":
+                return {"status": "unsupported", "reason": "codex_no_context"}
+            from providers.codex_session import peek_session as _peek_codex
+            sess = _peek_codex(conv_id)
+            if sess is None:
+                return {"status": "no_session"}
+            try:
+                # Model turu YOK: app-server'dan doğrudan okuyor, sıfır token.
+                return {"status": "ok", "kind": kind, "text": await sess.usage_card_text()}
+            except Exception:
+                logger.exception("Codex kullanım raporu alınamadı")
+                return {"status": "error"}
+
+        if not is_claude:
+            return {"status": "unsupported", "reason": "provider"}
+
+        from providers.claude_sdk_session import peek_session as _peek_claude, session_busy
+        sess = _peek_claude(conv_id)
+        if sess is None:
+            return {"status": "no_session"}
+        if session_busy(conv_id):
+            return {"status": "busy"}
+        try:
+            parcalar: list[str] = []
+            async for ev in sess.stream(f"/{kind}"):
+                t = ev.get("type")
+                if t in ("text", "response"):
+                    parcalar.append(ev.get("content") or "")
+                elif t in ("done", "error"):
+                    break
+            return {"status": "ok", "kind": kind, "text": "".join(parcalar).strip()}
+        except Exception:
+            logger.exception("Claude oturum raporu alınamadı")
+            return {"status": "error"}
+
     @router.delete("/conversations/{conv_id}")
     async def delete_conversation(conv_id: int, x_session_token: str = Header(alias="X-Session-Token")):
         require_conversation_owner(db, x_session_token, conv_id)

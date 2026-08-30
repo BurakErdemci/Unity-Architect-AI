@@ -1582,6 +1582,30 @@ def get_session(conversation_id: int, **kwargs) -> ClaudeSDKSession:
     return sess
 
 
+def peek_session(conversation_id: int) -> Optional["ClaudeSDKSession"]:
+    """Canlı session'ı getir ama YOKSA KURMA.
+
+    `get_session` eksik session'ı kuruyor, ve kurmak bir CLI süreci doğurmak
+    demek. Kullanıcının bir düğmeye basması bunu tetiklememeli: rapor
+    isteyen bir uç, raporlayacağı şeyi var etmemeli.
+    """
+    sess = _SESSIONS.get(conversation_id)
+    if sess is None or sess._broken:
+        return None
+    return sess
+
+
+def session_busy(conversation_id: int) -> bool:
+    """Bir tur akıyor mu.
+
+    `stream()` tur kilidini 10 saniye bekleyip `SessionBusyError` atıyor.
+    Yan kanal bunu beklememeli: kullanıcı düğmeye bastığında ya cevap ya da
+    "şu an meşgul" görmeli, 10 saniyelik bir donma değil.
+    """
+    sess = peek_session(conversation_id)
+    return bool(sess and sess._turn_lock.locked())
+
+
 async def close_session(conversation_id: int):
     sess = _SESSIONS.pop(conversation_id, None)
     if sess is not None:

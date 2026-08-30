@@ -100,6 +100,10 @@ export interface ContextUsage {
   message_count: number;
   estimated?: boolean;
   last_turn?: { input_tokens?: number; output_tokens?: number; cost_usd?: number | null };
+  // `/context` raporundan gelen GERÇEK doluluk. Dolduğunda `estimated` false
+  // olur ve gösterge "~" işaretini bırakır — işaret tahmin olduğunu söylüyor,
+  // gerçek sayının üstünde durursa yalan söyler.
+  real?: { used: string; total: string; model?: string };
 }
 
 // Sohbet açıldığından beri biriken GERÇEK token. Yeniden açılışta sıfırlanır:

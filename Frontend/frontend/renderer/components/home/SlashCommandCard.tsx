@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { Gauge, Layers, Clock, ChevronDown, ChevronRight } from 'lucide-react';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { useLang } from '../../lib/i18n';
+import { parseContextReport } from '../../lib/contextReport';
 
 /**
  * Claude Code'un metin döndüren slash komutlarını düz markdown baloncuğu yerine
@@ -27,12 +28,7 @@ const ContextCard: React.FC<{
 }> = ({ text, workspacePath, onOpenFile }) => {
   const { t } = useLang();
   const [open, setOpen] = useState(false);
-  const head = useMemo(() => {
-    const m = text.match(/\*\*Tokens:\*\*\s*([\d.]+\s*[kKmMbB]?)\s*\/\s*([\d.]+\s*[kKmMbB]?)\s*\((\d+(?:\.\d+)?)%\)/);
-    const model = text.match(/\*\*Model:\*\*\s*([^\n*]+)/);
-    if (!m) return null;
-    return { used: m[1].replace(/\s+/g, ''), total: m[2].replace(/\s+/g, ''), pct: Math.min(100, parseFloat(m[3])), model: model?.[1]?.trim() };
-  }, [text]);
+  const head = useMemo(() => parseContextReport(text), [text]);
 
   // Özet çıkmazsa ham markdown'a düş (tablolar zaten güzel render olur)
   if (!head) {
