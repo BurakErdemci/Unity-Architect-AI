@@ -80,6 +80,23 @@ _STALE_TEMP_AGE_S = 6 * 3600
 # COST of going higher: the overshoot grows linearly with it.
 _DOWNLOAD_POLL_INTERVAL_S = 0.5
 
+# How many failed kills the guard tolerates before it declares the kill LOST —
+# logs at error level and starts reclaiming blocks every tick as well. It does
+# NOT stop killing at this point; the number only says when a retry stops being
+# "probably a race" and becomes "this child is not going away".
+# WHY 10: at `_DOWNLOAD_POLL_INTERVAL_S` that is 5 seconds of retries. The
+# realistic failure is transient — a race with the OS reaping the child, or a
+# momentary handle error — and those clear within a tick or two; ten ticks is an
+# order of magnitude more patience than that, while still 1/120 of the 600-second
+# download timeout that used to be the only backstop.
+# COST of raising it: the loud log and the block reclaim start later, so the
+# pathological case spends `attempts × interval × line rate` more disk before
+# anything is written down (at 10 that is ~62 MiB on a saturated 1 Gbit/s link).
+# COST of lowering it: an error line and a truncate pass for a kill that was
+# only a tick away from succeeding — noise in the log and a file truncated under
+# a child that was about to die anyway.
+_KILL_ATTEMPT_CAP = 10
+
 # Directories a `extract()` in THIS process is currently using, normalised for
 # comparison. The sweep consults it so it can never delete live data; see
 # `sweep_stale_temp` for what this does NOT cover (other processes).
@@ -209,7 +226,7 @@ class ExtractionCancel:
         if self.cancelled:
             raise ExtractionCancelled(f"video çıkarımı iptal edildi (aşama: {stage})")
 
-    def kill_running(self) -> None:
+    def kill_running(self, log_failures: bool = True) -> int:
         """Kills the live children WITHOUT declaring the turn cancelled.
 
         The size guard needs exactly this and nothing more: a download that
@@ -217,14 +234,43 @@ class ExtractionCancel:
         and marking the handle cancelled would report it as `ExtractionCancelled`
         — the pipeline would then skip the video silently instead of telling the
         user their link was too large.
+
+        Returns how many children the kill did NOT reach, and logs each one.
+        Both halves come from a verification finding (30 Aug 2026): the body was
+        `try: p.kill() except Exception: pass`, so a failed kill was invisible
+        AND indistinguishable from a successful one. Its only caller that cares
+        (`_DownloadSizeGuard`) then retired after the single attempt, and the
+        download it was supposed to bound kept writing until yt-dlp's own
+        600-second timeout. A caller cannot react to a failure it cannot see.
+
+        Still swallowing the exception rather than raising it: the two callers
+        are a watcher thread and `cancel()` on the event-loop thread, and
+        neither can do anything useful with a raised error — but the count lets
+        the watcher retry and the log says what happened.
+
+        `log_failures=False` keeps the COUNT and drops the per-child line. The
+        retrying caller sets it once it has already written the situation down:
+        a retry every `_DOWNLOAD_POLL_INTERVAL_S` for the 600-second download
+        timeout is 1200 identical error lines, which buries the one line that
+        carries the diagnosis. Nothing is lost — the counters still reach the
+        error raised at the end of the download.
         """
         with self._lock:
             procs = list(self._procs)
+        unreached = 0
         for p in procs:
             try:
                 p.kill()
-            except Exception:
-                pass
+            except Exception as e:
+                unreached += 1
+                if log_failures:
+                    # pid and exception type are the two facts that separate the
+                    # diagnoses here (already-reaped race vs. permission vs. a
+                    # wedged handle); the bare `pass` gave neither.
+                    logger.error(
+                        "[video_extract] alt süreç öldürülemedi (pid=%s): %s: %s",
+                        getattr(p, "pid", "?"), type(e).__name__, e)
+        return unreached
 
     def cancel(self) -> None:
         """Stops the extraction. Safe to call from the event-loop thread."""
@@ -557,6 +603,30 @@ class _DownloadSizeGuard:
 
     The bound it gives is `cap + _DOWNLOAD_POLL_INTERVAL_S × line rate`; the
     overshoot per interval is stated at that constant.
+
+    THAT BOUND HOLDS ONLY WHILE THE KILL WORKS, and the first version assumed it
+    always does (verification round, 30 Aug 2026): `_watch` killed once and
+    `return`ed, while `kill_running` swallowed the failure. One raising `kill()`
+    therefore retired the watcher silently and nothing looked at the disk again
+    until the 600-second subprocess timeout — measured at 204800 bytes written
+    against a 4096-byte cap. The watcher now never retires early:
+
+      · every tick past the cap kills AGAIN, so a kill that failed for a
+        transient reason is simply retried a tick later;
+      · after `_KILL_ATTEMPT_CAP` failures the situation is written to the log at
+        error level (once) and `_reclaim_dir` runs on every tick as well, so the
+        blocks the doomed download is holding keep being handed back;
+      · `kill_attempts` / `kill_failures` / `kill_lost` are readable by the
+        caller, which logs them and puts them in the failure it raises.
+
+    What that leaves UNCOVERED, stated rather than implied closed: against a
+    child that can never be killed at all, killing is the only lever we own, and
+    the truncation is best-effort — a writer holding the file open can zero-fill
+    straight back to its old offset on its next write, so per-tick reclaim
+    returns blocks repeatedly instead of capping the logical size. The remaining
+    ceiling in that case is `_run`'s own 600-second timeout × line rate, exactly
+    as before, but it is now LOUD (an error line per tick-batch and a diagnosis
+    in the raised error) instead of silent.
     """
 
     def __init__(self, out_dir: str, cap: int,
@@ -571,6 +641,11 @@ class _DownloadSizeGuard:
         self._handle = _CANCEL.get()
         self.exceeded = False
         self.peak = 0
+        # Kill bookkeeping, read by `_download_url` so a lost kill reaches the
+        # log with numbers instead of only as a missing side effect.
+        self.kill_attempts = 0
+        self.kill_failures = 0
+        self.kill_lost = False
 
     def __enter__(self) -> "_DownloadSizeGuard":
         self._thread = threading.Thread(target=self._watch, daemon=True,
@@ -593,11 +668,35 @@ class _DownloadSizeGuard:
         while not self._stop.wait(self._interval):
             size = _dir_size(self._out_dir)
             self.peak = max(self.peak, size)
-            if size > self._cap:
+            if size <= self._cap:
+                continue
+            if not self.exceeded:
                 self.exceeded = True
-                if self._handle is not None:
-                    self._handle.kill_running()
-                return
+                logger.warning(
+                    "[video_extract] indirme bayt tavanını aştı (%s > %s); "
+                    "alt süreç öldürülüyor", size, self._cap)
+            if self._handle is None:
+                # No handle means no child to kill (a direct construction in a
+                # test, or a run without a cancel context). Keep looping anyway:
+                # `peak` is then the only record of how far it went, and the
+                # post-run gate still refuses the download.
+                continue
+            self.kill_attempts += 1
+            if self._handle.kill_running(log_failures=not self.kill_lost) == 0:
+                # The child is either dead or on its way out; stay in the loop
+                # so that a download which somehow keeps growing is killed again
+                # instead of running unwatched.
+                continue
+            self.kill_failures += 1
+            if self.kill_attempts >= _KILL_ATTEMPT_CAP:
+                if not self.kill_lost:
+                    self.kill_lost = True
+                    logger.error(
+                        "[video_extract] boyut tavanını aşan indirme %s denemede "
+                        "öldürülemedi (dizin=%r, %s bayt > %s); bloklar her "
+                        "turda geri alınmaya çalışılacak, indirme reddedilecek",
+                        self.kill_attempts, self._out_dir, size, self._cap)
+                _reclaim_dir(self._out_dir)
 
 
 def _run(cmd: list, timeout: int, check: bool = True):
@@ -827,9 +926,20 @@ def _download_url(url: str, out_dir: str):
     _size = _dir_size(out_dir)
     if guard.exceeded or _size > _MAX_DOWNLOAD_BYTES:
         _reclaim_dir(out_dir)
+        if guard.kill_lost:
+            # The bound degraded to "the subprocess timeout", and that is worth
+            # a line of its own: the numbers say how far past the cap it got and
+            # how many kills were refused, which is what a report needs.
+            logger.error(
+                "[video_extract] boyut koruması alt süreci öldüremedi "
+                "(%s deneme, %s başarısız); tepe %s bayt, tavan %s",
+                guard.kill_attempts, guard.kill_failures, guard.peak,
+                _MAX_DOWNLOAD_BYTES)
         raise RuntimeError(
             f"video boyut sınırını aştı ({max(_size, guard.peak)} bayt > "
-            f"{_MAX_DOWNLOAD_BYTES})")
+            f"{_MAX_DOWNLOAD_BYTES})"
+            + (f"; alt süreç {guard.kill_attempts} denemede öldürülemedi"
+               if guard.kill_lost else ""))
     vids = [q for q in glob.glob(os.path.join(out_dir, "dl.*")) if not q.endswith(".vtt")]
     if not vids:
         raise RuntimeError("video indirilemedi (yt-dlp çıktısı yok)")

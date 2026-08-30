@@ -172,6 +172,136 @@ class TestTheCapBoundsWhatIsWrittenNotOnlyWhatIsKept(unittest.TestCase):
             self.assertEqual(ve._dir_size(td), 100)
 
 
+class TestAFailingKillDoesNotEndTheBound(unittest.TestCase):
+    """Third verification round, 30 Aug 2026.
+
+    `_watch` killed once and returned, and `kill_running` swallowed the failure
+    with a bare `except: pass`. So a single raising `kill()` retired the watcher
+    silently and nothing looked at the disk again until yt-dlp's own 600-second
+    timeout; measured at 204800 bytes written against a 4096-byte cap. A bound
+    that holds only when the first kill works is not a bound.
+    """
+
+    def test_a_kill_that_fails_once_is_retried_and_still_stops_the_download(self):
+        # The realistic failure is transient (a race with the OS reaping the
+        # child, a momentary handle error). One retry a tick later must recover
+        # the bound rather than hand the download the full download timeout.
+        killed = threading.Event()
+        cap = 64 * 1024
+
+        class _StubbornChild:
+            def __init__(self):
+                self.attempts = 0
+
+            def kill(self):
+                self.attempts += 1
+                if self.attempts == 1:
+                    raise OSError("simulated transient kill failure")
+                killed.set()
+
+        child = _StubbornChild()
+
+        def endless_run(cmd, timeout, check=True):
+            out_tmpl = cmd[cmd.index("-o") + 1]
+            path = out_tmpl.replace("%(ext)s", "mp4")
+            handle = ve._CANCEL.get()
+            handle._attach_process(child)
+            try:
+                with open(path, "wb") as f:
+                    deadline = time.time() + 20      # the test's own escape hatch
+                    while not killed.is_set() and time.time() < deadline:
+                        f.write(b"x" * 8192)
+                        f.flush()
+                        time.sleep(0.002)
+            finally:
+                handle._detach_process(child)
+            raise subprocess.CalledProcessError(1, cmd)
+
+        cancel = ve.ExtractionCancel()
+        token = ve._CANCEL.set(cancel)
+        try:
+            with mock.patch.object(ve, "_MAX_DOWNLOAD_BYTES", cap), \
+                    mock.patch.object(ve, "_DOWNLOAD_POLL_INTERVAL_S", 0.01), \
+                    mock.patch.object(ve, "_run", endless_run), \
+                    tempfile.TemporaryDirectory() as td:
+                started = time.time()
+                with self.assertRaises(RuntimeError) as ctx:
+                    ve._download_url("https://youtube.com/watch?v=stubborn", td)
+                elapsed = time.time() - started
+        finally:
+            ve._CANCEL.reset(token)
+        self.assertTrue(killed.is_set(),
+                        "the watcher retired after the first failed kill")
+        self.assertGreaterEqual(child.attempts, 2, "the kill was never retried")
+        self.assertLess(elapsed, 15, "the guard waited for the child's own timeout")
+        self.assertIn("boyut", str(ctx.exception))
+        self.assertFalse(cancel.cancelled,
+                         "a size failure must not masquerade as the user's cancel")
+
+    def test_a_kill_that_never_works_is_loud_and_keeps_reclaiming(self):
+        # The pathological end: killing is the only lever we own, so the honest
+        # requirement is that the failure is written down with numbers and that
+        # the blocks keep being handed back — not a silent `pass`.
+        cap = 4096
+
+        class _UnkillableChild:
+            def kill(self):
+                raise OSError("simulated permanent kill failure")
+
+        cancel = ve.ExtractionCancel()
+        cancel._attach_process(_UnkillableChild())
+        token = ve._CANCEL.set(cancel)
+        try:
+            with tempfile.TemporaryDirectory() as td, \
+                    self.assertLogs(ve.logger, level="ERROR") as logs:
+                path = os.path.join(td, "dl.mp4.part")
+                with ve._DownloadSizeGuard(td, cap, interval=0.005) as guard:
+                    deadline = time.time() + 15
+                    with open(path, "wb") as f:
+                        while not guard.kill_lost and time.time() < deadline:
+                            f.write(b"x" * 1024)
+                            f.flush()
+                            time.sleep(0.003)
+                    # File closed, so the truncation the guard attempts every
+                    # tick is now visible: on Windows an open handle can
+                    # zero-fill straight back to its old offset.
+                    while ve._dir_size(td) and time.time() < deadline:
+                        time.sleep(0.005)
+                    reclaimed_to = ve._dir_size(td)
+                attempts, failures = guard.kill_attempts, guard.kill_failures
+        finally:
+            ve._CANCEL.reset(token)
+        self.assertTrue(guard.kill_lost, "a kill that never works was never declared lost")
+        self.assertGreaterEqual(attempts, ve._KILL_ATTEMPT_CAP)
+        self.assertGreaterEqual(failures, ve._KILL_ATTEMPT_CAP)
+        self.assertEqual(reclaimed_to, 0, "the doomed download kept its blocks")
+        self.assertFalse(cancel.cancelled,
+                         "a size failure must not masquerade as the user's cancel")
+        # Enough detail to diagnose it: which directory, how far past the cap.
+        loud = [r for r in logs.output if "öldürülemedi" in r]
+        self.assertTrue(loud, f"the failed kill never reached the log: {logs.output}")
+        self.assertTrue(any(str(cap) in r for r in loud),
+                        f"the log line names no numbers: {loud}")
+
+    def test_a_child_that_is_already_gone_is_not_counted_as_a_failure(self):
+        # `Popen.kill()` on a reaped child returns silently; treating that as a
+        # failure would make every ordinary size kill look lost.
+        class _AlreadyGone:
+            def kill(self):
+                pass
+
+        cancel = ve.ExtractionCancel()
+        cancel._attach_process(_AlreadyGone())
+        self.assertEqual(cancel.kill_running(), 0)
+
+    def test_the_retry_budget_is_a_stated_finite_number(self):
+        # Same rule as the poll interval: the escalation point has to be a real
+        # number, because it is what the worst-case overshoot is measured from.
+        self.assertIsInstance(ve._KILL_ATTEMPT_CAP, int)
+        self.assertGreaterEqual(ve._KILL_ATTEMPT_CAP, 1)
+        self.assertLessEqual(ve._KILL_ATTEMPT_CAP * ve._DOWNLOAD_POLL_INTERVAL_S, 30)
+
+
 class TestSubtitleIsBounded(unittest.TestCase):
     """The read itself must be finite, not just the string that survives it."""
 
