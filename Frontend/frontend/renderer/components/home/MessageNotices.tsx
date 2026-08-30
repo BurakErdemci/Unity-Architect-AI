@@ -1,6 +1,7 @@
 import React from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { useLang } from '../../lib/i18n';
+import { stripBidi } from '../../lib/modelText';
 import { MessageNotice } from './types';
 
 /**
@@ -17,16 +18,6 @@ import { MessageNotice } from './types';
  * A capped run did real work, so dressing it as a crash sends the user looking
  * for a bug that is not there.
  */
-/**
- * Strips Unicode bidi overrides from text that came in over the wire.
- *
- * The notice text originates in a helper process (a video tool's output today),
- * so it is not ours. React escapes markup, but U+202E and friends are not
- * markup: the browser honours them and the rest of the line is drawn in reverse,
- * which is how "safe-name<U+202E>exe.txt" reads as a text file on screen.
- */
-const stripBidi = (s: string) => s.replace(/[\u202A-\u202E\u2066-\u2069\u200E\u200F]/g, '');
-
 export const MessageNotices: React.FC<{ notices?: MessageNotice[] }> = ({ notices }) => {
   const { t } = useLang();
   if (!notices || notices.length === 0) return null;
