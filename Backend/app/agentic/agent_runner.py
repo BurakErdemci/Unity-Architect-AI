@@ -1116,7 +1116,18 @@ Kullanıcıyla {'Türkçe' if self.language == 'tr' else 'İngilizce'} konuş.""
 
             # AI'ın yanıtını ve tool sonuçlarını geçmişe ekle
             contents.append(candidate.content)
-            contents.append(gtypes.Content(role="tool", parts=function_response_parts))
+            # Rol "user", "tool" DEĞİL. Google'ın kendi SDK'sı araç sonuçlarını
+            # tam olarak böyle sarıyor (`google/genai/models.py`, otomatik
+            # fonksiyon çağırma dalı: `types.Content(role='user', parts=...)`),
+            # ve uç "tool"u reddediyor:
+            #   400 INVALID_ARGUMENT — "Role 'tool' is not supported. Please use
+            #   a valid role: SYSTEM, SYSTEM_1, USER, ASSISTANT, DEVELOPER,
+            #   CONTEXT, USER_CONTEXT, MODEL, USER."
+            # Sahada 30 Ağu 2026'da yakalandı: Gemini yolu İLK araç çağrısında
+            # ölüyordu, yani bu yolun araçlı hali hiç çalışmamıştı. Satır 30 May
+            # 2026'dan beri böyleydi ("tool" OpenAI'ın konvansiyonu, Google'ın
+            # değil) — kimse tetiklemediği için sessiz kaldı.
+            contents.append(gtypes.Content(role="user", parts=function_response_parts))
             # Screenshot(lar) → AYRI user-role Content (Gemini tool-role'a görsel kabul etmez → 400)
             if screenshot_parts:
                 contents.append(gtypes.Content(
