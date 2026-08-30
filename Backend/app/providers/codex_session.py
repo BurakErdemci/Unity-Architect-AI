@@ -442,6 +442,8 @@ class CodexSession:
         self.thread_id: Optional[str] = None
         self._current_turn_id: Optional[str] = None
         self._cancel_event: Optional[asyncio.Event] = None
+        # Aktif turun sonlanma olayı gitti mi — bkz. `_emit_terminal`.
+        self._terminal_sent = False
         self._active_gate_ids: Set[str] = set()
         # İlk turda DB bağlam özeti enjekte edildi mi (sonraki turlarda thread hatırlıyor)
         self._ctx_injected = False
@@ -618,9 +620,10 @@ class CodexSession:
         finally:
             # Süreç bittiyse aktif turu kapat
             self._started = False
-            if self._out_q is not None:
-                await self._out_q.put({"type": "error", "message": "Codex app-server süreci beklenmedik şekilde kapandı."})
-                await self._out_q.put(None)
+            await self._emit_terminal({
+                "type": "error",
+                "message": "Codex app-server süreci beklenmedik şekilde kapandı.",
+            })
 
     async def _dispatch(self, msg: dict):
         has_id = "id" in msg
@@ -706,6 +709,27 @@ class CodexSession:
         finally:
             gates.pop(gate_id, None)
 
+    # ── Turun TEK sonlanma olayı ─────────────────────────────────────────
+    async def _emit_terminal(self, event: dict) -> bool:
+        """Put the turn's one terminal event on the queue, then the sentinel.
+
+        The contract is exactly one terminal per turn — never zero, never two.
+        Both ends were reachable here (audit, 30 Aug 2026). Zero: `cancel_turn`
+        set `_cancel_event`, which nothing consumed, so a rejected interrupt
+        left the caller blocked in `out_q.get()` forever and Stop hung the turn.
+        Two: once the cancel path emits its own terminal, the app-server's later
+        `turn/completed` would add a second, which is the double-terminal bug
+        fixed elsewhere the same day. This flag is the single gate both go
+        through, so whichever ending arrives first is the turn's ending.
+        """
+        q = self._out_q
+        if q is None or self._terminal_sent:
+            return False
+        self._terminal_sent = True
+        await q.put(event)
+        await q.put(None)  # sentinel → stream biter
+        return True
+
     # ── Notification → event dict eşlemesi ───────────────────────────────
     async def _handle_notification(self, msg: dict):
         out_q = self._out_q
@@ -759,9 +783,13 @@ class CodexSession:
                              "output": self._item_output(item)})
 
         elif method == "turn/completed":
+            # Tur zaten sonlandıysa (iptal) `response` de basma: sentinel'den
+            # sonrası tüketilmiyor, ama turun cevabını ikinci kez kuyruğa koymak
+            # kaydı bozacak bir yarış bırakır.
+            if self._terminal_sent:
+                return
             await out_q.put({"type": "response", "content": self._final_text})
-            await out_q.put({"type": "done", "session_id": self.thread_id})
-            await out_q.put(None)  # sentinel → stream biter
+            await self._emit_terminal({"type": "done", "session_id": self.thread_id})
 
         elif method == "error":
             # willRetry=true → GEÇİCİ hata (codex kendi yeniden deniyor): turu
@@ -777,8 +805,7 @@ class CodexSession:
                         or params.get("additionalDetails") or "")
             if _details and _details not in _err:
                 _err = f"{_err} — {_details}"[:400]
-            await out_q.put({"type": "error", "message": _err})
-            await out_q.put(None)
+            await self._emit_terminal({"type": "error", "message": _err})
 
     @staticmethod
     def _item_summary(item: dict) -> str:
@@ -833,6 +860,21 @@ class CodexSession:
             logger.warning(f"[CodexSession:{self.conversation_id}] interrupt hatası: {e}")
         if self._cancel_event is not None:
             self._cancel_event.set()
+        # A cancelled turn is a turn that ENDED, so it owes the caller a
+        # terminal event — whether or not the interrupt was accepted. Emitted
+        # unconditionally rather than only on the rejected path: `_emit_terminal`
+        # is the single gate, so if the app-server's own `turn/completed` gets
+        # there first this is a no-op, and if it never comes (rejected
+        # interrupt, dead process) the caller is not left waiting on a queue
+        # nobody will ever write to. The partial answer is not lost by ending
+        # here: it already reached the client as `text` events, and the turn
+        # record falls back to that stream when no `response` arrives.
+        await self._emit_terminal({
+            "type": "done",
+            "session_id": self.thread_id,
+            "stop_reason": "cancelled",
+            "stop_message": "⏹ Tur durduruldu.",
+        })
         logger.info(f"[CodexSession:{self.conversation_id}] tur iptal edildi (cancel_turn)")
 
     # ── Mesaj akışı: bir tur gönder, event dict'leri yield et ────────────
@@ -905,6 +947,7 @@ class CodexSession:
             out_q: asyncio.Queue = asyncio.Queue()
             self._out_q = out_q
             self._cancel_event = asyncio.Event()
+            self._terminal_sent = False
             self._active_gate_ids.clear()
             self._final_text = ""
             self._current_turn_id = None

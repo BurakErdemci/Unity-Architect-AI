@@ -266,3 +266,208 @@ def test_the_record_stays_empty_when_nothing_was_produced():
     r = _TurnRecord()
     r.add(ar.AgentEvent("done", {"stop_reason": "complete"}))
     assert r.value() == ""
+
+
+def test_the_record_keeps_streamed_work_when_the_response_envelope_is_empty():
+    """BOŞ bir `response` akan işi düşürmemeli.
+
+    Sağlayıcı, iptal ile bitirme yarıştığında içi boş bir `response` zarfı
+    yollayabiliyor. "Herhangi bir `response` geldiyse akan metni at" kuralı bu
+    turda kaydı yalnız durma satırına indiriyordu — biriktiricinin var olma
+    sebebi olan veri kaybının aynısı (denetim, 30 Ağu 2026).
+    """
+    r = _TurnRecord()
+    r.add(ar.AgentEvent("text", {"content": "korunması gereken yarım iş"}))
+    r.add(ar.AgentEvent("response", {"content": ""}))
+    r.add(ar.AgentEvent("done", {"stop_reason": "max_iterations",
+                                 "stop_message": "Koşum durduruldu."}))
+    kayitli = r.value()
+    assert "korunması gereken yarım iş" in kayitli
+    assert "Koşum durduruldu." in kayitli
+
+
+def test_a_later_real_response_still_wins_over_the_streamed_text():
+    """Kapının ters yönü, araya boş zarf girmiş hâliyle: dolu `response`
+    geldiği anda kural yine 'yedek değil, yerine geçme'."""
+    r = _TurnRecord()
+    r.add(ar.AgentEvent("text", {"content": "merhaba"}))
+    r.add(ar.AgentEvent("response", {"content": ""}))
+    r.add(ar.AgentEvent("response", {"content": "merhaba"}))
+    assert r.value().count("merhaba") == 1, r.value()
+
+
+def test_an_empty_response_after_a_real_one_does_not_bring_the_stream_back():
+    """Diğer sıra: dolu zarftan SONRA gelen boş zarf, cevabı iki kez
+    kaydettirecek şekilde akan metni geri çağırmamalı."""
+    r = _TurnRecord()
+    r.add(ar.AgentEvent("text", {"content": "merhaba"}))
+    r.add(ar.AgentEvent("response", {"content": "merhaba"}))
+    r.add(ar.AgentEvent("response", {"content": ""}))
+    assert r.value().count("merhaba") == 1, r.value()
+
+
+def test_a_turn_whose_response_arrives_empty_is_stored_with_its_work():
+    """Aynı kural uçtan uca: /chat-stream'in DB'ye yazdığı metin."""
+
+    class _EmptyEnvelopeRunner:
+        def __init__(self, **kw):
+            pass
+
+        async def run(self, message):
+            yield ar.AgentEvent("text", {"content": "birinci adım tamam"})
+            yield ar.AgentEvent("response", {"content": ""})
+            yield ar.AgentEvent("done", {"iterations": 2, "stop_reason": "max_iterations",
+                                         "stop_message": "Koşum durduruldu."})
+
+    db, app, p = _client(_EmptyEnvelopeRunner)
+    with p:
+        _post(app)
+    assert db.add_message.called, "kesilen tur hiç kaydedilmedi"
+    kayitli = db.add_message.call_args[0][2]
+    assert "birinci adım tamam" in kayitli
+    assert "Koşum durduruldu." in kayitli
+
+
+# ── 4. Codex: iptal edilen tur da bir sonlanma olayı borçlu ──────────────
+def _drain_all(q: asyncio.Queue) -> "list[str]":
+    """Kuyruğun TAMAMI — sentinel'de durmadan.
+
+    `_drain` sentinel'de duruyor, ve ikinci bir terminal tam olarak orada
+    saklanıyor: iki üretici de "terminal + sentinel" koyduğu için ikinci çift
+    ilk sentinel'in ARKASINDA kalıyor ve mutasyon testi yeşil bırakıyor
+    (ölçüldü, 30 Ağu 2026 — sözleşme sınandığını sanan ama sınamayan test).
+    Sıra her zaman böyle de değil: sunucunun `done`u, iptalin sentinel'inden
+    ÖNCE düşerse arayüze gerçekten iki terminal ulaşıyor. O yüzden ölçüt
+    "kuyrukta iki terminal olmasın".
+    """
+    out = []
+    while not q.empty():
+        ev = q.get_nowait()
+        if ev is None:
+            continue
+        out.append(ev.get("type"))
+    return out
+
+
+def _codex_session(conv_id: int):
+    """Süreç açmadan, tur ortasındaymış gibi duran bir CodexSession."""
+    from providers.codex_session import CodexSession
+
+    sess = CodexSession(conv_id, model="gpt-test", cwd=os.path.dirname(__file__))
+    sess._started = True
+    sess.thread_id = "thread-1"
+    return sess
+
+
+def test_a_codex_turn_cancelled_after_a_rejected_interrupt_still_ends():
+    """Sıfır terminal tarafı: interrupt reddedilse bile akış bitmeli.
+
+    `cancel_turn` yalnız `_cancel_event`i set ediyordu; o olayı kimse
+    tüketmediği ve kuyruğa hiçbir şey konmadığı için çağıran `out_q.get()`te
+    süresiz bekliyordu — Durdur'a basmak turu kilitliyordu.
+    """
+
+    async def exercise():
+        sess = _codex_session(991)
+
+        async def fake_request(method, _params, timeout=60):
+            if method == "turn/start":
+                return {"result": {"turn": {"id": "turn-1"}}}
+            if method == "turn/interrupt":
+                raise RuntimeError("interrupt reddedildi")
+            raise AssertionError(f"beklenmeyen istek: {method}")
+
+        sess._request = fake_request
+        events = []
+
+        async def consume():
+            async for ev in sess.stream("selam"):
+                events.append(ev)
+
+        task = asyncio.create_task(consume())
+        for _ in range(200):
+            if sess._out_q is not None and sess._current_turn_id == "turn-1":
+                break
+            await asyncio.sleep(0.005)
+        else:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            raise AssertionError("sahte Codex turu olay beklemesine hiç gelmedi")
+        await sess.cancel_turn()
+        try:
+            await asyncio.wait_for(task, timeout=2.0)
+        except asyncio.TimeoutError:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            raise AssertionError("iptalden sonra akış bitmedi (sonlanma olayı gelmedi)")
+        return events
+
+    events = asyncio.run(exercise())
+    tipler = [e.get("type") for e in events]
+    assert tipler.count("done") + tipler.count("error") == 1, tipler
+    assert events[-1].get("stop_reason") == "cancelled", events[-1]
+
+
+def test_a_cancelled_codex_turn_does_not_take_a_second_terminal_from_the_server():
+    """İki terminal tarafı: interrupt KABUL edilirse app-server kendi
+    `turn/completed`ini de yolluyor; iptalin ürettiğiyle birlikte arayüze
+    'hem bitti hem durduruldu' giderdi."""
+
+    async def exercise():
+        sess = _codex_session(992)
+        sess._current_turn_id = "turn-1"
+        q: asyncio.Queue = asyncio.Queue()
+        sess._out_q = q
+        sess._cancel_event = asyncio.Event()
+        sess._terminal_sent = False
+        sess._final_text = "yarım iş"
+
+        async def fake_request(method, _params, timeout=60):
+            assert method == "turn/interrupt", method
+            return {"result": {}}
+
+        sess._request = fake_request
+        await sess.cancel_turn()
+        await sess._handle_notification({"method": "turn/completed", "params": {}})
+        return _drain_all(q)
+
+    tipler = asyncio.run(exercise())
+    assert tipler.count("done") + tipler.count("error") == 1, tipler
+    # Sonlanmış turun cevabı da ikinci kez kuyruğa girmemeli: turun metni zaten
+    # `text` olaylarıyla aktı, `response`u tekrar koymak kaydı çift yazdırırdı.
+    assert "response" not in tipler, tipler
+
+
+def test_a_normal_codex_turn_still_ends_with_one_done():
+    """Kapının ters yönü: iptal edilmemiş tur hâlâ cevabını ve tam bir `done`
+    olayını yolluyor."""
+
+    async def exercise():
+        sess = _codex_session(993)
+        q: asyncio.Queue = asyncio.Queue()
+        sess._out_q = q
+        sess._terminal_sent = False
+        sess._final_text = "tam cevap"
+        await sess._handle_notification({"method": "turn/completed", "params": {}})
+        return _drain_all(q)
+
+    tipler = asyncio.run(exercise())
+    assert tipler.count("done") == 1 and "error" not in tipler, tipler
+    assert "response" in tipler, tipler
+
+
+def test_a_codex_error_notification_ends_the_turn_exactly_once():
+    async def exercise():
+        sess = _codex_session(994)
+        q: asyncio.Queue = asyncio.Queue()
+        sess._out_q = q
+        sess._terminal_sent = False
+        await sess._handle_notification({"method": "error",
+                                         "params": {"message": "app-server çöktü"}})
+        # İkinci bir hata bildirimi ikinci terminal ÜRETMEMELİ.
+        await sess._handle_notification({"method": "error",
+                                         "params": {"message": "aynı çöküş"}})
+        return _drain_all(q)
+
+    tipler = asyncio.run(exercise())
+    assert tipler.count("error") == 1 and "done" not in tipler, tipler

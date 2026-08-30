@@ -155,7 +155,12 @@ class _TurnRecord:
     appear on screen, then reopened the conversation and found only "the run
     was stopped").
 
-    So the rule is a fallback, not a merge: `response` wins whenever it exists.
+    So the rule is a fallback, not a merge: a `response` that CARRIES SOMETHING
+    wins. The content test is not decoration: a provider can emit an empty
+    response envelope after streaming work (cancellation racing finalisation is
+    the measured case), and an empty envelope has nothing to replace the
+    streamed text with — treating it as authoritative reintroduced exactly the
+    data loss this record exists to prevent (audit, 30 Aug 2026).
     """
 
     def __init__(self):
@@ -167,9 +172,10 @@ class _TurnRecord:
         if event.type == "text":
             self._streamed += (event.data or {}).get("content") or ""
             return
-        if event.type == "response":
+        addition = _stored_turn_addition(event)
+        if event.type == "response" and addition.strip():
             self._had_response = True
-        self.saved = _append_turn_text(self.saved, _stored_turn_addition(event))
+        self.saved = _append_turn_text(self.saved, addition)
 
     def value(self) -> str:
         if self._had_response or not self._streamed.strip():
