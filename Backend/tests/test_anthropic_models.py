@@ -18,18 +18,24 @@ def test_opus_5_and_4_8_keep_distinct_api_model_ids(anthropic_client):
     assert AnthropicProvider("test-key", "claude-opus-4-8").model_name == "claude-opus-4-8"
 
 
-def test_opus_5_is_additive_in_api_and_claude_code_catalogs():
+def test_opus_5_is_selectable_on_the_claude_code_side():
+    """Abonelik (CLI) listesi hâlâ elle yazılı ve Opus 5 orada olmalı.
+
+    Bu testin bulut yarısı 30 Ağu 2026'da KALDIRILDI: elle yazılı bulut
+    kataloğu silindi ve liste artık sağlayıcının kendi `/v1/models`inden
+    geliyor. "Katalogda şu model yazıyor" diye bir iddia artık ölçülebilir
+    bir şey söylemiyor — o sözleşmenin yerini
+    `test_available_models_merge.py` aldı.
+
+    CLI tarafında listeleme yolu YOK (Claude Code'un `--help`inde model
+    listeleyen alt komut yok, ölçüldü 30 Ağu 2026), o yüzden orası elle
+    yazılı kalıyor ve bu test hâlâ bir şey koruyor.
+    """
     router = create_config_router(MagicMock())
     route = next(route for route in router.routes if route.path == "/available-models")
     catalog = asyncio.run(route.endpoint())
 
-    cloud = {model["id"]: model for model in catalog["cloud"]}
     subscription = {model["id"]: model for model in catalog["subscription"]}
-
-    assert "claude-opus-5" in cloud
-    assert "claude-opus-4-8" in cloud
-    assert cloud["claude-opus-5"]["provider"] == "anthropic"
-    assert "openrouter_id" not in cloud["claude-opus-5"]
 
     assert "claude-opus-5" in subscription
     assert "claude-opus-4-8" in subscription

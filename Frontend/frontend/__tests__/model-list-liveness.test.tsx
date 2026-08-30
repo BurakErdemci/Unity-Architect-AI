@@ -1,14 +1,21 @@
 /**
  * Model listesinin KAYNAĞI kullanıcıya görünüyor mu.
  *
- * Bulut kataloğu elle yazılı ve elle tutulan liste listelediğinden ayrışıyor.
- * Canlı liste onu silmiyor (küratörlü alanlar — görünen ad, OpenRouter
- * karşılığı, ücretli işareti — hiçbir `/v1/models` cevabında yok), yanına üç
- * hâl ekliyor: erişilebilir · erişilemez · BİLİNMİYOR.
+ * Elle yazılı bulut kataloğu 30 Ağu 2026'da SİLİNDİ (Burak'ın kararı): liste
+ * listelediğinden ayrışıyordu ve Groq'un tek modeli 16 Ağu'da kapatılmışken
+ * hâlâ tek seçenek olarak duruyordu. Artık iki kaynak var ve ikisi ayrı
+ * soruyu cevaplıyor:
  *
- * Üçüncüsü ayrı durmazsa ağı olmayan bir makinede çalışan her model
- * "erişemiyorsun" diye görünür ve kullanıcı denemekten vazgeçer. Buradaki
- * testler tam olarak o çökmeyi engelliyor.
+ *   * sağlayıcının kendi listesi (kullanıcının anahtarıyla) → doğrulanmış
+ *   * OpenRouter'ın açık kataloğu (anahtarsız)              → doğrulanmamış
+ *
+ * "Böyle bir model var" ile "senin hesabında var" ayrı iddialar, ve
+ * ikincisini birincisinden çıkarmak kullanıcıyı çalışmayacak bir modele
+ * yollar. Rozet bu ayrımı ekranda tutuyor.
+ *
+ * Sağlayıcının listesi HİÇ alınamadığında da ayrı bir hâl var: liste
+ * doğrulanamadı. Onu "hesabında yok"a çevirmek, ağı olmayan bir makinede
+ * çalışan her modeli kullanılamaz göstermek olurdu.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import React from 'react'
@@ -59,36 +66,26 @@ const MODEL = (ek: Record<string, any> = {}) => ({
 /** Satır gerçekten çizildi mi. Rozet yokluğu ancak satır VARSA bir şey söyler. */
 const satirVar = () => expect(screen.getByText('Claude Opus 5')).toBeTruthy()
 
-describe('erişilebilirlik rozeti', () => {
-  it('hesapta olmayan model işaretleniyor', () => {
-    ciz([MODEL({ available: false, source: 'catalog' })])
-    expect(screen.getByTestId('model-unavailable')).toBeTruthy()
+describe('doğrulanmışlık rozeti', () => {
+  // Elle yazılı bulut kataloğu 30 Ağu 2026'da silindi. Liste artık ya
+  // kullanıcının anahtarıyla sağlayıcıdan geliyor (doğrulanmış) ya da
+  // OpenRouter'ın açık kataloğundan (doğrulanmamış). İkisi ayrı iddia:
+  // "böyle bir model var" ile "senin hesabında var" aynı şey değil.
+  it('açık katalogdan gelen model "doğrulanmadı" diye işaretleniyor', () => {
+    ciz([MODEL({ verified: false, source: 'openrouter' })])
+    expect(screen.getByTestId('model-unverified')).toBeTruthy()
   })
 
-  it('hesapta olan modelde rozet yok', () => {
-    ciz([MODEL({ available: true, source: 'catalog' })])
+  it('kendi anahtarıyla doğrulanan modelde rozet yok', () => {
+    ciz([MODEL({ verified: true, source: 'live', available: true })])
     satirVar()
-    expect(screen.queryByTestId('model-unavailable')).toBeNull()
+    expect(screen.queryByTestId('model-unverified')).toBeNull()
   })
 
-  it('BİLİNMİYORken rozet yok — tanımsız, "erişemiyorsun" değil', () => {
-    // Bu testin tamamı bu ayrım için var.
+  it('alan hiç yoksa rozet yok — tanımsız "doğrulanmadı" DEĞİL', () => {
     ciz([MODEL()])
     satirVar()
-    expect(screen.queryByTestId('model-unavailable')).toBeNull()
-  })
-})
-
-describe('kaynak rozeti', () => {
-  it('yalnız canlı listeden gelen model "yeni" diye işaretleniyor', () => {
-    ciz([MODEL({ id: 'claude-opus-6', name: 'Claude Opus 6', source: 'live', available: true })])
-    expect(screen.getByTestId('model-live')).toBeTruthy()
-  })
-
-  it('katalogdan gelen modelde "yeni" rozeti yok', () => {
-    ciz([MODEL({ source: 'catalog', available: true })])
-    satirVar()
-    expect(screen.queryByTestId('model-live')).toBeNull()
+    expect(screen.queryByTestId('model-unverified')).toBeNull()
   })
 })
 
@@ -99,7 +96,7 @@ describe('liste doğrulanamadığında', () => {
   })
 
   it('liste canlı doğrulandıysa uyarı çıkmıyor', () => {
-    ciz([MODEL({ available: true, source: 'catalog' })], { anthropic: 'live' })
+    ciz([MODEL({ available: true, verified: true, source: 'live' })], { anthropic: 'live' })
     satirVar()
     expect(screen.queryByTestId('cloud-source-unknown')).toBeNull()
   })

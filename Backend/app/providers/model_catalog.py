@@ -130,6 +130,107 @@ def list_models(provider: str, api_key: str, force: bool = False) -> Optional[Di
     return result
 
 
+# ── OpenRouter açık kataloğu ────────────────────────────────────────────────
+#
+# Neden burada: bir modelin KÜNYESİ (düzgün ad, bağlam penceresi, fiyat,
+# OpenRouter karşılığı) sağlayıcıların kendi `/v1/models` cevaplarında YOK —
+# OpenAI yalnız kimlik döndürüyor. Bu bilgi 30 Ağu 2026'ya kadar elle
+# yazılıyordu ve elle tutulan liste listelediğinden ayrışıyordu.
+#
+# ÖLÇÜLDÜ 30 Ağu 2026: `https://openrouter.ai/api/v1/models` **anahtarsız**
+# çalışıyor (HTTP 200, 396 model) ve her kayıt `name`, `context_length`,
+# `pricing`, `expiration_date` taşıyor. Yani künye için ücretsiz, canlı ve
+# sağlayıcı-üstü bir kaynak var.
+#
+# Sınırı da ölçüldü: 14 kimliğin 12'si `<ad-alanı>/<kimlik>` biçiminde birebir
+# tutuyor, 2'si tutmuyor (`anthropic/claude-haiku-4-5` OR'da yok; Groq'un
+# modeli OR'da `meta-llama/` altında). Bu yüzden katalog LİSTENİN KAYNAĞI
+# DEĞİL, yalnız künye zenginleştiricisi: eşleşme bulunamazsa model yine
+# görünür, sadece künyesiz.
+_OPENROUTER_URL = "https://openrouter.ai/api/v1/models"
+_OR_TTL_SECONDS = 3600.0
+_or_cache: tuple[float, Optional[Dict[str, dict]]] | None = None
+
+
+def openrouter_catalog(force: bool = False) -> Optional[Dict[str, dict]]:
+    """`{openrouter_id: {name, context_length, pricing}}`, ya da ulaşılamazsa None."""
+    global _or_cache
+    now = time.monotonic()
+    if not force and _or_cache and (now - _or_cache[0]) < _OR_TTL_SECONDS:
+        return _or_cache[1]
+    sonuc: Optional[Dict[str, dict]] = None
+    try:
+        request = urllib.request.Request(_OPENROUTER_URL)
+        with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS * 2) as response:
+            payload = json.loads(response.read())
+        kayitlar = {}
+        for m in payload.get("data") or []:
+            mid = (m or {}).get("id")
+            if not mid:
+                continue
+            kayitlar[str(mid)] = {
+                "name": m.get("name") or mid,
+                "context_length": m.get("context_length"),
+                "pricing": m.get("pricing"),
+                "expiration_date": m.get("expiration_date"),
+            }
+        sonuc = kayitlar or None
+    except Exception as exc:
+        logger.warning("OpenRouter kataloğu alınamadı: %s", exc)
+    _or_cache = (now, sonuc)
+    return sonuc
+
+
+# Sağlayıcı → OpenRouter ad alanı. Bu tablo BİLEREK elle yazılı ve elle yazılı
+# model listesinden farklı: 9 satır, ve sağlayıcı adları model adları gibi her
+# ay değişmiyor. `None` = ad alanı eşlemesi yok; o sağlayıcının kimlikleri
+# zaten `vendor/model` biçiminde geliyor (NVIDIA NIM, Groq'un gpt-oss'ları).
+_OR_NAMESPACE: Dict[str, Optional[str]] = {
+    "anthropic": "anthropic",
+    "openai": "openai",
+    "google": "google",
+    "deepseek": "deepseek",
+    "z-ai": "z-ai",
+    "moonshot": "moonshotai",
+    "groq": None,
+    "nvidia": None,
+    "openrouter": "",
+}
+
+# Sohbet DIŞI modelleri eleyen desenler. ⚠️ Bu bir SEZGİ, ölçüm değil:
+# sağlayıcıların ham `/v1/models` cevabı gömme, ses, görsel ve moderasyon
+# modellerini de döndürüyor ve bunların sohbet seçicisinde işi yok. Yanlış
+# elemek yanlış göstermekten daha az zararlı değil, o yüzden desenler dar
+# tutuldu — şüphede kalan model LİSTEDE KALIR.
+_SOHBET_DISI = (
+    "embedding", "embed-", "tts", "whisper", "transcribe", "moderation",
+    "dall-e", "image-", "-image", "audio", "realtime", "rerank", "guard",
+)
+
+
+def is_chat_model(model_id: str) -> bool:
+    m = model_id.lower()
+    return not any(p in m for p in _SOHBET_DISI)
+
+
+def openrouter_id_for(provider: str, model_id: str) -> Optional[str]:
+    """Yerel kimlikten OpenRouter kimliğini türet.
+
+    Ölçüldü 30 Ağu 2026: 14 kimliğin 12'si bu kuralla tutuyor. Tutmayanlar
+    künyesiz kalıyor — model yine listede görünüyor, sadece bağlam penceresi
+    ve düzgün adı olmuyor. Eşleşmeyi zorlamak, YANLIŞ bir künyeyi doğru gibi
+    göstermek olurdu.
+    """
+    if "/" in model_id:
+        return model_id
+    ns = _OR_NAMESPACE.get(provider)
+    if ns is None:
+        return None
+    return f"{ns}/{model_id}" if ns else model_id
+
+
 def clear_cache() -> None:
     """Testler ve `force` yolu için; süreç ömrü boyunca başka çağıranı yok."""
+    global _or_cache
     _cache.clear()
+    _or_cache = None

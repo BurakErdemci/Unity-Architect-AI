@@ -331,55 +331,74 @@ def create_config_router(db):
         return {"status": "success"}
 
     def _merge_live_cloud(cloud: list, user_id: int, force: bool) -> dict:
-        """Elle yazılı bulut kataloğunu hesabın GERÇEK listesiyle karşılaştır.
+        """Bulut model listesini CANLI kur; elle yazılı katalog yok.
 
-        Üç sonuç üretiliyor ve üçü birbirinden ayrı tutuluyor:
-          * katalogda var, canlı listede var  → `available: True`
-          * katalogda var, canlı listede yok  → `available: False`
-          * canlı liste alınamadı             → alan HİÇ konmuyor (bilinmiyor)
+        Her kaynak TEK bir soruyu cevaplıyor ve rolleri karışmıyor:
 
-        Üçüncüsü ayrı bir hâl olmasa, ağı olmayan bir makinede katalogdaki her
-        model "erişemiyorsun" diye görünürdü — yanlış kırmızının en pahalı
-        biçimi, çünkü kullanıcı çalışan bir modeli denemekten vazgeçer.
+          * sağlayıcının kendi `/v1/models`i (kullanıcının anahtarıyla)
+            -> "bu hesap neyi çağırabiliyor" — listenin kaynağı budur.
+          * OpenRouter'in ACIK katalogu (anahtar gerekmiyor, olculdu 30 Agu
+            2026: HTTP 200, 396 model) -> "bu modelin duzgun adi, baglam
+            penceresi, fiyati ve OpenRouter karsiligi ne" — yalniz kunye.
 
-        Canlı listede olup katalogda olmayanlar da ekleniyor: yeni bir model
-        çıktığında sürüm beklemeden görünmesinin tek yolu bu. Onlarda küratörlü
-        alanlar (openrouter karşılığı, ücretli işareti) YOK ve olmadığı
-        `source: "live"` ile söyleniyor.
+        Anahtar yoksa ya da canli liste alinamazsa sağlayıcı GORUNMEZ OLMUYOR:
+        OpenRouter katalogundaki o ad alaninin modelleri yedek liste olarak
+        gosteriliyor, `verified: False` ile. Bos bir grup, "bu saglayici yok"
+        diye okunurdu; oysa dogru cumle "hesabinda dogrulanmadi".
+
+        Uc hal ayri kaliyor: `available: True` · `available: False` ·
+        alan HIC yok (bilinmiyor).
         """
         durum: dict[str, str] = {}
-        canli: dict[str, dict] = {}
+        or_katalog = model_catalog.openrouter_catalog(force=force) or {}
+
+        def _kunye(saglayici: str, mid: str) -> dict:
+            or_id = model_catalog.openrouter_id_for(saglayici, mid)
+            kayit = or_katalog.get(or_id or "")
+            alanlar: dict = {}
+            if or_id and saglayici != "openrouter":
+                alanlar["openrouter_id"] = or_id
+            if kayit:
+                alanlar["name"] = kayit["name"]
+                if kayit.get("context_length"):
+                    alanlar["context_length"] = kayit["context_length"]
+                fiyat = (kayit.get("pricing") or {}).get("prompt")
+                try:
+                    if fiyat is not None and float(fiyat) > 0:
+                        alanlar["paid"] = True
+                except (TypeError, ValueError):
+                    pass
+            return alanlar
+
         for saglayici in model_catalog.supported_providers():
             anahtar = db.get_api_key(user_id, saglayici) or ""
-            if not anahtar:
-                durum[saglayici] = "no_key"
+            canli = model_catalog.list_models(saglayici, anahtar, force=force)
+            if canli:
+                durum[saglayici] = "live"
+                for mid in sorted(canli):
+                    if not model_catalog.is_chat_model(mid):
+                        continue
+                    model = {"id": mid, "name": canli[mid], "provider": saglayici,
+                             "available": True, "verified": True, "source": "live"}
+                    model.update(_kunye(saglayici, mid))
+                    cloud.append(model)
                 continue
-            liste = model_catalog.list_models(saglayici, anahtar, force=force)
-            if liste is None:
-                durum[saglayici] = "unknown"
-                continue
-            durum[saglayici] = "live"
-            canli[saglayici] = liste
 
-        for model in cloud:
-            liste = canli.get(model.get("provider", ""))
-            if liste is None:
+            durum[saglayici] = "no_key" if not (isinstance(anahtar, str) and anahtar) else "unknown"
+            ns = model_catalog.openrouter_id_for(saglayici, "x")
+            onek = ns.rsplit("/", 1)[0] + "/" if ns and "/" in ns else None
+            if not onek:
                 continue
-            model["available"] = model["id"] in liste
-            model["source"] = "catalog"
-
-        katalogdakiler = {(m.get("provider"), m.get("id")) for m in cloud}
-        for saglayici, liste in canli.items():
-            for mid, ad in sorted(liste.items()):
-                if (saglayici, mid) in katalogdakiler:
+            for or_id, kayit in sorted(or_katalog.items()):
+                if not or_id.startswith(onek) or not model_catalog.is_chat_model(or_id):
                     continue
-                cloud.append({
-                    "id": mid,
-                    "name": ad,
-                    "provider": saglayici,
-                    "available": True,
-                    "source": "live",
-                })
+                yerel = or_id.split("/", 1)[1]
+                model = {"id": yerel, "name": kayit["name"], "provider": saglayici,
+                         "verified": False, "source": "openrouter",
+                         "openrouter_id": or_id}
+                if kayit.get("context_length"):
+                    model["context_length"] = kayit["context_length"]
+                cloud.append(model)
         return durum
 
     @router.get("/available-models")
@@ -394,46 +413,13 @@ def create_config_router(db):
         _check_token(x_session_token)
         models = {
             "local": [],
-            "cloud": [
-                {"id": "claude-sonnet-5",          "name": "Claude Sonnet 5",    "provider": "anthropic", "openrouter_id": "anthropic/claude-sonnet-5"},
-                {"id": "claude-fable-5",           "name": "Claude Fable 5",     "provider": "anthropic", "openrouter_id": "anthropic/claude-fable-5"},
-                {"id": "claude-opus-5",            "name": "Claude Opus 5",      "provider": "anthropic"},
-                {"id": "claude-opus-4-8",          "name": "Claude 4.8 Opus",    "provider": "anthropic", "openrouter_id": "anthropic/claude-opus-4-8"},
-                {"id": "claude-sonnet-4-6",       "name": "Claude 4.6 Sonnet",  "provider": "anthropic", "openrouter_id": "anthropic/claude-sonnet-4-6"},
-                {"id": "claude-haiku-4-5",         "name": "Claude 4.5 Haiku",   "provider": "anthropic", "openrouter_id": "anthropic/claude-haiku-4-5"},
-                {"id": "llama-3.3-70b-versatile",  "name": "Llama 3.3 70B",      "provider": "groq",      "openrouter_id": "meta-llama/llama-3.3-70b-instruct"},
-                {"id": "gemini-3.6-flash",              "name": "Gemini 3.6 Flash",      "provider": "google", "openrouter_id": "google/gemini-3.6-flash"},
-                {"id": "gemini-3.5-flash",              "name": "Gemini 3.5 Flash",      "provider": "google", "openrouter_id": "google/gemini-3.5-flash"},
-                {"id": "gemini-3.5-flash-lite",         "name": "Gemini 3.5 Flash Lite", "provider": "google", "openrouter_id": "google/gemini-3.5-flash-lite"},
-                {"id": "gemini-3-flash-preview",        "name": "Gemini 3 Flash",        "provider": "google", "openrouter_id": "google/gemini-3-flash-preview"},
-                {"id": "gemini-3.1-flash-lite-preview", "name": "Gemini 3.1 Flash Lite", "provider": "google", "openrouter_id": "google/gemini-3.1-flash-lite-preview"},
-                {"id": "gemini-3.1-pro-preview",        "name": "Gemini 3.1 Pro",        "provider": "google", "openrouter_id": "google/gemini-3.1-pro-preview", "paid": True},
-                {"id": "gpt-5.6-sol",              "name": "GPT-5.6 Sol",        "provider": "openai",    "openrouter_id": "openai/gpt-5.6-sol"},
-                {"id": "gpt-5.6-terra",            "name": "GPT-5.6 Terra",      "provider": "openai",    "openrouter_id": "openai/gpt-5.6-terra"},
-                {"id": "gpt-5.6-luna",             "name": "GPT-5.6 Luna",       "provider": "openai",    "openrouter_id": "openai/gpt-5.6-luna"},
-                {"id": "gpt-5.5",                  "name": "GPT-5.5",            "provider": "openai",    "openrouter_id": "openai/gpt-5.5"},
-                {"id": "gpt-5.5-pro",              "name": "GPT-5.5 Pro",        "provider": "openai",    "openrouter_id": "openai/gpt-5.5-pro"},
-                {"id": "gpt-5.4",                  "name": "GPT-5.4",            "provider": "openai",    "openrouter_id": "openai/gpt-5.4"},
-                {"id": "gpt-5.4-mini",             "name": "GPT-5.4 Mini",       "provider": "openai",    "openrouter_id": "openai/gpt-5.4-mini"},
-                {"id": "deepseek-v4-pro",          "name": "DeepSeek V4 Pro",    "provider": "deepseek",  "openrouter_id": "deepseek/deepseek-v4-pro"},
-                {"id": "deepseek-v4-flash",        "name": "DeepSeek V4 Flash",  "provider": "deepseek",  "openrouter_id": "deepseek/deepseek-v4-flash"},
-                {"id": "glm-5.2",                  "name": "GLM 5.2",            "provider": "z-ai",      "openrouter_id": "z-ai/glm-5.2"},
-                {"id": "kimi-k3",                  "name": "Kimi K3",            "provider": "moonshot",  "openrouter_id": "moonshotai/kimi-k3"},
-                {"id": "kimi-k2.7-code",           "name": "Kimi K2.7 Code",     "provider": "moonshot",  "openrouter_id": "moonshotai/kimi-k2.7-code"},
-                {"id": "kimi-k2.6",                "name": "Kimi K2.6",          "provider": "moonshot",  "openrouter_id": "moonshotai/kimi-k2.6"},
-                # NVIDIA NIM (build.nvidia.com) — tek nvapi- key ile ÜCRETSİZ havuz
-                # (kredi kartsız, ~40 RPM; ID'ler /v1/models'ten CANLI doğrulandı 2026-07-13;
-                #  glm-5.2 + qwen3-coder resmi docs.api.nvidia.com referanslarından 2026-07-16)
-                {"id": "z-ai/glm-5.2",                                 "name": "GLM 5.2 (NIM)",          "provider": "nvidia"},
-                {"id": "qwen/qwen3-coder-480b-a35b-instruct",          "name": "Qwen3 Coder 480B",       "provider": "nvidia"},
-                {"id": "nvidia/nemotron-3-ultra-550b-a55b",            "name": "Nemotron 3 Ultra 550B",  "provider": "nvidia"},
-                {"id": "nvidia/nemotron-3-super-120b-a12b",            "name": "Nemotron 3 Super 120B",  "provider": "nvidia"},
-                {"id": "qwen/qwen3.5-397b-a17b",                       "name": "Qwen 3.5 397B",          "provider": "nvidia"},
-                {"id": "mistralai/mistral-large-3-675b-instruct-2512", "name": "Mistral Large 3 675B",   "provider": "nvidia"},
-                {"id": "minimaxai/minimax-m3",                         "name": "MiniMax M3",             "provider": "nvidia"},
-                {"id": "deepseek-ai/deepseek-v4-pro",                  "name": "DeepSeek V4 Pro (NIM)",  "provider": "nvidia"},
-                {"id": "moonshotai/kimi-k2.6",                         "name": "Kimi K2.6 (NIM)",        "provider": "nvidia"},
-            ],
+            # Bulut listesi artık ELLE YAZILMIYOR (Karar: Burak, 30 Ağu 2026).
+            # Boş kuruluyor; `_merge_live_cloud` sağlayıcıların kendi
+            # `/v1/models` cevabından dolduruyor, künyeyi de OpenRouter'ın
+            # açık kataloğundan alıyor. Silinen 40 satırlık sözlük, listelediği
+            # şeyden ayrışıyordu: Groq modeli 16 Ağu'da kapanmıştı ve katalog
+            # hâlâ onu tek seçenek olarak sunuyordu.
+            "cloud": [],
             "subscription": [
                 {"id": "claude-sonnet-5",      "name": "Claude Sonnet 5 (CLI)",         "provider": "subscription"},
                 {"id": "claude-fable-5",       "name": "Claude Fable 5 (CLI)",          "provider": "subscription"},

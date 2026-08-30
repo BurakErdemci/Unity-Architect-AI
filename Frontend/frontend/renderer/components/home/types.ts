@@ -8,9 +8,14 @@ export interface ModelInfo {
   // listesi alınamadı. `false` ile karıştırılmamalı — ağı olmayan bir makinede
   // çalışan her modeli "erişemiyorsun" diye göstermek yanlış kırmızıdır.
   available?: boolean;
-  // 'catalog' elle küratörlenmiş satır, 'live' yalnız sağlayıcının listesinden
-  // gelen (görünen adı ham, OpenRouter karşılığı yok).
-  source?: 'catalog' | 'live';
+  // Satır kullanıcının KENDİ anahtarıyla doğrulandı mı. `false` → OpenRouter'ın
+  // açık kataloğundan geliyor, yani "böyle bir model var" ama "senin hesabında
+  // var" DEĞİL. İkisi ayrı iddia.
+  verified?: boolean;
+  // 'live' sağlayıcının kendi listesinden, 'openrouter' açık katalogdan.
+  source?: 'live' | 'openrouter';
+  // OpenRouter kataloğundan gelen bağlam penceresi (token).
+  context_length?: number;
 }
 
 export interface AvailableModels {

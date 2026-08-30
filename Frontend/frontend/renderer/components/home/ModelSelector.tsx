@@ -94,7 +94,7 @@ const CLI_GROUPS: CliGroupDef[] = [
   },
 ];
 
-type ModelItem = { id: string; name: string; provider?: string; openrouter_id?: string; disabled?: boolean; disabled_reason?: string; available?: boolean; source?: 'catalog' | 'live' };
+type ModelItem = { id: string; name: string; provider?: string; openrouter_id?: string; disabled?: boolean; disabled_reason?: string; available?: boolean; verified?: boolean; source?: 'live' | 'openrouter'; context_length?: number };
 type CliDoctor = Record<string, { installed: boolean; loggedIn: boolean | null }>;
 
 // Bulut API sağlayıcı grupları (abonelik CLI grupları gibi kategorize görünüm)
@@ -351,18 +351,14 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
               {hasKey
                 ? <Key size={9} className="text-blue-400/70 shrink-0" />
                 : <span className="text-[8px] text-amber-400/90 bg-amber-500/10 border border-amber-500/30 rounded px-1 leading-tight shrink-0">{t('models.noKey')}</span>}
-              {/* `=== false` şart: alan TANIMSIZ olduğunda sağlayıcının listesi
-                  hiç alınamamış demektir, "erişemiyorsun" demek değil. */}
-              {m.available === false && (
-                <span data-testid="model-unavailable" title={t('models.notInAccountTitle')}
-                  className="text-[8px] text-rose-300/90 bg-rose-500/10 border border-rose-500/30 rounded px-1 leading-tight shrink-0">
-                  {t('models.notInAccount')}
-                </span>
-              )}
-              {m.source === 'live' && (
-                <span data-testid="model-live" title={t('models.liveOnlyTitle')}
-                  className="text-[8px] text-emerald-300/90 bg-emerald-500/10 border border-emerald-500/30 rounded px-1 leading-tight shrink-0">
-                  {t('models.liveOnly')}
+              {/* Doğrulanmamış = OpenRouter'ın açık kataloğundan geliyor: "böyle
+                  bir model var" ama "senin hesabında var" DEĞİL. Bunu sessizce
+                  doğrulanmış gibi göstermek, kullanıcıyı çalışmayacak bir modele
+                  yollamak olurdu. */}
+              {m.verified === false && (
+                <span data-testid="model-unverified" title={t('models.unverifiedTitle')}
+                  className="text-[8px] text-slate-400/90 bg-slate-500/10 border border-slate-500/30 rounded px-1 leading-tight shrink-0">
+                  {t('models.unverified')}
                 </span>
               )}
             </span>

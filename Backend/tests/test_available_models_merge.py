@@ -1,13 +1,19 @@
-"""Elle yazılı bulut kataloğu + canlı liste = üç ayrı hâl.
+"""Bulut model listesi ARTIK ELLE YAZILMIYOR — sözleşme (30 Ağu 2026).
 
-Katalog SİLİNMİYOR çünkü küratörlü bilgi taşıyor (görünen ad, OpenRouter
-karşılığı, ücretli işareti) ve hiçbir `/v1/models` cevabında bunlar yok.
-Canlı liste ise tek bir soruyu cevaplıyor: bu hesap gerçekten neye erişiyor.
+Eski hâli 40 satırlık bir sözlüktü ve listelediğinden ayrışıyordu: Groq'un tek
+modeli 16 Ağu 2026'da kapatılmıştı ve katalog onu hâlâ tek seçenek diye
+sunuyordu. Karar (Burak): elle yazılan gitsin, her şey canlı çekilsin.
 
-Testlerin sabitlediği asıl şey, üç hâlin BİRBİRİNE karışmaması:
-  erişilebilir · erişilemez · bilinmiyor.
-Üçüncüsü ikinciye çökerse, ağı olmayan bir makinede çalışan her model
-"erişemiyorsun" diye görünür.
+Yerine geçen tasarımda her kaynak TEK bir soruyu cevaplıyor:
+
+  * sağlayıcının kendi `/v1/models`i (kullanıcının anahtarıyla)
+      → "bu hesap neyi çağırabiliyor" — listenin kaynağı
+  * OpenRouter'ın AÇIK kataloğu (anahtar gerekmiyor)
+      → "bu modelin düzgün adı, bağlam penceresi, fiyatı ne" — yalnız künye
+
+Testlerin koruduğu asıl şey: anahtar yokken sağlayıcının GÖRÜNMEZ OLMAMASI.
+Boş bir grup "bu sağlayıcı yok" diye okunur; doğru cümle "hesabında
+doğrulanmadı" ve ikisinin kullanıcıya söylediği iş farklı.
 """
 import asyncio
 import os
@@ -18,6 +24,15 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "app"))
 
 from routes.config_routes import create_config_router
 
+OR_KATALOG = {
+    "anthropic/claude-opus-5": {"name": "Anthropic: Claude Opus 5", "context_length": 1000000,
+                                "pricing": {"prompt": "0.000015"}},
+    "anthropic/claude-haiku-9": {"name": "Anthropic: Claude Haiku 9", "context_length": 200000,
+                                 "pricing": {"prompt": "0"}},
+    "openai/gpt-9": {"name": "OpenAI: GPT-9", "context_length": 400000,
+                     "pricing": {"prompt": "0.00001"}},
+}
+
 
 def _db(anahtarlar: dict):
     db = MagicMock()
@@ -25,82 +40,93 @@ def _db(anahtarlar: dict):
     return db
 
 
-def _katalog(anahtarlar: dict, canli: dict, refresh: bool = False):
-    """`canli`: saglayici -> ({id: ad} | None). Sözlükte olmayan hiç sorulmaz."""
+def _katalog(anahtarlar: dict, canli: dict, or_katalog=OR_KATALOG, refresh: bool = False):
+    """`canli`: saglayici -> ({id: ad} | None)."""
     router = create_config_router(_db(anahtarlar))
     route = next(r for r in router.routes if r.path == "/available-models")
 
-    def sahte(saglayici, _anahtar, force=False):
-        return canli.get(saglayici)
-
-    # Ollama çağrısı da ağ: yerel uç yoksa zaten düşüyor ama testi makinenin
-    # durumuna bağlamamak için kapatılıyor.
-    with patch("providers.model_catalog.list_models", side_effect=sahte), \
+    with patch("providers.model_catalog.list_models",
+               side_effect=lambda s, a, force=False: canli.get(s)), \
+         patch("providers.model_catalog.openrouter_catalog",
+               side_effect=lambda force=False: or_katalog), \
          patch("urllib.request.urlopen", side_effect=OSError("kapalı")):
         return asyncio.run(route.endpoint(refresh=refresh))
 
 
 def _bul(cloud, mid, saglayici):
-    return next(m for m in cloud if m["id"] == mid and m["provider"] == saglayici)
+    return next((m for m in cloud if m["id"] == mid and m["provider"] == saglayici), None)
 
 
-def test_a_catalog_model_the_account_has_is_marked_available():
-    sonuc = _katalog({"anthropic": "sk-x"}, {"anthropic": {"claude-opus-5": "Claude Opus 5"}})
-    assert _bul(sonuc["cloud"], "claude-opus-5", "anthropic")["available"] is True
+def test_a_live_list_becomes_the_cloud_list():
+    sonuc = _katalog({"anthropic": "sk-x"}, {"anthropic": {"claude-opus-5": "claude-opus-5"}})
+    m = _bul(sonuc["cloud"], "claude-opus-5", "anthropic")
+    assert m and m["available"] is True and m["verified"] is True
+    assert m["source"] == "live"
     assert sonuc["cloud_sources"]["anthropic"] == "live"
 
 
-def test_a_catalog_model_the_account_lacks_is_marked_unavailable():
-    sonuc = _katalog({"anthropic": "sk-x"}, {"anthropic": {"claude-opus-5": "Claude Opus 5"}})
-    assert _bul(sonuc["cloud"], "claude-haiku-4-5", "anthropic")["available"] is False
+def test_openrouter_supplies_the_display_name_and_context_window():
+    # Sağlayıcı yalnız kimlik döndürüyor; düzgün ad ve pencere künyeden gelir.
+    sonuc = _katalog({"anthropic": "sk-x"}, {"anthropic": {"claude-opus-5": "claude-opus-5"}})
+    m = _bul(sonuc["cloud"], "claude-opus-5", "anthropic")
+    assert m["name"] == "Anthropic: Claude Opus 5"
+    assert m["context_length"] == 1000000
+    assert m["openrouter_id"] == "anthropic/claude-opus-5"
+    assert m["paid"] is True
 
 
-def test_an_unreachable_provider_leaves_availability_UNSET_not_false():
-    # Bu testin tamamı bu satır için var: bilinmezlik "erişemiyorsun" değil.
-    sonuc = _katalog({"anthropic": "sk-x"}, {"anthropic": None})
-    model = _bul(sonuc["cloud"], "claude-opus-5", "anthropic")
-    assert "available" not in model
-    assert sonuc["cloud_sources"]["anthropic"] == "unknown"
+def test_a_model_with_no_openrouter_match_still_appears_just_without_a_badge():
+    # Eşleşmeyi zorlamak YANLIŞ bir künyeyi doğru gibi gösterirdi.
+    sonuc = _katalog({"anthropic": "sk-x"}, {"anthropic": {"claude-gizli-1": "claude-gizli-1"}})
+    m = _bul(sonuc["cloud"], "claude-gizli-1", "anthropic")
+    assert m is not None
+    assert m["name"] == "claude-gizli-1"
+    assert "context_length" not in m
 
 
-def test_a_provider_without_a_key_is_reported_as_such_not_as_a_failure():
+def test_a_provider_without_a_key_is_still_visible_from_the_open_catalogue():
+    # Bu testin tamamı bunun için: boş grup "sağlayıcı yok" diye okunur.
     sonuc = _katalog({}, {})
-    assert sonuc["cloud_sources"]["openai"] == "no_key"
-    assert "available" not in _bul(sonuc["cloud"], "gpt-5.5", "openai")
+    m = _bul(sonuc["cloud"], "claude-opus-5", "anthropic")
+    assert m is not None
+    assert m["verified"] is False
+    assert m["source"] == "openrouter"
+    assert "available" not in m       # bilinmiyor — "erişemiyorsun" DEĞİL
+    assert sonuc["cloud_sources"]["anthropic"] == "no_key"
 
 
-def test_a_model_only_the_account_has_is_added_so_a_new_release_needs_no_deploy():
-    sonuc = _katalog({"openai": "sk-x"}, {"openai": {"gpt-6-yeni": "GPT-6 Yeni"}})
-    yeni = _bul(sonuc["cloud"], "gpt-6-yeni", "openai")
-    assert yeni["name"] == "GPT-6 Yeni"
-    assert yeni["source"] == "live"
-    assert yeni["available"] is True
+def test_a_provider_whose_live_list_failed_is_unknown_not_keyless():
+    sonuc = _katalog({"anthropic": "sk-x"}, {"anthropic": None})
+    assert sonuc["cloud_sources"]["anthropic"] == "unknown"
+    assert _bul(sonuc["cloud"], "claude-opus-5", "anthropic")["verified"] is False
 
 
-def test_a_live_entry_never_overwrites_the_curated_one():
-    # Katalogdaki satır openrouter karşılığını taşıyor; canlı cevap taşımıyor.
-    # Canlı liste kazansa o bilgi sessizce düşerdi.
-    sonuc = _katalog({"openai": "sk-x"}, {"openai": {"gpt-5.5": "gpt-5.5"}})
-    eslesenler = [m for m in sonuc["cloud"] if m["id"] == "gpt-5.5" and m["provider"] == "openai"]
-    assert len(eslesenler) == 1
-    assert eslesenler[0]["name"] == "GPT-5.5"
-    assert eslesenler[0]["openrouter_id"] == "openai/gpt-5.5"
-    assert eslesenler[0]["source"] == "catalog"
+def test_non_chat_models_are_kept_out_of_a_chat_picker():
+    sonuc = _katalog({"openai": "sk-x"},
+                     {"openai": {"gpt-9": "gpt-9", "text-embedding-4": "text-embedding-4",
+                                 "whisper-2": "whisper-2"}})
+    assert _bul(sonuc["cloud"], "gpt-9", "openai") is not None
+    assert _bul(sonuc["cloud"], "text-embedding-4", "openai") is None
+    assert _bul(sonuc["cloud"], "whisper-2", "openai") is None
 
 
 def test_one_provider_being_down_does_not_hide_another_provider_state():
-    sonuc = _katalog(
-        {"openai": "sk-x", "anthropic": "sk-y"},
-        {"openai": None, "anthropic": {"claude-opus-5": "Claude Opus 5"}},
-    )
+    sonuc = _katalog({"openai": "sk-x", "anthropic": "sk-y"},
+                     {"openai": None, "anthropic": {"claude-opus-5": "claude-opus-5"}})
     assert sonuc["cloud_sources"]["openai"] == "unknown"
     assert sonuc["cloud_sources"]["anthropic"] == "live"
-    assert _bul(sonuc["cloud"], "claude-opus-5", "anthropic")["available"] is True
-    assert "available" not in _bul(sonuc["cloud"], "gpt-5.5", "openai")
+    assert _bul(sonuc["cloud"], "claude-opus-5", "anthropic")["verified"] is True
+
+
+def test_without_the_open_catalogue_a_keyless_provider_simply_has_no_rows():
+    # Ağ yoksa künye de yedek liste de yok. Uydurulmuş bir liste göstermektense
+    # boş bırakmak doğru; `cloud_sources` yine neden boş olduğunu söylüyor.
+    sonuc = _katalog({}, {}, or_katalog={})
+    assert sonuc["cloud"] == []
+    assert sonuc["cloud_sources"]["anthropic"] == "no_key"
 
 
 def test_the_subscription_list_is_untouched_by_cloud_liveness():
-    # Abonelik CLI'ları bu yoldan hiç geçmiyor; oradaki listelerin canlılığı
-    # ayrı bir uçtan (`/cli-models/{cli}`) geliyor.
-    sonuc = _katalog({"openai": "sk-x"}, {"openai": {"gpt-5.5": "gpt-5.5"}})
-    assert all("available" not in m for m in sonuc["subscription"])
+    sonuc = _katalog({"anthropic": "sk-x"}, {"anthropic": {"claude-opus-5": "claude-opus-5"}})
+    assert sonuc["subscription"], "abonelik listesi bu değişiklikten etkilenmemeli"
+    assert all("verified" not in m for m in sonuc["subscription"])
