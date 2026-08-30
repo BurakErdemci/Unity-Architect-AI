@@ -881,6 +881,18 @@ class ClaudeSDKSession:
         self._rate_limit: Optional[Dict[str, Any]] = None
 
     # ── Yaşam döngüsü ────────────────────────────────────────────────────
+    @property
+    def is_live(self) -> bool:
+        """Altındaki CLI süreci ŞU AN ayakta mı.
+
+        Cache'te bir session NESNESİ olması sürecin var olduğu anlamına gelmiyor:
+        nesne kurulur, süreç ancak ilk `start()` ile doğar. Salt-okunur uçlar bu
+        ayrımı yapmak zorunda — yapmadıklarında `stream()`/`usage_card_text()`
+        kendiliğinden `start()` çağırıyor ve bir GET süreç doğuruyordu
+        (denetim, 30 Ağu 2026).
+        """
+        return self._started and not self._broken
+
     async def start(self):
         if self._started:
             return
@@ -1163,9 +1175,25 @@ class ClaudeSDKSession:
                 # döngüsünden gelen hataları KAPSAMIYORDU — bir korumayı
                 # çağrı yerine koymak, unutulan çağrı kadar koruma demek.
                 from secret_redaction import redact_secrets as _redact
+                # ONE terminal event per turn: on the error path the turn ends
+                # with `error` and MUST NOT also send `done`. It used to send
+                # both, and `_normalize_session_event` then stamped the `done`
+                # with the default `stop_reason="complete"` — so a transport
+                # failure reached the UI as a failure AND a successful
+                # completion, and the user could not tell which was true
+                # (audit, 30 Aug 2026).
+                #
+                # The partial text still goes out first: `response` carries
+                # content, not termination, and dropping it would turn a
+                # reporting bug into data loss. Ending the stream is the
+                # sentinel's job, not `done`'s — see `stream()`, which breaks
+                # on `None`.
+                if final:
+                    await q.put({"type": "response", "content": final})
                 await q.put({"type": "error", "message": _redact(str(error))})
-            await q.put({"type": "response", "content": final})
-            await q.put({"type": "done", "session_id": self.session_id})
+            else:
+                await q.put({"type": "response", "content": final})
+                await q.put({"type": "done", "session_id": self.session_id})
             await q.put(None)  # sentinel → stream() biter
         elif final and not error:
             # SSE kapalıyken biten tur (Durdur/kopma sonrası otonom devam) → kaybolmasın.
@@ -1471,18 +1499,33 @@ class ClaudeSDKSession:
         }
 
     # ── Mesaj akışı: bir tur gönder, event dict'leri yield et ────────────
-    async def stream(self, message: str) -> AsyncGenerator[dict, None]:
+    async def stream(self, message: str, lock_timeout: float = 10.0) -> AsyncGenerator[dict, None]:
         if not self._started:
             await self.start()
         if self._broken:
             raise SessionBusyError("Claude session kopmuş (reader ölü).")
 
-        # Kilidi SINIRLI bekle: önceki tur sıkıştıysa sonsuza dek "düşünüyor"da
-        # kalınmaz — SessionBusyError fırlar, AgentRunner session'ı resetleyip dener.
-        try:
-            await asyncio.wait_for(self._turn_lock.acquire(), timeout=10.0)
-        except asyncio.TimeoutError:
-            raise SessionBusyError("Önceki tur kilidi bırakmadı.")
+        if lock_timeout <= 0:
+            # `lock_timeout=0` = "meşguldür de bekleme". Yan kanallar (rapor ucu)
+            # bunu kullanır: eskiden çağıran önce `session_busy()` sorup sonra
+            # buraya giriyordu, ve iki işlem arasında başlayan bir tur "anında
+            # busy" vaadini yalanlıyordu (denetim, 30 Ağu 2026).
+            #
+            # Kontrol ile alma arasında ASKIYA ALMA NOKTASI YOK: asyncio.Lock
+            # serbestken `acquire()` hiç await etmeden döner, yani bu iki satır
+            # event loop açısından bölünemez. (`wait_for(..., timeout=0)` burada
+            # ÇALIŞMAZ: coroutine'i henüz koşmamış bir task'a sarıp hemen iptal
+            # eder, yani kilit boşken bile TimeoutError üretirdi.)
+            if self._turn_lock.locked():
+                raise SessionBusyError("Bir tur akıyor.")
+            await self._turn_lock.acquire()
+        else:
+            # Kilidi SINIRLI bekle: önceki tur sıkıştıysa sonsuza dek "düşünüyor"da
+            # kalınmaz — SessionBusyError fırlar, AgentRunner session'ı resetleyip dener.
+            try:
+                await asyncio.wait_for(self._turn_lock.acquire(), timeout=lock_timeout)
+            except asyncio.TimeoutError:
+                raise SessionBusyError("Önceki tur kilidi bırakmadı.")
 
         try:
             out_q: asyncio.Queue = asyncio.Queue()
@@ -1588,9 +1631,15 @@ def peek_session(conversation_id: int) -> Optional["ClaudeSDKSession"]:
     `get_session` eksik session'ı kuruyor, ve kurmak bir CLI süreci doğurmak
     demek. Kullanıcının bir düğmeye basması bunu tetiklememeli: rapor
     isteyen bir uç, raporlayacağı şeyi var etmemeli.
+
+    "Canlı" = nesne var VE süreci ayakta. Başlatılmamış bir nesneyi döndürmek de
+    süreç doğurmaya davetiyeydi: çağıran onu canlı sanıp `stream()` çağırıyor,
+    `stream()` de `start()` ediyordu. Codex tarafındaki eşi aynı ölçütü
+    kullanıyor — denetim ikisinin AYRIŞTIĞINI bulmuştu (30 Ağu 2026): burada
+    `_broken` eleniyordu, orada hiçbir şey elenmiyordu.
     """
     sess = _SESSIONS.get(conversation_id)
-    if sess is None or sess._broken:
+    if sess is None or not sess.is_live:
         return None
     return sess
 

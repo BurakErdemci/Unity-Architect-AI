@@ -447,6 +447,16 @@ class CodexSession:
         self._ctx_injected = False
 
     # ── Süreç yaşam döngüsü ──────────────────────────────────────────────
+    @property
+    def is_live(self) -> bool:
+        """app-server süreci ŞU AN ayakta mı — bkz. `ClaudeSDKSession.is_live`.
+
+        Claude'daki `_broken` bayrağının burada karşılığı yok çünkü gerek yok:
+        okuma döngüsü süreç öldüğünde `_started`ı zaten False'a çekiyor, yani
+        tek bayrak hem "hiç başlamadı" hem "öldü" durumunu taşıyor.
+        """
+        return self._started
+
     async def start(self):
         if self._started:
             return
@@ -939,8 +949,16 @@ def get_session(conversation_id: int, **kwargs) -> CodexSession:
 
 
 def peek_session(conversation_id: int) -> "CodexSession | None":
-    """Canlı session'ı getir ama YOKSA KURMA — bkz. `claude_sdk_session.peek_session`."""
-    return _SESSIONS.get(conversation_id)
+    """Canlı session'ı getir ama YOKSA KURMA — bkz. `claude_sdk_session.peek_session`.
+
+    Ölçüt Claude'daki ile AYNI olmak zorunda: denetim (30 Ağu 2026) iki `peek`in
+    ayrıştığını buldu — Claude kopuk oturumu eliyordu, bu hiçbir şey elemiyordu,
+    yani aynı GET sağlayıcıya göre farklı davranıyordu.
+    """
+    sess = _SESSIONS.get(conversation_id)
+    if sess is None or not sess.is_live:
+        return None
+    return sess
 
 
 async def close_session(conversation_id: int):

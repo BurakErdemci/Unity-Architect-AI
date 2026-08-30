@@ -10,10 +10,18 @@ bir istemci testi, sunucunun import satırını hiç çalıştırmıyor. Panel t
 yeşildi ve özellik tamamen kırıktı.
 
 Buradaki testler bu yüzden route fonksiyonunu DOĞRUDAN koşturuyor.
+
+İKİNCİ TUR (dış denetim, 30 Ağu 2026)
+Bu dosyanın ilk hâli yeşildi ve uç üç ayrı yerden kırıktı. Sebep tek bir kalıp:
+testler tam da düşen DURUMLARI yamayıp yerine geçiyordu — `peek_session` zorla
+`None`, `session_busy` zorla `True`. Yamanan bir durum sınanmamış bir durumdur.
+Aşağıdaki üç test bu yüzden GERÇEK oturum nesneleriyle ve gerçek kilitle
+koşuyor; adlarının sonunda hangi arızadan doğdukları yazılı.
 """
 import asyncio
 import os
 import sys
+import time
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -97,7 +105,7 @@ def test_agy_is_unsupported_rather_than_silently_empty():
 def test_claude_report_text_is_collected_from_the_stream():
     sess = MagicMock()
 
-    async def _akis(mesaj):
+    async def _akis(mesaj, lock_timeout=10.0):
         assert mesaj == "/context"
         for ev in [{"type": "text", "content": "**Tokens:** "},
                    {"type": "text", "content": "69.9k / 1m (7%)"},
@@ -114,10 +122,196 @@ def test_claude_report_text_is_collected_from_the_stream():
 def test_a_failing_stream_is_an_error_not_a_crash():
     sess = MagicMock()
 
-    async def _akis(_m):
+    async def _akis(_m, lock_timeout=10.0):
         raise RuntimeError("kopuk")
         yield  # pragma: no cover
     sess.stream = _akis
     with patch("providers.claude_sdk_session.peek_session", return_value=sess), \
          patch("providers.claude_sdk_session.session_busy", return_value=False):
         assert _cagir("context")["status"] == "error"
+
+
+# ── Denetim turu: cache'te DURAN ama BAŞLAMAMIŞ oturum ──────────────────────
+# Bu testler bir kalıbı kırıyor: yukarıdaki eski testler `peek_session`ı `None`
+# döndürmeye zorluyordu, yani "nesne var ama süreç yok" durumu HİÇ kurulmuyordu.
+# Gerçek nesneler kullanılıyor, yalnız süreç doğuran `start()` bir sayaçla
+# değiştiriliyor — çağrılırsa test kırılır.
+
+def test_a_cached_but_unstarted_claude_session_is_no_session_not_a_new_process():
+    from providers.claude_sdk_session import ClaudeSDKSession
+
+    sess = ClaudeSDKSession(1)
+    baslatildi: list[str] = []
+
+    async def _sahte_start():
+        baslatildi.append("start")
+        sess._started = True
+
+    sess.start = _sahte_start
+    assert sess.is_live is False, "kurulmuş ama başlamamış nesne canlı sayılmamalı"
+    with patch("providers.claude_sdk_session.peek_session", return_value=sess), \
+         patch("providers.claude_sdk_session.session_busy", return_value=False):
+        assert _cagir("usage")["status"] == "no_session"
+    # Asıl iddia: salt-okunur bir GET, raporlayacağı SÜRECİ var etmedi.
+    assert baslatildi == [], "GET Claude CLI transport'unu başlattı"
+
+
+def test_a_cached_but_unstarted_codex_session_is_no_session_not_a_new_process():
+    from providers.codex_session import CodexSession
+
+    sess = CodexSession(1)
+    baslatildi: list[str] = []
+
+    async def _sahte_start():
+        baslatildi.append("start")
+        sess._started = True
+
+    sess.start = _sahte_start
+    assert sess.is_live is False
+    with patch("providers.codex_session.peek_session", return_value=sess):
+        assert _cagir("usage", _db(model="gpt-5.6-sol"))["status"] == "no_session"
+    assert baslatildi == [], "GET codex app-server sürecini başlattı"
+
+
+def test_both_providers_peek_hide_a_session_whose_process_is_gone():
+    """İki `peek_session` AYNI ölçütü kullanmalı.
+
+    Denetimin bulduğu asimetri: Claude tarafı kopuk oturumu eliyordu, Codex
+    tarafı hiçbir şey elemiyordu — yani aynı uç, sağlayıcıya göre farklı
+    davranıyordu.
+    """
+    from providers import claude_sdk_session as c
+    from providers import codex_session as x
+
+    claude = c.ClaudeSDKSession(4242)
+    claude._started = True
+    codex = x.CodexSession(4242)
+    codex._started = True
+    with patch.dict(c._SESSIONS, {4242: claude}, clear=False), \
+         patch.dict(x._SESSIONS, {4242: codex}, clear=False):
+        assert c.peek_session(4242) is claude
+        assert x.peek_session(4242) is codex
+        # Claude: reader öldü. Codex: okuma döngüsü süreç ölünce _started'ı düşürür.
+        claude._broken = True
+        codex._started = False
+        assert c.peek_session(4242) is None
+        assert x.peek_session(4242) is None
+
+
+# ── Denetim turu: sağlayıcı yönlendirmesi ──────────────────────────────────
+
+@pytest.mark.parametrize("model", ["kimi-k3", "copilot-auto", "cursor-auto", "opencode:auto"])
+def test_a_non_claude_subscription_model_never_reads_a_stale_claude_session(model):
+    """Kimi/Copilot/Cursor/OpenCode seçiliyken rapor `unsupported` olmalı.
+
+    Arıza (denetim, 30 Ağu 2026): yönlendirme "gpt- değil, gemini değil, agy-
+    değil → Claude" diyordu. Kullanıcı sohbeti Claude'dan bu ailelerden birine
+    çevirdiğinde eski Claude oturumu cache'te kalıyor ve uç ONA `/usage`
+    gönderip BAŞKA SAĞLAYICININ raporunu `status: ok` ile kullanıcının
+    raporuymuş gibi gösteriyordu.
+    """
+    cagrilar: list[str] = []
+
+    class BayatClaudeOturumu:
+        is_live = True
+
+        async def stream(self, mesaj, lock_timeout=10.0):
+            cagrilar.append(mesaj)
+            yield {"type": "text", "content": "BAYAT CLAUDE RAPORU"}
+            yield {"type": "done"}
+
+    with patch("providers.claude_sdk_session.peek_session", return_value=BayatClaudeOturumu()), \
+         patch("providers.claude_sdk_session.session_busy", return_value=False):
+        sonuc = _cagir("usage", _db(model=model))
+    assert sonuc == {"status": "unsupported", "reason": "provider"}
+    assert cagrilar == [], "bayat Claude oturumuna mesaj gitti"
+
+
+def test_an_unrecognised_subscription_model_is_unsupported_rather_than_claude():
+    """Tanınmayan ad SESSİZCE Claude'a düşmez.
+
+    `spawn_env.env_family` bilinmeyen adı bilerek "claude"a düşürüyor (alt süreç
+    ortamı için doğru karar: en kısıtlı izin listesi). Rapor ucunda aynı düşüş
+    başka sağlayıcının raporunu göstermek demek olurdu.
+    """
+    assert _cagir("usage", _db(model="hicbir-yerde-olmayan-model"))["status"] == "unsupported"
+
+
+def test_the_report_routing_table_agrees_with_the_real_provider_dispatch():
+    """Rapor ailesi ile `AIProviderManager`ın SEÇTİĞİ sağlayıcı sınıfı aynı olmalı.
+
+    Bu deponun tekrar eden arıza şekli "uyuşması gereken iki tablo uyuşmuyor".
+    Rapor ucu ikinci bir önek tablosu tutmuyor (`spawn_env.env_family` kullanıyor)
+    ama o tablo da manager'dan AYRI bir dosyada duruyor — burada ikisi karşı
+    karşıya getiriliyor, yani biri değişip diğeri değişmezse test kırılır.
+    """
+    from ai_providers import AIProviderManager
+    from providers.agy_provider import AgyProvider
+    from providers.claude_provider import ClaudeCodeProvider
+    from providers.codex_provider import CodexProvider
+    from providers.copilot_provider import CopilotProvider
+    from providers.cursor_provider import CursorProvider
+    from providers.kimi_provider import KimiProvider
+    from providers.opencode_provider import OpenCodeProvider
+    from routes.conversation_routes import _report_family
+
+    beklenen = {
+        "claude-opus-5": ("claude", ClaudeCodeProvider),
+        "gpt-5.6-sol": ("codex", CodexProvider),
+        "gemini-3.6-flash": ("agy", AgyProvider),
+        "agy-pro": ("agy", AgyProvider),
+        "cursor-auto": ("cursor", CursorProvider),
+        "copilot-auto": ("copilot", CopilotProvider),
+        "opencode:auto": ("opencode", OpenCodeProvider),
+        "kimi-k3": ("kimi", KimiProvider),
+    }
+    for model, (aile, sinif) in beklenen.items():
+        assert _report_family(model) == aile, f"{model}: rapor ailesi kaydı"
+        provider = AIProviderManager.get_provider(
+            {"provider_type": "subscription", "model_name": model})
+        assert isinstance(provider, sinif), (
+            f"{model}: manager {type(provider).__name__} seçiyor ama rapor ucu "
+            f"{aile!r} ailesi sanıyor — iki tablo ayrışmış"
+        )
+
+
+# ── Denetim turu: meşgul kontrolü ile kullanımı arasındaki yarış ───────────
+
+def test_a_turn_that_starts_after_the_busy_check_still_answers_busy_immediately():
+    """`session_busy()` "boş" dedikten SONRA başlayan bir tur cevabı bekletmemeli.
+
+    Arıza (denetim, 30 Ağu 2026): uç önce `session_busy()` soruyor, sonra
+    `stream()`e giriyordu; `stream()` aynı kilidi BAĞIMSIZ olarak 10 saniye
+    bekliyor. İki işlem arasında başlayan bir tur "anında busy" vaadini
+    yalanlıyor — kullanıcı ya saniyelerce donuyor ya da `error` görüyordu.
+
+    Eski test bunu göremezdi çünkü `session_busy`ı `True` döndürmeye zorluyordu,
+    yani pencereyi hiç AÇMIYORDU. Burada kontrol `False` diyor ve hemen ardından
+    kilit gerçekten alınıyor.
+    """
+    from providers.claude_sdk_session import ClaudeSDKSession
+
+    sess = ClaudeSDKSession(1)
+    sess._started = True
+    sorgular: list[str] = []
+
+    class SahteIstemci:
+        async def query(self, mesaj):
+            sorgular.append(mesaj)
+
+    sess._client = SahteIstemci()
+
+    def bayat_mesgul_kontrolu(_conv_id):
+        # Kontrol anı ile kullanım anı ARASINDA rakip tur kilidi alıyor.
+        sess._turn_lock._locked = True
+        return False
+
+    baslangic = time.monotonic()
+    with patch("providers.claude_sdk_session.peek_session", return_value=sess), \
+         patch("providers.claude_sdk_session.session_busy", side_effect=bayat_mesgul_kontrolu):
+        sonuc = _cagir("context")
+    gecen = time.monotonic() - baslangic
+
+    assert sonuc["status"] == "busy", f"{sonuc!r} döndü — 'busy' bekleniyordu"
+    assert gecen < 1.0, f"cevap {gecen:.2f}s bekledi; anında olmalıydı"
+    assert sorgular == [], "meşgul oturuma mesaj gönderildi"

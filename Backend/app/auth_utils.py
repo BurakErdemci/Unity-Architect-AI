@@ -45,25 +45,58 @@ def _check_token(token) -> None:
 
 
 def require_user(db: Any, token: str, expected_user_id: int = None) -> tuple[int, str]:
-    """Local mode: her zaman user_id=1 döner. expected_user_id ignore edilir."""
+    """Token'ı doğrula; istenen kullanıcı YEREL kullanıcı olmalı.
+
+    Local mode'da tek kullanıcı var (`_LOCAL_USER`, id=1), yani "hangi kullanıcı"
+    sorusunun tek doğru cevabı var. Eskiden `expected_user_id` okunmadan atılıyordu:
+    çağıran 999999 gönderdiğinde istek kabul edilip sessizce 1'e çevriliyordu, yani
+    adı bir kimlik doğrulaması vaat eden fonksiyon hiçbir kimlik doğrulamıyordu
+    (dış denetim, 30 Ağu 2026). Bu ikinci bir insan kullanıcıya karşı gizlilik
+    sınırı DEĞİL — ama bir rotanın bu vaade dayanabilmesi için vaadin tutması şart.
+    """
     _check_token(token)
-    return (1, "local")
+    if expected_user_id is not None and int(expected_user_id) != _LOCAL_USER[0]:
+        raise HTTPException(status_code=403, detail="Bu kullanıcıya erişim yok")
+    return (_LOCAL_USER[0], _LOCAL_USER[1])
 
 
 def get_current_user(db: Any, token: str) -> tuple[int, str]:
     _check_token(token)
-    return (1, "local")
+    return (_LOCAL_USER[0], _LOCAL_USER[1])
 
 
-# Local mode: tüm kayıtlar user_id=1'e aittir, gerçek ownership kontrolü yok.
+def _require_owned(db: Any, token: str, obj_id: int, lookup: str, ne: str) -> tuple[int, int]:
+    """Token + NESNE kontrolü: kayıt var mı ve yerel kullanıcıya mı ait.
+
+    Var olma sebebi: bu iki bağımlılık adlarında "owner" taşıyıp yalnızca uygulama
+    token'ına bakıyordu — veritabanına hiç sorulmuyor, `conv_id`/`item_id` hiç
+    okunmuyordu (dış denetim, 30 Ağu 2026). Var olmayan bir id ile çağrılan uçlar
+    reddedilmek yerine boş rapor döndürüyordu. Sorgu ucuz ve indeksli (birincil
+    anahtar üzerinde tek satır), yani vaadi tutmanın bedeli yok.
+
+    Kayıt yoksa 404: "yok" ile "senin değil" ayrımı burada anlamlı değil (tek
+    kullanıcı), ve 404 çağırana doğru olanı söylüyor.
+    """
+    user_id, _ = require_user(db, token)
+    getter = getattr(db, lookup, None)
+    if getter is None:
+        # DB katmanı bu aramayı sunmuyorsa AÇIKÇA patla: sessizce kabul etmek
+        # tam olarak düzeltilen arızanın kendisiydi.
+        raise HTTPException(status_code=500, detail=f"db.{lookup} yok")
+    owner = getter(obj_id)
+    if owner is None:
+        raise HTTPException(status_code=404, detail=f"{ne} bulunamadı")
+    if int(owner) != user_id:
+        raise HTTPException(status_code=403, detail=f"Bu {ne} size ait değil")
+    return (user_id, obj_id)
+
+
 def require_conversation_owner(db: Any, token: str, conv_id: int) -> tuple[int, int]:
-    _check_token(token)
-    return (1, 1)
+    return _require_owned(db, token, conv_id, "get_conversation_owner", "sohbet")
 
 
 def require_analysis_owner(db: Any, token: str, item_id: int) -> tuple[int, int]:
-    _check_token(token)
-    return (1, 1)
+    return _require_owned(db, token, item_id, "get_analysis_owner", "analiz")
 
 
 def is_path_within_workspace(file_path: str, workspace_path: str) -> bool:

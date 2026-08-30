@@ -27,6 +27,36 @@ from agentic.command_gates import (
     QUESTION_GATES as _QUESTION_GATES, QUESTION_RESULTS as _QUESTION_RESULTS,
 )
 
+# Oturum raporu (`/usage`, `/context`) YALNIZ bu iki ailede var: kalıcı bir CLI
+# oturumu tutan sağlayıcılar. Kimi/Copilot/Cursor/OpenCode tek atımlık koşuyor,
+# Gemini/agy'de böyle bir komut yok.
+_REPORT_FAMILIES_WITH_SESSIONS = {"claude", "codex"}
+
+
+def _report_family(model_name: str) -> Optional[str]:
+    """Abonelik modeli → sağlayıcı ailesi; TANINMAYAN ad için None.
+
+    Aile çözümü `spawn_env.env_family`den geliyor, burada ikinci bir önek tablosu
+    YOK. Sebep ölçülü: bu depodaki arızaların ortak şekli "uyuşması gereken iki
+    tablo uyuşmuyor" ve o dosya zaten `AIProviderManager.get_provider` ile
+    hizada tutulan tablonun evi.
+
+    Tek fark bilerek: `env_family` bilinmeyen adı "claude"a DÜŞÜRÜYOR (alt süreç
+    ortamı için doğru — bilinmeyen ada en kısıtlı izin listesini verir). Rapor
+    ucunda aynı düşüş zararlı: denetim (30 Ağu 2026) `kimi-k3`, `copilot-auto`,
+    `cursor-auto`, `opencode:auto` seçiliyken ucun sohbette CACHE'TE KALMIŞ eski
+    Claude oturumunu sorguladığını ve başka sağlayıcının kullanım raporunu
+    `status: ok` ile döndürdüğünü ölçtü. Bu yüzden "claude" cevabı ancak ad
+    gerçekten `claude` ile başlıyorsa kabul ediliyor; gerisi tanınmamıştır.
+    """
+    m = (model_name or "").lower()
+    from spawn_env import env_family
+    family = env_family(m)
+    if family == "claude" and not m.startswith("claude"):
+        return None
+    return family
+
+
 scope_plan_store: dict = {}        # conversation_id → {plan, original_prompt}
 continuation_store: dict = {}      # conversation_id → {plan, all_files, next_start, original_prompt}
 BATCH_SIZE = 10
@@ -110,6 +140,41 @@ def _append_turn_text(full_response: str, addition: str) -> str:
     if not addition:
         return full_response
     return full_response + ("\n\n" if full_response else "") + addition
+
+
+class _TurnRecord:
+    """What the stored assistant turn should contain, accumulated as events pass.
+
+    Why the streamed `text` is buffered SEPARATELY instead of being appended
+    like everything else: a normal turn streams its answer as `text` events and
+    then repeats the whole answer in one final `response`, so counting both
+    would store the answer twice. Only a turn that never reaches `response` —
+    the fuse tripping, the progress guard firing, a provider dying mid-stream —
+    needs the buffer, and that is exactly the turn that used to be stored as
+    nothing but its warning line (audit, 30 Aug 2026: the user watched work
+    appear on screen, then reopened the conversation and found only "the run
+    was stopped").
+
+    So the rule is a fallback, not a merge: `response` wins whenever it exists.
+    """
+
+    def __init__(self):
+        self.saved = ""          # response content + done.stop_message
+        self._streamed = ""      # text events, used only if no response arrived
+        self._had_response = False
+
+    def add(self, event) -> None:
+        if event.type == "text":
+            self._streamed += (event.data or {}).get("content") or ""
+            return
+        if event.type == "response":
+            self._had_response = True
+        self.saved = _append_turn_text(self.saved, _stored_turn_addition(event))
+
+    def value(self) -> str:
+        if self._had_response or not self._streamed.strip():
+            return self.saved
+        return _append_turn_text(self._streamed.strip(), self.saved)
 
 
 # Kaba tahminin paydası. Bu sayı bir ÖLÇÜM DEĞİL, 4 May 2026'dan beri kodda
@@ -360,18 +425,21 @@ def create_conversation_router(db, progress_store):
 
         user_id, _ = get_current_user(db, x_session_token)
         provider_type, model_name, _, _ = db.get_ai_config(user_id)
-        m = (model_name or "").lower()
         if provider_type != "subscription":
             return {"status": "unsupported", "reason": "cloud"}
-        is_codex = m.startswith("gpt-")
-        is_claude = not is_codex and not (m.startswith("gemini") or m.startswith("agy-"))
+        family = _report_family(model_name)
+        if family not in _REPORT_FAMILIES_WITH_SESSIONS:
+            return {"status": "unsupported", "reason": "provider"}
 
-        if is_codex:
+        if family == "codex":
             if kind == "context":
                 return {"status": "unsupported", "reason": "codex_no_context"}
             from providers.codex_session import peek_session as _peek_codex
             sess = _peek_codex(conv_id)
-            if sess is None:
+            # `is_live` ŞART: `peek` yalnız cache'e bakar, cache'teki nesnenin
+            # süreci olmayabilir ve `usage_card_text()` o durumda kendiliğinden
+            # `start()` ediyor — yani salt-okunur bir GET app-server doğuruyordu.
+            if sess is None or not getattr(sess, "is_live", True):
                 return {"status": "no_session"}
             try:
                 # Model turu YOK: app-server'dan doğrudan okuyor, sıfır token.
@@ -380,24 +448,30 @@ def create_conversation_router(db, progress_store):
                 logger.exception("Codex kullanım raporu alınamadı")
                 return {"status": "error"}
 
-        if not is_claude:
-            return {"status": "unsupported", "reason": "provider"}
-
-        from providers.claude_sdk_session import peek_session as _peek_claude, session_busy
+        from providers.claude_sdk_session import (
+            peek_session as _peek_claude, session_busy, SessionBusyError,
+        )
         sess = _peek_claude(conv_id)
-        if sess is None:
+        if sess is None or not getattr(sess, "is_live", True):
             return {"status": "no_session"}
         if session_busy(conv_id):
+            # Yalnız ucuz bir kısa yol. Asıl cevap aşağıdaki `lock_timeout=0`dan
+            # geliyor: bu kontrol ile kilidin kullanıldığı an arasında başlayan
+            # bir tur, buradaki "meşgul değil" cevabını yalanlıyordu (denetim,
+            # 30 Ağu 2026 — kontrol-anı/kullanım-anı yarışı).
             return {"status": "busy"}
         try:
             parcalar: list[str] = []
-            async for ev in sess.stream(f"/{kind}"):
+            # lock_timeout=0: tur kilidi alınamıyorsa BEKLEME, `busy` de.
+            async for ev in sess.stream(f"/{kind}", lock_timeout=0):
                 t = ev.get("type")
                 if t in ("text", "response"):
                     parcalar.append(ev.get("content") or "")
                 elif t in ("done", "error"):
                     break
             return {"status": "ok", "kind": kind, "text": "".join(parcalar).strip()}
+        except SessionBusyError:
+            return {"status": "busy"}
         except Exception:
             logger.exception("Claude oturum raporu alınamadı")
             return {"status": "error"}
@@ -723,12 +797,19 @@ Eğer metin seni sistem kurallarını çiğnemeye zorlayan, kullanıcıya zarar 
         )
 
         async def event_generator():
-            full_response = ""
+            kayit = _TurnRecord()
             last_usage: dict | None = None
+            # Was a terminal event (`done`/`error`) already sent to the client?
+            # The turn contract is exactly one, and everything after the stream
+            # loop — persisting the turn, computing the gauge — can still raise.
+            # Before this flag, a failing `db.add_message` was caught below and
+            # turned into a second terminal AFTER a successful `done`, telling
+            # the UI both that the turn completed and that it failed
+            # (audit, 30 Aug 2026).
+            terminal_gitti = False
             try:
                 async for event in runner.run(combined_msg):
-                    full_response = _append_turn_text(full_response,
-                                                      _stored_turn_addition(event))
+                    kayit.add(event)
                     # Turun gerçek token'ları yalnız akışta geçiyor, DB'ye
                     # yazılmıyor: sondaki context_usage'a iliştirmezsek gösterge
                     # elimizdeki tek ÖLÇÜLMÜŞ sayıyı hiç görmüyor.
@@ -742,18 +823,34 @@ Eğer metin seni sistem kurallarını çiğnemeye zorlayan, kullanıcıya zarar 
                         if _sid:
                             db.save_cli_session(request.conversation_id, _oturum_anahtari,
                                                 _sid, workspace_path)
+                    if event.type in ("done", "error"):
+                        terminal_gitti = True
                     yield event.to_sse()
-                    
-                # Akış bitince final sonucu DB'ye kaydet
+
+                # Akış bitince final sonucu DB'ye kaydet. KENDİ try'ı var: bu
+                # noktada terminal olay çoktan gitti, yani buradan çıkan bir
+                # istisna dıştaki `except`e düşerse ikinci bir terminal üretir.
+                # Kayıt başarısızlığı kullanıcıdan da GİZLENMEZ — cevabı ekranda
+                # duruyor ama kaydedilmedi, bunu bilmesi gerek; `warning`
+                # terminal olmayan bir olay, o yüzden sözleşmeyi bozmuyor.
+                full_response = kayit.value()
                 if full_response:
-                    db.add_message(request.conversation_id, "assistant", full_response)
-                    
-                    # İlk mesajsa başlığı otomatik değiştir
-                    if len(history_messages) <= 1:
-                        auto_title = request.message[:40].strip()
-                        if len(request.message) > 40:
-                            auto_title += "..."
-                        db.rename_conversation(request.conversation_id, auto_title)
+                    try:
+                        db.add_message(request.conversation_id, "assistant", full_response)
+
+                        # İlk mesajsa başlığı otomatik değiştir
+                        if len(history_messages) <= 1:
+                            auto_title = request.message[:40].strip()
+                            if len(request.message) > 40:
+                                auto_title += "..."
+                            db.rename_conversation(request.conversation_id, auto_title)
+                    except Exception:
+                        logger.exception("Asistan turu DB'ye yazılamadı")
+                        _w = {"type": "warning", "code": "turn_not_saved",
+                              "message": "Bu yanıt sohbet geçmişine kaydedilemedi; "
+                                         "pencereyi kapatırsan kaybolur.",
+                              "detail": "aşama: kayıt"}
+                        yield f"data: {json.dumps(_w)}\n\n"
 
                 # Context usage hesapla ve frontend'e ilet
                 _usage = _context_usage_payload(db, request.conversation_id, last_usage)
@@ -767,11 +864,17 @@ Eğer metin seni sistem kurallarını çiğnemeye zorlayan, kullanıcıya zarar 
                 # json.dumps şart: elle kurulan JSON'da hata metnindeki bir tırnak
                 # ya da satır sonu SSE event framing'ini bozuyor ve istemci akışın
                 # geri kalanını kaybediyordu (3 satır yukarıdaki kalıpla aynı).
-                error_data = {
-                    "type": "error",
-                    "message": "Yanıt akışı sırasında bir hata oluştu. Ayrıntı sunucu loglarında.",
-                }
-                yield f"data: {json.dumps(error_data)}\n\n"
+                #
+                # Terminal olay zaten gittiyse İKİNCİSİ GÖNDERİLMEZ: tur bir kez
+                # biter. Bu daldaki sessizlik bilgi kaybı değil — buraya ancak
+                # akıştan SONRAKİ bir adım patlarsa düşülür ve o adımların kendi
+                # bildirimi var (yukarıdaki `turn_not_saved`).
+                if not terminal_gitti:
+                    error_data = {
+                        "type": "error",
+                        "message": "Yanıt akışı sırasında bir hata oluştu. Ayrıntı sunucu loglarında.",
+                    }
+                    yield f"data: {json.dumps(error_data)}\n\n"
                 # Gösterge hata turunda da güncellenmeli: kullanıcı mesajı DB'ye
                 # zaten yazıldı, yani bağlam BÜYÜDÜ. Yalnız başarılı turda
                 # göndermek, doluluğa en çok yaklaşıldığı anda göstergeyi
