@@ -1,7 +1,8 @@
 # Contributing
 
-> Türkçe issue ve PR açmak tamamen normaldir. Bu dosya İngilizce yazıldı çünkü
-> hedef kitlesi dışarıdaki katkıcılar.
+> Opening issues and pull requests in Turkish is perfectly fine — that is a
+> conversation, not a file in the repository. What goes *into* the repository
+> is English (see below).
 
 Thanks for looking. This is a non-commercial, one-person project, so the most
 useful contributions are small, sharp and self-contained.
@@ -39,8 +40,14 @@ your first PR:
 - **Comments carry the reasoning, not the code.** A comment restating what the
   line does is noise; a comment recording a measurement, a constraint or an
   incident earns its place. An undocumented non-obvious decision is a defect too.
-- Code and identifiers in **English**; comments and internal docs in **Turkish**;
-  commit messages in **English**.
+- **Everything written into the repository is in English** — code, identifiers,
+  comments, docstrings, internal docs, log lines and commit messages. The one
+  exception is user-facing text for the app's Turkish language option, which
+  lives behind the i18n layer and is Turkish by definition.
+  (This line used to ask for Turkish comments. It was reversed on 30 Aug 2026:
+  a codebase whose reasoning is written in one language and whose identifiers
+  are in another is harder to read in both, and the audit trail — commit
+  messages, test names, findings — was already English.)
 - **Do not add a dependency without asking first** in an issue.
 
 ## Running it
