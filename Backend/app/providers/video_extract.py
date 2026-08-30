@@ -292,10 +292,18 @@ def _download_url(url: str, out_dir: str):
     # 1) VİDEO (kritik yol). Altyazı flag'i YOK — böylece altyazı hatası (429/yok/ağ)
     #    videoyu DÜŞÜRMEZ. Format yatay VE dikey (Shorts) için sağlam: 1080'i her iki
     #    yönde dener, sonra best'e düşer. ('mp4[height<=720]' dikey Shorts'ta -height 1280-
-    #    ve ayrı-stream'li modern YouTube'da eşleşmeyip exit-1 veriyordu.) Birleştirme
-    #    container'ını yt-dlp seçer (ffmpeg webm/mkv de okur).
+    #    ve ayrı-stream'li modern YouTube'da eşleşmeyip exit-1 veriyordu.)
+    #
+    # SES BİLEREK İSTENMİYOR (`+bestaudio` kaldırıldı, 30 Ağu 2026). Bu boru hattı
+    # sesi HİÇ tüketmiyor: kareler görüntüden, transkript altyazıdan geliyor —
+    # yani ses akışı indirildiği anda çöpe gidiyordu. Bedeli teorik değil,
+    # sahada ölçüldü: bir Shorts'ta görüntü akışı indi ve YouTube SES akışına
+    # `HTTP Error 403` döndü; yt-dlp exit 1 verdi ve kullanıcı videonun tamamını
+    # kaybetti ("link indirilemedi"). İki URL'de yeniden üretildi ve bu satırla
+    # ikisi de düzeldi. Yan kazanç: indirilen bayt yarıya iniyor ve ayrı akış
+    # kalmadığı için ffmpeg birleştirme adımı tamamen ortadan kalkıyor.
     _run([ytdlp_path(), "--no-playlist", "--no-warnings",
-          "-f", "bestvideo[height<=1080]+bestaudio/bestvideo[width<=1080]+bestaudio/best[height<=1080]/best",
+          "-f", "bestvideo[height<=1080]/bestvideo[width<=1080]/bestvideo/best[height<=1080]/best",
           "-o", out_tmpl, "--", url], timeout=600)
     vids = [q for q in glob.glob(os.path.join(out_dir, "dl.*")) if not q.endswith(".vtt")]
     if not vids:
