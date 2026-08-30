@@ -70,6 +70,33 @@ _TRANSCRIPT_CHAR_CAP = 200 * 1024
 # dizin en fazla 6 saat + bir sonraki video turuna kadar diskte durur.
 _STALE_TEMP_AGE_S = 6 * 3600
 
+# Poll interval of the download size guard (see `_DownloadSizeGuard`). The
+# number IS the bound's precision: the guard can only notice a breach on a tick,
+# so peak disk = cap + interval × line rate. At 0.5 s that is ~62 MiB on a
+# saturated 1 Gbit/s link and ~6 MiB on a typical 100 Mbit/s one — a few percent
+# of the 1 GiB cap, i.e. the overshoot does not change the order of the bound.
+# COST of going lower: every tick walks the output directory (a stat per file,
+# and the frame stage puts up to 180 files there), so the wakeups are not free;
+# COST of going higher: the overshoot grows linearly with it.
+_DOWNLOAD_POLL_INTERVAL_S = 0.5
+
+# Directories a `extract()` in THIS process is currently using, normalised for
+# comparison. The sweep consults it so it can never delete live data; see
+# `sweep_stale_temp` for what this does NOT cover (other processes).
+_LIVE_ROOTS = set()
+_LIVE_ROOTS_LOCK = threading.Lock()
+
+
+def _norm(path: str) -> str:
+    """Path in the one form the live-root set compares: absolute + normcase.
+
+    `normcase` matters on Windows, where the same directory reaches us as
+    `C:\\Users\\...` from `extract()` and `c:/users/...` from a test or a saved
+    workspace; a set keyed on the raw string would then hold two entries and the
+    sweep would match neither.
+    """
+    return os.path.normcase(os.path.abspath(path))
+
 
 class VideoPipelineError(RuntimeError):
     """Carries WHICH STAGE of the pipeline failed and WHY.
@@ -134,7 +161,32 @@ class ExtractionCancel:
         self._lock = threading.Lock()
         self._cancelled = False
         self._procs = set()
-        self.tmp_root: Optional[str] = None
+        self._tmp_root: Optional[str] = None
+
+    @property
+    def tmp_root(self) -> Optional[str]:
+        return self._tmp_root
+
+    @tmp_root.setter
+    def tmp_root(self, path: Optional[str]) -> None:
+        """Assignment also PUBLISHES the directory as live (audit, 30 Aug 2026).
+
+        The stale sweep decided liveness from directory mtime alone, so a run
+        that was still downloading but had started more than `_STALE_TEMP_AGE_S`
+        ago had its directory deleted out from under its own worker — a cleanup
+        step that destroys live data is worse than the leak it was added to fix.
+
+        The registration hangs off the setter rather than off `extract()` so
+        that there is no second call site that can forget it: this handle is by
+        construction the one object that knows which directory a live run owns,
+        and it learns it exactly here.
+        """
+        with _LIVE_ROOTS_LOCK:
+            if self._tmp_root:
+                _LIVE_ROOTS.discard(_norm(self._tmp_root))
+            self._tmp_root = path
+            if path:
+                _LIVE_ROOTS.add(_norm(path))
 
     @property
     def cancelled(self) -> bool:
@@ -157,16 +209,29 @@ class ExtractionCancel:
         if self.cancelled:
             raise ExtractionCancelled(f"video çıkarımı iptal edildi (aşama: {stage})")
 
-    def cancel(self) -> None:
-        """Stops the extraction. Safe to call from the event-loop thread."""
+    def kill_running(self) -> None:
+        """Kills the live children WITHOUT declaring the turn cancelled.
+
+        The size guard needs exactly this and nothing more: a download that
+        broke the byte cap is a FAILURE of that download, not the user's stop,
+        and marking the handle cancelled would report it as `ExtractionCancelled`
+        — the pipeline would then skip the video silently instead of telling the
+        user their link was too large.
+        """
         with self._lock:
-            self._cancelled = True
-            procs, tmp_root = list(self._procs), self.tmp_root
+            procs = list(self._procs)
         for p in procs:
             try:
                 p.kill()
             except Exception:
                 pass
+
+    def cancel(self) -> None:
+        """Stops the extraction. Safe to call from the event-loop thread."""
+        with self._lock:
+            self._cancelled = True
+            tmp_root = self._tmp_root
+        self.kill_running()
         # The directory is dropped HERE and not left to the worker's own
         # `finally`: that block only runs once the killed child has been
         # reaped and the stack unwound, and on a stuck child that is the very
@@ -347,23 +412,192 @@ def sweep_stale_temp(workspace: Optional[str] = None,
     (or another turn in this one) may be mid-extraction, and taking its
     directory away would break a live turn to reclaim a few megabytes.
     Returns how many directories were removed, so callers can log it.
+
+    Age alone was NOT enough, and this is the second audit finding on this
+    function (30 Aug 2026): a long extraction older than the threshold was
+    deleted while its own worker was still writing into it. Two guards answer
+    that, and they cover different halves:
+
+      1. `_LIVE_ROOTS` — every directory an `ExtractionCancel` in this process
+         owns. Exact, not a heuristic: no live run in this process is touchable.
+      2. The newest mtime of the directory's CONTENTS, not just of the directory
+         itself. A directory's own mtime only moves when an ENTRY is added or
+         removed, so a run that spent an hour growing `dl.mp4.part` still
+         carried its creation time — while the file inside was seconds old.
+         This is what makes a live run in ANOTHER backend process survive.
+
+    NOT covered, deliberately stated rather than implied closed: a run in
+    another process that has written nothing for `max_age_s` (a child hung on a
+    dead socket, or a stall between the download and the frame stage) is still
+    indistinguishable from a crashed run's leftovers and will be swept. Closing
+    that needs a cross-process liveness marker (a pid/heartbeat file the sweep
+    validates), which is not in this change. The residual risk is bounded by the
+    threshold: at 6 hours, a run must be completely idle for six hours to be
+    mistaken for garbage, while a single extraction's own timeouts total 15
+    minutes.
     """
     root = _attach_root(workspace)
     try:
         names = os.listdir(root)
     except OSError:
         return 0
+    with _LIVE_ROOTS_LOCK:
+        live = set(_LIVE_ROOTS)
     now, removed = time.time(), 0
     for name in names:
         path = os.path.join(root, name)
         try:
-            if not os.path.isdir(path) or (now - os.path.getmtime(path)) < max_age_s:
+            if not os.path.isdir(path) or _norm(path) in live:
+                continue
+            if (now - _newest_mtime(path)) < max_age_s:
                 continue
         except OSError:
             continue
         shutil.rmtree(path, ignore_errors=True)
         removed += 1
     return removed
+
+
+def _stat_live(path: str) -> os.stat_result:
+    """`os.stat` on a path, NEVER `os.DirEntry.stat()`. Measured 30 Aug 2026.
+
+    On Windows `scandir` hands back the size and timestamps cached in the
+    directory ENTRY, and Windows does not refresh that entry while a file is
+    open — a download that had already written 1.6 MB read as 0 bytes, so the
+    size guard below never fired. `os.stat` on the path queries the file itself
+    and reports the truth. The cost is a real syscall per file instead of a free
+    field read; these directories hold a couple of hundred files at most.
+    """
+    return os.stat(path)
+
+
+def _newest_mtime(path: str) -> float:
+    """Most recent mtime of `path` or of anything directly inside it.
+
+    Entries are flat here by construction (`dl.*`, `dl*.vtt`, `frame_*.jpg`), so
+    one listing sees everything; no recursive walk is needed and the cost stays
+    one stat per file.
+    """
+    newest = os.path.getmtime(path)
+    try:
+        names = os.listdir(path)
+    except OSError:
+        return newest
+    for name in names:
+        try:
+            newest = max(newest, _stat_live(os.path.join(path, name)).st_mtime)
+        except OSError:
+            continue
+    return newest
+
+
+def _dir_size(path: str) -> int:
+    """Bytes currently on disk directly under `path` (missing path → 0).
+
+    Counts EVERY entry, not just the finished outputs: yt-dlp writes into
+    `dl.mp4.part`, and a size check that only looked at the final file measured
+    zero for the whole download — which is precisely when the disk is filling.
+    """
+    total = 0
+    try:
+        names = os.listdir(path)
+    except OSError:
+        return 0
+    for name in names:
+        try:
+            total += _stat_live(os.path.join(path, name)).st_size
+        except OSError:
+            continue
+    return total
+
+
+def _reclaim_dir(path: str) -> int:
+    """Truncates everything under `path` to zero; returns how many files.
+
+    Called when a download is rejected for size. The tree itself is removed by
+    `extract()`'s `finally` (and by the sweep after a crash), but that happens
+    only once the stack unwinds — while the point of the byte cap is that the
+    blocks come back NOW, before the caller does anything else.
+
+    Truncate rather than unlink because of the Windows case this pipeline hits
+    constantly: the yt-dlp we just killed may still hold the file open for a
+    moment, and `os.remove` on an open file raises `PermissionError` there while
+    a truncate is at least attempted on the same handle. Both are best-effort —
+    the removal in `finally` is the backstop for whatever this could not touch.
+    """
+    reclaimed = 0
+    try:
+        with os.scandir(path) as it:
+            entries = [e.path for e in it if e.is_file()]
+    except OSError:
+        return 0
+    for file_path in entries:
+        try:
+            os.truncate(file_path, 0)
+            reclaimed += 1
+        except OSError:
+            continue
+    return reclaimed
+
+
+class _DownloadSizeGuard:
+    """Kills the downloader once the bytes it has WRITTEN pass the cap.
+
+    Audit finding (30 Aug 2026): the byte cap was only summed after `_run`
+    returned, so it bounded what was KEPT, not what was written, and
+    `--max-filesize` is advisory — it needs a length the host announced, and a
+    chunked response announces none. That is exactly the abuse shape the
+    original finding described (a pasted link filling the disk): for the full
+    600-second download timeout nothing looked at the disk at all.
+
+    The guard watches the output directory from a side thread and kills the live
+    child through the run's `ExtractionCancel`, the same handle the cancellation
+    work already established. It does NOT mark the run cancelled — see
+    `kill_running` for why that distinction matters to the user's message.
+
+    The bound it gives is `cap + _DOWNLOAD_POLL_INTERVAL_S × line rate`; the
+    overshoot per interval is stated at that constant.
+    """
+
+    def __init__(self, out_dir: str, cap: int,
+                 interval: float = _DOWNLOAD_POLL_INTERVAL_S):
+        self._out_dir = out_dir
+        self._cap = cap
+        self._interval = interval
+        self._stop = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+        # Captured on the calling thread: `_CANCEL` is a ContextVar and the
+        # watcher thread would see the default (None) if it read it itself.
+        self._handle = _CANCEL.get()
+        self.exceeded = False
+        self.peak = 0
+
+    def __enter__(self) -> "_DownloadSizeGuard":
+        self._thread = threading.Thread(target=self._watch, daemon=True,
+                                        name="video-download-size-guard")
+        self._thread.start()
+        return self
+
+    def __exit__(self, *_exc) -> bool:
+        self._stop.set()
+        if self._thread is not None:
+            # The watcher only ever waits on `_stop` or does one scandir, so a
+            # short join is generous; it is bounded so a wedged filesystem
+            # cannot hold the turn open.
+            self._thread.join(timeout=5)
+        return False
+
+    def _watch(self) -> None:
+        # `wait` first, not last: at entry the directory is empty by definition
+        # (the download has not started), so an immediate scan measures nothing.
+        while not self._stop.wait(self._interval):
+            size = _dir_size(self._out_dir)
+            self.peak = max(self.peak, size)
+            if size > self._cap:
+                self.exceeded = True
+                if self._handle is not None:
+                    self._handle.kill_running()
+                return
 
 
 def _run(cmd: list, timeout: int, check: bool = True):
@@ -570,17 +804,35 @@ def _download_url(url: str, out_dir: str):
     # akışları hiç başlatmadan reddeder; bilinmeyenler için aşağıdaki
     # uygulama-tarafı ölçüm var, çünkü Content-Length'i olmayan bir akışta
     # yt-dlp'nin de karşılaştıracağı bir sayı yok.
-    _run([ytdlp_path(), "--no-playlist", "--no-warnings",
-          "-f", "bestvideo[height<=1080]/bestvideo[width<=1080]/bestvideo/best[height<=1080]/best",
-          "--max-filesize", str(_MAX_DOWNLOAD_BYTES),
-          "-o", out_tmpl, "--", url], timeout=600)
+    # `_DownloadSizeGuard` is the half `--max-filesize` cannot do: it bounds the
+    # bytes WRITTEN while the child runs, not just the bytes kept afterwards.
+    with _DownloadSizeGuard(out_dir, _MAX_DOWNLOAD_BYTES) as guard:
+        try:
+            _run([ytdlp_path(), "--no-playlist", "--no-warnings",
+                  "-f", "bestvideo[height<=1080]/bestvideo[width<=1080]/bestvideo/best[height<=1080]/best",
+                  "--max-filesize", str(_MAX_DOWNLOAD_BYTES),
+                  "-o", out_tmpl, "--", url], timeout=600)
+        except ExtractionCancelled:
+            raise
+        except Exception:
+            # A child the guard killed exits non-zero (or times out mid-kill).
+            # That is our own kill, not the host failing, and it must surface as
+            # the size error below — `download_failure_message` would otherwise
+            # blame the site for a limit we imposed.
+            if not guard.exceeded:
+                raise
+    # Measured over the whole directory, so a `.part` left by the killed child
+    # counts. Both gates stay: the guard bounds the peak, this bounds what is
+    # kept when a download completes between two ticks.
+    _size = _dir_size(out_dir)
+    if guard.exceeded or _size > _MAX_DOWNLOAD_BYTES:
+        _reclaim_dir(out_dir)
+        raise RuntimeError(
+            f"video boyut sınırını aştı ({max(_size, guard.peak)} bayt > "
+            f"{_MAX_DOWNLOAD_BYTES})")
     vids = [q for q in glob.glob(os.path.join(out_dir, "dl.*")) if not q.endswith(".vtt")]
     if not vids:
         raise RuntimeError("video indirilemedi (yt-dlp çıktısı yok)")
-    _size = sum(os.path.getsize(q) for q in vids)
-    if _size > _MAX_DOWNLOAD_BYTES:
-        raise RuntimeError(
-            f"video boyut sınırını aştı ({_size} bayt > {_MAX_DOWNLOAD_BYTES})")
     # 2) ALTYAZI (best-effort, AYRI çağrı). check=False + try/except: 429/eksik/ağ
     #    hatası yutulur → transkript alınamasa bile kareler yine döner.
     transcript = ""
@@ -715,3 +967,7 @@ def extract(source: dict, workspace: Optional[str], tag: str,
     finally:
         _CANCEL.reset(_token)
         shutil.rmtree(tmp_root, ignore_errors=True)
+        # Unpublish before returning: a handle that keeps a directory registered
+        # after its run ended would make the sweep skip that path for the rest
+        # of the process's life — the leak this whole file exists to prevent.
+        cancel.tmp_root = None

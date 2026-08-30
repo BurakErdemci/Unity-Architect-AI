@@ -60,9 +60,16 @@ class TestACrashLeavesNothingToLeak(unittest.TestCase):
             root = os.path.join(workspace, ".gamachine_tmp", "video")
             stale = os.path.join(root, "vid_conv1_deadbeef")
             os.makedirs(stale)
-            with open(os.path.join(stale, "dl.mp4"), "wb") as f:
+            leftover = os.path.join(stale, "dl.mp4")
+            with open(leftover, "wb") as f:
                 f.write(b"half a download")
             old = time.time() - (ve._STALE_TEMP_AGE_S + 60)
+            # The CONTENTS are aged too, and that is what a crash actually looks
+            # like: after the process died nothing wrote into the directory
+            # again. The first version of this setup aged only the directory and
+            # left the file seconds old — which is the signature of a LIVE run,
+            # not of a dead one, and the sweep now (correctly) spares it.
+            os.utime(leftover, (old, old))
             os.utime(stale, (old, old))
 
             self.assertEqual(ve.sweep_stale_temp(workspace), 1)
@@ -77,6 +84,57 @@ class TestACrashLeavesNothingToLeak(unittest.TestCase):
             os.makedirs(live)
             self.assertEqual(ve.sweep_stale_temp(workspace), 0)
             self.assertTrue(os.path.isdir(live))
+
+    def test_a_live_run_is_spared_however_old_its_directory_is(self):
+        # Verification round, 30 Aug 2026, and this is the sweep's OWN defect:
+        # liveness was decided from directory mtime alone, so an extraction that
+        # was still running but had started before the threshold was deleted out
+        # from under its worker. A cleanup step that destroys live data is worse
+        # than the leak it was added to fix.
+        with tempfile.TemporaryDirectory() as workspace:
+            live = os.path.join(workspace, ".gamachine_tmp", "video", "active_turn")
+            os.makedirs(live)
+            payload = os.path.join(live, "dl.mp4")
+            with open(payload, "wb") as f:
+                f.write(b"still in use")
+            cancel = ve.ExtractionCancel()
+            cancel.tmp_root = live                 # what a running extract() owns
+            try:
+                old = time.time() - 10_000
+                os.utime(payload, (old, old))      # age EVERYTHING the sweep can see
+                os.utime(live, (old, old))
+                self.assertEqual(ve.sweep_stale_temp(workspace, max_age_s=1), 0)
+                self.assertTrue(os.path.isdir(live),
+                                "the sweep deleted a live extraction's directory")
+            finally:
+                cancel.tmp_root = None
+
+    def test_releasing_the_handle_makes_the_directory_sweepable_again(self):
+        # The other half: a registry that is never cleared would make the sweep
+        # skip that path forever, which is the very leak it exists to close.
+        with tempfile.TemporaryDirectory() as workspace:
+            done = os.path.join(workspace, ".gamachine_tmp", "video", "finished_turn")
+            os.makedirs(done)
+            cancel = ve.ExtractionCancel()
+            cancel.tmp_root = done
+            cancel.tmp_root = None
+            old = time.time() - 10_000
+            os.utime(done, (old, old))
+            self.assertEqual(ve.sweep_stale_temp(workspace, max_age_s=1), 1)
+
+    def test_a_directory_being_written_into_now_is_not_swept(self):
+        # The cross-process half. Another backend's live run is invisible to this
+        # process's handles, and a directory's own mtime does not move while a
+        # file inside it grows — so the mtime that counts is the newest one in it.
+        with tempfile.TemporaryDirectory() as workspace:
+            other = os.path.join(workspace, ".gamachine_tmp", "video", "other_process")
+            os.makedirs(other)
+            with open(os.path.join(other, "dl.mp4.part"), "wb") as f:
+                f.write(b"downloading right now")
+            old = time.time() - 10_000
+            os.utime(other, (old, old))            # the directory itself is old
+            self.assertEqual(ve.sweep_stale_temp(workspace, max_age_s=1), 0)
+            self.assertTrue(os.path.isdir(other))
 
     def test_the_sweep_is_quiet_when_there_is_nothing_to_sweep(self):
         with tempfile.TemporaryDirectory() as workspace:
