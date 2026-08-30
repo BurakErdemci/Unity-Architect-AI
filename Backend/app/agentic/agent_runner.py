@@ -972,6 +972,7 @@ Kullanıcıyla {'Türkçe' if self.language == 'tr' else 'İngilizce'} konuş.""
 
             # Retry mekanizması (429 hataları için daha agresif)
             response = None
+            _son_hata = ""          # son denemenin sebebi — tükenince kullanıcıya bu gidiyor
             for retry in range(3):
                 try:
                     response = await asyncio.to_thread(
@@ -980,13 +981,32 @@ Kullanıcıyla {'Türkçe' if self.language == 'tr' else 'İngilizce'} konuş.""
                         contents=contents,
                         config=config,
                     )
-                    break 
+                    break
                 except Exception as e:
                     err_msg = str(e).lower()
-                    # 429 (Hız Sınırı) veya 503 (Servis Kesintisi) durumlarında bekle ve tekrar dene
-                    if any(code in err_msg for code in ["429", "503", "too many requests", "service unavailable"]):
+                    # 429 (Hız Sınırı) / 503 (Servis Kesintisi) → bekle ve tekrar dene.
+                    #
+                    # Kod araması SINIR İLE: eski hâli `"429" in err_msg` idi ve
+                    # içinde 4293 gibi bir sayı geçen HERHANGİ bir hatayı kota
+                    # sanıp üç kez yeniden deniyordu — sonra da onu kullanıcıya
+                    # "kota" diye raporluyordu. Yanlış sınıflandırma, yanlış
+                    # teşhis ve 60 saniye boşa bekleme, hepsi tek `in` yüzünden.
+                    _kota = bool(re.search(r"(?<!\d)429(?!\d)", err_msg)) or "too many requests" in err_msg \
+                        or "resource_exhausted" in err_msg
+                    _kesinti = bool(re.search(r"(?<!\d)503(?!\d)", err_msg)) or "service unavailable" in err_msg \
+                        or "unavailable" in err_msg
+                    if _kota or _kesinti:
+                        _kod = "429" if _kota else "503"
+                        _son_hata = _kod
                         wait_time = (retry + 1) * 10
-                        logger.warning(f"  ⚠️ Google API Hatası ({'429' if '429' in err_msg else '503'}). {wait_time}s bekleniyor... (Deneme {retry+1}/3)")
+                        logger.warning(f"  ⚠️ Google API Hatası ({_kod}). {wait_time}s bekleniyor... (Deneme {retry+1}/3)")
+                        # Bekleme SESSİZ olmamalı: üç deneme 60 saniye sürüyor ve
+                        # o süre boyunca arayüze tek olay gitmiyordu — kullanıcı
+                        # donmuş bir uygulama görüyor. Sebebi söyleyip bekliyoruz.
+                        yield AgentEvent("status", {"detail": (
+                            f"🚦 Google {_kod} döndü ({'kota/hız sınırı' if _kod == '429' else 'servis meşgul'}) — "
+                            f"{wait_time} sn bekleniyor, deneme {retry + 1}/3"
+                        )})
                         await asyncio.sleep(wait_time)
                         continue
                     else:
@@ -994,9 +1014,20 @@ Kullanıcıyla {'Türkçe' if self.language == 'tr' else 'İngilizce'} konuş.""
                         logger.error(f"  ❌ Gemini API hatası [{self.model_name}]: {str(e)}", exc_info=True)
                         yield AgentEvent("error", {"message": f"AI hatası: {str(e)}"})
                         return
-            
+
             if not response:
-                yield AgentEvent("error", {"message": "AI yanıt vermeyi reddetti (Rate Limit)."})
+                # Eski metin "AI yanıt vermeyi reddetti (Rate Limit)." idi ve iki
+                # şeyi birden yanlış söylüyordu: reddeden model değil sağlayıcı,
+                # ve 503 (servis kesintisi) de aynı cümleyle "rate limit" diye
+                # raporlanıyordu. Hangi kodun geldiği loglarda vardı, kullanıcıda
+                # yoktu — yani teşhis için gereken tek bilgi atılıyordu.
+                _aciklama = {
+                    "429": "Google kota/hız sınırı nedeniyle üç denemede de isteği reddetti. "
+                           "Bir süre bekleyip tekrar dene ya da başka bir modele geç.",
+                    "503": "Google servisi üç denemede de meşgul döndü (503). Bu geçici; "
+                           "birazdan tekrar dene.",
+                }.get(_son_hata, "Sağlayıcıya üç denemede de ulaşılamadı.")
+                yield AgentEvent("error", {"message": _aciklama})
                 return
 
             if not response.candidates:
