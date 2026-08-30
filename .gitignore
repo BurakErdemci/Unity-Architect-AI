@@ -42,6 +42,7 @@ Backend/vendor/uv/
 # Video araçları (~126MB, ffmpeg+yt-dlp) — repoda tutulmaz.
 # Tekrar: pwsh Backend/vendor/fetch_video_bins.ps1  (mac/linux: bash fetch_video_bins.sh)
 Backend/vendor/bin/win/*.exe
+Backend/vendor/bin/*/.fetched
 Backend/vendor/bin/mac/
 Backend/vendor/bin/linux/
 

@@ -4,23 +4,52 @@ Video-to-chat özelliği **ffmpeg** + **yt-dlp** gerektirir. Kullanıcı hiçbir
 indirmesin diye bunlar app'e **bundle** edilir (`backend.spec` → `_video_bins`;
 frozen'da `_internal/bin/` altına düşer, `providers/video_bin.py` resolver oradan bulur).
 
-## Bu klasöre koy (Windows)
+## Nasıl gelir — ELLE DEĞİL, build adımı
 
-- `ffmpeg.exe` — https://www.gyan.dev/ffmpeg/builds/ (ffmpeg-release-essentials.zip → `bin/ffmpeg.exe`)
-- `yt-dlp.exe` — https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe
+```
+Frontend/frontend » npm run build        # prebuild bunu kendisi çağırır
+```
 
-Yoksa: **build kırılmaz** ama frozen app'te video çalışmaz. (Dev'de PATH'teki
-ffmpeg/yt-dlp kullanılır — resolver PATH'e düşer.)
+Zinciri: `prebuild` → `scripts/fetch-video-bins.js` → platforma göre
+`Backend/vendor/fetch_video_bins.ps1` (Windows) ya da `.sh` (mac/linux) →
+`Backend/vendor/bin/<os>/`.
 
-## Commit stratejisi (KULLANICI KARARI — bekliyor)
+Elle çağırmak istersen:
 
-Bu `.exe`'ler büyük (~80-100MB). Repo'ya nasıl gireceği netleşmeli:
-- **Git LFS** ile commit (`git lfs track "Backend/vendor/bin/win/*.exe"`), veya
-- **.gitignore + build-öncesi indirme script'i** (repo temiz kalır, CI/kullanıcı build'de indirir).
+```
+node Frontend/frontend/scripts/fetch-video-bins.js
+```
 
-Karar verilene kadar `.exe`'ler repo'ya **EKLENMEDİ** (yalnız bu README + `backend.spec` wiring hazır).
+Sarmalayıcı, sabitlenmiş özetler değişmediyse indirmeyi **atlar** (`.fetched`
+damgası). Platform script'lerinin kendisinde atlama yok — her çağrıda 126 MB
+yeniden iner; idempotanlık bilerek sarmalayıcıda, çünkü tekrar tekrar koşulan
+şey build adımı.
+
+⚠️ **`pwsh` VARSAYMA.** Bu depodaki eski yorumlar `pwsh Backend/vendor/...`
+diyor ama PowerShell 7 kurulu olmayabilir (ölçüldü 30 Ağu 2026, bu makinede
+yok). Sarmalayıcı önce `pwsh`, sonra Windows'un kendi `powershell`'ini deniyor.
+
+## Dev modunda
+
+`video_bin.py` çözümleyicisi `Backend/vendor/bin/<os>/` klasörüne de bakıyor,
+yani indirdikten sonra `npm run dev` altında da bulunuyor — sistem PATH'ine
+gerek yok. (30 Ağu 2026'ya kadar bakmıyordu: ikili indirilse bile bulunamıyor,
+PATH'e düşülüyordu ve PATH'te yoksa video sessizce atlanıyordu.)
+
+Binary yoksa **build kırılmaz**; frozen app'te video çalışmaz ve kullanıcı
+`video_binary_missing` uyarısını görür.
+
+## Commit stratejisi — KARAR VERİLDİ (30 Ağu 2026)
+
+`.gitignore` + build-öncesi indirme. Git LFS seçilmedi: ikililer sürüm
+başına ~126 MB ve `pinned_assets.json` zaten adres+özet taşıdığı için depoda
+tutmanın getirdiği tek şey boyut olurdu.
+
+Bu bölüm uzun süre "karar bekliyor" diyordu ve o yüzden **hiçbir şey indirilmedi** —
+script'ler yazılmıştı, `backend.spec` wiring'i hazırdı, `.gitignore` yorumu
+script'leri adıyla anıyordu, ama onları çağıran bir adım yoktu.
 
 ## Lisans
 
-- ffmpeg: LGPL build (redistribution serbest). NOTICE'a eklenecek.
+- ffmpeg: LGPL build (redistribution serbest). `THIRD-PARTY-NOTICES.md`'de.
 - yt-dlp: Unlicense (serbest).

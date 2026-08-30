@@ -9,6 +9,29 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _vendor_dir():
+    """Depodaki `Backend/vendor/bin/<os>/` — GELİŞTİRME modunun kaynağı.
+
+    `fetch_video_bins.ps1/.sh` ikilileri tam buraya indiriyor ve `backend.spec`
+    paketlenmiş build için oradan alıyor. Ama dev'de `sys.executable` venv'in
+    python'u, yani aday dizinler `Backend/venv/Scripts/bin` oluyordu ve vendor
+    klasörüne HİÇ bakılmıyordu: ikililer indirilmiş olsa bile bulunamıyordu ve
+    çözümleyici sistem PATH'ine düşüyordu.
+
+    Bedeli sahada ölçüldü (Burak, 30 Ağu 2026): yt-dlp makinede kuruluydu ama
+    `~/bin` Windows PATH'inde olmadığı için video sessizce atlandı.
+    """
+    if sys.platform == "win32":
+        bin_os = "win"
+    elif sys.platform == "darwin":
+        bin_os = "mac"
+    else:
+        bin_os = "linux"
+    # providers/ → app/ → Backend/
+    backend = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    return os.path.join(backend, "vendor", "bin", bin_os)
+
+
 def _candidate_dirs():
     dirs = []
     mp = getattr(sys, "_MEIPASS", None)
@@ -19,6 +42,9 @@ def _candidate_dirs():
     exe_dir = os.path.dirname(sys.executable)
     dirs.append(os.path.join(exe_dir, "bin"))
     dirs.append(exe_dir)
+    # Depo vendor'ı EN SONDA: paketlenmiş bir kopyada bu yol zaten yok, ve
+    # varsa bile bundle'ın kendi ikilisi öncelikli olmalı.
+    dirs.append(_vendor_dir())
     return dirs
 
 
