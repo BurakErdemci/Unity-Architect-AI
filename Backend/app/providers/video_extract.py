@@ -15,7 +15,7 @@ import subprocess
 from urllib.parse import urlparse
 from typing import List, Optional
 
-from providers.video_bin import ffmpeg_path, ytdlp_path
+from providers.video_bin import ffmpeg_path, ytdlp_path, missing_binaries
 
 # `spawn_env` app KÖKÜNDE duruyor, `providers` paketinin içinde değil (bkz. o
 # dosyanın başındaki gerekçe). Üretimde `Backend/app` zaten sys.path'te (main.py
@@ -35,6 +35,24 @@ _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 _TMP_SUBDIR = os.path.join(".gamachine_tmp", "video")
 _FRAME_CAP = 60
+
+
+class VideoPipelineError(RuntimeError):
+    """Carries WHICH STAGE of the pipeline failed and WHY.
+
+    Why a plain `RuntimeError` was not enough: `_prepare_videos` turned every
+    exception into the single text "a video could not be processed", so a
+    missing binary and a dead link looked the same to the user — while their
+    fixes are entirely different. `code` is the machine-readable name the
+    frontend reads; `stage` is the diagnostic step that goes to the log.
+    """
+
+    def __init__(self, code: str, message: str, stage: str, detail: str = ""):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.stage = stage
+        self.detail = detail or message
 
 
 class ExtractResult:
@@ -248,6 +266,7 @@ def _download_url(url: str, out_dir: str):
     p = urlparse(url or "")
     if p.scheme not in ("http", "https") or not p.netloc:
         raise ValueError("desteklenmeyen video URL'si (yalnız http/https)")
+    logger.info(f"[video_extract] aşama=indirme başlıyor ({p.netloc})")
     out_tmpl = os.path.join(out_dir, "dl.%(ext)s")
     # 1) VİDEO (kritik yol). Altyazı flag'i YOK — böylece altyazı hatası (429/yok/ağ)
     #    videoyu DÜŞÜRMEZ. Format yatay VE dikey (Shorts) için sağlam: 1080'i her iki
@@ -264,6 +283,7 @@ def _download_url(url: str, out_dir: str):
     #    hatası yutulur → transkript alınamasa bile kareler yine döner.
     transcript = ""
     try:
+        logger.info("[video_extract] aşama=altyazı başlıyor")
         _run([ytdlp_path(), "--no-playlist", "--no-warnings", "--skip-download",
               "--write-auto-subs", "--write-subs", "--sub-langs", "en.*,tr.*",
               "--convert-subs", "vtt", "-o", out_tmpl, "--", url], timeout=120, check=False)
@@ -271,8 +291,10 @@ def _download_url(url: str, out_dir: str):
         if subs:
             with open(subs[0], encoding="utf-8", errors="ignore") as f:
                 transcript = parse_vtt(f.read())
-    except Exception:
-        pass
+    except Exception as e:
+        # Deliberately swallowed (frames are useful without a transcript) but no
+        # longer SILENT: which stage fell over is now readable from the log.
+        logger.warning(f"[video_extract] aşama=altyazı başarısız (kareler yine de sürecek): {e}")
     return vids[0], transcript, os.path.basename(url) or "url-video"
 
 
@@ -282,25 +304,65 @@ def extract(source: dict, workspace: Optional[str], tag: str) -> ExtractResult:
     tmp_root = os.path.join(_attach_root(workspace), f"{tag}_{uuid.uuid4().hex[:8]}")
     os.makedirs(tmp_root, exist_ok=True)
     try:
+        # Binary gate goes FIRST: diagnosing a missing ffmpeg/yt-dlp backwards
+        # from the subprocess failure was near impossible (the error text is
+        # generic, "the system cannot find the file specified"). Here the NAME of
+        # what is missing is known and can be shown to the user.
+        _missing = missing_binaries(need_ytdlp=(kind == "url"))
+        if _missing:
+            _ad = " ve ".join(_missing)
+            raise VideoPipelineError(
+                "video_binary_missing",
+                f"Videoyu işlemek için gereken {_ad} programı bu bilgisayarda bulunamadı; "
+                "video atlandı, sohbet metinle sürüyor.",
+                stage="binary_resolve",
+                detail=f"çözülemeyen binary: {', '.join(_missing)}")
+
         transcript = ""
         if kind == "path":
             video_path = source.get("path")
             if not video_path or not os.path.isfile(video_path):
-                raise FileNotFoundError(f"video bulunamadı: {video_path}")
+                raise VideoPipelineError(
+                    "video_download_failed",
+                    "Eklenen video dosyası bulunamadı.",
+                    stage="kaynak", detail=f"video bulunamadı: {video_path}")
             # GÜVENLİK: mutlak yola normalize et → ffmpeg '-i' argümanı '-' ile başlayıp
             # flag gibi yorumlanamaz (argv flag-smuggling savunması).
             video_path = os.path.abspath(video_path)
             name = source.get("name") or os.path.basename(video_path)
         elif kind == "url":
-            video_path, transcript, name = _download_url(source.get("url") or "", tmp_root)
+            try:
+                video_path, transcript, name = _download_url(source.get("url") or "", tmp_root)
+            except VideoPipelineError:
+                raise
+            except Exception as e:
+                raise VideoPipelineError(
+                    "video_download_failed",
+                    "Videonun linki indirilemedi (link kapalı, bölgesel kısıtlı ya da "
+                    "ağ engelli olabilir); video atlandı, sohbet metinle sürüyor.",
+                    stage="indirme", detail=f"{type(e).__name__}: {e}") from e
         else:
-            raise ValueError(f"bilinmeyen video kaynağı: {kind!r}")
+            raise VideoPipelineError(
+                "video_extract_failed", "Bu video kaynağı tanınmadı.",
+                stage="kaynak", detail=f"bilinmeyen video kaynağı: {kind!r}")
 
-        duration = _probe_duration(video_path)
-        fps, cap = budget_fps(duration)
-        raw = _extract_frames(video_path, tmp_root, fps, cap)
+        try:
+            logger.info("[video_extract] aşama=süre ölçümü")
+            duration = _probe_duration(video_path)
+            fps, cap = budget_fps(duration)
+            logger.info(f"[video_extract] aşama=kare çıkarma (süre≈{duration:.0f}s, fps={fps})")
+            raw = _extract_frames(video_path, tmp_root, fps, cap)
+        except Exception as e:
+            raise VideoPipelineError(
+                "video_extract_failed",
+                "Videodan görüntü çıkarılamadı; video atlandı, sohbet metinle sürüyor.",
+                stage="kare çıkarma", detail=f"{type(e).__name__}: {e}") from e
         if not raw:
-            raise RuntimeError("hiç kare çıkarılamadı")
+            raise VideoPipelineError(
+                "video_extract_failed",
+                "Videodan hiç görüntü çıkmadı (dosya bozuk ya da desteklenmeyen bir "
+                "biçimde olabilir); video atlandı, sohbet metinle sürüyor.",
+                stage="kare çıkarma", detail="ffmpeg 0 kare üretti")
         sigs = [_frame_signature(p) for p in raw]
         keep = dedup_indices(sigs, threshold=2.0)
         kept = [raw[i] for i in keep][:cap]

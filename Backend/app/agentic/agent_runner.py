@@ -481,18 +481,25 @@ class AgentRunner:
                 f"model olduğun sorulursa BUNU söyle; farklı bir model (Claude/GPT/Gemini vb.) "
                 f"olduğunu İDDİA ETME.")
 
-    async def _prepare_videos(self, user_message: str) -> str:
+    async def _prepare_videos(self, user_message: str) -> "tuple[str, list[dict]]":
         """Videoları (yerel dosya + mesaja YAPIŞTIRILAN URL) kare data-URI'leri + transkripte
         çevirip mevcut görsel hattına enjekte eder. Kareler self.images'a katılır (sağlayıcı
         yolları DEĞİŞMEZ), transkript+bağlam bloğu user_message'ın başına eklenir. URL'ler
-        ayrı UI'dan değil doğrudan mesaj metninden otomatik yakalanır. Hata YUMUŞAK."""
+        ayrı UI'dan değil doğrudan mesaj metninden otomatik yakalanır.
+
+        Returns (message, warnings). Failure is still SOFT — a video error must
+        not kill the chat — but no longer SILENT: the second item is a list of
+        dicts to be emitted as `warning` events. Before this, every exception
+        collapsed into one text string and NO event reached the user, so a
+        missing program and a dead link looked identical on screen.
+        """
         from providers import video_extract
         videos = list(self.videos or [])
         for _u in video_extract.detect_video_urls(user_message):
             videos.append({"kind": "url", "url": _u})
         if not videos:
-            return user_message
-        blocks, all_uris = [], []
+            return user_message, []
+        blocks, all_uris, warnings = [], [], []
         for src in videos:
             try:
                 res = await asyncio.to_thread(
@@ -500,12 +507,24 @@ class AgentRunner:
                     f"vid_conv{self.conversation_id}")
                 all_uris.extend(res.frame_data_uris)
                 blocks.append(video_extract.build_video_block(res.meta, res.transcript))
+            except video_extract.VideoPipelineError as e:
+                logger.warning(f"[video] aşama={e.stage} kod={e.code}: {e.detail}")
+                warnings.append({"code": e.code, "message": e.message, "detail": e.detail})
+                blocks.append(f"\n\n[VİDEO] Bir video işlenemedi ({e.detail}). Metinle devam et.\n")
             except Exception as e:
-                logger.warning(f"[video] çıkarım hatası: {e}")
+                # An unclassified error must be visible too, otherwise the silence
+                # comes back through exactly the hole we just closed.
+                logger.warning(f"[video] sınıflandırılmamış çıkarım hatası: {e}", exc_info=True)
+                warnings.append({
+                    "code": "video_extract_failed",
+                    "message": "Video işlenemedi; video atlandı, sohbet metinle sürüyor.",
+                    "detail": f"{type(e).__name__}: {e}",
+                })
                 blocks.append(f"\n\n[VİDEO] Bir video işlenemedi ({e}). Metinle devam et.\n")
         if all_uris:
             self.images = (self.images or []) + all_uris
-        return ("".join(blocks) + "\n" + user_message) if blocks else user_message
+        message = ("".join(blocks) + "\n" + user_message) if blocks else user_message
+        return message, warnings
 
     async def run(self, user_message: str) -> AsyncGenerator[AgentEvent, None]:
         """Turun MODUNU kaydeder, sonra asıl döngüyü çalıştırır.
@@ -532,7 +551,12 @@ class AgentRunner:
         """
         Agentic loop'u çalıştırır. Her adımda AgentEvent yield eder.
         """
-        user_message = await self._prepare_videos(user_message)
+        user_message, _video_warnings = await self._prepare_videos(user_message)
+        # Video warnings are emitted BEFORE the provider branch: `_prepare_videos`
+        # runs for every provider, so emitting here closes all nine paths at once —
+        # putting it inside the branches would again close only one.
+        for _w in _video_warnings:
+            yield AgentEvent("warning", _w)
         if self.provider_type == "google":
             async for event in self._run_gemini(user_message):
                 yield event

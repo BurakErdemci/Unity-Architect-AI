@@ -22,12 +22,29 @@ def _candidate_dirs():
     return dirs
 
 
-def _resolve(name: str, exe: str) -> str:
+def _find(name: str, exe: str):
+    """Returns the path actually found, or ``None``.
+
+    Separate from `_resolve`, which falls back to the bare name and so left the
+    caller unable to TELL APART "found it" from "not found, will try the bare
+    name". The cost of not telling them apart was measured: a missing binary
+    blows up inside subprocess, the error lands in `_prepare_videos`'s broad
+    `except`, and the user saw nothing beyond "a video could not be processed".
+
+    ⚠️ On Windows the extension is not necessarily `.exe`: on this machine
+    yt-dlp is installed as `~/bin/yt-dlp.CMD` (measured 30 Aug 2026) and
+    `shutil.which` finds it through PATHEXT — searching the bundle dir for an
+    `.exe` alone would have called it missing.
+    """
     for d in _candidate_dirs():
         p = os.path.join(d, exe)
         if os.path.exists(p):
             return p
-    found = shutil.which(name)
+    return shutil.which(name)
+
+
+def _resolve(name: str, exe: str) -> str:
+    found = _find(name, exe)
     if found:
         return found
     logger.warning(f"[video_bin] '{name}' bulunamadı (bundle/PATH); çıplak isimle denenecek")
@@ -40,3 +57,13 @@ def ffmpeg_path() -> str:
 
 def ytdlp_path() -> str:
     return _resolve("yt-dlp", "yt-dlp.exe" if os.name == "nt" else "yt-dlp")
+
+
+def missing_binaries(need_ytdlp: bool) -> "list[str]":
+    """Names of the binaries that could not be resolved (empty = all present)."""
+    missing = []
+    if not _find("ffmpeg", "ffmpeg.exe" if os.name == "nt" else "ffmpeg"):
+        missing.append("ffmpeg")
+    if need_ytdlp and not _find("yt-dlp", "yt-dlp.exe" if os.name == "nt" else "yt-dlp"):
+        missing.append("yt-dlp")
+    return missing

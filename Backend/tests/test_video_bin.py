@@ -23,6 +23,27 @@ class TestVideoBin(unittest.TestCase):
                  mock.patch.object(vb.shutil, "which", lambda name: "/should/not/be/used"):
                 self.assertEqual(vb.ffmpeg_path(), os.path.join(bin_dir, exe))
 
+    def test_missing_binaries_names_what_is_missing(self):
+        # `_resolve` falling back to the bare name made "found" and "not found"
+        # indistinguishable; `missing_binaries` is exactly that distinction.
+        with mock.patch.object(vb, "_candidate_dirs", lambda: []), \
+             mock.patch.object(vb.shutil, "which", lambda name: None):
+            self.assertEqual(vb.missing_binaries(need_ytdlp=True), ["ffmpeg", "yt-dlp"])
+            self.assertEqual(vb.missing_binaries(need_ytdlp=False), ["ffmpeg"])
+
+    def test_missing_binaries_empty_when_all_resolve(self):
+        with mock.patch.object(vb, "_candidate_dirs", lambda: []), \
+             mock.patch.object(vb.shutil, "which", lambda name: f"/usr/bin/{name}"):
+            self.assertEqual(vb.missing_binaries(need_ytdlp=True), [])
+
+    def test_extract_names_the_missing_binary_instead_of_dying_in_subprocess(self):
+        import providers.video_extract as ve
+        with mock.patch.object(ve, "missing_binaries", lambda need_ytdlp: ["yt-dlp"]):
+            with self.assertRaises(ve.VideoPipelineError) as cm:
+                ve.extract({"kind": "url", "url": "https://youtu.be/x"}, None, "t")
+        self.assertEqual(cm.exception.code, "video_binary_missing")
+        self.assertIn("yt-dlp", cm.exception.message)
+
     def test_meipass_maps_to_bin_subdir(self):
         # _candidate_dirs, sys._MEIPASS altındaki /bin'i döndürmeli
         with tempfile.TemporaryDirectory() as td:
