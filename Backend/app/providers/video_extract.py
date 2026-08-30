@@ -223,9 +223,11 @@ def _run(cmd: list, timeout: int, check: bool = True):
     yok; onlara bir aile vermek tam da kapattığımız sızıntıyı geri açardı.
     Taban katman (`_BASE_ENV_ALLOWLIST`) bu iki ikilinin okuduğu işletimsel
     adların hepsini zaten taşıyor ve her biri gerekli:
-      · PATH        — yt-dlp video+ses akışlarını BİRLEŞTİRMEK için ffmpeg'i
-                      PATH'ten arıyor; ayrıca frozen olmayan kurulumda
+      · PATH        — yt-dlp altyazıyı vtt'ye çevirmek için (`--convert-subs`)
+                      ffmpeg'i kendisi arıyor; ayrıca frozen olmayan kurulumda
                       ikililerin kendisi de PATH'ten çözülüyor (video_bin).
+                      (Eskiden burada "video+ses BİRLEŞTİRMEK için" yazıyordu;
+                      artık ses hiç indirilmiyor, birleştirme adımı yok.)
       · HOME/XDG_*  — yt-dlp'nin config ve cache dizini (~/.config/yt-dlp,
                       ~/.cache/yt-dlp); Windows'ta USERPROFILE/APPDATA.
       · TMPDIR/TMP/TEMP — yt-dlp parça dosyalarını, PyInstaller ile paketlenmiş
@@ -244,6 +246,69 @@ def _run(cmd: list, timeout: int, check: bool = True):
     """
     return subprocess.run(cmd, capture_output=True, timeout=timeout, check=check,
                           creationflags=_NO_WINDOW, env=build_spawn_env())
+
+
+def _subprocess_stderr(e: Exception) -> str:
+    """The failing tool's own stderr, or ``""``.
+
+    `CalledProcessError` and `TimeoutExpired` both carry it; anything else does
+    not, and an absent stream must read as empty rather than as a reason.
+    """
+    raw = getattr(e, "stderr", None)
+    if isinstance(raw, (bytes, bytearray)):
+        raw = raw.decode("utf-8", "ignore")
+    return raw if isinstance(raw, str) else ""
+
+
+def _tool_error_detail(e: Exception) -> str:
+    """`Type: message` plus the tail of the tool's own stderr — FOR THE LOG.
+
+    Measured 30 Aug 2026, and this is the whole reason the function exists:
+    `_run` captures stderr, so `CalledProcessError`'s text is only "Command
+    '[...]' returned non-zero exit status 1." — argv and nothing else. A real
+    field failure ("HTTP Error 403: Forbidden" on the audio stream) therefore
+    left NO trace of its cause anywhere; diagnosing it meant reproducing the
+    download by hand. The tool knew the answer and we were throwing it away.
+
+    Only the last few lines are kept: yt-dlp writes a progress line per chunk,
+    so the whole stream is thousands of lines of noise ending in the reason.
+    This string never leaves the backend — `client_detail` still ships only the
+    exception class name.
+    """
+    detail = f"{type(e).__name__}: {e}"
+    lines = [ln.strip() for ln in _subprocess_stderr(e).splitlines() if ln.strip()]
+    if lines:
+        detail += " | stderr: " + " ⏎ ".join(lines[-3:])[:600]
+    return detail
+
+
+# Reason classes worth telling apart, because the advice differs. Everything
+# else keeps the generic message — a wrong specific reason is worse than an
+# honest vague one, which is exactly what the single old message risked: it
+# blamed "dead link / geo-block / firewall" for a 403 that was none of those.
+_REFUSED_RE = re.compile(r"http error 40[13]|forbidden|sign in to confirm", re.I)
+_GONE_RE = re.compile(r"private video|members[- ]only|video unavailable|"
+                      r"removed by the uploader|has been terminated", re.I)
+# "available in your country" bilerek geniş: yt-dlp'nin gerçek cümlesi
+# "has not made this video available in your country" ve ilk yazılan dar desen
+# ("not available in your country") onu KAÇIRIYORDU — testte yakalandı.
+_GEO_RE = re.compile(r"available in your country|blocked it in your country|geo[- ]restrict", re.I)
+
+
+def download_failure_message(stderr_text: str) -> str:
+    """User-facing sentence for a failed download, chosen from the tool's stderr."""
+    if _GEO_RE.search(stderr_text):
+        return ("Video bu ülkeden izlenemiyor (yayıncı bölgesel kısıtlama koymuş); "
+                "video atlandı, sohbet metinle sürüyor.")
+    if _GONE_RE.search(stderr_text):
+        return ("Video artık açık değil (özel, üyelere özel ya da kaldırılmış); "
+                "video atlandı, sohbet metinle sürüyor.")
+    if _REFUSED_RE.search(stderr_text):
+        return ("Video sitesi indirmeyi reddetti (403) — genelde geçici bir kısıtlama, "
+                "biraz sonra yeniden denemek işe yarayabilir; video atlandı, "
+                "sohbet metinle sürüyor.")
+    return ("Videonun linki indirilemedi (link kapalı, bölgesel kısıtlı ya da "
+            "ağ engelli olabilir); video atlandı, sohbet metinle sürüyor.")
 
 
 def _probe_duration(video_path: str) -> float:
@@ -367,9 +432,8 @@ def extract(source: dict, workspace: Optional[str], tag: str) -> ExtractResult:
             except Exception as e:
                 raise VideoPipelineError(
                     "video_download_failed",
-                    "Videonun linki indirilemedi (link kapalı, bölgesel kısıtlı ya da "
-                    "ağ engelli olabilir); video atlandı, sohbet metinle sürüyor.",
-                    stage="indirme", detail=f"{type(e).__name__}: {e}") from e
+                    download_failure_message(_subprocess_stderr(e)),
+                    stage="indirme", detail=_tool_error_detail(e)) from e
         else:
             raise VideoPipelineError(
                 "video_extract_failed", "Bu video kaynağı tanınmadı.",
@@ -385,7 +449,7 @@ def extract(source: dict, workspace: Optional[str], tag: str) -> ExtractResult:
             raise VideoPipelineError(
                 "video_extract_failed",
                 "Videodan görüntü çıkarılamadı; video atlandı, sohbet metinle sürüyor.",
-                stage="kare çıkarma", detail=f"{type(e).__name__}: {e}") from e
+                stage="kare çıkarma", detail=_tool_error_detail(e)) from e
         if not raw:
             raise VideoPipelineError(
                 "video_extract_failed",
