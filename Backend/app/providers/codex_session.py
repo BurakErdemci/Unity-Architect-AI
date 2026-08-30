@@ -22,6 +22,7 @@ Yield edilen event'ler AgentEvent.data şekline uyar (claude_sdk_session ile ayn
 text / thinking / tool_call / tool_result / command_approval_needed / response / done / error.
 """
 import asyncio
+import collections
 import json
 import logging
 import os
@@ -214,6 +215,13 @@ async def fetch_codex_skills(cwd: Optional[str] = None, force: bool = False) -> 
                     await asyncio.wait_for(proc.wait(), timeout=5)
                 except Exception:
                     pass
+
+
+# How many finished turn ids to remember. Staleness here is measured in the
+# milliseconds between one turn ending and the next starting, not in turns,
+# so a handful covers every reachable ordering; the bound exists so a long
+# session cannot grow the set without limit.
+_RETIRED_TURN_IDS_MAX = 8
 
 
 def _notification_turn_id(params: dict) -> Optional[str]:
@@ -473,6 +481,11 @@ class CodexSession:
         self._cancel_event: Optional[asyncio.Event] = None
         # Aktif turun sonlanma olayı gitti mi — bkz. `_emit_terminal`.
         self._terminal_sent = False
+        # Sonlanmış turların kimlikleri. Biten bir tur SONSUZA DEK bayattır;
+        # `_handle_notification` bunu, canlı turun kimliği henüz bilinmezken
+        # bile reddedebilmek için kullanıyor (bkz. oradaki gerekçe).
+        self._retired_turn_ids: "collections.deque[str]" = collections.deque(
+            maxlen=_RETIRED_TURN_IDS_MAX)
         self._active_gate_ids: Set[str] = set()
         # İlk turda DB bağlam özeti enjekte edildi mi (sonraki turlarda thread hatırlıyor)
         self._ctx_injected = False
@@ -755,6 +768,10 @@ class CodexSession:
         if q is None or self._terminal_sent:
             return False
         self._terminal_sent = True
+        # The turn is over, so its id is stale from here on. Recorded at the one
+        # gate every ending goes through, which is why no ending can forget to.
+        if self._current_turn_id:
+            self._retired_turn_ids.append(self._current_turn_id)
         await q.put(event)
         await q.put(None)  # sentinel → stream biter
         return True
@@ -790,9 +807,33 @@ class CodexSession:
         # is not evidence of staleness: `stream()` clears `_current_turn_id` and
         # only learns the new one when `turn/start` returns, so the live turn's
         # own first notifications can legitimately arrive while the session-side
-        # id is still None — rejecting those would drop real work to close a
-        # race that has not been observed.
+        # id is still None — rejecting those would drop real work.
+        #
+        # That rule is right and stays, but it left a window, and the third
+        # verification round measured it (30 Aug 2026): between `stream()`
+        # installing the new queue and `turn/start` replying, the session-side
+        # id is None, so a delayed completion for the turn just cancelled was
+        # accepted and spent the new turn's terminal gate — the new turn ended
+        # instantly carrying the dead turn's answer. Worse, nothing downstream
+        # could notice: the stale `done` carries no `stop_reason`, so
+        # `_normalize_session_event` stamps it `complete` and it reads as a
+        # perfectly ordinary success.
+        #
+        # The window is closed from the other side instead of by tightening the
+        # rule above. A turn that has ENDED is stale forever, whatever the live
+        # turn's id happens to be at this instant — so retired ids are
+        # remembered and always rejected. `_RETIRED_TURN_IDS_MAX` bounds the
+        # memory; a handful is plenty because staleness is measured in the
+        # milliseconds between one turn ending and the next starting, not in
+        # turns.
         msg_turn_id = _notification_turn_id(params)
+        if msg_turn_id and msg_turn_id in self._retired_turn_ids:
+            logger.debug(
+                "[CodexSession:%s] BİTMİŞ tura ait bildirim atlandı "
+                "(method=%s, bildirim=%s)",
+                self.conversation_id, method, msg_turn_id,
+            )
+            return
         if msg_turn_id and self._current_turn_id and msg_turn_id != self._current_turn_id:
             logger.debug(
                 "[CodexSession:%s] geçmiş tura ait bildirim atlandı "

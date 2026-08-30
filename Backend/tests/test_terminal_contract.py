@@ -505,6 +505,79 @@ async def _cancel_then_start_next(sess):
     return yeni_kuyruk
 
 
+async def _cancel_then_start_next_unknown_id(sess):
+    """`stream()`in gercek sirasi: yeni kuyruk KURULUR, kimlik SILINIR, ve yeni
+    kimlik ancak `turn/start` cevabiyla ogrenilir. Aradaki pencere bu."""
+    async def kabul_eden_interrupt(_method, _params, timeout=60):
+        return {"result": {}}
+
+    sess._request = kabul_eden_interrupt
+    await sess.cancel_turn()
+
+    yeni_kuyruk: asyncio.Queue = asyncio.Queue()
+    sess._out_q = yeni_kuyruk
+    sess._current_turn_id = None      # turn/start henuz cevaplamadi
+    sess._terminal_sent = False
+    sess._final_text = ""
+    return yeni_kuyruk
+
+
+def test_a_late_completion_cannot_end_a_turn_whose_id_is_not_known_yet():
+    """Ucuncu dogrulama turunun bulgusu (30 Agu 2026).
+
+    "Iki BILINEN ve farkli kimlik reddeder" kurali dogruydu ama bir pencere
+    birakiyordu: `stream()` yeni kuyrugu kurup kimligi siliyor, ve yeni kimlik
+    ancak sunucu cevabiyla geliyor. O aralikta gelen eski bitis canli sayiliyor,
+    yeni turun sonlanma kapisini harciyor ve tur eski turun cevabiyla bitiyordu.
+    Asagi tarafta fark edilmesi de imkansizdi: bayat `done` bir `stop_reason`
+    tasimadigi icin `_normalize_session_event` ona `complete` damgasini vuruyor.
+
+    Pencere kurali SIKILASTIRARAK degil, ters taraftan kapatildi: BITMIS bir tur
+    sonsuza dek bayattir, canli turun kimligi o an bilinsin ya da bilinmesin.
+    """
+
+    async def exercise():
+        sess = _codex_after_cancel_then_new_turn(997)
+        q = await _cancel_then_start_next_unknown_id(sess)
+        await sess._handle_notification({
+            "method": "turn/completed",
+            "params": {"turn": {"id": "turn-old"}},
+        })
+        return _drain_all(q), sess._terminal_sent
+
+    tipler, kapandi = asyncio.run(exercise())
+    assert tipler == [], f"kimlik bilinmezken bayat bitis sizdi: {tipler}"
+    assert not kapandi, "yeni turun sonlanma kapisi eski turla harcandi"
+
+
+def test_an_unknown_id_notification_from_the_live_turn_is_still_delivered():
+    """Kapinin TERS yonu, ve bu testin varlik sebebi: pencereyi 'bilinmeyen
+    kimligi de reddet' diye kapatmak gercek isi coper. Canli turun kendi ilk
+    bildirimleri tam da o aralikta geliyor."""
+
+    async def exercise():
+        sess = _codex_after_cancel_then_new_turn(998)
+        q = await _cancel_then_start_next_unknown_id(sess)
+        await sess._handle_notification({
+            "method": "item/agentMessage/delta",
+            "params": {"turnId": "turn-new", "delta": "canli metin"},
+        })
+        return _drain_all(q)
+
+    assert "text" in asyncio.run(exercise())
+
+
+def test_only_a_bounded_number_of_finished_turn_ids_is_remembered():
+    """Sinir olmadan hatirlamak, uzun bir oturumda sinirsiz buyuyen bir kume
+    demek olurdu."""
+    from providers.codex_session import _RETIRED_TURN_IDS_MAX
+
+    sess = _codex_after_cancel_then_new_turn(999)
+    for i in range(_RETIRED_TURN_IDS_MAX * 3):
+        sess._retired_turn_ids.append(f"turn-{i}")
+    assert len(sess._retired_turn_ids) == _RETIRED_TURN_IDS_MAX
+
+
 def test_a_late_completion_from_a_cancelled_turn_does_not_end_the_next_turn():
     async def exercise():
         sess = _codex_after_cancel_then_new_turn(995)
