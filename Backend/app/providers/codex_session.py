@@ -216,6 +216,35 @@ async def fetch_codex_skills(cwd: Optional[str] = None, force: bool = False) -> 
                     pass
 
 
+def _notification_turn_id(params: dict) -> Optional[str]:
+    """Turn id an app-server notification declares, or ``None`` when it declares none.
+
+    Two shapes are on the wire: nested ``params.turn.id`` (``turn/completed``)
+    and a flat ``params.turnId`` (item notifications). The flat one is matched by
+    NORMALIZED KEY NAME, not by exact spelling — this file already paid for the
+    other approach in `bul_onay_hakemi`: a fixed spelling list grows one edge per
+    casing (``turnId`` / ``turn_id`` / ``TurnID``) and every miss fails silently,
+    while "keep letters and digits, lowercase" is a finite rule that also covers
+    spellings nobody has seen yet.
+
+    Deliberately shallow: only the notification envelope is inspected. A turn id
+    found deep inside an item payload would describe the item, not the message's
+    own turn, and treating it as the message's turn would reject live events.
+    """
+    if not isinstance(params, dict):
+        return None
+    for key, value in params.items():
+        if isinstance(key, str) and "".join(c for c in key if c.isalnum()).lower() == "turnid":
+            if isinstance(value, str) and value:
+                return value
+    turn = params.get("turn")
+    if isinstance(turn, dict):
+        tid = turn.get("id")
+        if isinstance(tid, str) and tid:
+            return tid
+    return None
+
+
 def _describe_approval(method: str, params: dict) -> str:
     """Onay kartında gösterilecek kısa açıklama."""
     cmd = params.get("command")
@@ -737,6 +766,40 @@ class CodexSession:
             return  # tur dışı bildirim (ör. remoteControl/status) — yok say
         method = msg.get("method", "")
         params = msg.get("params", {}) or {}
+
+        # ── Bu bildirim ŞU ANKİ tura mı ait? ─────────────────────────────
+        # A notification names its turn and the session already tracks the turn
+        # that is running, so no parallel notion of "which turn" is introduced
+        # here. When both ids are known and differ, the message is about a turn
+        # NOBODY IS WAITING FOR — typically the app-server's delayed
+        # `turn/completed` for a turn we cancelled, landing after the next turn
+        # installed its own queue and reset `_terminal_sent`. It is DROPPED, not
+        # forwarded and not queued for later: the old turn already received its
+        # one terminal from `cancel_turn`, and forwarding would end the live turn
+        # early while showing the dead turn's answer as its own (measured,
+        # 30 Aug 2026).
+        #
+        # The test lives at the TOP of the handler, not inside `turn/completed`:
+        # `error` is the other terminal producer and would end the live turn the
+        # same way, while a stale `item/*` would splice the dead turn's text and
+        # tool output into the live turn's transcript. A gate that covers one
+        # message type while another stays open is this repo's most repeated
+        # failure.
+        #
+        # Only two KNOWN and DIFFERENT ids reject. An unknown id on either side
+        # is not evidence of staleness: `stream()` clears `_current_turn_id` and
+        # only learns the new one when `turn/start` returns, so the live turn's
+        # own first notifications can legitimately arrive while the session-side
+        # id is still None — rejecting those would drop real work to close a
+        # race that has not been observed.
+        msg_turn_id = _notification_turn_id(params)
+        if msg_turn_id and self._current_turn_id and msg_turn_id != self._current_turn_id:
+            logger.debug(
+                "[CodexSession:%s] geçmiş tura ait bildirim atlandı "
+                "(method=%s, bildirim=%s, aktif=%s)",
+                self.conversation_id, method, msg_turn_id, self._current_turn_id,
+            )
+            return
 
         if method == "item/agentMessage/delta":
             delta = params.get("delta", "")

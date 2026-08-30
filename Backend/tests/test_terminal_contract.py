@@ -471,3 +471,136 @@ def test_a_codex_error_notification_ends_the_turn_exactly_once():
 
     tipler = asyncio.run(exercise())
     assert tipler.count("error") == 1 and "done" not in tipler, tipler
+
+
+# ── 5. Codex: BİTMİŞ turun geç gelen bildirimi sonrakini bitirmemeli ─────
+# `_terminal_sent` kapısı tur İÇİNDEKİ çift sonlanmayı kapattı ama turlar
+# ARASINDAKİNİ açtı: kapıyı `stream()` her turda sıfırlıyor, dolayısıyla A
+# turunun geciken `turn/completed`i B turunun kuyruğunda taze bir kapı buluyor
+# ve B'yi A'nın cevabıyla bitiriyordu (denetim, 30 Ağu 2026).
+
+def _codex_after_cancel_then_new_turn(conv_id: int):
+    """A turunu iptal etmiş, B turunu kurmuş bir session + B'nin kuyruğu."""
+    sess = _codex_session(conv_id)
+    sess._current_turn_id = "turn-old"
+    sess._out_q = asyncio.Queue()
+    sess._cancel_event = asyncio.Event()
+    sess._terminal_sent = False
+    return sess
+
+
+async def _cancel_then_start_next(sess):
+    async def kabul_eden_interrupt(_method, _params, timeout=60):
+        return {"result": {}}
+
+    sess._request = kabul_eden_interrupt
+    await sess.cancel_turn()
+
+    # `stream()`in yeni tur için yaptığı sıfırlamanın aynısı.
+    yeni_kuyruk: asyncio.Queue = asyncio.Queue()
+    sess._out_q = yeni_kuyruk
+    sess._current_turn_id = "turn-new"
+    sess._terminal_sent = False
+    sess._final_text = "yeni turun yarım metni"
+    return yeni_kuyruk
+
+
+def test_a_late_completion_from_a_cancelled_turn_does_not_end_the_next_turn():
+    async def exercise():
+        sess = _codex_after_cancel_then_new_turn(995)
+        q = await _cancel_then_start_next(sess)
+        await sess._handle_notification({
+            "method": "turn/completed",
+            "params": {"turn": {"id": "turn-old"}},
+        })
+        return _drain_all(q), sess._terminal_sent
+
+    tipler, kapandi = asyncio.run(exercise())
+    assert tipler == [], f"biten turun bildirimi yeni tura sızdı: {tipler}"
+    assert not kapandi, "yeni turun sonlanma kapısı başkasının turuyla harcandı"
+
+
+def test_a_late_error_from_a_cancelled_turn_does_not_end_the_next_turn():
+    """`error` de bir terminal üreticisi: kapı yalnız `turn/completed`i
+    kapatsaydı aynı yarış bu yoldan aynen sürerdi."""
+
+    async def exercise():
+        sess = _codex_after_cancel_then_new_turn(996)
+        q = await _cancel_then_start_next(sess)
+        await sess._handle_notification({
+            "method": "error",
+            "params": {"turnId": "turn-old", "message": "eski tur çöktü"},
+        })
+        return _drain_all(q), sess._terminal_sent
+
+    tipler, kapandi = asyncio.run(exercise())
+    assert tipler == [], f"biten turun hatası yeni tura sızdı: {tipler}"
+    assert not kapandi
+
+
+def test_a_late_item_notification_does_not_leak_into_the_next_turn():
+    """Terminal olmayan bildirimler de aidiyet sınavına giriyor: eski turun
+    araç çıktısı yeni turun dökümüne yapışırsa kayıt yanlış olur."""
+
+    async def exercise():
+        sess = _codex_after_cancel_then_new_turn(997)
+        q = await _cancel_then_start_next(sess)
+        await sess._handle_notification({
+            "method": "item/completed",
+            # Yazım bilerek `turn_id`: ölçüt adres değil, sadeleştirilmiş
+            # anahtar ADI — casing/ayırıcı farkı sessizce kaçırılmamalı.
+            "params": {"turn_id": "turn-old",
+                       "item": {"type": "commandExecution", "exitCode": 0}},
+        })
+        await sess._handle_notification({
+            "method": "item/agentMessage/delta",
+            "params": {"turnId": "turn-old", "delta": "eski turun metni"},
+        })
+        return _drain_all(q), sess._final_text
+
+    tipler, metin = asyncio.run(exercise())
+    assert tipler == [], f"eski turun araç/metin olayları yeni tura sızdı: {tipler}"
+    assert "eski turun metni" not in metin, metin
+
+
+def test_the_running_turns_own_completion_still_ends_it():
+    """Kapının ters yönü: id'ler UYUŞUNCA bildirim aynen işleniyor."""
+
+    async def exercise():
+        sess = _codex_after_cancel_then_new_turn(998)
+        q = await _cancel_then_start_next(sess)
+        await sess._handle_notification({
+            "method": "turn/completed",
+            "params": {"turn": {"id": "turn-new"}},
+        })
+        return _drain_all(q)
+
+    tipler = asyncio.run(exercise())
+    assert tipler.count("done") == 1 and "error" not in tipler, tipler
+    assert "response" in tipler, tipler
+
+
+def test_a_notification_arriving_before_the_turn_id_is_known_is_still_delivered():
+    """Bilinmeyen id bir aidiyet kanıtı DEĞİL: `stream()` id'yi ancak
+    `turn/start` cevabıyla öğreniyor, o ana kadar gelen gerçek olayları elemek
+    turun işini düşürürdü."""
+
+    async def exercise():
+        sess = _codex_session(999)
+        q: asyncio.Queue = asyncio.Queue()
+        sess._out_q = q
+        sess._terminal_sent = False
+        sess._current_turn_id = None
+        await sess._handle_notification({
+            "method": "item/agentMessage/delta",
+            "params": {"turnId": "turn-1", "delta": "canlı metin"},
+        })
+        await sess._handle_notification({
+            "method": "turn/completed",
+            "params": {"turn": {"id": "turn-1"}},
+        })
+        return _drain_all(q), sess._final_text
+
+    tipler, metin = asyncio.run(exercise())
+    assert tipler.count("done") == 1, tipler
+    assert metin == "canlı metin", metin
