@@ -24,6 +24,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 import secrets
 import time
 import urllib.request
@@ -138,6 +139,30 @@ def _coerce_name(value, fallback: str) -> str:
     return value if isinstance(value, str) and value else fallback
 
 
+# Bidi overrides/isolates and the C0/C1 control ranges. A model ID is a wire
+# identifier — it is sent to the provider, stored in the config and shown as a
+# label — and none of these characters has a legitimate place in one.
+_ID_CONTROL_RE = re.compile("[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]")
+
+
+def usable_model_id(mid: object) -> bool:
+    """Whether a remote model ID may be accepted at all.
+
+    Names are sanitised where they are DISPLAYED, because the name is only ever
+    a label. An ID cannot be handled that way: it is both displayed and acted
+    on, so stripping it for display would show one string while sending
+    another, and stripping it everywhere would send the provider an ID it never
+    published. The only honest option left is to refuse the row.
+
+    Found by the verification round after the display-side fix: the picker's
+    labels were sanitised, but the SAVED id reached an editable settings field
+    and the chat's model label untouched — the same class, one step further
+    along. Refusing it here closes every consumer at once instead of chasing
+    render sites.
+    """
+    return isinstance(mid, str) and bool(mid) and not _ID_CONTROL_RE.search(mid)
+
+
 def supported_providers() -> tuple[str, ...]:
     """Canlı listeleme ucu BİLİNEN sağlayıcılar.
 
@@ -164,7 +189,7 @@ def _parse(shape: str, payload: dict) -> Dict[str, str]:
     if shape in ("openai", "anthropic"):
         for item in payload.get("data") or []:
             mid = (item or {}).get("id")
-            if isinstance(mid, str) and mid:
+            if usable_model_id(mid):
                 out[mid] = _coerce_name(item.get("display_name"),
                                         _coerce_name(item.get("name"), mid))
     elif shape == "google":
@@ -174,7 +199,7 @@ def _parse(shape: str, payload: dict) -> Dict[str, str]:
                 continue
             # "models/gemini-3.6-flash" → "gemini-3.6-flash"
             mid = raw.split("/", 1)[1] if "/" in raw else raw
-            if mid:
+            if usable_model_id(mid):
                 out[mid] = _coerce_name(item.get("displayName"), mid)
     return out
 
@@ -271,7 +296,7 @@ def openrouter_catalog(force: bool = False) -> Optional[Dict[str, dict]]:
         kayitlar = {}
         for m in payload.get("data") or []:
             mid = (m or {}).get("id")
-            if not isinstance(mid, str) or not mid:
+            if not usable_model_id(mid):
                 continue
             # Every field below is remote-controlled and crosses `/available-models`
             # into the React picker, so each is typed at this boundary: a wrong

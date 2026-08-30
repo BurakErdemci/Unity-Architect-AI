@@ -13,6 +13,7 @@ import {
 import { Message, UserData, FileEntry, GenerationMode, ChatActivity } from './types';
 import { ModelAvatar } from './ModelAvatar';
 import { MarkdownRenderer } from './MarkdownRenderer';
+import { stripBidi } from '../../lib/modelText';
 import { SlashCommandCard } from './SlashCommandCard';
 import { ThinkingBlock } from './ThinkingBlock';
 import { ToolGroup } from './ToolGroup';
@@ -150,9 +151,16 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     gemini: 'Gemini', agy: 'Antigravity', copilot: 'Copilot', cursor: 'Cursor',
     opencode: 'OpenCode', nvidia: 'NVIDIA', groq: 'Groq', ollama: 'Ollama',
   };
+  // Sanitised because this is a LABEL, not the value anything acts on: the
+  // model id it returns comes from a provider's catalogue, and a directional
+  // override in it would reorder the name the user reads while the stored id
+  // stays what it is. The settings field that lets the user EDIT that id is
+  // deliberately left raw — showing a cleaned string in an editable box would
+  // save a different value than the one displayed. The id itself is refused
+  // upstream instead (`model_catalog.usable_model_id`).
   const metaName = (msgProvider?: string) => {
     const p = (msgProvider || effectiveProvider || '').toLowerCase();
-    if ((!msgProvider || msgProvider === effectiveProvider) && modelName) return modelName;
+    if ((!msgProvider || msgProvider === effectiveProvider) && modelName) return stripBidi(modelName);
     return PROVIDER_LABELS[p] || (p ? p.charAt(0).toUpperCase() + p.slice(1) : 'AI');
   };
 
