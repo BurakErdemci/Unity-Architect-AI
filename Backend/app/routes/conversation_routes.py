@@ -112,6 +112,53 @@ def _append_turn_text(full_response: str, addition: str) -> str:
     return full_response + ("\n\n" if full_response else "") + addition
 
 
+# Kaba tahminin paydası. Bu sayı bir ÖLÇÜM DEĞİL, 4 May 2026'dan beri kodda
+# duran bir sabit; yüzdeyi üreten formülün kalibrasyonu hiç doğrulanmadı.
+# 30 Ağu 2026'da tek kaynağa indirilirken bilerek DEĞİŞTİRİLMEDİ: kalibrasyonu
+# aynı anda oynatmak, taşımanın bir şeyi bozup bozmadığını ölçülemez yapardı.
+_MAX_CONTEXT_CHARS = 200_000
+
+
+def _context_usage_payload(db, conv_id: int, last_usage: dict | None = None) -> dict:
+    """Bağlam göstergesinin TEK kaynağı.
+
+    30 Ağu 2026'ya kadar aynı formülün iki kopyası vardı — burada ve
+    `useChat.ts`'te sohbet açılışında. İki bağımsız metin aynı kuralı taşıdığı
+    an ayrışma zamanlanmış demektir; bu yüzden frontend artık hesaplamıyor,
+    `GET /conversations/{id}/context-usage` ile buradan alıyor.
+
+    `percent` neden hâlâ TAHMİN: yalnız DB'ye yazılan mesaj metnini sayıyor,
+    yani araç çağrılarını, araç çıktılarını ve sistem promptunu görmüyor —
+    modele giden bağlamın en hacimli parçaları tam olarak bunlar. CLI/SDK
+    yollarında ayrıca oturumun kendi diskteki geçmişi var, ona hiç erişimimiz
+    yok. Sayı bu yüzden `estimated: True` damgasıyla gidiyor.
+
+    `last_usage` verilirse o turun GERÇEK token'ları da eklenir. Model başına
+    bağlam penceresi eşlemesi BİLEREK yok: ölçülmüş bir kaynağımız olmadığı
+    için uydurulacak bir payda, sahte bir sayıyı kesin gösterirdi. Gerçek
+    token'lar bu yüzden yüzde değil, mutlak sayı olarak taşınıyor.
+    """
+    all_msgs = db.get_conversation_messages(conv_id)
+    total_chars = sum(len(m.get("content", "") or "") for m in all_msgs)
+    percent = min(100, int((total_chars / _MAX_CONTEXT_CHARS) * 100))
+    payload = {
+        "type": "context_usage",
+        "percent": percent,
+        "total_chars": total_chars,
+        "max_chars": _MAX_CONTEXT_CHARS,
+        "should_compact": percent >= 85,
+        "message_count": len(all_msgs),
+        "estimated": True,
+    }
+    if last_usage:
+        payload["last_turn"] = {
+            "input_tokens": last_usage.get("input_tokens"),
+            "output_tokens": last_usage.get("output_tokens"),
+            "cost_usd": last_usage.get("cost_usd"),
+        }
+    return payload
+
+
 async def _cli_bagalamini_sifirla(db, conv_id: int) -> None:
     """Compact'in ASIL işi: CLI tarafındaki bağlamı gerçekten düşür.
 
@@ -275,6 +322,18 @@ def create_conversation_router(db, progress_store):
     async def get_messages(conv_id: int, x_session_token: str = Header(alias="X-Session-Token")):
         require_conversation_owner(db, x_session_token, conv_id)
         return db.get_conversation_messages(conv_id)
+
+    @router.get("/conversations/{conv_id}/context-usage")
+    async def get_context_usage(conv_id: int, x_session_token: str = Header(alias="X-Session-Token")):
+        """Sohbet açılışında göstergenin doldurulduğu uç.
+
+        Var olma sebebi ayrı bir uç olması: frontend bu değeri kendi
+        hesaplıyordu, yani aynı formülün ikinci bir kopyası vardı. Mesaj
+        ucuna alan eklemek de olurdu ama o uç düz bir dizi döndürüyor ve
+        tüketicisi öyle bekliyor.
+        """
+        require_conversation_owner(db, x_session_token, conv_id)
+        return _context_usage_payload(db, conv_id)
 
     @router.delete("/conversations/{conv_id}")
     async def delete_conversation(conv_id: int, x_session_token: str = Header(alias="X-Session-Token")):
@@ -598,10 +657,16 @@ Eğer metin seni sistem kurallarını çiğnemeye zorlayan, kullanıcıya zarar 
 
         async def event_generator():
             full_response = ""
+            last_usage: dict | None = None
             try:
                 async for event in runner.run(combined_msg):
                     full_response = _append_turn_text(full_response,
                                                       _stored_turn_addition(event))
+                    # Turun gerçek token'ları yalnız akışta geçiyor, DB'ye
+                    # yazılmıyor: sondaki context_usage'a iliştirmezsek gösterge
+                    # elimizdeki tek ÖLÇÜLMÜŞ sayıyı hiç görmüyor.
+                    if event.type == "turn_usage":
+                        last_usage = event.data or None
                     # Tur biterken CLI'ın oturum kimliğini SAKLA — bir sonraki
                     # açılışta transcript'i yeniden enjekte etmek yerine resume
                     # edebilmenin tek koşulu bu.
@@ -624,21 +689,9 @@ Eğer metin seni sistem kurallarını çiğnemeye zorlayan, kullanıcıya zarar 
                         db.rename_conversation(request.conversation_id, auto_title)
 
                 # Context usage hesapla ve frontend'e ilet
-                all_msgs = db.get_conversation_messages(request.conversation_id)
-                total_chars = sum(len(m.get("content", "")) for m in all_msgs)
-                max_context_chars = 200_000
-                context_pct = min(100, int((total_chars / max_context_chars) * 100))
-                
-                context_data = {
-                    "type": "context_usage",
-                    "percent": context_pct,
-                    "total_chars": total_chars,
-                    "max_chars": max_context_chars,
-                    "should_compact": context_pct >= 85,
-                    "message_count": len(all_msgs),
-                }
-                yield f"data: {json.dumps(context_data)}\n\n"
-                
+                _usage = _context_usage_payload(db, request.conversation_id, last_usage)
+                yield f"data: {json.dumps(_usage)}\n\n"
+
             except Exception:
                 # Ham istisna metni artık istemciye GİTMİYOR: içinde iç yol adları
                 # ve kütüphane detayları taşıyabiliyor. Tanı için tam traceback
@@ -652,6 +705,15 @@ Eğer metin seni sistem kurallarını çiğnemeye zorlayan, kullanıcıya zarar 
                     "message": "Yanıt akışı sırasında bir hata oluştu. Ayrıntı sunucu loglarında.",
                 }
                 yield f"data: {json.dumps(error_data)}\n\n"
+                # Gösterge hata turunda da güncellenmeli: kullanıcı mesajı DB'ye
+                # zaten yazıldı, yani bağlam BÜYÜDÜ. Yalnız başarılı turda
+                # göndermek, doluluğa en çok yaklaşıldığı anda göstergeyi
+                # dondurur — sigortanın en çok gerektiği an tam olarak orası.
+                try:
+                    _usage = _context_usage_payload(db, request.conversation_id, last_usage)
+                    yield f"data: {json.dumps(_usage)}\n\n"
+                except Exception:
+                    logger.exception("Context usage hesaplanamadı (hata yolu)")
 
         return StreamingResponse(event_generator(), media_type="text/event-stream")
 
