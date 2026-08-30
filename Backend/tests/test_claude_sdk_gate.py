@@ -469,7 +469,12 @@ def test_agent_runner_has_no_hardcoded_gate_timeout():
     from agentic import agent_runner as ar
     src = inspect.getsource(ar)
     assert "timeout=60.0" not in src
-    assert src.count("timeout=APPROVAL_TIMEOUT_S") == 3
+    # ONE, not three. Three was the number of copied approval gates; the gates
+    # were collapsed into a single `_await_approval` helper and the constant is
+    # read there. In the words of the test above: this fault closes by taking N
+    # to 1, not by lowering it — a count above 1 means a copy came back, and
+    # this assertion should bite then.
+    assert src.count("timeout=APPROVAL_TIMEOUT_S") == 1
 
 
 # ── unityMCP muafiyetleri kütüğe bağlı mı ────────────────────────────────────

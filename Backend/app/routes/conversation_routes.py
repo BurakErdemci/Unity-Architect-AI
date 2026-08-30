@@ -585,6 +585,14 @@ Eğer metin seni sistem kurallarını çiğnemeye zorlayan, kullanıcıya zarar 
                         if _sid:
                             db.save_cli_session(request.conversation_id, _oturum_anahtari,
                                                 _sid, workspace_path)
+                        # Kesilen tur (adım tavanı / ilerleme yok) sohbete metin
+                        # BASMIYOR — sebebi arayüz kendi kartında gösteriyor. Ama
+                        # kaydedilen tek şey `response` olayları olduğu için, metin
+                        # buraya eklenmezse o tur geçmişte BOŞ kalır ve kullanıcı
+                        # yeniden açtığında neden yarım kaldığını göremez.
+                        _stop_msg = (event.data or {}).get("stop_message")
+                        if _stop_msg:
+                            full_response += ("\n\n" if full_response else "") + _stop_msg
                     yield event.to_sse()
                     
                 # Akış bitince final sonucu DB'ye kaydet

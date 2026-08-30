@@ -37,7 +37,23 @@ from prompts import SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
 
-MAX_ITERATIONS = 15  # Güvenlik: Sonsuz döngü koruması
+# Last-resort ceiling, NOT the primary fuse. The primary fuse is the progress
+# signal (`_ProgressGuard`): a runaway loop shows itself by repeating the same
+# call, not by taking many steps, so counting steps cut healthy long runs short
+# while letting a stuck one spin to the end anyway. This number only bounds a
+# run that is still making progress but is unusually long.
+MAX_ITERATIONS = 60
+
+# How many times in a row the same (tool, arguments) pair may repeat before the
+# run is declared stalled. Three, not two: a legitimate retry of an identical
+# call happens (a flaky command, a file being written by another process), a
+# third identical call in a row does not.
+_STALL_LIMIT = 3
+
+# Above this many characters the canonical argument string is hashed instead of
+# kept: a single `write_file` call can carry a whole source file, and the guard
+# holds only the last signature, so the raw text buys nothing.
+_STALL_ARG_MAX = 2000
 
 # Onay bekleme süresi `command_gates`'ten gelir (tek kaynak, gerekçesi orada).
 
@@ -320,6 +336,123 @@ class AgentEvent:
         return f"data: {payload}\n\n"
 
 
+# ── Termination contract (the frontend consumes this) ───────────────────────
+#
+# `done` payload: {"iterations": int, "stop_reason": "complete"|"max_iterations"
+# |"no_progress", "max_reached": bool}. Before this contract the ceiling emitted
+# a `done` byte-identical to a normal finish apart from a `max_reached` flag
+# nothing read, so a truncated run was indistinguishable from a successful one.
+# `stop_reason` is emitted on EVERY path — the CLI/SDK paths included — so the
+# reader never has to treat a missing field as "probably fine".
+#
+# The two exit texts live here and only here; each of the three loops used to
+# carry its own wording, and none of the three said why the run had stopped.
+#
+# These are NOT streamed as a `response` event any more. The UI renders the stop
+# reason as its own localized notice, so streaming the text too showed the same
+# warning twice. They ride on `done.stop_message` instead, and the route layer
+# persists that into the stored message — a cut-short turn writes ONLY this text
+# to the DB (the loops' intermediate output goes out as `text` events, which are
+# never persisted), so dropping it would leave an empty turn in the history.
+#
+# Neither text promises a summary of the partial work: there is none to promise
+# while intermediate text stays unpersisted.
+_STOP_TEXTS = {
+    "max_iterations": (
+        "⚠️ Bu istek için ayrılan adım sayısı doldu ve burada durdum. İş yarım "
+        "kalmış olabilir — kaldığım yerden sürdürmemi istersen \"devam et\" yaz."
+    ),
+    "no_progress": (
+        "⚠️ Aynı işlemi arka arkaya tekrarlamaya başladım, yani artık ilerleme "
+        "kaydetmiyordum; boşuna dönmemek için durdum. Ne yapmamı istediğini "
+        "biraz daha açarsan farklı bir yol deneyebilirim."
+    ),
+}
+
+
+def _done_event(iterations: int, stop_reason: str = "complete", **extra) -> "AgentEvent":
+    """Builds the `done` event from one place (the contract above).
+
+    `max_reached` is carried for backwards compatibility only: an old consumer
+    reading that flag keeps working, a new one reads `stop_reason`.
+    """
+    return AgentEvent("done", {
+        "iterations": iterations,
+        "stop_reason": stop_reason,
+        "max_reached": stop_reason != "complete",
+        **extra,
+    })
+
+
+def _normalize_session_event(etype: str, payload: dict) -> "AgentEvent":
+    """Brings CLI/SDK session events in line with the `done` contract.
+
+    It only does work for `done`. Those events are produced under `providers/`
+    and were forwarded verbatim, which made them the only paths without a
+    `stop_reason`. Adding the field at this single gate rather than in each of
+    the five paths also covers a session provider added later.
+    """
+    if etype != "done":
+        return AgentEvent(etype, payload)
+    data = dict(payload)
+    return _done_event(data.pop("iterations", 1),
+                       data.pop("stop_reason", "complete"), **data)
+
+
+def _stop_events(iterations: int, stop_reason: str) -> "list[AgentEvent]":
+    """The events a cut-short run sends to the user.
+
+    One event, not two: the reason is shown by the UI's own notice, so a second
+    copy as chat text was the same warning twice. `stop_message` keeps the text
+    reaching the layer that persists the turn.
+    """
+    return [_done_event(iterations, stop_reason,
+                        stop_message=_STOP_TEXTS[stop_reason])]
+
+
+def _canonical_call(tool_name: str, tool_args: object) -> str:
+    """A comparable signature for a (tool, arguments) pair.
+
+    `sort_keys` is required: providers can hand back the same argument dict in
+    a different key order, and without sorting two identical calls would look
+    different. `default=str` keeps the signature from blowing up on a
+    non-JSON-serializable argument — this signature is a hint, not a security
+    decision.
+    """
+    try:
+        blob = json.dumps(tool_args, sort_keys=True, ensure_ascii=False, default=str)
+    except Exception:
+        blob = repr(tool_args)
+    if len(blob) > _STALL_ARG_MAX:
+        import hashlib
+        blob = hashlib.sha256(blob.encode("utf-8", "replace")).hexdigest()
+    return f"{tool_name}::{blob}"
+
+
+class _ProgressGuard:
+    """Counts consecutive identical tool calls; declares a stall at `_STALL_LIMIT`.
+
+    Why this and not a step count: a runaway loop shows itself by returning to
+    the same place, not by running long. The counter ceiling is a last resort.
+    """
+
+    def __init__(self):
+        self._last: Optional[str] = None
+        self._streak = 0
+
+    def record(self, tool_name: str, tool_args: object) -> None:
+        sig = _canonical_call(tool_name, tool_args)
+        if sig == self._last:
+            self._streak += 1
+        else:
+            self._last = sig
+            self._streak = 1
+
+    @property
+    def stalled(self) -> bool:
+        return self._streak >= _STALL_LIMIT
+
+
 # conversation_id → son tur'u işleyen subscription CLI'ı ('claude'|'codex'|'agy').
 # CLI değişince (örn. Claude→Codex) hedef provider'ın bayat session'ı kapatılır →
 # bir sonraki turda tam transcript yeniden enjekte edilir (kaldığı yerden devam).
@@ -451,6 +584,45 @@ class AgentRunner:
         if tool_name == "delete_file":
             return f"delete_file {tool_args.get('file_path', '?')}"
         return None
+
+    def _open_approval_gate(self, command_text: str) -> "tuple[AgentEvent, str]":
+        """Opens an approval gate; returns (event to yield, gate_id).
+
+        Why this is split in two (this + `_await_approval`) instead of one
+        helper: the caller must yield the approval event BEFORE blocking — the
+        approval arrives over a separate HTTP route only after the client has
+        seen that event. A single helper that waited before yielding would
+        deadlock.
+
+        `_APPROVAL_RESULTS` is seeded False here; of the three copies only the
+        Gemini one did that, the other two relied on the entry being absent.
+        """
+        gate_id = uuid.uuid4().hex[:10]
+        _APPROVAL_GATES[gate_id] = asyncio.Event()
+        _APPROVAL_RESULTS[gate_id] = False
+        return (AgentEvent("command_approval_needed",
+                           {"command": command_text, "gate_id": gate_id}), gate_id)
+
+    async def _await_approval(self, gate_id: str) -> bool:
+        """Waits for approval; timeout or error counts as refused (fail-closed).
+
+        `except Exception` is deliberately narrow: two of the copies used a bare
+        `except:`, which also swallowed the CancelledError raised when the user
+        presses Stop and let the run continue.
+        """
+        event = _APPROVAL_GATES.get(gate_id)
+        try:
+            if event is None:
+                return False
+            await asyncio.wait_for(event.wait(), timeout=APPROVAL_TIMEOUT_S)
+            return bool(_APPROVAL_RESULTS.get(gate_id, False))
+        except Exception:
+            return False
+        finally:
+            _APPROVAL_GATES.pop(gate_id, None)
+            # RESULTS'ı da düşür: yazan taraf conversation_routes, temizleyen
+            # yoktu → gate_id başına kalıcı girdi birikiyordu.
+            _APPROVAL_RESULTS.pop(gate_id, None)
 
     async def _execute_tool_with_approval(
         self, tool_name: str, tool_args: dict
@@ -692,6 +864,7 @@ Kullanıcıyla {'Türkçe' if self.language == 'tr' else 'İngilizce'} konuş.""
 
         _turn_t0 = time.time()   # footer: tur süresi + token
         _turn_in = _turn_out = 0
+        _progress = _ProgressGuard()
         for iteration in range(MAX_ITERATIONS):
             logger.info(f"  🔄 Agentic Loop iterasyon {iteration + 1}")
             
@@ -757,7 +930,7 @@ Kullanıcıyla {'Türkçe' if self.language == 'tr' else 'İngilizce'} konuş.""
                     "duration_ms": int((time.time() - _turn_t0) * 1000),
                 })
                 yield AgentEvent("response", {"content": final_text})
-                yield AgentEvent("done", {"iterations": iteration + 1})
+                yield _done_event(iteration + 1)
                 return
 
             # Tool call'ları çalıştır
@@ -775,31 +948,14 @@ Kullanıcıyla {'Türkçe' if self.language == 'tr' else 'İngilizce'} konuş.""
                     "iteration": iteration + 1,
                 })
 
+                _progress.record(tool_name, tool_args)
+
                 # Tehlikeli komut kontrolü ve onay yield'ı
                 _approval_text = self._approval_prompt(tool_name, tool_args)
                 if _approval_text:
-                    # Onay event'ini HEMEN yield et
-                    gate_id = uuid.uuid4().hex[:10]
-                    event = asyncio.Event()
-                    _APPROVAL_GATES[gate_id] = event
-                    _APPROVAL_RESULTS[gate_id] = False
-                        
-                    yield AgentEvent("command_approval_needed", {
-                        "command": _approval_text,
-                        "gate_id": gate_id,
-                    })
-                        
-                    # Şimdi onayı bekle
-                    try:
-                        await asyncio.wait_for(event.wait(), timeout=APPROVAL_TIMEOUT_S)
-                        approved = _APPROVAL_RESULTS.get(gate_id, False)
-                    except asyncio.TimeoutError:
-                        approved = False
-                    finally:
-                        _APPROVAL_GATES.pop(gate_id, None)
-                        _APPROVAL_RESULTS.pop(gate_id, None)
-
-                    if not approved:
+                    _gate_event, _gate_id = self._open_approval_gate(_approval_text)
+                    yield _gate_event
+                    if not await self._await_approval(_gate_id):
                         result = {"success": False, "summary": "❌ Kullanıcı reddetti."}
                         # Tool result olarak ilet
                         yield AgentEvent("tool_result", {
@@ -860,11 +1016,14 @@ Kullanıcıyla {'Türkçe' if self.language == 'tr' else 'İngilizce'} konuş.""
                     parts=[gtypes.Part(text="(capture_unity_screenshot çıktısı — ekran görüntüsü:)")] + screenshot_parts,
                 ))
 
-        # Max iterasyona ulaşıldı
-        yield AgentEvent("response", {
-            "content": "⚠️ Maksimum araç çağrısı sayısına ulaşıldı. Mevcut bulgularımla yanıt veriyorum."
-        })
-        yield AgentEvent("done", {"iterations": MAX_ITERATIONS, "max_reached": True})
+            if _progress.stalled:
+                logger.warning(f"  ⛔ Gemini loop {iteration + 1}. turda ilerlemeyi durdurdu")
+                for _ev in _stop_events(iteration + 1, "no_progress"):
+                    yield _ev
+                return
+
+        for _ev in _stop_events(MAX_ITERATIONS, "max_iterations"):
+            yield _ev
 
     # ═══════════════════════════════════════════════
     # ANTHROPIC AGENTIC LOOP (Claude 3.5 Sonnet vb.)
@@ -931,6 +1090,7 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
         _sys_blocks = [{"type": "text", "text": _sys_text,
                         "cache_control": {"type": "ephemeral"}}]
 
+        _progress = _ProgressGuard()
         for iteration in range(MAX_ITERATIONS):
             logger.info(f"  🔄 Anthropic Agentic Loop iterasyon {iteration + 1}")
             
@@ -1010,9 +1170,9 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                     "duration_ms": int((time.time() - _turn_t0) * 1000),
                 })
                 yield AgentEvent("response", {"content": final_text})
-                yield AgentEvent("done", {"iterations": iteration + 1})
+                yield _done_event(iteration + 1)
                 return
-                
+
             tool_results = []
             for tool_call in tool_calls:
                 yield AgentEvent("tool_call", {
@@ -1021,24 +1181,14 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                     "iteration": iteration + 1,
                 })
 
+                _progress.record(tool_call.name, tool_call.input)
+
                 # Terminal Onay Katmanı
                 _approval_text = self._approval_prompt(tool_call.name, tool_call.input)
                 if _approval_text:
-                    gate_id = uuid.uuid4().hex[:10]
-                    event = asyncio.Event()
-                    _APPROVAL_GATES[gate_id] = event
-                    yield AgentEvent("command_approval_needed", {"command": _approval_text, "gate_id": gate_id})
-                    try:
-                        await asyncio.wait_for(event.wait(), timeout=APPROVAL_TIMEOUT_S)
-                        approved = _APPROVAL_RESULTS.get(gate_id, False)
-                    except: approved = False
-                    finally:
-                        _APPROVAL_GATES.pop(gate_id, None)
-                        # RESULTS'ı da düşür: yazan taraf conversation_routes,
-                        # temizleyen yoktu → gate_id başına kalıcı girdi birikiyordu.
-                        _APPROVAL_RESULTS.pop(gate_id, None)
-                        
-                    if not approved:
+                    _gate_event, _gate_id = self._open_approval_gate(_approval_text)
+                    yield _gate_event
+                    if not await self._await_approval(_gate_id):
                         result_str = json.dumps({"success": False, "summary": "Reddedildi"})
                         tool_results.append({"type": "tool_result", "tool_use_id": tool_call.id, "content": result_str})
                         continue
@@ -1075,9 +1225,15 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                 })
                 
             messages.append({"role": "user", "content": tool_results})
-            
-        yield AgentEvent("response", {"content": "⚠️ Maksimum araç çağrısına ulaşıldı."})
-        yield AgentEvent("done", {"iterations": MAX_ITERATIONS, "max_reached": True})
+
+            if _progress.stalled:
+                logger.warning(f"  ⛔ Anthropic loop {iteration + 1}. turda ilerlemeyi durdurdu")
+                for _ev in _stop_events(iteration + 1, "no_progress"):
+                    yield _ev
+                return
+
+        for _ev in _stop_events(MAX_ITERATIONS, "max_iterations"):
+            yield _ev
 
     # ═══════════════════════════════════════════════
     # OPENAI AGENTIC LOOP (OpenAI, DeepSeek, vb.)
@@ -1157,6 +1313,7 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
         _effort_extra_body = _eff.get("extra_body")
 
         _turn_in = _turn_out = 0
+        _progress = _ProgressGuard()
         for iteration in range(MAX_ITERATIONS):
             logger.info(f"  🔄 OpenAI Agentic Loop iterasyon {iteration + 1}")
             
@@ -1222,7 +1379,7 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                     "duration_ms": int((time.time() - _turn_t0) * 1000),
                 })
                 yield AgentEvent("response", {"content": final_text})
-                yield AgentEvent("done", {"iterations": iteration + 1})
+                yield _done_event(iteration + 1)
                 return
 
             if message.content:
@@ -1241,24 +1398,14 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                     "iteration": iteration + 1,
                 })
 
+                _progress.record(tool_name, tool_args)
+
                 # Terminal Onay Katmanı
                 _approval_text = self._approval_prompt(tool_name, tool_args)
                 if _approval_text:
-                    gate_id = uuid.uuid4().hex[:10]
-                    event = asyncio.Event()
-                    _APPROVAL_GATES[gate_id] = event
-                    yield AgentEvent("command_approval_needed", {"command": _approval_text, "gate_id": gate_id})
-                    try:
-                        await asyncio.wait_for(event.wait(), timeout=APPROVAL_TIMEOUT_S)
-                        approved = _APPROVAL_RESULTS.get(gate_id, False)
-                    except: approved = False
-                    finally:
-                        _APPROVAL_GATES.pop(gate_id, None)
-                        # RESULTS'ı da düşür: yazan taraf conversation_routes,
-                        # temizleyen yoktu → gate_id başına kalıcı girdi birikiyordu.
-                        _APPROVAL_RESULTS.pop(gate_id, None)
-                        
-                    if not approved:
+                    _gate_event, _gate_id = self._open_approval_gate(_approval_text)
+                    yield _gate_event
+                    if not await self._await_approval(_gate_id):
                         messages.append({"role": "tool", "tool_call_id": tool_call.id, "name": tool_name, "content": "Reddedildi"})
                         continue
 
@@ -1289,9 +1436,15 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                             {"type": "image_url", "image_url": {"url": screenshot_b64}},
                         ],
                     })
-                
-        yield AgentEvent("response", {"content": "⚠️ Maksimum araç çağrısına ulaşıldı."})
-        yield AgentEvent("done", {"iterations": MAX_ITERATIONS, "max_reached": True})
+
+            if _progress.stalled:
+                logger.warning(f"  ⛔ OpenAI loop {iteration + 1}. turda ilerlemeyi durdurdu")
+                for _ev in _stop_events(iteration + 1, "no_progress"):
+                    yield _ev
+                return
+
+        for _ev in _stop_events(MAX_ITERATIONS, "max_iterations"):
+            yield _ev
 
     # ═══════════════════════════════════════════════
     # BASIT FALLBACK (Function calling olmayan provider'lar)
@@ -1342,7 +1495,7 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                 logger.info(f"[AgentRunner] Response received ({len(text) if text else 0} chars).")
                 yield AgentEvent("response", {"content": text})
 
-            yield AgentEvent("done", {"iterations": 1})
+            yield _done_event(1)
 
         except Exception as e:
             logger.error(f"[AgentRunner] Error in simple run: {str(e)}", exc_info=True)
@@ -1532,7 +1685,7 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
         for f in deleted:
             yield AgentEvent("pending_delete", {"path": f["path"]})
 
-        yield AgentEvent("done", {"iterations": 1})
+        yield _done_event(1)
 
     # ═══════════════════════════════════════════════
     # CURSOR / COPILOT / OPENCODE / KIMI — one-shot CLI
@@ -1720,7 +1873,7 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
         if not final_text:
             final_text = f"⚠️ {cli_key} bu tur için bir yanıt üretmedi."
         yield AgentEvent("response", {"content": final_text})
-        yield AgentEvent("done", {"iterations": 1, "session_id": sess.session_id})
+        yield _done_event(1, session_id=sess.session_id)
 
     # ═══════════════════════════════════════════════
     # CLAUDE KALICI SESSION (claude-agent-sdk, native onay)
@@ -1872,7 +2025,7 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                 async for ev in session.stream(message):
                     _yielded += 1
                     etype = ev.pop("type", "text")
-                    yield AgentEvent(etype, ev)
+                    yield _normalize_session_event(etype, ev)
                 cleanup_dir(_att_dir)
                 return
             except Exception as e:
@@ -1979,7 +2132,7 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                 text = f"Codex kullanım bilgisi alınamadı: {e}"
             yield AgentEvent("text", {"content": text})
             yield AgentEvent("response", {"content": text})
-            yield AgentEvent("done", {"session_id": session.thread_id})
+            yield _done_event(1, session_id=session.thread_id)
             return
 
         # İlk turda proje bağlamını ekle; sonraki turlarda thread zaten hatırlıyor.
@@ -2015,7 +2168,7 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
                             "⏳ Codex kullanım hakkın dolmuş görünüyor (plan kotası). "
                             "Kota yenilenene kadar başka bir sağlayıcı seçebilirsin "
                             "(örn. NVIDIA ücretsiz havuzu veya OpenCode).\n\n" + _msg[:200])
-                yield AgentEvent(etype, ev)
+                yield _normalize_session_event(etype, ev)
         except Exception as e:
             logger.exception("[CodexSession] stream hatası")
             # ⚠️ `redact_secrets` ŞART — gerekçe Claude yolundaki ikiziyle (bkz.
