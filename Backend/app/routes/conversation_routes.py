@@ -11,7 +11,7 @@ from fastapi.responses import StreamingResponse
 
 from ai_providers import AIProviderManager
 from analyzer import UnityAnalyzer
-from auth_utils import require_conversation_owner, require_user, _check_token
+from auth_utils import require_conversation_owner, require_user, get_current_user, _check_token
 from code_detector import CodeDetector
 from schemas import ChatRequest, NewConversationRequest, RenameRequest
 
