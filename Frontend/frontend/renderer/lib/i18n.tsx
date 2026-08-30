@@ -47,6 +47,14 @@ const tr = {
   'chat.approve': 'Onaylıyor musun?',
   'chat.stepByStep': 'Adım Adım',
   'chat.agyNotice': 'Antigravity CLI: dosya yazma ve terminal komutları onay alınmadan otomatik çalışır (Google MCP onay entegrasyonu henüz hazır değil).',
+  'chat.newBelow': 'Yeni mesaj — aşağı in',
+  // --- Mesaj altı bildirimleri (hata DEĞİL) ---
+  'notice.warningTitle': 'Uyarı',
+  'notice.stoppedTitle': 'Koşum yarıda durdu',
+  'notice.maxIterations': 'Model adım sınırına ulaştığı için koşum burada bitti. Bu bir hata değil — işin bir kısmı yapılmış olabilir; "devam et" yazarak kaldığı yerden sürdürebilirsin.',
+  'notice.noProgress': 'Model art arda birkaç adımda ilerleme kaydedemedi, o yüzden koşum burada bitti. Bu bir hata değil — ne yapmasını istediğini biraz daha açık yazıp sürdürebilirsin.',
+  'notice.stoppedOther': 'Koşum tamamlanmadan durdu. Bu bir hata değil — işin bir kısmı yapılmış olabilir; "devam et" yazarak sürdürebilirsin.',
+  'notice.detail': 'Teknik ayrıntı',
   // SettingsModal
   'settings.title': 'AI Yapılandırması',
   'settings.language': 'Dil',
@@ -464,6 +472,14 @@ const en: Record<keyof typeof tr, string> = {
   'chat.approve': 'Do you approve?',
   'chat.stepByStep': 'Step by Step',
   'chat.agyNotice': 'Antigravity CLI: file writes and terminal commands run automatically without approval (Google MCP approval integration not yet available).',
+  'chat.newBelow': 'New messages — jump down',
+  // --- Message notices (NOT errors) ---
+  'notice.warningTitle': 'Warning',
+  'notice.stoppedTitle': 'Run stopped early',
+  'notice.maxIterations': 'The run ended here because the model reached its step limit. This is not a failure — part of the work may be done; type "continue" to pick it up where it stopped.',
+  'notice.noProgress': 'The model made no progress over several steps in a row, so the run ended here. This is not a failure — describe what you want a bit more clearly and continue.',
+  'notice.stoppedOther': 'The run stopped before finishing. This is not a failure — part of the work may be done; type "continue" to carry on.',
+  'notice.detail': 'Technical detail',
   // SettingsModal
   'settings.title': 'AI Configuration',
   'settings.language': 'Language',

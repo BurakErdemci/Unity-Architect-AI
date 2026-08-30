@@ -25,6 +25,7 @@ import AgentPlan, { Task as AgentTask } from '../ui/agent-plan';
 import { postMcpDecision, decisionToast, GateFailure } from '../../hooks/home/gateResponse';
 import { McpActiveGate } from '../../hooks/home/useMCPApproval';
 import { McpApprovalCards } from './McpApprovalCards';
+import { MessageNotices } from './MessageNotices';
 
 interface ChatPanelProps {
   messages: Message[];
@@ -353,6 +354,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                       />
                     </div>
                   )}
+
+                  <MessageNotices notices={msg.notices} />
 
                   {/* Tur istatistiği artık mesajın ÜSTÜNDEKİ meta satırında */}
 

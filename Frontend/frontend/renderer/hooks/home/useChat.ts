@@ -224,6 +224,51 @@ export const useChat = (
                     // Hata artık chat'te GÖRÜNÜR (eskiden sessizce yutuluyordu → "boş baloncuk")
                     updated.content += (updated.content ? '\n\n' : '') + `❌ ${data.message}`;
                   }
+                  // Side-pipeline failure (video download/extract today). The run
+                  // is NOT killed — the stream keeps going — but the user has to
+                  // learn that a piece of their input never made it in.
+                  //
+                  // Deliberately NOT switched on `data.code`: the contract says a
+                  // machine-readable code plus a ready-to-show `message`, and a
+                  // frontend `switch` over today's three codes would swallow
+                  // tomorrow's fourth. The code only rides along in the detail.
+                  else if (data.type === 'warning' && data.message) {
+                    const detail = [data.code ? `code=${data.code}` : null, data.detail || null]
+                      .filter(Boolean).join(' · ');
+                    updated.notices = [...(updated.notices || []), {
+                      kind: 'warning',
+                      title: cevir('notice.warningTitle'),
+                      message: String(data.message),
+                      detail: detail || undefined,
+                    }];
+                  }
+                  // A run that hit the iteration cap looked EXACTLY like a run that
+                  // finished: `done` only cleared the activity line. The user was
+                  // left with a half-done task and no reason to ask for more.
+                  //
+                  // Missing `stop_reason` means an older backend → assume
+                  // `complete`, except that the pre-contract `max_reached` flag
+                  // still carries the same fact and is honoured.
+                  else if (data.type === 'done') {
+                    const reason = typeof data.stop_reason === 'string'
+                      ? data.stop_reason
+                      : (data.max_reached ? 'max_iterations' : 'complete');
+                    if (reason !== 'complete') {
+                      const detail = [`stop_reason=${reason}`,
+                        typeof data.iterations === 'number' ? `iterations=${data.iterations}` : null]
+                        .filter(Boolean).join(' · ');
+                      updated.notices = [...(updated.notices || []), {
+                        kind: 'stopped',
+                        title: cevir('notice.stoppedTitle'),
+                        // An unrecognised reason still gets a notice: "we do not
+                        // know why, but it did not finish" beats silence.
+                        message: cevir(reason === 'max_iterations' ? 'notice.maxIterations'
+                          : reason === 'no_progress' ? 'notice.noProgress'
+                          : 'notice.stoppedOther'),
+                        detail,
+                      }];
+                    }
+                  }
                   else if (data.type === 'turn_usage') {
                     updated.usage = { input_tokens: data.input_tokens, output_tokens: data.output_tokens, cost_usd: data.cost_usd, duration_ms: data.duration_ms };
                   }

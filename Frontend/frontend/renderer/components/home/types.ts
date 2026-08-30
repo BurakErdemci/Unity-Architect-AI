@@ -36,6 +36,29 @@ export interface ToolCallEntry {
   id?: string;
 }
 
+/**
+ * A non-error notice drawn under a message.
+ *
+ * Why a separate field instead of appending to `content`: `content` is the
+ * model's own text, rendered as markdown — a warning written there reads as
+ * something the model said, and a detail block cannot be collapsed inside it.
+ * Why not the error branch: the two `❌` paths (`chat.errorOccurred` and the
+ * `error` event) mean the turn failed. Here the run worked; it was either cut
+ * short or a side pipeline broke. Giving both the same look makes users read a
+ * capped run as a crash.
+ *
+ * Texts are stored ALREADY TRANSLATED (same as `content`): switching language
+ * later leaves old notices in the old language.
+ */
+export interface MessageNotice {
+  /** `warning` = the run continued but something failed. `stopped` = the run ended early. */
+  kind: 'warning' | 'stopped';
+  title: string;
+  message: string;
+  /** Optional technical detail, shown in a collapsed disclosure. */
+  detail?: string;
+}
+
 export interface Message {
   id: number;
   role: 'user' | 'assistant';
@@ -52,6 +75,7 @@ export interface Message {
   slashCommand?: string;  // 'usage' | 'cost' — özel kart olarak render edilen slash komutu yanıtı
   // Tur sonu istatistiği (backend turn_usage event'i) — mesaj altında küçük özet satırı
   usage?: { input_tokens?: number; output_tokens?: number; cost_usd?: number | null; duration_ms?: number | null };
+  notices?: MessageNotice[];
 }
 
 // Canlı aktivite göstergesi (backend status event'leri): Claude'un o an ne yaptığı +
