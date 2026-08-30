@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.request
 
 from fastapi import APIRouter, Header, HTTPException
@@ -15,6 +16,35 @@ from schemas import AIConfigRequest, APIKeySaveRequest
 
 
 logger = logging.getLogger(__name__)
+
+
+# One forced `/available-models?refresh=true` costs 11 outbound calls (Ollama,
+# the anonymous OpenRouter catalogue, and one per keyed provider), and nothing
+# stopped it from being repeated back to back.
+#
+# 8 s: a person clicking "refresh" cannot have new information within 8 s of the
+# previous refresh, and 8 s is shorter than the serial round trip of the eleven
+# lookups themselves, so an honest single click is never throttled. What it
+# costs: a second deliberate click inside 8 s is served from cache instead of
+# re-fetching, and the user must wait out the remainder to force a real refresh.
+_FORCED_REFRESH_MIN_INTERVAL_SECONDS = 8.0
+# 0.0 = never refreshed. `time.monotonic()` is always > 0, so the first forced
+# refresh of the process is always allowed.
+_last_forced_refresh = 0.0
+
+
+def _forced_refresh_allowed() -> bool:
+    """Rate gate for the caller-controlled `refresh` flag.
+
+    Single-user desktop app, so one process-wide timestamp is the whole state:
+    there is no second user whose refresh this could starve.
+    """
+    global _last_forced_refresh
+    now = time.monotonic()
+    if now - _last_forced_refresh < _FORCED_REFRESH_MIN_INTERVAL_SECONDS:
+        return False
+    _last_forced_refresh = now
+    return True
 
 
 _WINDOWS_INSTALL_CMDS = {
@@ -411,6 +441,12 @@ def create_config_router(db):
         # kurulu olduğunu doğrulanmamış bir çağırana söylüyordu. Küçük ama
         # keşif adımı; kapı işten ÖNCE.
         _check_token(x_session_token)
+        # A forced refresh that arrives too soon after the previous one is
+        # downgraded to a cached read; the endpoint still answers, just without
+        # eleven fresh outbound calls.
+        if refresh and not _forced_refresh_allowed():
+            logger.info("Yenile isteği kısıldı; önbellekten yanıtlanıyor")
+            refresh = False
         models = {
             "local": [],
             # Bulut listesi artık ELLE YAZILMIYOR (Karar: Burak, 30 Ağu 2026).

@@ -21,8 +21,10 @@ aynı desen.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import secrets
 import time
 import urllib.request
 from typing import Dict, Optional
@@ -49,8 +51,91 @@ _ENDPOINTS: Dict[str, tuple[str, str, str]] = {
 _TTL_SECONDS = 600.0
 _TIMEOUT_SECONDS = 6.0
 
-# provider → (zaman damgası, sonuç). Sonuç `None` ise "o turda ulaşılamadı".
-_cache: Dict[str, tuple[float, Optional[Dict[str, str]]]] = {}
+# Read caps. The socket timeout only bounds INACTIVITY: a peer that drips a few
+# bytes every second keeps it alive forever, so a byte cap and an overall
+# deadline are both needed and neither replaces the other.
+#
+# 8 MiB: the largest observed catalogue (OpenRouter, 396 models, 30 Aug 2026) is
+# ~0.5 MB, so this is ~16x headroom. Cost of the number: a provider that grows
+# past 8 MiB is reported as "unknown" instead of listed, which is the same
+# failure mode as an unreachable endpoint and is visible in `cloud_sources`.
+_MAX_BODY_BYTES = 8 * 1024 * 1024
+# 64 KiB per read: one syscall per chunk, so the deadline is re-checked at least
+# every chunk. Smaller would check more often but costs more syscalls per MB.
+_READ_CHUNK_BYTES = 64 * 1024
+# Overall deadline = 3x the socket timeout. A healthy body arrives well inside
+# one timeout; 3x leaves room for a slow but honest peer (connect + TLS + body)
+# while capping the worst case at 18 s for a keyed lookup instead of unbounded.
+_DEADLINE_FACTOR = 3.0
+
+# Per-process random salt for the cache key. It is generated at import, never
+# persisted and never logged, so the stored digest is not an offline oracle for
+# the key: without the salt a guessed key cannot be confirmed against it, and
+# the salt dies with the process. The digest is only ever compared to another
+# digest computed in the same process.
+_CACHE_SALT = secrets.token_bytes(16)
+
+
+def _credential_fingerprint(api_key: str) -> str:
+    """Stable-within-process handle for a credential; not reversible to it."""
+    return hashlib.blake2b(api_key.encode("utf-8", "replace"),
+                           key=_CACHE_SALT, digest_size=16).hexdigest()
+
+
+# (provider, kimlik parmak izi) → (zaman damgası, sonuç).
+# Sonuç `None` ise "o turda ulaşılamadı".
+#
+# Parmak izi anahtarın PARÇASI: yalnız sağlayıcı adıyla anahtarlanırken,
+# kullanıcı anahtarını değiştirdikten sonra 600 sn boyunca ESKİ anahtarın
+# listesi (ya da eski anahtarın başarısızlığı) dönüyordu — düzeltilen anahtar
+# `unknown` kalıyordu.
+_cache: Dict[tuple[str, str], tuple[float, Optional[Dict[str, str]]]] = {}
+
+
+def _read_bounded(response, deadline: float) -> Optional[bytes]:
+    """Read the body under a byte cap and an absolute deadline, else `None`.
+
+    Crossing either bound is a FAILED lookup, not a partial parse: half a
+    catalogue parsed as a whole one would silently mark real models missing.
+    """
+    chunks: list[bytes] = []
+    total = 0
+    # Some response objects expose `read()` without a size argument (older
+    # wrappers, test doubles). They cannot be chunked, so they get a single
+    # read that is still measured against the same cap below.
+    sized = True
+    while True:
+        if time.monotonic() > deadline:
+            return None
+        if sized:
+            try:
+                chunk = response.read(_READ_CHUNK_BYTES)
+            except TypeError:
+                sized = False
+                continue
+        else:
+            chunk = response.read()
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > _MAX_BODY_BYTES:
+            return None
+        chunks.append(chunk)
+        if not sized:
+            break
+    if time.monotonic() > deadline:
+        return None
+    return b"".join(chunks)
+
+
+def _coerce_name(value, fallback: str) -> str:
+    """Remote display names are only accepted as strings.
+
+    A provider can put any JSON value in `name`; an object reaching the picker
+    makes React throw at render time instead of showing a model. Rejecting the
+    non-string here means the model still appears, under its own id.
+    """
+    return value if isinstance(value, str) and value else fallback
 
 
 def supported_providers() -> tuple[str, ...]:
@@ -79,24 +164,34 @@ def _parse(shape: str, payload: dict) -> Dict[str, str]:
     if shape in ("openai", "anthropic"):
         for item in payload.get("data") or []:
             mid = (item or {}).get("id")
-            if mid:
-                out[str(mid)] = str(item.get("display_name") or item.get("name") or mid)
+            if isinstance(mid, str) and mid:
+                out[mid] = _coerce_name(item.get("display_name"),
+                                        _coerce_name(item.get("name"), mid))
     elif shape == "google":
         for item in payload.get("models") or []:
-            raw = (item or {}).get("name") or ""
+            raw = (item or {}).get("name")
+            if not isinstance(raw, str):
+                continue
             # "models/gemini-3.6-flash" → "gemini-3.6-flash"
             mid = raw.split("/", 1)[1] if "/" in raw else raw
             if mid:
-                out[mid] = str(item.get("displayName") or mid)
+                out[mid] = _coerce_name(item.get("displayName"), mid)
     return out
 
 
 def _fetch(provider: str, api_key: str) -> Optional[Dict[str, str]]:
     url, auth_kind, shape = _ENDPOINTS[provider]
+    # Deadline starts BEFORE the connection: it bounds the whole operation,
+    # which is exactly what the socket timeout does not do.
+    deadline = time.monotonic() + _TIMEOUT_SECONDS * _DEADLINE_FACTOR
     try:
         request = urllib.request.Request(url, headers=_headers(auth_kind, api_key))
         with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS) as response:
-            payload = json.loads(response.read())
+            body = _read_bounded(response, deadline)
+        if body is None:
+            logger.warning("Model listesi sınırı aştı (%s): gövde çok büyük ya da çok yavaş", provider)
+            return None
+        payload = json.loads(body)
         parsed = _parse(shape, payload)
         # Şema değişmiş ya da beklenmedik bir gövde gelmişse boş sözlük çıkar.
         # Onu "hesapta model yok" diye taşımak katalogdaki her satırı
@@ -121,12 +216,15 @@ def list_models(provider: str, api_key: str, force: bool = False) -> Optional[Di
     if provider not in _ENDPOINTS or not isinstance(api_key, str) or not api_key:
         return None
     now = time.monotonic()
+    # Önbellek girdisi onu ÜRETEN kimliğe bağlı; anahtar değişince eski cevap
+    # (ya da eski başarısızlık) yeniden kullanılamıyor.
+    cache_key = (provider, _credential_fingerprint(api_key))
     if not force:
-        cached = _cache.get(provider)
+        cached = _cache.get(cache_key)
         if cached and (now - cached[0]) < _TTL_SECONDS:
             return cached[1]
     result = _fetch(provider, api_key)
-    _cache[provider] = (now, result)
+    _cache[cache_key] = (now, result)
     return result
 
 
@@ -159,20 +257,36 @@ def openrouter_catalog(force: bool = False) -> Optional[Dict[str, dict]]:
     if not force and _or_cache and (now - _or_cache[0]) < _OR_TTL_SECONDS:
         return _or_cache[1]
     sonuc: Optional[Dict[str, dict]] = None
+    socket_timeout = _TIMEOUT_SECONDS * 2
+    deadline = time.monotonic() + socket_timeout * _DEADLINE_FACTOR
     try:
         request = urllib.request.Request(_OPENROUTER_URL)
-        with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS * 2) as response:
-            payload = json.loads(response.read())
+        with urllib.request.urlopen(request, timeout=socket_timeout) as response:
+            body = _read_bounded(response, deadline)
+        if body is None:
+            logger.warning("OpenRouter kataloğu sınırı aştı: gövde çok büyük ya da çok yavaş")
+            _or_cache = (now, None)
+            return None
+        payload = json.loads(body)
         kayitlar = {}
         for m in payload.get("data") or []:
             mid = (m or {}).get("id")
-            if not mid:
+            if not isinstance(mid, str) or not mid:
                 continue
-            kayitlar[str(mid)] = {
-                "name": m.get("name") or mid,
-                "context_length": m.get("context_length"),
-                "pricing": m.get("pricing"),
-                "expiration_date": m.get("expiration_date"),
+            # Every field below is remote-controlled and crosses `/available-models`
+            # into the React picker, so each is typed at this boundary: a wrong
+            # type is dropped, never forwarded.
+            context_length = m.get("context_length")
+            pricing = m.get("pricing")
+            expiration = m.get("expiration_date")
+            kayitlar[mid] = {
+                "name": _coerce_name(m.get("name"), mid),
+                # `bool` is an `int` in Python; `True` is not a context window.
+                "context_length": (context_length
+                                   if isinstance(context_length, int) and not isinstance(context_length, bool)
+                                   else None),
+                "pricing": pricing if isinstance(pricing, dict) else None,
+                "expiration_date": expiration if isinstance(expiration, str) else None,
             }
         sonuc = kayitlar or None
     except Exception as exc:

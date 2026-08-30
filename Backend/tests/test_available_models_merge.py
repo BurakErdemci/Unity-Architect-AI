@@ -16,12 +16,15 @@ Boş bir grup "bu sağlayıcı yok" diye okunur; doğru cümle "hesabında
 doğrulanmadı" ve ikisinin kullanıcıya söylediği iş farklı.
 """
 import asyncio
+import json
 import os
 import sys
 from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "app"))
 
+from providers import model_catalog
+from routes import config_routes
 from routes.config_routes import create_config_router
 
 OR_KATALOG = {
@@ -124,6 +127,106 @@ def test_without_the_open_catalogue_a_keyless_provider_simply_has_no_rows():
     sonuc = _katalog({}, {}, or_katalog={})
     assert sonuc["cloud"] == []
     assert sonuc["cloud_sources"]["anthropic"] == "no_key"
+
+
+# ─── Uçtan uca: uzak veri ve yenileme maliyeti ──────────────────────────────
+#
+# The two tests below drive the REAL catalogue (no `list_models` patch), only
+# the socket is faked, because both audit findings live in the path between the
+# provider response and the endpoint result.
+
+
+class _Cevap:
+    def __init__(self, payload):
+        self._raw = json.dumps(payload).encode()
+        self._sent = False
+
+    def read(self, size=None):
+        if self._sent:
+            return b""
+        self._sent = True
+        return self._raw
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def _canli_uc(anahtarlar: dict, cevap_ver, refresh: bool = False):
+    """Gerçek katalogla `/available-models`; yalnız soket sahte.
+
+    Önbelleği KENDİ temizlemiyor: kısma testleri iki çağrı arasında sıcak
+    önbelleğe ihtiyaç duyuyor, çünkü ölçülen şey tam olarak "kısılan istek
+    önbellekten mi yanıtlandı".
+    """
+    router = create_config_router(_db(anahtarlar))
+    route = next(r for r in router.routes if r.path == "/available-models")
+    with patch("routes.config_routes._check_token"), \
+         patch("routes.config_routes.get_current_user", return_value=(1, None)), \
+         patch("urllib.request.urlopen", side_effect=cevap_ver) as urlopen:
+        sonuc = asyncio.run(route.endpoint(refresh=refresh, x_session_token="valid"))
+    return sonuc, urlopen.call_count
+
+
+def test_an_object_valued_remote_name_never_reaches_the_endpoint():
+    # OpenRouter controls this response; the picker renders `m.name` as a React
+    # child, so an object there is a render-time TypeError, not a bad label.
+    def cevap_ver(request, timeout=None):
+        if request.full_url.startswith("http://127.0.0.1:11434"):
+            return _Cevap({"models": []})
+        return _Cevap({"data": [{"id": "openai/remote-object-name",
+                                 "name": {"not": "renderable text"},
+                                 "context_length": 1, "pricing": {"prompt": "0"}}]})
+
+    model_catalog.clear_cache()
+    try:
+        sonuc, _ = _canli_uc({}, cevap_ver)
+    finally:
+        model_catalog.clear_cache()
+    satir = _bul(sonuc["cloud"], "remote-object-name", "openai")
+    assert satir is not None, "model yine listelenmeli — sadece adı düzeltilmiş olmalı"
+    assert isinstance(satir["name"], str)
+
+
+def _dokuz_saglayici_cevabi(request, timeout=None):
+    url = request.full_url
+    if url.startswith("http://127.0.0.1:11434"):
+        return _Cevap({"models": []})
+    if "generativelanguage.googleapis.com" in url:
+        return _Cevap({"models": [{"name": "models/chat-model"}]})
+    return _Cevap({"data": [{"id": "chat-model"}]})
+
+
+def test_an_immediate_second_forced_refresh_does_not_repeat_all_eleven_calls():
+    # One forced refresh = 11 outbound calls (Ollama + open catalogue + nine
+    # keyed providers). Nothing stopped an immediate repeat from costing 11 more.
+    anahtarlar = {s: f"key-{s}" for s in model_catalog.supported_providers()}
+    model_catalog.clear_cache()
+    config_routes._last_forced_refresh = 0.0
+    try:
+        _, ilk = _canli_uc(anahtarlar, _dokuz_saglayici_cevabi, refresh=True)
+        _, ikinci = _canli_uc(anahtarlar, _dokuz_saglayici_cevabi, refresh=True)
+    finally:
+        model_catalog.clear_cache()
+    assert ilk == 11
+    assert ikinci < ilk
+
+
+def test_the_refresh_button_still_works_once_the_interval_has_passed():
+    # The guard must not turn "refresh now" into "refresh maybe": a click after
+    # the minimum interval has to reach every provider again.
+    anahtarlar = {s: f"key-{s}" for s in model_catalog.supported_providers()}
+    model_catalog.clear_cache()
+    config_routes._last_forced_refresh = 0.0
+    try:
+        _, ilk = _canli_uc(anahtarlar, _dokuz_saglayici_cevabi, refresh=True)
+        config_routes._last_forced_refresh -= config_routes._FORCED_REFRESH_MIN_INTERVAL_SECONDS
+        _, ikinci = _canli_uc(anahtarlar, _dokuz_saglayici_cevabi, refresh=True)
+    finally:
+        model_catalog.clear_cache()
+    assert ilk == ikinci == 11
 
 
 def test_the_subscription_list_is_untouched_by_cloud_liveness():
