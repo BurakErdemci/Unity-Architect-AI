@@ -529,6 +529,94 @@ def _stop_events(iterations: int, stop_reason: str,
     return [_done_event(iterations, stop_reason, stop_message=metin, **ekstra)]
 
 
+async def _guarantee_terminal(events: "AsyncGenerator[AgentEvent, None]",
+                              model_name: str) -> "AsyncGenerator[AgentEvent, None]":
+    """Forwards a provider loop's events and GUARANTEES a terminal one.
+
+    The contract this repo keeps failing at: a turn emits exactly one terminal
+    event — one `done` carrying `stop_reason`, or one `error`. Never zero.
+    Every hole found so far was closed where it was found (`choices=[]`,
+    `content.parts=None`, a part without `function_call`) and the next
+    unpredicted provider shape opened a new one, because an exception raised
+    OUTSIDE the request `try` leaves the generator with no terminal at all.
+    This closes the CLASS rather than the case: a loop cannot end silently
+    even when something nobody anticipated escapes it.
+
+    `CancelledError` and `GeneratorExit` are deliberately NOT caught — they are
+    BaseException, so plain `except Exception` lets them through. A stopped
+    turn owes no terminal event: the consumer that would read it is the one
+    that walked away.
+    """
+    terminal = 0
+    try:
+        try:
+            async for _ev in events:
+                if _ev.type in ("done", "error"):
+                    terminal += 1
+                yield _ev
+        except Exception as e:
+            logger.error(f"[provider] {model_name} döngüsü beklenmedik bir hatayla "
+                         f"bitti: {e}", exc_info=True)
+            if terminal == 0:
+                yield AgentEvent("error", {
+                    "code": "provider_loop_crashed",
+                    "message": (
+                        f"`{model_name}` turu beklenmedik bir hatayla kesildi "
+                        f"({type(e).__name__}). Tekrar dene ya da başka bir modele geç."
+                    )})
+            return
+        if terminal == 0:
+            # The loop returned normally without saying how it ended. Silence is
+            # the failure being reported: the UI would sit on a spinner forever.
+            yield AgentEvent("error", {
+                "code": "provider_no_terminal",
+                "message": (
+                    f"`{model_name}` turu nasıl bittiğini bildirmeden kapandı. "
+                    "Bu backend tarafında bir arıza; turu tekrarla."
+                )})
+        elif terminal > 1:
+            # Not swallowed: a duplicate terminal is a real defect and hiding it
+            # here would only make it harder to find than it already is.
+            logger.error(f"[provider] {model_name} turu {terminal} terminal olay "
+                         f"yaydı — sözleşme tam olarak bir tane diyor")
+    finally:
+        # Closing the wrapper must close what it wraps, deterministically. The
+        # inner loop's `finally` is what hands an abandoned provider request
+        # back (see `_await_provider`); leaving that to the garbage collector
+        # would make the stop path non-deterministic.
+        await events.aclose()
+
+
+def _gemini_part_view(part) -> "tuple[str, object, bool]":
+    """(text, function_call, thought) for one Gemini content part.
+
+    EVERY field of a `types.Part` is optional, and an object that drifted from
+    the SDK's shape may not define the attribute at all. The audit (30 Aug
+    2026) produced a part carrying only `text`; the plain `p.function_call`
+    read raised AttributeError outside the request `try` and the turn ended
+    with no terminal event. Absent means "not that kind of part" — never a
+    crash.
+    """
+    return (getattr(part, "text", None) or "",
+            getattr(part, "function_call", None),
+            bool(getattr(part, "thought", False)))
+
+
+def _consume_abandoned_request(istek: "asyncio.Task") -> None:
+    """Reads the outcome of a provider request whose turn is already gone.
+
+    Without this, a task nobody awaits ends its life with an unretrieved
+    exception, which asyncio reports much later, out of context, with no turn
+    to attribute it to.
+    """
+    if istek.cancelled():
+        return
+    hata = istek.exception()
+    if hata is not None:
+        logger.warning(f"[provider] sahipsiz kalan sağlayıcı isteği hata ile "
+                       f"bitti: {hata!r}")
+
+
 class _ApprovalDecision(NamedTuple):
     """The gate's answer, plus the sentence the model and the user are told.
 
@@ -867,6 +955,8 @@ class AgentRunner:
         bloklayan çağrıyı durdurmaz, yalnız sonucunu hiç kimsenin okumadığı bir
         `CancelledError`'a çevirir. İptal etmiyoruz ki thread'in istisnası
         sessizce yutulmuş olmasın; beklemenin sesli olması yine de kazanılıyor.
+        Bunun bedeli o dalda ayrıca ödeniyor: iptal edilemeyen istek sahipsiz
+        kalmasın diye sonucunu okuyan bir done-callback bağlanıyor (aşağıya bak).
         """
         gecen = 0.0
         try:
@@ -883,18 +973,32 @@ class AgentRunner:
             # `done()` ise DOKUNULMAZ: biten bir isteğin sonucunu (ya da
             # istisnasını) çağıran `result()` ile okuyor, burada beklemek onu
             # yutardı. Yalnız gerçekten askıda kalmış bir istek iptal edilir.
-            if iptal_edilebilir and not istek.done():
-                istek.cancel()
-                try:
-                    await istek
-                except asyncio.CancelledError:
-                    pass
-                except Exception:
-                    # Tur artık yok; bu istisnayı anlatacak bir kullanıcı da yok.
-                    # Yine de kayda geçiyor — sessizce yutulan hata bu depoda
-                    # ayrı bir bulgu sınıfı.
-                    logger.debug("[provider] iptal edilen istek hata ile bitti",
-                                 exc_info=True)
+            if not istek.done():
+                if iptal_edilebilir:
+                    istek.cancel()
+                    try:
+                        await istek
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception:
+                        # Tur artık yok; bu istisnayı anlatacak bir kullanıcı da yok.
+                        # Yine de kayda geçiyor — sessizce yutulan hata bu depoda
+                        # ayrı bir bulgu sınıfı.
+                        logger.debug("[provider] iptal edilen istek hata ile bitti",
+                                     exc_info=True)
+                else:
+                    # Gemini: the blocking SDK call sits in a pool thread and
+                    # NOTHING here can stop it — `Task.cancel()` does not reach
+                    # a thread, and `to_thread` has no interruption point. That
+                    # stays impossible, so the task legitimately outlives the
+                    # turn; what is fixable is OWNERSHIP. Without this callback
+                    # the abandoned task's outcome is never retrieved, so a
+                    # provider failure after a stopped turn is either lost or
+                    # resurfaces later as an unattributable asyncio warning.
+                    # The callback fires whenever the thread finishes, costs
+                    # nothing while it runs, and keeps a reference to the task
+                    # alive so the loop cannot drop it half-finished.
+                    istek.add_done_callback(_consume_abandoned_request)
 
     async def _prepare_videos(self, user_message: str) -> "tuple[str, list[dict]]":
         """Videoları (yerel dosya + mesaja YAPIŞTIRILAN URL) kare data-URI'leri + transkripte
@@ -1052,6 +1156,11 @@ class AgentRunner:
     # GEMINI AGENTIC LOOP (Native Function Calling)
     # ═══════════════════════════════════════════════
     async def _run_gemini(self, user_message: str) -> AsyncGenerator[AgentEvent, None]:
+        async for _ev in _guarantee_terminal(self._gemini_loop(user_message),
+                                             self.model_name):
+            yield _ev
+
+    async def _gemini_loop(self, user_message: str) -> AsyncGenerator[AgentEvent, None]:
         client = genai.Client(api_key=self.api_key)
 
         # Tool tanımlarını Gemini formatına çevir
@@ -1240,18 +1349,25 @@ Kullanıcıyla {'Türkçe' if self.language == 'tr' else 'İngilizce'} konuş.""
             # sokuyor: araç çağrısı yok → boş final yanıt → tek `done`.
             parts = getattr(candidate.content, "parts", None) or []
 
-            # Thinking varsa yield et
-            for part in parts:
-                if getattr(part, "thought", False) and part.text:
-                    yield AgentEvent("thinking", {"text": part.text})
+            # Her parça TEK yerde şekline çevriliyor (`_gemini_part_view`): alan
+            # yokluğu bir arıza değil, "bu parça o türden değil" demek.
+            _views = [(p, *_gemini_part_view(p)) for p in parts]
 
-            # Tool call var mı kontrol et
-            tool_calls = [p for p in parts if p.function_call]
-            text_parts = [p for p in parts if p.text and not getattr(p, "thought", False)]
+            # Thinking varsa yield et
+            for _p, _text, _fc, _thought in _views:
+                if _thought and _text:
+                    yield AgentEvent("thinking", {"text": _text})
+
+            # Tool call var mı kontrol et. İsimsiz bir `function_call`
+            # çağrılabilir değil — araç sayılmıyor, böylece tur araçsız yolundan
+            # doğal olarak tek `done` ile kapanıyor.
+            tool_calls = [(p, fc) for p, _t, fc, _th in _views
+                          if fc is not None and getattr(fc, "name", None)]
+            text_parts = [t for _p, t, _fc, th in _views if t and not th]
 
             if not tool_calls:
                 # Tool call yok = AI işini bitirdi, final yanıt
-                final_text = "\n".join(p.text for p in text_parts if p.text)
+                final_text = "\n".join(text_parts)
                 yield AgentEvent("turn_usage", {
                     "input_tokens": _turn_in, "output_tokens": _turn_out, "cost_usd": None,
                     "duration_ms": int((time.time() - _turn_t0) * 1000),
@@ -1264,10 +1380,10 @@ Kullanıcıyla {'Türkçe' if self.language == 'tr' else 'İngilizce'} konuş.""
             function_response_parts = []
             screenshot_parts = []  # Gemini: görsel tool-role Content'e KONMAZ (400) → ayrı user-content
 
-            for part in tool_calls:
-                fc = part.function_call
+            for part, fc in tool_calls:
                 tool_name = fc.name
-                tool_args = dict(fc.args) if fc.args else {}
+                _args = getattr(fc, "args", None)
+                tool_args = dict(_args) if _args else {}
 
                 yield AgentEvent("tool_call", {
                     "tool": tool_name,
@@ -1341,9 +1457,8 @@ Kullanıcıyla {'Türkçe' if self.language == 'tr' else 'İngilizce'} konuş.""
                     )
 
             # Arada metin varsa (AI'ın açıklaması) yield et
-            for p in text_parts:
-                if p.text:
-                    yield AgentEvent("text", {"content": p.text})
+            for _t in text_parts:
+                yield AgentEvent("text", {"content": _t})
 
             # AI'ın yanıtını ve tool sonuçlarını geçmişe ekle
             contents.append(candidate.content)
@@ -1379,6 +1494,11 @@ Kullanıcıyla {'Türkçe' if self.language == 'tr' else 'İngilizce'} konuş.""
     # ANTHROPIC AGENTIC LOOP (Claude 3.5 Sonnet vb.)
     # ═══════════════════════════════════════════════
     async def _run_anthropic(self, user_message: str) -> AsyncGenerator[AgentEvent, None]:
+        async for _ev in _guarantee_terminal(self._anthropic_loop(user_message),
+                                             self.model_name):
+            yield _ev
+
+    async def _anthropic_loop(self, user_message: str) -> AsyncGenerator[AgentEvent, None]:
         client = anthropic.AsyncAnthropic(api_key=self.api_key)
         
         system_instruction = f"""{SYSTEM_PROMPT}
@@ -1611,6 +1731,11 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
     # OPENAI AGENTIC LOOP (OpenAI, DeepSeek, vb.)
     # ═══════════════════════════════════════════════
     async def _run_openai(self, user_message: str) -> AsyncGenerator[AgentEvent, None]:
+        async for _ev in _guarantee_terminal(self._openai_loop(user_message),
+                                             self.model_name):
+            yield _ev
+
+    async def _openai_loop(self, user_message: str) -> AsyncGenerator[AgentEvent, None]:
         client = openai.AsyncOpenAI(api_key=self.api_key)
         
         # DeepSeek OpenRouter veya custom base URL'ler için:

@@ -24,6 +24,7 @@ Canlı sağlayıcıya çıkılmıyor: her istemci sahte.
 import asyncio
 import os
 import sys
+import threading
 import time
 import types
 import unittest
@@ -323,6 +324,297 @@ class TestMalformedResponseStillTerminates(unittest.TestCase):
         olaylar = _collect("anthropic", _IceriksizAnthropic())
         self.assertEqual([e.type for e in olaylar
                           if e.type in ("done", "error")], ["done"])
+
+
+    def test_a_gemini_part_without_function_call_still_terminates(self):
+        """Bir önceki düzeltme `content.parts=None` şeklini kapatmıştı; hemen
+        ardındaki `p.function_call` okuması AÇIK kalmıştı. Yalnız `text` taşıyan
+        bir parça `AttributeError`'ı istek `try`'ının DIŞINDA fırlatıyor ve tur
+        hiç terminal olay üretmeden bitiyordu (denetim, 30 Ağu 2026)."""
+
+        class _EksikAlanliGemini:
+            def __init__(self):
+                self.models = types.SimpleNamespace(generate_content=self._generate)
+
+            def _generate(self, **kwargs):
+                # `function_call` ve `thought` YOK — sadece metin var.
+                part = types.SimpleNamespace(text="sağlayıcı metni")
+                return types.SimpleNamespace(
+                    candidates=[types.SimpleNamespace(
+                        content=types.SimpleNamespace(parts=[part]))],
+                    usage_metadata=None)
+
+        olaylar = _collect("google", _EksikAlanliGemini())
+        self.assertEqual([e.type for e in olaylar
+                          if e.type in ("done", "error")], ["done"])
+        yanit = [e for e in olaylar if e.type == "response"]
+        self.assertEqual([e.data["content"] for e in yanit], ["sağlayıcı metni"])
+
+    def test_a_nameless_function_call_is_not_treated_as_a_tool_call(self):
+        """Çağrılamayan bir `function_call` araç sayılmıyor: tur araçsız
+        yolundan doğal olarak tek `done` ile kapanıyor, `fc.name` üzerinde
+        patlamıyor."""
+
+        class _IsimsizCagriGemini:
+            def __init__(self):
+                self.models = types.SimpleNamespace(generate_content=self._generate)
+
+            def _generate(self, **kwargs):
+                part = types.SimpleNamespace(
+                    text="", function_call=types.SimpleNamespace(args={}))
+                return types.SimpleNamespace(
+                    candidates=[types.SimpleNamespace(
+                        content=types.SimpleNamespace(parts=[part]))],
+                    usage_metadata=None)
+
+        olaylar = _collect("google", _IsimsizCagriGemini())
+        self.assertEqual([e.type for e in olaylar
+                          if e.type in ("done", "error")], ["done"])
+
+
+# ── Sonlanma garantisi ŞEKİLDEN BAĞIMSIZ ────────────────────────────────────
+
+
+class TestTerminalGuaranteeIsStructural(unittest.TestCase):
+    """Tek tek şekilleri kapatmak bu depoda işe yaramadı.
+
+    `choices=[]`, `content.parts=None`, `function_call` alanı olmayan parça —
+    üçü de aynı sınıf, üçü de bulunduğu yerde kapatıldı ve her seferinde bir
+    sonraki öngörülmemiş sağlayıcı şekli yeni bir delik açtı. Bu testler
+    özel duruma değil, sınıfı kapatan sarmalayıcıya bakıyor.
+    """
+
+    @staticmethod
+    def _topla(uretici):
+        async def _go():
+            return [e async for e in ar._guarantee_terminal(uretici, "test-model")]
+        return asyncio.run(_go())
+
+    def test_an_unexpected_exception_becomes_exactly_one_error(self):
+        async def _patlayan():
+            yield ar.AgentEvent("text", {"content": "yarım iş"})
+            raise AttributeError("öngörülmemiş sağlayıcı şekli")
+
+        olaylar = self._topla(_patlayan())
+        terminal = [e for e in olaylar if e.type in ("done", "error")]
+        self.assertEqual([e.type for e in terminal], ["error"])
+        self.assertEqual(terminal[0].data["code"], "provider_loop_crashed")
+        self.assertIn("test-model", terminal[0].data["message"])
+
+    def test_the_work_streamed_before_the_crash_is_not_dropped(self):
+        """Sonlanmayı garanti etmek İÇERİĞİ düşürmemeli."""
+
+        async def _patlayan():
+            yield ar.AgentEvent("text", {"content": "yarım iş"})
+            raise RuntimeError("kopuş")
+
+        olaylar = self._topla(_patlayan())
+        self.assertIn("yarım iş", [e.data.get("content") for e in olaylar])
+
+    def test_a_loop_that_ends_without_saying_how_is_reported(self):
+        async def _sessiz():
+            yield ar.AgentEvent("text", {"content": "iş"})
+
+        terminal = [e for e in self._topla(_sessiz())
+                    if e.type in ("done", "error")]
+        self.assertEqual([e.data["code"] for e in terminal],
+                         ["provider_no_terminal"])
+
+    def test_a_healthy_loop_gets_no_extra_terminal(self):
+        """Kapının ters yönü: sağlam bir tur ikinci bir terminal olay almıyor."""
+
+        async def _saglam():
+            yield ar.AgentEvent("response", {"content": "cevap"})
+            yield ar._done_event(1)
+
+        terminal = [e for e in self._topla(_saglam())
+                    if e.type in ("done", "error")]
+        self.assertEqual([e.type for e in terminal], ["done"])
+
+    def test_a_stopped_turn_owes_no_terminal_event(self):
+        """`CancelledError`/`GeneratorExit` yakalanmıyor: turu bırakan taraf
+        zaten olayı okuyacak olan taraf. Uydurma bir `error` üretmek durdurma
+        akışını hataya çevirirdi."""
+        kapandi = []
+
+        async def _askida():
+            try:
+                yield ar.AgentEvent("text", {"content": "iş"})
+                await asyncio.sleep(10)
+            finally:
+                kapandi.append(True)
+
+        async def _go():
+            # İç generator'a burada da bir referans TUTULUYOR ve bu kasıtlı:
+            # bırakılsaydı sarmalayıcı kapanır kapanmaz referans sayacı düşer,
+            # CPython'un kendi sonlandırıcısı `finally`'yi çalıştırır ve test
+            # mekanizmayı değil çöp toplayıcıyı ölçerdi (ölçüldü: mutasyon
+            # testi yeşil bıraktı). Referans dururken `finally`'yi
+            # çalıştırabilecek tek şey sarmalayıcının açık `aclose()`'u.
+            ic = _askida()
+            gen = ar._guarantee_terminal(ic, "test-model")
+            ilk = await gen.__anext__()
+            await gen.aclose()
+            # Sarmalayıcı kapanınca SARDIĞI da kapanmalı: iç döngünün
+            # `finally`'si sahipsiz kalan sağlayıcı isteğini devreden yer
+            # (bkz. `_await_provider`), onu çöp toplayıcıya bırakmak durdurma
+            # yolunu belirsizleştirirdi.
+            return ilk, list(kapandi), ic
+
+        ilk, kapandi_ic, _ic = asyncio.run(_go())
+        self.assertEqual(ilk.type, "text")
+        self.assertEqual(kapandi_ic, [True])
+
+    def test_every_api_loop_goes_through_the_guarantee(self):
+        """Sınıfı kapatıyor, bir dalı değil — kapının bir dala konup
+        diğerlerinin açık kalması bu deponun ölçülmüş en sık arızası."""
+        src = open(ar.__file__, encoding="utf-8").read()
+        self.assertEqual(src.count("_guarantee_terminal("), 4)   # 1 tanım + 3 kullanım
+
+
+# ── İptal edilemeyen Gemini isteği sahipsiz kalmıyor ────────────────────────
+
+
+class _AskidaGemini:
+    """Bloklayan, thread'e bağlı ve İPTAL EDİLEMEZ — gerçek Gemini şekli."""
+
+    def __init__(self, hata: "Exception | None" = None):
+        self.started = threading.Event()
+        self.release = threading.Event()
+        self.hata = hata
+        self.models = types.SimpleNamespace(generate_content=self._generate)
+
+    def _generate(self, **kwargs):
+        self.started.set()
+        self.release.wait(5)
+        if self.hata:
+            raise self.hata
+        part = types.SimpleNamespace(function_call=None, text="bitti", thought=False)
+        return types.SimpleNamespace(
+            candidates=[types.SimpleNamespace(
+                content=types.SimpleNamespace(parts=[part]))],
+            usage_metadata=None)
+
+
+class TestAbandonedGeminiRequestIsAccountedFor(unittest.TestCase):
+    """`asyncio.to_thread` içindeki iş DURDURULAMAZ ve bu değişmiyor.
+
+    `Task.cancel()` bir havuz thread'ine ulaşmıyor; iptal etmek bloklayan SDK
+    çağrısını kesmez, yalnız sonucunu kimsenin okumadığı bir `CancelledError`'a
+    çevirirdi. O yüzden istek turdan uzun yaşıyor — düzeltilebilir olan
+    SAHİPLİK: sonucu her hâlükârda okunuyor ve hatası kayda geçiyor.
+    """
+
+    def _kesilen_tur(self, client):
+        """Turu sağlayıcı çağrısı başladıktan sonra durdurur; sonra thread'i
+        serbest bırakıp isteğin akıbetini döndürür."""
+        original_create_task = asyncio.create_task
+        gorevler = []
+
+        def _yakala(coro, *a, **kw):
+            gorev = original_create_task(coro, *a, **kw)
+            gorevler.append(gorev)
+            return gorev
+
+        async def _go():
+            runner = _runner("google")
+            gen = runner._run_gemini("merhaba")
+            with mock.patch.object(ar.asyncio, "create_task", _yakala):
+                tuketici = original_create_task(gen.__anext__())
+                await asyncio.wait_for(
+                    asyncio.to_thread(client.started.wait, 2), timeout=2)
+                tuketici.cancel()
+                await asyncio.gather(tuketici, return_exceptions=True)
+                await gen.aclose()
+            self.assertTrue(gorevler, "sağlayıcı görevi hiç oluşturulmadı")
+            istek = gorevler[0]
+            # Thread durdurulamıyor: tur bittiği hâlde istek hâlâ koşuyor.
+            # Bu bir kusur değil, ödenen bedelin kendisi — testin kaydettiği şey.
+            askida_kaldi = not istek.done()
+            client.release.set()
+            await asyncio.wait_for(asyncio.shield(
+                asyncio.gather(istek, return_exceptions=True)), timeout=5)
+            return askida_kaldi, istek
+
+        ps = _patches(client)
+        for p in ps:
+            p.start()
+        try:
+            return asyncio.run(_go())
+        finally:
+            client.release.set()
+            for p in reversed(ps):
+                p.stop()
+
+    def test_the_thread_bound_request_does_outlive_the_stopped_turn(self):
+        client = _AskidaGemini()
+        with mock.patch.object(ar.logger, "warning"):
+            askida_kaldi, istek = self._kesilen_tur(client)
+        self.assertTrue(askida_kaldi,
+                        "iptal edilemeyen istek turdan uzun yaşamalı — "
+                        "aksi bir sonuç thread'in durdurulabildiği anlamına gelir")
+        self.assertTrue(istek.done())
+
+    def test_a_failure_after_the_turn_is_logged_not_lost(self):
+        client = _AskidaGemini(hata=RuntimeError("sağlayıcı geç patladı"))
+        with mock.patch.object(ar.logger, "warning") as uyari:
+            self._kesilen_tur(client)
+        metinler = [str(c.args[0]) for c in uyari.call_args_list if c.args]
+        self.assertTrue(any("sahipsiz" in m and "sağlayıcı geç patladı" in m
+                            for m in metinler),
+                        f"sahipsiz isteğin hatası kayda geçmedi: {metinler}")
+
+    def test_a_clean_late_finish_stays_quiet(self):
+        """Kapının ters yönü: başarıyla biten sahipsiz istek gürültü üretmiyor."""
+        client = _AskidaGemini()
+        with mock.patch.object(ar.logger, "warning") as uyari:
+            self._kesilen_tur(client)
+        metinler = [str(c.args[0]) for c in uyari.call_args_list if c.args]
+        self.assertEqual([m for m in metinler if "sahipsiz" in m], [])
+
+    def test_the_uncancellable_branch_hands_the_outcome_to_a_reader(self):
+        """Mekanizmanın kendisi: iptal edilmeyen istek bir done-callback'e
+        bağlanıyor. Bu olmadan görevin istisnası hiç okunmuyor ve asyncio onu
+        çok sonra, hangi tura ait olduğu bilinmeden rapor ediyor."""
+
+        def _okuyucu_bagli_mi(istek) -> bool:
+            # `Task._callbacks` özel bir alan; mekanizmayı doğrudan görmenin
+            # başka yolu yok — takılı OLMAMASI da sınanan bir durum olduğu için
+            # olayı dolaylı gözlemek (log) tek başına yetmiyor.
+            return any((c[0] if isinstance(c, tuple) else c)
+                       is ar._consume_abandoned_request
+                       # Biten bir görevde alan `None`'a düşüyor.
+                       for c in (istek._callbacks or []))
+
+        async def _go():
+            runner = _runner("google")
+            istek = asyncio.create_task(asyncio.sleep(0.05))
+            async for _ in runner._await_provider(istek, iptal_edilebilir=False):
+                pass
+            return istek, _okuyucu_bagli_mi(istek)
+
+        async def _kes():
+            runner = _runner("google")
+            istek = asyncio.create_task(asyncio.sleep(5))
+            gen = runner._await_provider(istek, iptal_edilebilir=False)
+            tuketici = asyncio.create_task(gen.__anext__())
+            await asyncio.sleep(0)
+            tuketici.cancel()
+            await asyncio.gather(tuketici, return_exceptions=True)
+            await gen.aclose()
+            bagli = _okuyucu_bagli_mi(istek)
+            istek.cancel()
+            await asyncio.gather(istek, return_exceptions=True)
+            return bagli
+
+        with mock.patch.object(ar, "_KALP_ATISI_SN", 0.01):
+            self.assertTrue(asyncio.run(_kes()),
+                            "iptal edilemeyen istek sahipsiz bırakıldı")
+            # Ters yön: biten bir isteğe callback takılmıyor, sonucunu zaten
+            # çağıranın kendisi (`istek.result()`) okuyor.
+            istek, bagli = asyncio.run(_go())
+            self.assertTrue(istek.done())
+            self.assertFalse(bagli, "biten isteğe gereksiz okuyucu takıldı")
 
 
 if __name__ == "__main__":
