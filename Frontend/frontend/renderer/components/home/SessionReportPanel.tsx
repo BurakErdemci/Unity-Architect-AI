@@ -4,7 +4,7 @@ import { RefreshCw, X } from 'lucide-react';
 import { useLang } from '../../lib/i18n';
 import { SlashCommandCard } from './SlashCommandCard';
 
-type Durum = 'yukleniyor' | 'ok' | 'no_session' | 'busy' | 'unsupported' | 'error';
+type Durum = 'yukleniyor' | 'ok' | 'no_session' | 'busy' | 'unsupported' | 'outdated' | 'error';
 interface Rapor { durum: Durum; text?: string }
 
 interface Props {
@@ -42,6 +42,11 @@ export const SessionReportPanel: React.FC<Props> = ({
       const res = await fetch(`${API}/session-report/${convId}/${kind}`, {
         headers: { 'X-Session-Token': sessionToken },
       });
+      // 404 = bu uç sunucuda YOK, yani çalışan arka uç bu sürümden eski.
+      // "Hata" diye göstermek kullanıcıyı log okumaya yollardı; oysa yapılacak
+      // şey belli ve tek: uygulamayı yeniden başlat. Ölçüldü 30 Ağu 2026 —
+      // panel ilk denemede tam bu yüzden "Rapor alınamadı" dedi.
+      if (res.status === 404) return { durum: 'outdated' };
       if (!res.ok) return { durum: 'error' };
       const d = await res.json();
       if (d.status === 'ok') return { durum: 'ok', text: d.text || '' };
@@ -72,6 +77,7 @@ export const SessionReportPanel: React.FC<Props> = ({
       : r.durum === 'no_session' ? 'report.noSession'
       : r.durum === 'busy' ? 'report.busy'
       : r.durum === 'unsupported' ? 'report.unsupported'
+      : r.durum === 'outdated' ? 'report.outdated'
       : 'report.error';
     return <p data-testid={`report-empty-${r.durum}`} className="text-[11.5px] text-slate-500 px-1 py-2">{t(anahtar as any)}</p>;
   };

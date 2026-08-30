@@ -71,6 +71,15 @@ describe('dört ayrı boşluk hâli', () => {
     await waitFor(() => expect(screen.getByTestId('report-empty-unsupported')).toBeTruthy())
   })
 
+  it('sunucu bu ucu tanımıyorsa "yeniden başlat" diyor, "hata" demiyor', async () => {
+    // 404 = çalışan arka uç bu sürümden eski. Yapılacak şey tek ve belli;
+    // "Ayrıntı sunucu loglarında" demek kullanıcıyı boşuna log okumaya yollar.
+    ;(globalThis as any).fetch = vi.fn(async () => ({ ok: false, status: 404, json: async () => ({}) }) as any)
+    ciz()
+    await waitFor(() => expect(screen.getAllByTestId('report-empty-outdated').length).toBe(2))
+    expect(screen.queryByTestId('report-empty-error')).toBeNull()
+  })
+
   it('hata ayrı bir hâl', async () => {
     cevapla({ usage: { status: 'error' }, context: { status: 'error' } })
     ciz()
