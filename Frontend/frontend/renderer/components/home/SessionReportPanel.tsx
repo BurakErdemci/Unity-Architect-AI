@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { RefreshCw, X } from 'lucide-react';
 import { useLang } from '../../lib/i18n';
@@ -59,10 +59,27 @@ export const SessionReportPanel: React.FC<Props> = ({
     }
   }, [API, convId, sessionToken]);
 
+  /**
+   * Uçuştaki çekimin KİMLİĞİ. Yalnız en son başlatılan çekim state'e yazabilir.
+   *
+   * Eskiden her `Promise.all` sonucu koşulsuz yazılıyordu. Ölçüldü 30 Ağu 2026:
+   * A sohbeti için açılan panel kapatılıp B için yeniden açıldığında, A'nın geç
+   * dönen yanıtı B'nin AÇIK panelini eziyordu — kullanıcı yanlış sohbetin
+   * raporunu, doğru sanarak okuyordu. Bir raporun hangi sohbete ait olduğu
+   * ekranda hiçbir yerde yazmadığı için de fark edilemezdi.
+   *
+   * Sayaç `convId` karşılaştırmasına tercih edildi: aynı sohbette arka arkaya
+   * basılan "yenile" de aynı yarışı üretiyor ve kimlik testi orada `convId`
+   * eşit olduğu için geçerdi.
+   */
+  const nesilRef = useRef(0);
+
   const tazele = useCallback(async () => {
+    const nesil = ++nesilRef.current;
     setUsage({ durum: 'yukleniyor' });
     setContext({ durum: 'yukleniyor' });
     const [u, c] = await Promise.all([getir('usage'), getir('context')]);
+    if (nesil !== nesilRef.current) return;
     setUsage(u);
     setContext(c);
     if (c.durum === 'ok' && c.text) onContextText?.(c.text);
@@ -73,7 +90,14 @@ export const SessionReportPanel: React.FC<Props> = ({
   if (!open) return null;
 
   const bos = (r: Rapor) => {
+    // `ok` BURADA açıkça sayılıyor. Bu dala yalnız metni boş olan BAŞARILI bir
+    // yanıt düşüyor (HTTP 200 + `status: "ok"` + `text: ""`), ve o eskiden
+    // sondaki `: 'report.error'` varsayılanına kayıyordu: sunucu doğru
+    // çalışmışken kullanıcıya "Rapor alınamadı, ayrıntı loglarda" deniyordu —
+    // yani okunacak bir log bile yoktu. Varsayılana düşmeye bırakılan her yeni
+    // durum aynı yalanı üretir; onun için dal listelenerek yazılıyor.
     const anahtar = r.durum === 'yukleniyor' ? 'report.loading'
+      : r.durum === 'ok' ? 'report.emptyOk'
       : r.durum === 'no_session' ? 'report.noSession'
       : r.durum === 'busy' ? 'report.busy'
       : r.durum === 'unsupported' ? 'report.unsupported'

@@ -70,11 +70,29 @@ export function unityMcpStatusOku(ham: unknown): UnityMCPStatus {
   return 'unknown';
 }
 
+/**
+ * Model kataloğu state'i + SON ÇEKİMİN BAŞARISI.
+ *
+ * Bayrak neden burada, `types.ts`'teki `AvailableModels`'ta değil: `AvailableModels`
+ * backend'in `/available-models` GÖVDESİNİN şekli — sunucu böyle bir alan
+ * göndermiyor. Bu, isteğin kendisi hakkında bir istemci ölçümü; sunucu
+ * sözleşmesine karıştırmak, olmayan bir alanı varmış gibi gösterirdi.
+ *
+ * Ayrı bir prop yerine state'in İÇİNDE olmasının sebebi ölçülmüş: `availableModels`
+ * zaten dropdown'a ve ayarlara akıyor. Yeni bir prop, her tüketicide ayrı ayrı
+ * bağlanmayı gerektirirdi ve bu depoda kayıtlı arıza sınıfı tam olarak bu —
+ * bir yolda bağlanan, öbür yolda unutulan sinyal.
+ */
+export type AvailableModelsState = AvailableModels & {
+  /** Son `/available-models` çağrısı başarısız oldu; listeler BOŞ değil, BİLİNMİYOR. */
+  catalog_error?: boolean;
+};
+
 export const useAIConfig = (API: string, user: UserData | null, showToast: (msg: string, type: any) => void, workspacePath?: string) => {
   const [aiConfig, setAiConfig] = useState<AIConfig>({
     provider_type: 'subscription', api_key: '', model_name: 'claude-sonnet-4-6', thinking_level: 'medium'
   });
-  const [availableModels, setAvailableModels] = useState<AvailableModels>({ local: [], cloud: [], subscription: [] });
+  const [availableModels, setAvailableModels] = useState<AvailableModelsState>({ local: [], cloud: [], subscription: [] });
   const [providersWithKeys, setProvidersWithKeys] = useState<string[]>([]);
   // Sohbet kapısı. Tek doğruluk kaynağı backend'de (`/provider-ready`): model →
   // CLI ailesi eşlemesi orada yaşıyor ve burada ikinci bir kopyasını tutmak
@@ -302,9 +320,22 @@ export const useAIConfig = (API: string, user: UserData | null, showToast: (msg:
         params: force ? { refresh: true } : undefined,
         headers: { 'X-Session-Token': user?.sessionToken ?? '' },
       });
-      if (res.data) setAvailableModels(res.data);
-    } catch (err) { console.error("Modeller alınamadı:", err); }
-  }, [API, user?.sessionToken]);
+      if (res.data) setAvailableModels({ ...res.data, catalog_error: false });
+    } catch (err) {
+      console.error("Modeller alınamadı:", err);
+      // Konsol KULLANICI ARAYÜZÜ DEĞİL. Eski hâlde tek iz buydu ve sonuç
+      // ölçüldü: `/available-models` düşünce dropdown bulut bölümünü sessizce
+      // gizliyordu (`cloudGroups.length > 0`), yani geçici bir katalog arızası
+      // "bütün modeller kayboldu" gibi görünüyordu.
+      //
+      // Eldeki liste SİLİNMİYOR: bayat bir liste, hiç liste olmamasından iyi —
+      // yeter ki bayat olduğu yazsın. Bayrak dropdown'daki uyarı+yeniden dene
+      // satırını sürüyor; toast ise açılış anındaki arıza için tek kanal,
+      // çünkü o sırada dropdown kapalı ve uyarı satırı görünmüyor.
+      setAvailableModels(prev => ({ ...prev, catalog_error: true }));
+      showToast(cevir('models.catalogFailed'), 'error');
+    }
+  }, [API, user?.sessionToken, showToast]);
 
   const fetchProvidersWithKeys = useCallback(async (userId: number) => {
     if (!API) return;

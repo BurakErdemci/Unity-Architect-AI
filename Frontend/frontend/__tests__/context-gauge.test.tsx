@@ -83,6 +83,34 @@ describe('yüzdenin dürüstlüğü', () => {
     expect(baslik).toContain('tahmin')
     expect(baslik).toContain('araç çıktıları')
   })
+
+  it('GERÇEK veri geldiğinde başlık artık tahmin metni DEĞİL', () => {
+    // Denetim bulgusu (30 Ağu 2026): sayı ölçümdü (`%7 · 69.9k/1m`,
+    // `estimated: false`) ama başlık koşulsuz `usage.estimateTitle` idi, yani
+    // "Yaklaşık doluluk… bu bir tahmin" diyordu. Sayı ile güven etiketi
+    // birbirini yalanlayınca kullanıcı hangisine inanacağını seçemiyor —
+    // ölçülmüş bir sayıyı tahmin diye etiketlemek, tahmini ölçüm diye
+    // etiketlemek kadar yanlış, yalnız ters yönde.
+    ciz({
+      contextUsage: {
+        percent: 7, should_compact: false, message_count: 12, estimated: false,
+        real: { used: '69.9k', total: '1m', model: 'claude-opus-5' },
+      },
+    })
+    const baslik = screen.getByTestId('context-gauge').getAttribute('title') || ''
+    expect(baslik).not.toMatch(/tahmin|yaklaşık/i)
+    // Ve boş kalmıyor: gerçek sayı başlıkta da duruyor.
+    expect(baslik).toContain('69.9k')
+    expect(baslik).toContain('1m')
+  })
+
+  it('veri hiç yokken (null) gösterge "veri yok" diyor, %0 demiyor', () => {
+    // `null` = ÖLÇÜM YOK. Sıfır bir tahminle aynı dala düşerse, başarısız bir
+    // istek ölçülmüş bir "neredeyse boş" gibi okunur.
+    ciz({ contextUsage: null })
+    expect(screen.getByTestId('context-percent').textContent).toBe('henüz veri yok')
+    expect(screen.getByTestId('context-gauge').getAttribute('title')).toBe('henüz veri yok')
+  })
 })
 
 describe('gerçek token', () => {

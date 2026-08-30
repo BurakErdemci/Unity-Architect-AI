@@ -45,8 +45,12 @@ interface ControlPanelProps {
   importMemory: () => Promise<void>;
   compactConversation: () => Promise<void>;
   isCompacting: boolean;
-  contextUsage?: ContextUsage;
-  sessionUsage?: SessionUsage;
+  // `null` = ÖLÇÜM YOK (istek başarısız ya da hiç yapılmadı), sıfır tahmin
+  // değil. Üretici taraf (useChat) bu ayrımı gönderiyor; burada `undefined` ile
+  // aynı dala düşüyor ve gösterge "henüz veri yok" diyor. Sıfır bir halka
+  // çizmek, hiç ölçmediğimiz bir şeyi ölçtük demek olurdu.
+  contextUsage?: ContextUsage | null;
+  sessionUsage?: SessionUsage | null;
   /** Kullanım/bağlam panelini aç-kapa. Panelin kendisi home.tsx'te mount ediliyor. */
   reportsOpen?: boolean;
   onToggleReports?: () => void;
@@ -285,13 +289,25 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
       {activeConvId && (
         <>
           <div className="w-px h-3 bg-slate-800" />
+          {/* Başlık YANINDAKİ SAYIYI anlatmak zorunda; ayrımı `real` yapıyor,
+              çünkü yüzdenin kendisi de aşağıda ona bakarak çiziliyor. İki ayrı
+              koşul kullanmak, sayının ölçüm ama başlığın tahmin dediği kartı
+              yeniden mümkün kılardı — ölçüldü 30 Ağu 2026: `%7 · 69.9k/1m`
+              sayısının üstünde "Yaklaşık doluluk… bu bir tahmin" yazıyordu ve
+              kullanıcı hangisinin doğru olduğunu seçemiyordu. */}
           <button
             data-testid="context-gauge"
             onClick={() => compactConversation()}
             disabled={isCompacting}
-            title={contextUsage
-              ? t('usage.estimateTitle', { yuzde: contextUsage.percent, sayi: contextUsage.message_count })
-              : t('usage.noData')}
+            title={!contextUsage
+              ? t('usage.noData')
+              : contextUsage.real
+                ? t('usage.realTitle', {
+                    yuzde: contextUsage.percent,
+                    used: contextUsage.real.used,
+                    total: contextUsage.real.total,
+                  })
+                : t('usage.estimateTitle', { yuzde: contextUsage.percent, sayi: contextUsage.message_count })}
             className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium transition-colors group relative ${
               yuzde >= 90 ? 'bg-red-500/10 border border-red-500/30 text-red-400 hover:bg-red-500/20'
               : yuzde >= 75 ? 'bg-amber-500/10 border border-amber-500/30 text-amber-400 hover:bg-amber-500/20'

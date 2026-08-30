@@ -2,6 +2,7 @@ import React from 'react';
 import { motion } from 'framer-motion';
 import { Terminal, X, Check, AlertTriangle, Box } from 'lucide-react';
 import { useLang } from '../../lib/i18n';
+import { stripBidi } from '../../lib/modelText';
 
 interface CommandApprovalProps {
   command: string;
@@ -76,7 +77,15 @@ export const CommandApproval: React.FC<CommandApprovalProps> = ({ command, onCon
             <div className="bg-black/50 rounded-lg px-3 py-2 border border-white/5 max-h-[320px] overflow-y-auto custom-scrollbar">
               <code className="block text-[11px] text-emerald-400 font-mono break-all whitespace-pre-wrap leading-relaxed">
                 {!unity && <span className="text-slate-600 mr-1.5 select-none">$</span>}
-                {command}
+                {/* Yalnız GÖSTERİM temizleniyor; `onConfirm` hâlâ gerçek komutu
+                    çalıştırıyor. Sanitize edilmiş metni geri göndermek, sunucuya
+                    kullanıcının onayladığından BAŞKA bir komut yollamak olurdu.
+                    Temizlik burada zorunlu, çünkü U+202E React'in kaçırdığı
+                    türden değil: markup değil, çizim yönü. Tarayıcı onu
+                    onurlandırınca `printf safe<U+202E>; rm -rf /` ekranda zararsız
+                    görünüp zararlı olanı onaylatır — gösterdiğinden başkasını
+                    onaylayan bir kapı, kapı değildir. */}
+                {stripBidi(command)}
               </code>
             </div>
           </div>

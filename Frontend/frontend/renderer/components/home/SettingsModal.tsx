@@ -5,6 +5,7 @@ import { AIConfig, AvailableModels } from "./types";
 import { ModelAvatar } from "./ModelAvatar";
 import { UnityMCPStatus } from "../../hooks/home/useAIConfig";
 import { useLang, type Lang } from "../../lib/i18n";
+import { stripBidi } from "../../lib/modelText";
 
 
 
@@ -102,10 +103,14 @@ export const SettingsModal = ({
       : aiConfig.provider_type === 'subscription' ? availableModels?.subscription
         : (availableModels?.cloud || []).filter(m => m.provider === aiConfig.provider_type)
   ) || [];
+  // `label` GÖSTERİM, `value` ise seçildiğinde `model_name`e yazılan gerçek
+  // kimlik — bu yüzden yalnız `label` temizleniyor. Aynı katalog model
+  // seçicide de çiziliyor ve orada temizlenip burada bırakmak, bu depoda adı
+  // konmuş arıza olurdu: kapı bir yolda var, öbür yolda yok.
   const MODEL_HINTS = saglayiciModelleri
     .slice(0, 8)
-    .map(m => ({ label: m.name, value: m.id }));
-  const varsayilanModel = saglayiciModelleri[0]?.id || '';
+    .map(m => ({ label: stripBidi(m.name || ''), value: m.id }));
+  const varsayilanModel = stripBidi(saglayiciModelleri[0]?.id || '');
 
   return (
   <AnimatePresence>

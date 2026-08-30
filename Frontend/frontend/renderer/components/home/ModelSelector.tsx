@@ -15,14 +15,16 @@ import {
   RefreshCw
 } from 'lucide-react';
 import { ModelAvatar } from './ModelAvatar';
-import { AIConfig, AvailableModels, UserData } from './types';
+import { AIConfig, UserData } from './types';
 import { useLang } from '../../lib/i18n';
 import { apiHataMesaji } from '../../lib/apiError';
+import { stripBidi } from '../../lib/modelText';
+import type { AvailableModelsState } from '../../hooks/home/useAIConfig';
 
 interface ModelSelectorProps {
   aiConfig: AIConfig;
   setAiConfig: (cfg: AIConfig) => void;
-  availableModels: AvailableModels;
+  availableModels: AvailableModelsState;
   providersWithKeys: string[];
   effectiveProvider: string;
   displayModelName: string;
@@ -226,21 +228,21 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
     }
     return order.map(p => ({
       provider: p,
-      meta: CLOUD_PROVIDER_META[p] || { label: p },
+      meta: CLOUD_PROVIDER_META[p] || { label: stripBidi(p) },
       models: map[p],
     }));
   }, [availableModels.cloud]);
 
   const selectCliModel = async (g: CliGroupDef, m: ModelItem) => {
     if (m.disabled) {
-      showToast(t('models.planLocked', { model: m.name, cli: g.label }), 'warning');
+      showToast(t('models.planLocked', { model: goster(m.name), cli: g.label }), 'warning');
       return;
     }
     const newCfg = { ...aiConfig, provider_type: 'subscription', model_name: m.id, api_key: 'CLI_SESSION' };
     setAiConfig(newCfg);
     setIsModelDropdownOpen(false);
     if (user) await axios.post(`${API}/save-ai-config`, { ...newCfg, user_id: user.id });
-    showToast(t('models.selected', { model: m.name }), 'info');
+    showToast(t('models.selected', { model: goster(m.name) }), 'info');
     if (doctor && doctor[g.availKey]?.installed === false) {
       showToast(t('models.cliNotFound', { cli: g.cliLabel }), 'warning');
     }
@@ -260,7 +262,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
     if (user) await axios.post(`${API}/save-ai-config`, { ...newCfg, user_id: user.id });
     if (!hasKey) {
       setShowSettings(true);
-      showToast(`${orToggle ? 'OpenRouter' : m.provider} ${t('models.apiKeyNeeded')}`, 'warning');
+      showToast(`${orToggle ? 'OpenRouter' : goster(m.provider)} ${t('models.apiKeyNeeded')}`, 'warning');
     }
   };
 
@@ -303,6 +305,22 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
     </div>
   );
 
+  /**
+   * Katalog metni HER ZAMAN buradan geçerek ekrana çıkıyor.
+   *
+   * Model adları, sağlayıcı adları ve model kimlikleri uzak bir kataloğun
+   * (sağlayıcının `/v1/models` yanıtı ya da OpenRouter) kontrolünde. React
+   * markup'ı kaçırıyor ama U+202E markup değil: tarayıcı onu onurlandırıp
+   * satırın kalanını ters çiziyor, yani listede seçtiğin ad ile state'e yazılan
+   * kimlik farklı okunabiliyor.
+   *
+   * Tek bir yardımcı bilerek: bu depoda ölçülmüş arıza sınıfı "kapı bir yolda
+   * var, öbür yolda yok" — satır temizlenip seçili etiket temizlenmeyince
+   * korunmuş görünüp korunmayan bir yüzey kalıyordu. `stripBidi` YALNIZ
+   * gösterimde; `m.id` seçim ve kayıt yollarında ham kalıyor.
+   */
+  const goster = (s?: string) => stripBidi(s || '');
+
   const cliModelRow = (g: CliGroupDef, m: ModelItem, indent = true) => {
     const active = isActive(m.id);
     if (m.disabled) {
@@ -314,7 +332,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
           title={t('models.planLockedTitle')}
           className={`w-full text-left ${indent ? 'pl-[46px]' : 'pl-4'} pr-3 py-[7px] text-[12px] flex items-center justify-between rounded-lg hover:bg-white/[0.03] transition-colors`}
         >
-          <span className="truncate font-medium text-slate-600 line-through decoration-slate-700">{m.name}</span>
+          <span className="truncate font-medium text-slate-600 line-through decoration-slate-700">{goster(m.name)}</span>
           <span className="text-[9px] text-slate-600 shrink-0 ml-2">{t('models.notInPlan')}</span>
         </button>
       );
@@ -325,7 +343,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
         onClick={() => selectCliModel(g, m)}
         className={`w-full text-left ${indent ? 'pl-[46px]' : 'pl-4'} pr-3 py-[7px] text-[12px] flex items-center justify-between rounded-lg transition-colors hover:bg-white/[0.05] group/row`}
       >
-        <span className={`truncate font-medium ${active ? g.accent : 'text-slate-300'}`}>{m.name}</span>
+        <span className={`truncate font-medium ${active ? g.accent : 'text-slate-300'}`}>{goster(m.name)}</span>
         {active && <Check size={13} className={`${g.accent} shrink-0 ml-2`} />}
       </button>
     );
@@ -347,7 +365,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
           <ModelAvatar provider={orToggle ? 'openrouter' : m.provider} size={11} containerSize="h-5 w-5" />
           <span className="flex flex-col min-w-0">
             <span className={`text-[12px] font-medium truncate flex items-center gap-1.5 ${active ? 'text-blue-400' : 'text-slate-300'}`}>
-              {m.name}
+              {goster(m.name)}
               {hasKey
                 ? <Key size={9} className="text-blue-400/70 shrink-0" />
                 : <span className="text-[8px] text-amber-400/90 bg-amber-500/10 border border-amber-500/30 rounded px-1 leading-tight shrink-0">{t('models.noKey')}</span>}
@@ -362,7 +380,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                 </span>
               )}
             </span>
-            <span className="text-[9.5px] text-slate-500 truncate">{orToggle ? 'via OpenRouter' : m.provider}</span>
+            <span className="text-[9.5px] text-slate-500 truncate">{orToggle ? 'via OpenRouter' : goster(m.provider)}</span>
           </span>
         </button>
         {active && <Check size={13} className="text-blue-400 shrink-0" />}
@@ -404,10 +422,10 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
         <ModelAvatar provider={activeGroupKey ? CLI_GROUPS.find(g => g.key === activeGroupKey)!.brand : aiConfig.provider_type} size={14} />
         <div className="flex flex-col min-w-0">
           <span className="text-[12px] font-semibold text-slate-300 leading-tight whitespace-nowrap truncate">
-            {displayModelName}
+            {goster(displayModelName)}
           </span>
           <span className="text-[9px] text-slate-500 leading-tight capitalize whitespace-nowrap truncate">
-            {activeGroupKey ? CLI_GROUPS.find(g => g.key === activeGroupKey)!.label : effectiveProvider}
+            {activeGroupKey ? CLI_GROUPS.find(g => g.key === activeGroupKey)!.label : goster(effectiveProvider)}
           </span>
         </div>
         <ChevronDown size={14} className="text-slate-500" />
@@ -464,7 +482,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                         onClick={() => selectLocalModel(m)}
                         className={`w-full text-left px-4 py-[7px] text-[12px] rounded-lg hover:bg-white/[0.05] ${isActive(m.id) ? 'text-emerald-400' : 'text-slate-300'}`}
                       >
-                        {m.name}
+                        {goster(m.name)}
                       </button>
                     ))}
                   </div>
@@ -559,6 +577,29 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                       })}
                     </div>
 
+                    {/* Katalog ÇEKİLEMEDİĞİNDE bunu söyle.
+                        Bölüm `cloudGroups.length > 0` ile gizlendiği için arıza
+                        "bütün bulut modelleri kayboldu" gibi görünüyordu; boş
+                        liste ile alınamamış liste aynı şey değil. Yeniden dene
+                        düğmesi şart: kullanıcıya bir hâl gösterip çıkış yolu
+                        vermemek, arızayı yalnız daha görünür yapardı. */}
+                    {availableModels.catalog_error && (
+                      <div
+                        data-testid="cloud-catalog-error"
+                        className="p-3 border-t border-white/[0.06] flex items-center gap-2 text-[11px] text-amber-400/90"
+                      >
+                        <AlertTriangle size={12} className="shrink-0" />
+                        <span className="flex-1 leading-snug">{t('models.catalogFailed')}</span>
+                        <button
+                          data-testid="cloud-catalog-retry"
+                          onClick={() => fetchAvailableModels()}
+                          className="shrink-0 px-2 py-1 rounded-md border border-amber-500/40 bg-amber-500/10 text-amber-200 text-[10px] font-semibold hover:bg-amber-500/20 transition-colors"
+                        >
+                          {t('models.catalogRetry')}
+                        </button>
+                      </div>
+                    )}
+
                     {/* ── BULUT API (sağlayıcıya göre gruplu) ── */}
                     {cloudGroups.length > 0 && (
                       <div className="p-1 border-t border-white/[0.06]">
@@ -633,7 +674,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                           onClick={() => selectLocalModel(m)}
                           className={`w-full text-left px-4 py-[7px] text-[12px] rounded-lg hover:bg-white/[0.05] flex items-center justify-between ${isActive(m.id) ? 'text-emerald-400' : 'text-slate-300'}`}
                         >
-                          <span className="truncate">{m.name}</span>
+                          <span className="truncate">{goster(m.name)}</span>
                           {isActive(m.id) && <Check size={13} className="text-emerald-400 shrink-0 ml-2" />}
                         </button>
                       ))}

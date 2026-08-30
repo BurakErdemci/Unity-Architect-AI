@@ -14,7 +14,7 @@
  */
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 import React from 'react'
-import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, cleanup, fireEvent, waitFor, act } from '@testing-library/react'
 
 import { SessionReportPanel } from '../renderer/components/home/SessionReportPanel'
 
@@ -107,6 +107,131 @@ describe('rapor geldiğinde', () => {
     ciz({ onContextText: haber })
     await waitFor(() => expect(screen.getAllByTestId('report-empty-busy').length).toBe(2))
     expect(haber).not.toHaveBeenCalled()
+  })
+})
+
+describe('başarılı ama BOŞ rapor', () => {
+  it('HTTP 200 + status ok + boş metin, HATA diye gösterilmiyor', async () => {
+    // Denetim bulgusu (30 Ağu 2026): panel `r.text`in doğruluğuna bakıp boş
+    // metni `bos()`a yolluyordu ve orada hiçbir dal eşleşmediği için sondaki
+    // varsayılan seçiliyordu — `report.error`. Yani sunucu doğru çalışmışken
+    // kullanıcıya "Rapor alınamadı, ayrıntı sunucu loglarında" deniyordu; oysa
+    // okunacak bir log bile yok. Sunucuyu, başarıyla verdiği bir cevap için
+    // suçlamak, kullanıcıyı olmayan bir arızayı aramaya yollar.
+    cevapla({ usage: { status: 'ok', text: '' }, context: { status: 'ok', text: '' } })
+    ciz()
+    await waitFor(() => expect(screen.getAllByTestId('report-empty-ok').length).toBe(2))
+    expect(screen.queryByTestId('report-empty-error')).toBeNull()
+    expect(screen.getByTestId('session-report-panel').textContent || '')
+      .not.toContain('Rapor alınamadı')
+  })
+
+  it('boş başarı, "oturum yok" ile de karıştırılmıyor', async () => {
+    // Beş ayrı boşluk hâlinin hepsi ayrı bir sonraki adım anlatıyor; ikisini
+    // birleştirmek kullanıcıya yanlış işi yaptırır.
+    cevapla({ usage: { status: 'ok', text: '' }, context: { status: 'ok', text: '' } })
+    ciz()
+    await waitFor(() => expect(screen.getAllByTestId('report-empty-ok').length).toBe(2))
+    expect(screen.queryByTestId('report-empty-no_session')).toBeNull()
+  })
+
+  it('dolu bir rapor hâlâ KART olarak çiziliyor — boş hâl onu yutmuyor', async () => {
+    cevapla({ usage: { status: 'no_session' }, context: { status: 'ok', text: CONTEXT_METNI } })
+    ciz()
+    await waitFor(() => expect(screen.getByText('69.9k / 1m token')).toBeTruthy())
+    expect(screen.queryByTestId('report-empty-ok')).toBeNull()
+  })
+})
+
+describe('sohbet değişince gelen BAYAT yanıt', () => {
+  /** Elde tutulan `fetch`: her çağrı bir söz döndürüyor, çözümü testte. */
+  const tutulanFetch = () => {
+    const bekleyen: { url: string; resolve: (v: any) => void }[] = []
+    ;(globalThis as any).fetch = vi.fn(
+      (url: string) => new Promise(resolve => { bekleyen.push({ url, resolve }) }),
+    )
+    return bekleyen
+  }
+  const yanit = (text: string) => ({ ok: true, status: 200, json: async () => ({ status: 'ok', text }) })
+
+  it('A sohbetinin geç yanıtı, AÇIK olan B panelini EZMİYOR', async () => {
+    // Denetim bulgusu (30 Ağu 2026): her `Promise.all` sonucu aynı state'e
+    // koşulsuz yazılıyordu. Kullanıcı A için paneli açıp kapatıyor, B için
+    // yeniden açıyor; B'nin raporu çiziliyor, sonra A'nın yavaş yanıtı gelip
+    // onu eziyordu. Panelde hangi sohbete ait olduğu HİÇBİR YERDE yazmadığı
+    // için kullanıcı yanlış raporu doğru sanarak okuyor.
+    const bekleyen = tutulanFetch()
+    const view = ciz()                                        // A (convId 7) → 2 istek
+    view.rerender(
+      <SessionReportPanel open={false} onClose={() => {}} API="http://x" sessionToken="t" convId={7} />,
+    )
+    view.rerender(
+      <SessionReportPanel open onClose={() => {}} API="http://x" sessionToken="t" convId={8} />,
+    )
+    // Kapı: dört istek gerçekten uçuşta değilse aşağıdaki yarış hiç kurulmamış
+    // olur ve test kendi ölçtüğü şeyi ölçemeden yeşil yanar.
+    await waitFor(() => expect(bekleyen.length).toBe(4))
+
+    await act(async () => {
+      bekleyen[2].resolve(yanit('YENI_KULLANIM'))
+      bekleyen[3].resolve(yanit('**Tokens:** 2 / 10 (20%)'))
+    })
+    expect(screen.getByTestId('session-report-panel').textContent).toContain('YENI_KULLANIM')
+
+    await act(async () => {
+      bekleyen[0].resolve(yanit('ESKI_KULLANIM'))
+      bekleyen[1].resolve(yanit('**Tokens:** 1 / 10 (10%)'))
+    })
+    const metin = screen.getByTestId('session-report-panel').textContent || ''
+    expect(metin).not.toContain('ESKI_KULLANIM')
+    expect(metin).not.toContain('1 / 10 token')
+    expect(metin).toContain('YENI_KULLANIM')
+  })
+
+  it('aynı sohbette arka arkaya yenilemede de son çekim kazanıyor', async () => {
+    // Kimlik testi `convId` üzerinden yapılsaydı bu senaryo KAÇARDI: iki çekim
+    // de aynı sohbete ait ve yine de biri bayat. Sayaç bu yüzden seçildi.
+    const bekleyen = tutulanFetch()
+    ciz()
+    await waitFor(() => expect(bekleyen.length).toBe(2))
+    fireEvent.click(screen.getByTestId('report-refresh'))
+    await waitFor(() => expect(bekleyen.length).toBe(4))
+
+    await act(async () => {
+      bekleyen[2].resolve(yanit('IKINCI'))
+      bekleyen[3].resolve(yanit('**Tokens:** 2 / 10 (20%)'))
+    })
+    await act(async () => {
+      bekleyen[0].resolve(yanit('BIRINCI'))
+      bekleyen[1].resolve(yanit('**Tokens:** 1 / 10 (10%)'))
+    })
+    const metin = screen.getByTestId('session-report-panel').textContent || ''
+    expect(metin).toContain('IKINCI')
+    expect(metin).not.toContain('BIRINCI')
+  })
+
+  it('bayat yanıt DIŞARIYA da bildirilmiyor — gösterge yanlış sayıyı almasın', async () => {
+    // `onContextText` göstergeye gerçek doluluğu taşıyor. Bayat bir bağlam
+    // metnini oraya sızdırmak, arızayı panelden göstergeye taşımak olurdu.
+    const haber = vi.fn()
+    const bekleyen = tutulanFetch()
+    const view = render(
+      <SessionReportPanel open onClose={() => {}} API="http://x" sessionToken="t" convId={7} onContextText={haber} />,
+    )
+    view.rerender(
+      <SessionReportPanel open onClose={() => {}} API="http://x" sessionToken="t" convId={8} onContextText={haber} />,
+    )
+    await waitFor(() => expect(bekleyen.length).toBe(4))
+    await act(async () => {
+      bekleyen[2].resolve(yanit('YENI'))
+      bekleyen[3].resolve(yanit(CONTEXT_METNI))
+    })
+    await act(async () => {
+      bekleyen[0].resolve(yanit('ESKI'))
+      bekleyen[1].resolve(yanit('**Tokens:** 1 / 10 (10%)'))
+    })
+    expect(haber).toHaveBeenCalledTimes(1)
+    expect(haber).toHaveBeenCalledWith(CONTEXT_METNI)
   })
 })
 
