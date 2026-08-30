@@ -104,7 +104,10 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
     : `Effort ${activeMeta.label}`;
 
   return (
-    <div className="flex items-center gap-2 px-1 mt-1.5">
+    // `flex-wrap`: bu şerit sabit genişlikte bir çekmecenin içinde ve her yeni
+    // düğme onu sessizce taşırıyor — 30 Ağu 2026'da gösterge eklenince "Hafıza"
+    // etiketi kesildi. Taşan içerik kırpılmak yerine alt satıra iniyor.
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 px-1 mt-1.5">
       <GenerationModeSelector value={generationMode} onChange={setGenerationMode} />
       <div className="w-px h-3 bg-slate-800" />
       
@@ -320,7 +323,6 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
             <span data-testid="context-percent">
               {contextUsage ? `~%${yuzde}` : t('usage.noData')}
             </span>
-            <span className="text-slate-600">·</span>
             <span>{isCompacting ? t('memory.compacting') : t('memory.compact')}</span>
           </button>
 
