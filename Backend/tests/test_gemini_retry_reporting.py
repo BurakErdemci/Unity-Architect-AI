@@ -117,6 +117,22 @@ def test_a_number_that_merely_contains_429_is_not_a_quota_error():
     assert "kota" not in metin.lower()
 
 
+def test_a_model_without_tool_support_is_told_plainly_not_in_raw_json():
+    """Saha, 30 Ağu 2026: kullanıcının yüzüne ham JSON basılıyordu.
+
+    `{'error': {'code': 400, 'message': 'Function calling is not enabled for
+    models/antigravity-preview-05-2026', ...}}` — doğru bilgi, ama kullanıcıyı
+    hata metnini çözmeye zorluyor. Yapılacak şey tek ve belli: araç
+    çağırabilen bir model seç.
+    """
+    client, olaylar = _kostur(
+        "400 INVALID_ARGUMENT: Function calling is not enabled for models/antigravity-preview-05-2026")
+    assert client.calls == 1, "yapılandırma hatası yeniden denenmemeli"
+    metin = _hata_metni(olaylar)
+    assert "araç çağırmayı desteklemiyor" in metin
+    assert "INVALID_ARGUMENT" not in metin
+
+
 def test_the_turn_ends_with_error_and_no_done():
     # A paketinin sonlanma sözleşmesi: bir tur `done` YA DA `error` ile biter.
     _, olaylar = _kostur("429 quota")

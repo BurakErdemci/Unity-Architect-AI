@@ -1057,6 +1057,18 @@ Kullanıcıyla {'Türkçe' if self.language == 'tr' else 'İngilizce'} konuş.""
                     else:
                         # 400 / diğer hatalar — tam hata mesajını logla
                         logger.error(f"  ❌ Gemini API hatası [{self.model_name}]: {str(e)}", exc_info=True)
+                        # "Function calling is not enabled" seçilen modelin araç
+                        # çağıramadığı anlamına geliyor ve bu bir YAPILANDIRMA
+                        # sorunu, geçici bir arıza değil. Ham JSON'u kullanıcının
+                        # yüzüne basmak onu hata metnini çözmeye zorluyordu;
+                        # yapılacak şey tek: araç çağırabilen bir model seç.
+                        if "function calling is not enabled" in err_msg:
+                            yield AgentEvent("error", {"message": (
+                                f"`{self.model_name}` modeli araç çağırmayı desteklemiyor, "
+                                "bu yüzden Unity/dosya araçlarını kullanamıyor. Araç gerektiren "
+                                "işler için araç çağırabilen bir model seç."
+                            )})
+                            return
                         yield AgentEvent("error", {"message": f"AI hatası: {str(e)}"})
                         return
 
