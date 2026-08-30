@@ -146,6 +146,13 @@ export default function Home() {
     }
   }, [auth.isLoading, auth.user, API]);
 
+  // Ayarlar açılınca model listesini tazele: oradaki öneri çipleri artık CANLI
+  // listeden geliyor, ve liste kullanıcının anahtarına bağlı. Açılışta bir kez
+  // çekmek yetmiyor — kullanıcı anahtar ekleyip aynı ekranda öneri bekliyor.
+  useEffect(() => {
+    if (ai.showSettings) ai.fetchAvailableModels();
+  }, [ai.showSettings]);
+
   // --- Sohbet kapısı: seçili sağlayıcı gerçekten kullanılabilir mi? ---
   // Model/sağlayıcı DEĞİŞTİĞİNDE de yeniden ölçülüyor: kullanıcı anahtarı olmayan
   // bir modele geçtiği anda kapı kapanmalı, bir sonraki mesajı beklemeden.
@@ -515,7 +522,7 @@ export default function Home() {
       </Head>
 
       <SettingsModal
-        open={ai.showSettings} aiConfig={ai.aiConfig} providersWithKeys={ai.providersWithKeys}
+        open={ai.showSettings} aiConfig={ai.aiConfig} availableModels={ai.availableModels} providersWithKeys={ai.providersWithKeys}
         onChange={ai.setAiConfig} onClose={() => ai.setShowSettings(false)} onSave={ai.saveAIConfig}
         onLogout={handleLogout} onDeleteKey={ai.deleteApiKey}
         unityMcpStatus={ai.unityMcpStatus} unityMcpToggling={ai.unityMcpToggling} onToggleUnityMcp={ai.toggleUnityMcp}

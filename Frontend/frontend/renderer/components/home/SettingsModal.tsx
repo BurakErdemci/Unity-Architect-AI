@@ -1,26 +1,12 @@
 import { LogOut, Settings, Trash2, X, Gamepad2, Loader2, Globe, Key, Check } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 
-import { AIConfig } from "./types";
+import { AIConfig, AvailableModels } from "./types";
 import { ModelAvatar } from "./ModelAvatar";
 import { UnityMCPStatus } from "../../hooks/home/useAIConfig";
 import { useLang, type Lang } from "../../lib/i18n";
 
 
-const DEFAULT_MODELS: Record<string, string> = {
-  anthropic: "claude-sonnet-5",
-  openai: "gpt-5.6-terra",
-  openrouter: "z-ai/glm-5.2",
-  google: "gemini-3.6-flash",
-  groq: "llama-3.3-70b-versatile",
-  deepseek: "deepseek-v4-pro",
-  moonshot: "kimi-k3",
-  "z-ai": "glm-5.2",
-  nvidia: "z-ai/glm-5.2",
-  ollama: "qwen2.5-coder:7b",
-  kb: "unity-kb-v1",
-  subscription: "claude-sonnet-5",
-};
 
 // Sağlayıcı seçim ızgarası (marka avatarlı — native <select> yerine).
 // brand: ModelAvatar/ModelLogo anahtarı; badge: küçük rozet.
@@ -48,6 +34,7 @@ const PROVIDER_TILES: { value: string; label: string; labelKey?: string; brand: 
 interface SettingsModalProps {
   open: boolean;
   aiConfig: AIConfig;
+  availableModels?: AvailableModels;
   providersWithKeys: string[];
   onChange: (nextConfig: AIConfig) => void;
   onClose: () => void;
@@ -65,6 +52,7 @@ interface SettingsModalProps {
 export const SettingsModal = ({
   open,
   aiConfig,
+  availableModels,
   providersWithKeys,
   onChange,
   onClose,
@@ -99,93 +87,26 @@ export const SettingsModal = ({
   // saymak bilinçli: yeni bir durum eklendiğinde varsayılan "açık" olmasın.
   const unityMcpAcik =
     unityMcpStatus === 'starting' || unityMcpStatus === 'running' || unityMcpStatus === 'connected';
-  const MODEL_HINTS: Record<string, { label: string; value: string }[]> = {
-    anthropic: [
-      { label: `Sonnet 5 (${t('hint.recommended')})`, value: "claude-sonnet-5" },
-      { label: "Fable 5", value: "claude-fable-5" },
-      { label: `Opus 5 (${t('hint.strongest')})`, value: "claude-opus-5" },
-      { label: "Opus 4.8", value: "claude-opus-4-8" },
-      { label: "Sonnet 4.6", value: "claude-sonnet-4-6" },
-      { label: "Haiku 4.5", value: "claude-haiku-4-5" },
-    ],
-    openai: [
-      { label: `GPT-5.6 Terra (${t('hint.recommended')})`, value: "gpt-5.6-terra" },
-      { label: "GPT-5.6 Sol (Frontier)", value: "gpt-5.6-sol" },
-      { label: "GPT-5.6 Luna (Fast)", value: "gpt-5.6-luna" },
-      { label: "GPT-5.5 (Frontier)", value: "gpt-5.5" },
-      { label: "GPT-5.5 Pro", value: "gpt-5.5-pro" },
-      { label: "GPT-5.4", value: "gpt-5.4" },
-      { label: "GPT-5.4 Mini", value: "gpt-5.4-mini" },
-    ],
-    openrouter: [
-      { label: `GLM 5.2 (${t('hint.recommended')})`, value: "z-ai/glm-5.2" },
-      { label: "GPT-5.6 Sol", value: "openai/gpt-5.6-sol" },
-      { label: "GPT-5.6 Terra", value: "openai/gpt-5.6-terra" },
-      { label: "GPT-5.6 Luna", value: "openai/gpt-5.6-luna" },
-      { label: "Gemini 3.6 Flash", value: "google/gemini-3.6-flash" },
-      { label: "Kimi K3", value: "moonshotai/kimi-k3" },
-      { label: "Kimi K2.7 Code", value: "moonshotai/kimi-k2.7-code" },
-      { label: "DeepSeek V4 Pro", value: "deepseek/deepseek-v4-pro" },
-      { label: "DeepSeek V4 Flash", value: "deepseek/deepseek-v4-flash" },
-      { label: "GPT-5.5 (Frontier)", value: "openai/gpt-5.5" },
-      { label: "GPT-5.5 Pro (Elite)", value: "openai/gpt-5.5-pro" },
-      { label: "Claude Sonnet 5", value: "anthropic/claude-sonnet-5" },
-      { label: "Claude Opus 4.8", value: "anthropic/claude-opus-4-8" },
-      { label: "Gemini 3 Flash", value: "google/gemini-3-flash-preview" },
-    ],
-    google: [
-      { label: `Gemini 3.6 Flash (${t('hint.recommended')})`, value: "gemini-3.6-flash" },
-      { label: "Gemini 3.5 Flash", value: "gemini-3.5-flash" },
-      { label: `Gemini 3.5 Flash Lite (${t('hint.fast')})`, value: "gemini-3.5-flash-lite" },
-      { label: "Gemini 3 Flash", value: "gemini-3-flash-preview" },
-      { label: "Gemini 3.1 Pro", value: "gemini-3.1-pro-preview" },
-      { label: "Gemini 3.1 Flash Lite", value: "gemini-3.1-flash-lite-preview" },
-    ],
-    moonshot: [
-      { label: `Kimi K3 (${t('hint.newest')})`, value: "kimi-k3" },
-      { label: "Kimi K2.7 Code", value: "kimi-k2.7-code" },
-      { label: "Kimi K2.6", value: "kimi-k2.6" },
-    ],
-    "z-ai": [
-      { label: `GLM 5.2 (${t('hint.recommended')})`, value: "glm-5.2" },
-    ],
-    groq: [
-      { label: `Llama 3.3 70B (${t('hint.recommended')})`, value: "llama-3.3-70b-versatile" },
-      { label: `Llama 3.1 8B (${t('hint.fast')})`, value: "llama-3.1-8b-instant" },
-    ],
-    deepseek: [
-      { label: `DeepSeek V4 Pro (${t('hint.recommended')})`, value: "deepseek-v4-pro" },
-      { label: "DeepSeek V4 Flash", value: "deepseek-v4-flash" },
-    ],
-    nvidia: [
-      { label: `GLM 5.2 (${t('hint.recommended')})`, value: "z-ai/glm-5.2" },
-      { label: `Nemotron 3 Ultra 550B (${t('hint.strongest')})`, value: "nvidia/nemotron-3-ultra-550b-a55b" },
-      { label: "Nemotron 3 Super 120B", value: "nvidia/nemotron-3-super-120b-a12b" },
-      { label: "Qwen3 Coder 480B", value: "qwen/qwen3-coder-480b-a35b-instruct" },
-      { label: "Qwen 3.5 397B", value: "qwen/qwen3.5-397b-a17b" },
-      { label: "Mistral Large 3 675B", value: "mistralai/mistral-large-3-675b-instruct-2512" },
-      { label: "MiniMax M3", value: "minimaxai/minimax-m3" },
-      { label: "DeepSeek V4 Pro", value: "deepseek-ai/deepseek-v4-pro" },
-      { label: "Kimi K2.6", value: "moonshotai/kimi-k2.6" },
-    ],
-    subscription: [
-      { label: "Claude Fable 5", value: "claude-fable-5" },
-      { label: `Claude Opus 5 (${t('hint.strongest')})`, value: "claude-opus-5" },
-      { label: "Claude Opus 4.8", value: "claude-opus-4-8" },
-      { label: `Claude Sonnet 4.6 (${t('hint.recommended')})`, value: "claude-sonnet-4-6" },
-      { label: `Claude Haiku 4.5 (${t('hint.fast')})`, value: "claude-haiku-4-5" },
-      { label: "Codex GPT-5.6 Terra", value: "gpt-5.6-terra" },
-      { label: "Codex GPT-5.6 Sol", value: "gpt-5.6-sol" },
-      { label: "Codex GPT-5.6 Luna", value: "gpt-5.6-luna" },
-      { label: "Codex GPT-5.5 (Frontier)", value: "gpt-5.5" },
-      { label: "Codex GPT-5.4", value: "gpt-5.4" },
-      { label: "Codex GPT-5.4 Mini", value: "gpt-5.4-mini" },
-      { label: `Gemini 3.6 Flash (${t('hint.recommended')})`, value: "gemini-3.6-flash" },
-      { label: "Gemini 3.6 Flash (Medium)", value: "gemini-3.6-flash-medium" },
-      { label: "Gemini 3.5 Flash", value: "gemini-3.5-flash" },
-      { label: `Gemini 3.1 Pro (${t('hint.smartest')})`, value: "gemini-3.1-pro-preview" },
-    ],
-  };
+  // Model onerileri CANLI listeden turetiliyor; elle yazili katalog YOK.
+  //
+  // 30 Agu 2026'da bulut katalogu backend'den silindi ama BU dosyadaki ikinci
+  // kopya kalmisti ve olu bir modeli oneriyordu (Groq `llama-3.3-70b-versatile`,
+  // 16 Agu'da kapatildi). Ayni kuralin iki yazili kopyasi sessizce ayrisiyor —
+  // biri silinip digeri birakilinca ayrisma daha da gorunmez oluyor, cunku
+  // "duzeltildi" sanilan bir yer var.
+  //
+  // Ilk sekiz: canli liste yuzlerce model dondurebiliyor ve bu bir cip serisi,
+  // katalog degil. Tamami model seciciden gorulebiliyor.
+  const saglayiciModelleri = (
+    aiConfig.provider_type === 'ollama' ? availableModels?.local
+      : aiConfig.provider_type === 'subscription' ? availableModels?.subscription
+        : (availableModels?.cloud || []).filter(m => m.provider === aiConfig.provider_type)
+  ) || [];
+  const MODEL_HINTS = saglayiciModelleri
+    .slice(0, 8)
+    .map(m => ({ label: m.name, value: m.id }));
+  const varsayilanModel = saglayiciModelleri[0]?.id || '';
+
   return (
   <AnimatePresence>
     {open && (
@@ -217,7 +138,7 @@ export const SettingsModal = ({
                     <button
                       key={tile.value}
                       type="button"
-                      onClick={() => onChange({ ...aiConfig, provider_type: tile.value, api_key: '', model_name: DEFAULT_MODELS[tile.value] || '' })}
+                      onClick={() => onChange({ ...aiConfig, provider_type: tile.value, api_key: '', model_name: '' })}
                       className={`relative flex items-center gap-2 px-2 py-2 rounded-xl border text-left transition-all ${
                         selected
                           ? 'border-blue-500/60 bg-blue-500/10 shadow-[0_0_0_1px_rgba(59,130,246,0.25)]'
@@ -281,11 +202,11 @@ export const SettingsModal = ({
                 value={aiConfig.model_name}
                 onChange={e => onChange({ ...aiConfig, model_name: e.target.value })}
                 className="w-full bg-white/[0.04] border border-white/[0.08] rounded-xl p-3 text-white text-sm outline-none focus:border-blue-500/60 focus:bg-white/[0.06] transition-colors placeholder:text-slate-600"
-                placeholder={DEFAULT_MODELS[aiConfig.provider_type] || t('settings.modelPlaceholder')}
+                placeholder={varsayilanModel || t('settings.modelPlaceholder')}
               />
-              {MODEL_HINTS[aiConfig.provider_type] && (
+              {MODEL_HINTS.length > 0 && (
                 <div className="flex flex-wrap gap-1.5 mt-2">
-                  {MODEL_HINTS[aiConfig.provider_type].map(hint => (
+                  {MODEL_HINTS.map(hint => (
                     <button
                       key={hint.value}
                       type="button"
