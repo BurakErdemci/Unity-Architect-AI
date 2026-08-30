@@ -25,7 +25,12 @@ export const useChat = (
   const [loading, setLoading] = useState(false);
   const [chatInput, setChatInput] = useState('');
   const [currentPlan, setCurrentPlan] = useState<Task[]>([]);
-  const [contextUsage, setContextUsage] = useState<ContextUsage>({ percent: 0, should_compact: false, message_count: 0, estimated: true });
+  // `null` means "no reading available", NOT "the context is empty". A truthy
+  // `{percent: 0, estimated: true}` placeholder used to sit here and stayed put
+  // when the context request failed, so a request that only ever errored was
+  // drawn as a confident near-empty gauge. The gauge renders the unavailable
+  // state itself (ControlPanel: `usage.noData`).
+  const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
   const [sessionUsage, setSessionUsage] = useState<SessionUsage>({ input_tokens: 0, output_tokens: 0, cost_usd: null, turns: 0 });
   const [isCompacting, setIsCompacting] = useState(false);
   const [isAnalyzingProject, setIsAnalyzingProject] = useState(false);
@@ -77,7 +82,13 @@ export const useChat = (
     try {
       const res = await axios.get(`${API}/conversations/${convId}/context-usage`);
       setContextUsage(res.data);
-    } catch (err) { console.error('Bağlam göstergesi hatası:', err); }
+    } catch (err) {
+      // Keeping the previous reading would attribute a number to a request that
+      // failed; falling back to zero would invent one. Only `null` says what
+      // actually happened — we do not know.
+      setContextUsage(null);
+      console.error('Bağlam göstergesi hatası:', err);
+    }
   }, [API]);
 
   // `/context` raporu geldiğinde göstergeyi TAHMİNDEN gerçek sayıya çevir.
@@ -88,6 +99,9 @@ export const useChat = (
     if (!r) return;
     setContextUsage(prev => ({
       ...prev,
+      // `prev` is null until the first successful reading; the report itself
+      // carries no message count, so the field needs a base that is a number.
+      message_count: prev?.message_count ?? 0,
       percent: Math.round(r.pct),
       should_compact: r.pct >= 85,
       estimated: false,
@@ -107,7 +121,10 @@ export const useChat = (
   const selectConversation = useCallback(async (conv: Conversation) => {
     if (editingId) return;
     setActiveConvId(conv.id);
-    setContextUsage({ percent: 0, should_compact: false, message_count: 0, estimated: true });
+    // Nothing has been measured for the new conversation yet — the previous
+    // conversation's reading must not carry over, and a zero placeholder would
+    // be a claim about a conversation we have not looked at.
+    setContextUsage(null);
     // Tur istatistikleri sohbete değil OTURUMA ait; başka bir sohbete geçince
     // devretmeleri "bu sohbette şu kadar harcadın" diye okunurdu.
     setSessionUsage({ input_tokens: 0, output_tokens: 0, cost_usd: null, turns: 0 });
@@ -367,6 +384,26 @@ export const useChat = (
                 setActivity(prev => ({ detail: `🔧 ${data.tool}${s}`, tokens: prev?.tokens }));
               } else if (data.type === 'done' || data.type === 'error' || data.type === 'response') {
                 setActivity(null);
+                // A terminal event ends the turn, and with it every gate the
+                // turn was holding. Only the activity line used to be cleared,
+                // so a question whose gate had expired stayed on screen: the
+                // user could still answer a decision that no longer belonged to
+                // anything, and `answerQuestion` posted into a dead gate. The
+                // QUEUE goes too — a queued card is just one that has not been
+                // shown yet, and it belongs to the same finished turn.
+                //
+                // The queue is emptied INSIDE the updater, not next to it: the
+                // queue is filled from another updater (`question_needed`),
+                // which React runs when it processes the update, not when the
+                // event is parsed. Clearing the ref straight from the stream
+                // loop therefore ran BEFORE the push and a queued card came
+                // back — measured, this exact test was red that way. Updaters
+                // run in order, so this one sees the finished queue. Clearing
+                // twice is a no-op, so a StrictMode double-invocation is safe.
+                setPendingQuestion(() => {
+                  pendingQuestionQueueRef.current = [];
+                  return null;
+                });
               }
               // Biriktirme BURADA, `setMessages` güncelleyicisinin içinde değil:
               // React bir state güncelleyicisini iki kez çağırabiliyor (StrictMode)

@@ -163,6 +163,57 @@ describe('birden fazla soru', () => {
   })
 })
 
+/**
+ * AYNI METİNLİ İKİ SORU (denetim `question-duplicate-state`, 30 Ağu 2026).
+ *
+ * Kartın durumu soru METNİYLE anahtarlanıyordu, satırlar ise sırayla
+ * çiziliyordu. Model aynı metni iki kez sorduğunda (farklı seçenek kümeleriyle
+ * — SDK bunu yasaklamıyor) ilk satırın cevabı ikincisini de "çözülmüş"
+ * gösteriyordu: ekranda seçilmemiş bir satır dururken Gönder açılıyordu.
+ *
+ * Yükün anahtarı metin OLARAK KALIYOR — SDK cevabı gönderdiği metinle eşliyor
+ * (bkz. dosyanın başındaki WIRE SHAPE). O yüzden ikizlerin cevapları tek
+ * anahtarda, SDK'nın çoklu seçim için tarif ettiği ", " ile birleşiyor:
+ * ikinci cevabın üzerine yazılması kullanıcının FARK EDEMEYECEĞİ tek sonuç.
+ */
+describe('aynı metinli iki soru', () => {
+  const IKIZ = [
+    { question: 'Hangi taşıma?', options: [{ label: 'HTTP' }, { label: 'IPC' }] },
+    { question: 'Hangi taşıma?', options: [{ label: 'WebSocket' }, { label: 'stdio' }] },
+  ]
+
+  it('ilk satırı cevaplamak ikinciyi çözülmüş SAYMIYOR', () => {
+    kartiCiz(IKIZ)
+    fireEvent.click(secenekler()[0])            // 1. satır → HTTP
+    expect(gonder().disabled).toBe(true)        // 2. satır hâlâ cevapsız
+    fireEvent.click(secenekler()[2])            // 2. satır → WebSocket
+    expect(gonder().disabled).toBe(false)
+  })
+
+  it('iki satırın serbest metin kutuları birbirini doldurmuyor', () => {
+    kartiCiz(IKIZ)
+    fireEvent.change(serbestMetin(0), { target: { value: 'grpc' } })
+    expect((serbestMetin(1) as HTMLInputElement).value).toBe('')
+  })
+
+  it('ikisi de cevaplanınca hiçbir cevap kaybolmuyor', () => {
+    const onSubmit = kartiCiz(IKIZ)
+    fireEvent.click(secenekler()[0])
+    fireEvent.click(secenekler()[2])
+    fireEvent.click(gonder())
+    expect(onSubmit).toHaveBeenCalledWith({ 'Hangi taşıma?': 'HTTP, WebSocket' })
+  })
+
+  it('bir satırı atlamak diğerini atlamıyor', () => {
+    const onSubmit = kartiCiz(IKIZ)
+    fireEvent.click(atla(0))
+    expect(gonder().disabled).toBe(true)        // 2. satır hâlâ bekliyor
+    fireEvent.click(secenekler()[3])            // 2. satır → stdio
+    fireEvent.click(gonder())
+    expect(onSubmit).toHaveBeenCalledWith({ 'Hangi taşıma?': 'stdio' })
+  })
+})
+
 describe('model metni temizliği', () => {
   // U+202E metni ters çeviriyor: kullanıcının gördüğü etiket ile gönderilen
   // dizenin ayrışabildiği yer burası. Gösterim temizlenip değer ham gönderilse

@@ -39,16 +39,23 @@ interface QuestionApprovalProps {
  *
  * A skipped question is OMITTED from the payload rather than sent as an empty
  * string: absence says "no answer", "" says "the answer is nothing".
+ *
+ * STATE IS KEYED BY ROW INDEX, NOT BY QUESTION TEXT. The rows are rendered by
+ * index, and nothing stops the model from asking two questions with identical
+ * text (different option sets, e.g. "Which transport?" twice). Keyed by text,
+ * the first row's answer silently resolved the second: Send lit up while a row
+ * still had no selection on screen. Only the payload keys stay textual, because
+ * the SDK matches them against the text it sent (see WIRE SHAPE above).
  */
 export const QuestionApproval: React.FC<QuestionApprovalProps> = ({ questions, onSubmit }) => {
   const { t } = useLang();
-  const [picks, setPicks] = useState<Record<string, string[]>>({});
-  const [custom, setCustom] = useState<Record<string, string>>({});
-  const [skipped, setSkipped] = useState<Record<string, boolean>>({});
+  const [picks, setPicks] = useState<Record<number, string[]>>({});
+  const [custom, setCustom] = useState<Record<number, string>>({});
+  const [skipped, setSkipped] = useState<Record<number, boolean>>({});
 
-  const answerFor = (q: QuestionItem): string => {
-    const parts = [...(picks[q.question] || [])];
-    const typed = (custom[q.question] || '').trim();
+  const answerFor = (qi: number): string => {
+    const parts = [...(picks[qi] || [])];
+    const typed = (custom[qi] || '').trim();
     if (typed) parts.push(typed);
     return parts.join(', ');
   };
@@ -56,48 +63,54 @@ export const QuestionApproval: React.FC<QuestionApprovalProps> = ({ questions, o
   // Presence, not truthiness. The old gate tested `selected[q.question]`, so an
   // answer of "" — reachable the moment a text box exists — read as unanswered
   // and disabled Send with nothing on screen explaining why.
-  const isResolved = (q: QuestionItem) => !!skipped[q.question] || answerFor(q).length > 0;
-  const allResolved = questions.length > 0 && questions.every(isResolved);
+  const isResolved = (qi: number) => !!skipped[qi] || answerFor(qi).length > 0;
+  const allResolved = questions.length > 0 && questions.every((_, qi) => isResolved(qi));
 
   // A skipped question's controls are `disabled`, so neither of the two
   // functions below can run while it is skipped. Undo therefore goes through
   // the skip toggle alone — deliberately, so "skipped" reads as one state
   // rather than something a stray click can silently reverse. Anyone removing
   // the `disabled` props has to add the un-skip side effect back here.
-  const togglePick = (q: QuestionItem, label: string) => {
+  const togglePick = (qi: number, q: QuestionItem, label: string) => {
     if (!q.multiSelect) {
       // Single select: a pick and typed text would contradict each other, so
       // each clears the other. Re-clicking the pick clears it — the only way
       // back out of a misclick when there is no radio group to reset.
-      setCustom((c) => ({ ...c, [q.question]: '' }));
+      setCustom((c) => ({ ...c, [qi]: '' }));
     }
     setPicks((p) => {
-      const cur = p[q.question] || [];
+      const cur = p[qi] || [];
       if (q.multiSelect) {
         return {
           ...p,
-          [q.question]: cur.includes(label) ? cur.filter((x) => x !== label) : [...cur, label],
+          [qi]: cur.includes(label) ? cur.filter((x) => x !== label) : [...cur, label],
         };
       }
-      return { ...p, [q.question]: cur[0] === label ? [] : [label] };
+      return { ...p, [qi]: cur[0] === label ? [] : [label] };
     });
   };
 
-  const typeCustom = (q: QuestionItem, value: string) => {
-    if (!q.multiSelect && value.trim()) setPicks((p) => ({ ...p, [q.question]: [] }));
-    setCustom((c) => ({ ...c, [q.question]: value }));
+  const typeCustom = (qi: number, q: QuestionItem, value: string) => {
+    if (!q.multiSelect && value.trim()) setPicks((p) => ({ ...p, [qi]: [] }));
+    setCustom((c) => ({ ...c, [qi]: value }));
   };
 
-  const toggleSkip = (q: QuestionItem) =>
-    setSkipped((s) => ({ ...s, [q.question]: !s[q.question] }));
+  const toggleSkip = (qi: number) =>
+    setSkipped((s) => ({ ...s, [qi]: !s[qi] }));
 
   const submit = () => {
     const answers: Record<string, string> = {};
-    for (const q of questions) {
-      if (skipped[q.question]) continue;
-      const a = answerFor(q);
-      if (a) answers[q.question] = a;
-    }
+    questions.forEach((q, qi) => {
+      if (skipped[qi]) return;
+      const a = answerFor(qi);
+      if (!a) return;
+      // Two rows CAN carry the same question text, but the payload is keyed by
+      // that text (SDK contract, see WIRE SHAPE) so their answers have to share
+      // one key. They are joined with the same ", " the SDK documents for
+      // multi-select answers — losing the second answer to an overwrite would
+      // be the one outcome the user cannot detect.
+      answers[q.question] = answers[q.question] ? `${answers[q.question]}, ${a}` : a;
+    });
     onSubmit(answers);
   };
 
@@ -116,8 +129,8 @@ export const QuestionApproval: React.FC<QuestionApprovalProps> = ({ questions, o
 
       <div className="p-4 space-y-4">
         {questions.map((q, qi) => {
-          const isSkipped = !!skipped[q.question];
-          const chosen = picks[q.question] || [];
+          const isSkipped = !!skipped[qi];
+          const chosen = picks[qi] || [];
           return (
             <div key={qi} className={isSkipped ? 'opacity-45' : undefined}>
               {q.header && (
@@ -146,7 +159,7 @@ export const QuestionApproval: React.FC<QuestionApprovalProps> = ({ questions, o
                       key={oi}
                       data-testid="question-option"
                       disabled={isSkipped}
-                      onClick={() => togglePick(q, label)}
+                      onClick={() => togglePick(qi, q, label)}
                       className={
                         'text-left px-3 py-2 rounded-lg border transition-all active:scale-[0.99] ' +
                         (isSel
@@ -186,15 +199,15 @@ export const QuestionApproval: React.FC<QuestionApprovalProps> = ({ questions, o
                 data-testid="question-custom"
                 type="text"
                 disabled={isSkipped}
-                value={custom[q.question] || ''}
-                onChange={(e) => typeCustom(q, e.target.value)}
+                value={custom[qi] || ''}
+                onChange={(e) => typeCustom(qi, q, e.target.value)}
                 placeholder={t('question.otherPlaceholder')}
                 className="mt-2 w-full px-3 py-2 rounded-lg bg-black/30 border border-white/10 text-[12px] text-white placeholder:text-slate-500 focus:outline-none focus:border-indigo-400/60 focus:ring-1 focus:ring-indigo-400/30 disabled:cursor-not-allowed"
               />
 
               <button
                 data-testid="question-skip"
-                onClick={() => toggleSkip(q)}
+                onClick={() => toggleSkip(qi)}
                 className="mt-1.5 text-[11px] text-slate-400 hover:text-slate-200 underline underline-offset-2 transition-colors"
               >
                 {isSkipped ? t('question.skipped') : t('question.skip')}

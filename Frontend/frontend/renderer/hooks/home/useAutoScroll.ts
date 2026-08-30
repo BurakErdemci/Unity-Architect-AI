@@ -17,6 +17,11 @@ import { useCallback, useRef, useState } from 'react';
  * Not zero: smooth scrolling lands a pixel or two short and sub-pixel layout
  * makes an exact comparison flip to `false` on its own, which would silently
  * disarm following forever. 40 is the value the terminal console already used.
+ *
+ * INCLUSIVE: exactly this distance still counts as "at the bottom". The
+ * comparison was `<`, so the one position the constant names as the boundary
+ * was the one position it excluded — a value documented as the tolerance that
+ * was not itself tolerated.
  */
 export const BOTTOM_TOLERANCE_PX = 40;
 
@@ -61,7 +66,7 @@ export const useAutoScroll = (): AutoScroll => {
 
   const onScroll = useCallback((e: React.UIEvent<HTMLElement>) => {
     const el = e.currentTarget;
-    setPinned(el.scrollHeight - el.scrollTop - el.clientHeight < BOTTOM_TOLERANCE_PX);
+    setPinned(el.scrollHeight - el.scrollTop - el.clientHeight <= BOTTOM_TOLERANCE_PX);
   }, [setPinned]);
 
   const repin = useCallback(() => setPinned(true), [setPinned]);

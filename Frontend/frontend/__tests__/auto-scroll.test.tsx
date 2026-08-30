@@ -143,6 +143,30 @@ describe('useAutoScroll — dipteyken takip et, yukarıdayken bırak', () => {
     rerender(<Harness itemCount={2} gate={false} />)
     expect(scrollIntoView).toHaveBeenCalled()
   })
+
+  // The constant is exported and documented as "still at the bottom", but the
+  // comparison was `<`, so the single position the constant NAMES was the one
+  // position it excluded (audit `auto-scroll-boundary`). Measured at the
+  // boundary itself, not near it: an off-by-one is invisible at 39 and 41.
+  it('tam sınırdaki konum takibi KAPATMIYOR — sabit neyi diyorsa o', () => {
+    const { rerender } = render(<Harness itemCount={1} gate={false} />)
+    scrollTo(screen.getByTestId('scroller'), BOTTOM_TOLERANCE_PX)
+    scrollIntoView.mockClear()
+    rerender(<Harness itemCount={2} gate={false} />)
+    expect(scrollIntoView).toHaveBeenCalled()
+    expect(screen.queryByText(JUMP_LABEL)).toBeNull()
+  })
+
+  // The other side of the same boundary: widening it to `<=` must not turn into
+  // "a bit more is fine too". One pixel past the tolerance is a user who left.
+  it('sınırın bir piksel ötesi takibi kapatıyor', () => {
+    const { rerender } = render(<Harness itemCount={1} gate={false} />)
+    scrollTo(screen.getByTestId('scroller'), BOTTOM_TOLERANCE_PX + 1)
+    scrollIntoView.mockClear()
+    rerender(<Harness itemCount={2} gate={false} />)
+    expect(scrollIntoView).not.toHaveBeenCalled()
+    expect(screen.getByText(JUMP_LABEL)).toBeTruthy()
+  })
 })
 
 describe('useAutoScroll — karar kartı kullanıcıyı BEKLEMEZ', () => {
