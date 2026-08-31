@@ -20,6 +20,19 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
   const [code, setCode] = useState('');
   const [originalCode, setOriginalCode] = useState('');
   const [isDirty, setIsDirty] = useState(false);
+  // The editor and the 3D preview share one content area, so at most one of
+  // `openedFilePath` / `previewFile` may be set. The invariant lives here
+  // because both are written here.
+  const [previewFile, setPreviewFile] = useState<{ path: string; name: string } | null>(null);
+
+  const openPreview = useCallback((filePath: string) => {
+    setOpenedFilePath(null);
+    setCode('');
+    setOriginalCode('');
+    setPreviewFile({ path: filePath, name: filePath.split(/[\\/]/).pop() || filePath });
+  }, []);
+
+  const closePreview = useCallback(() => setPreviewFile(null), []);
 
   // VSCode tarzı git rozetleri: mutlak yol → durum (modified/added/untracked/deleted)
   const [gitStatus, setGitStatus] = useState<{ isRepo: boolean; files: Record<string, string>; dirs: Record<string, string> }>({ isRepo: false, files: {}, dirs: {} });
@@ -184,6 +197,7 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
       setCode(result.content);
       setOriginalCode(result.content);
       setOpenedFilePath(result.path);
+      setPreviewFile(null);
     }
   }, []);
 
@@ -195,6 +209,7 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
     setDirContents({});
     setOpenedFilePath(null);
     setCode('');
+    setPreviewFile(null);
   }, []);
 
   const openFile = useCallback(async (filePath: string) => {
@@ -212,6 +227,7 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
       setCode(result.content);
       setOriginalCode(result.content);
       setOpenedFilePath(result.path);
+      setPreviewFile(null);
       return;
     }
     // ⚠️ Bu dal eskiden SESSİZDİ ve bu bir arıza sınıfıydı: ana süreçteki
@@ -410,7 +426,7 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
 
   return {
     workspacePath, lastWorkspacePath, fileTree, openedFilePath, code, setCode, setOpenedFilePath,
-    isDirty, saveFile,
+    isDirty, saveFile, previewFile, openPreview, closePreview,
     fetchLastWorkspace, selectWorkspace, openFolder, closeWorkspace, openFile, refreshFileTree,
     openFilePicker, treeCreating, setTreeCreating, treeCreateValue, setTreeCreateValue,
     submitTreeCreate, expandedDirs, dirContents, toggleDir, treeDragSource, treeDragTarget,

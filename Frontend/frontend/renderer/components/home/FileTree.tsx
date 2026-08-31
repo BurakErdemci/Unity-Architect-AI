@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { FileEntry } from './types';
 import { useLang } from '../../lib/i18n';
+import { routeForFile } from '../model-viewer/extensions';
 
 interface FileTreeProps {
   entries: FileEntry[];
@@ -24,6 +25,7 @@ interface FileTreeProps {
   dirContents: Record<string, FileEntry[]>;
   toggleDir: (path: string) => void;
   openFile: (path: string) => void;
+  openPreview: (path: string) => void;
   treeDragSource: FileEntry | null;
   treeDragTarget: string | null;
   renamingPath: string | null;
@@ -59,7 +61,7 @@ export const FileTree: React.FC<FileTreeProps> = (props) => {
   const { t } = useLang();
   const {
     entries, depth = 0, openedFilePath, expandedDirs, dirContents,
-    toggleDir, openFile, treeDragSource, treeDragTarget,
+    toggleDir, openFile, openPreview, treeDragSource, treeDragTarget,
     renamingPath, renameValue, setRenameValue, submitRename, setRenamingPath,
     handleTreeDragStart, handleTreeDragOver, handleTreeDragLeave, handleTreeDrop,
     handleTreeContextMenu, startTreeCreate, startRename, handleTreeDelete,
@@ -116,7 +118,14 @@ export const FileTree: React.FC<FileTreeProps> = (props) => {
           ) : (
             <div
               draggable onDragStart={(e) => handleTreeDragStart(e, entry)}
-              onClick={() => entry.isDirectory ? toggleDir(entry.path) : openFile(entry.path)}
+              onClick={() => {
+                if (entry.isDirectory) { toggleDir(entry.path); return; }
+                // Blocked model formats also go to the preview panel: it is the
+                // surface that can explain why they cannot be shown.
+                const route = routeForFile(entry.path);
+                if (route === 'model' || route === 'blocked-model') openPreview(entry.path);
+                else openFile(entry.path);
+              }}
               onContextMenu={(e) => handleTreeContextMenu(e, entry)}
               className={`flex items-center gap-1.5 py-[3px] rounded cursor-pointer text-[12px] hover:bg-slate-800/40 transition-colors group select-none ${
                 openedFilePath === entry.path ? 'bg-slate-800/60 text-white' : 'text-slate-400'

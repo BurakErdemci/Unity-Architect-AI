@@ -45,6 +45,7 @@ interface SidebarProps {
   dirContents: Record<string, FileEntry[]>;
   toggleDir: (path: string) => void;
   openFile: (path: string) => void;
+  openPreview: (path: string) => void;
   treeDragSource: FileEntry | null;
   treeDragTarget: string | null;
   renamingPath: string | null;

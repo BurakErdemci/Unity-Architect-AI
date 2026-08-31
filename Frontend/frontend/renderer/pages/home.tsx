@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import Head from 'next/head';
+import dynamic from 'next/dynamic';
 import axios from 'axios';
 import { motion } from 'framer-motion';
 import {
@@ -33,6 +34,10 @@ import { useAIConfig } from '../hooks/home/useAIConfig';
 import { useMCPApproval } from '../hooks/home/useMCPApproval';
 import { useAutoScroll } from '../hooks/home/useAutoScroll';
 import { McpApprovalCards } from '../components/home/McpApprovalCards';
+
+// Lazy island: keeps three.js out of the eager bundle, which nothing else in
+// this app needs, and off the server render (it touches WebGL on mount).
+const ModelPreviewPanel = dynamic(() => import('../components/model-viewer/ModelPreviewPanel'), { ssr: false });
 
 const ipc = typeof window !== 'undefined' ? (window as any).ipc : null;
 const globalStyles = `
@@ -544,7 +549,7 @@ export default function Home() {
         setTreeCreating={fs.setTreeCreating} treeCreateValue={fs.treeCreateValue} setTreeCreateValue={fs.setTreeCreateValue}
         submitTreeCreate={fs.submitTreeCreate} fileTree={fs.fileTree}
         openedFilePath={fs.openedFilePath} expandedDirs={fs.expandedDirs} dirContents={fs.dirContents}
-        toggleDir={fs.toggleDir} openFile={fs.openFile} treeDragSource={fs.treeDragSource}
+        toggleDir={fs.toggleDir} openFile={fs.openFile} openPreview={fs.openPreview} treeDragSource={fs.treeDragSource}
         treeDragTarget={fs.treeDragTarget} renamingPath={fs.renamingPath} renameValue={fs.renameValue}
         setRenameValue={fs.setRenameValue} submitRename={fs.submitRename} setRenamingPath={fs.setRenamingPath}
         handleTreeDragStart={fs.handleTreeDragStart} handleTreeDragOver={fs.handleTreeDragOver}
@@ -565,16 +570,22 @@ export default function Home() {
             <button onClick={() => setIsTerminalOpen(!isTerminalOpen)} className={`p-1.5 hover:bg-white/[0.06] rounded-lg transition-all shrink-0 ${isTerminalOpen ? 'text-blue-400 bg-blue-500/10' : 'text-slate-500 hover:text-slate-300'}`}>
               <TerminalIcon size={16} />
             </button>
-            <div className="flex items-center gap-2 border-l border-white/[0.06] pl-3 ml-1 min-w-0" title={fs.openedFilePath || undefined}>
+            <div className="flex items-center gap-2 border-l border-white/[0.06] pl-3 ml-1 min-w-0" title={fs.previewFile?.path || fs.openedFilePath || undefined}>
               <Code2 size={14} className="text-blue-500 shrink-0" />
               <div className="flex items-center gap-1.5 min-w-0">
                 {/* Windows yolları '\' kullanır — her iki ayraçta da böl; dar ekranda kırp */}
                 <span className="text-[12px] font-semibold text-slate-400 truncate">
-                  {fs.openedFilePath ? fs.openedFilePath.split(/[\\/]/).pop() : 'C# Editor'}
+                  {fs.previewFile ? fs.previewFile.name : (fs.openedFilePath ? fs.openedFilePath.split(/[\\/]/).pop() : 'C# Editor')}
                 </span>
-                {fs.isDirty && <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse shrink-0" />}
+                {/* No dirty dot in preview mode: the model is never edited here. */}
+                {!fs.previewFile && fs.isDirty && <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse shrink-0" />}
               </div>
-              {fs.openedFilePath && (
+              {fs.previewFile && (
+                <div className="flex items-center gap-1 shrink-0">
+                  <button onClick={fs.closePreview} title={t('approval.close')} className="p-0.5 hover:bg-slate-700 rounded text-slate-500"><X size={12} /></button>
+                </div>
+              )}
+              {!fs.previewFile && fs.openedFilePath && (
                 <div className="flex items-center gap-1 shrink-0">
                   <button onClick={async () => { await fs.saveFile(); }} disabled={!fs.isDirty} className={`p-1 rounded hover:bg-slate-800 ${fs.isDirty ? 'text-blue-400' : 'text-slate-600 opacity-50'}`}>
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
@@ -626,7 +637,9 @@ export default function Home() {
         </div>
 
         <div className="flex-1 overflow-hidden relative flex flex-col bg-[#0B0D12]">
-          {(fs.openedFilePath || diffFile) ? (
+          {fs.previewFile ? (
+            <ModelPreviewPanel file={fs.previewFile} onClose={fs.closePreview} />
+          ) : (fs.openedFilePath || diffFile) ? (
             <EditorPanel
               code={fs.code} setCode={fs.setCode} openedFilePath={fs.openedFilePath} isEditorFocused={isEditorFocused} setIsEditorFocused={setIsEditorFocused}
               workspacePath={fs.workspacePath} problems={flattenedProblems} diffFile={diffFile}
