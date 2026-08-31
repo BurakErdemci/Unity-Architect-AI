@@ -13,6 +13,28 @@ import {
 let ws = ''
 let disari = ''
 
+/**
+ * Can this filesystem make a hardlink at all?
+ *
+ * Hardlinks are the subject of one of the gate's own rules, so their absence
+ * has to be VISIBLE. The earlier shape returned early from inside `it()` when
+ * `linkSync` threw, which reported a green test that asserted nothing — on a
+ * container volume or FAT/exFAT that is a silently disabled security check.
+ */
+const sabitBagDestekli = ((): boolean => {
+  const probe = fs.mkdtempSync(path.join(os.tmpdir(), 'model-gate-link-probe-'))
+  try {
+    const kaynak = path.join(probe, 'a')
+    fs.writeFileSync(kaynak, 'x')
+    fs.linkSync(kaynak, path.join(probe, 'b'))
+    return true
+  } catch {
+    return false
+  } finally {
+    try { fs.rmSync(probe, { recursive: true, force: true }) } catch { /* best effort */ }
+  }
+})()
+
 beforeEach(() => {
   ws = fs.mkdtempSync(path.join(os.tmpdir(), 'model-gate-ws-'))
   disari = fs.mkdtempSync(path.join(os.tmpdir(), 'model-gate-out-'))
@@ -64,6 +86,21 @@ describe('model okuma kapısı — kabul', () => {
     expect(readModelFileFromWorkspace(p, ws)).not.toHaveProperty('error')
   })
 
+  // Sıfır bayt kapının üç sorusunun (kapsama, uzantı, boyut) hepsini geçiyor,
+  // yani kanal onu OKUYOR. Davranış burada çivileniyor çünkü "boş dosya" bir
+  // ayrıştırıcı sorunu: panel zaten ayrıştırma hatasını gösterecek sözü taşıyor,
+  // ve kapıya bir boşluk reddi eklenecekse bu bilinçli bir değişiklik olmalı,
+  // sessiz bir kayma değil.
+  it('sıfır baytlık dosyayı reddetmez — boşluk kapının değil ayrıştırıcının işi', () => {
+    const p = yaz(ws, 'empty.glb', Buffer.alloc(0))
+
+    const sonuc = readModelFileFromWorkspace(p, ws)
+
+    expect('error' in sonuc).toBe(false)
+    if ('error' in sonuc) return
+    expect(sonuc.data.byteLength).toBe(0)
+  })
+
   it('tavan sınırındaki dosyayı reddetmez', () => {
     const p = yaz(ws, 'edge.stl', Buffer.alloc(0))
     const fd = fs.openSync(p, 'r+')
@@ -108,14 +145,10 @@ describe('model okuma kapısı — kapsama', () => {
     expect(sonuc).toHaveProperty('error')
   })
 
-  it('workspace dışına giden sabit bağı reddeder', () => {
+  it.skipIf(!sabitBagDestekli)('workspace dışına giden sabit bağı reddeder', () => {
     const hedef = yaz(disari, 'secret.glb', Buffer.from([7, 7, 7]))
     const bag = path.join(ws, 'linked.glb')
-    try {
-      fs.linkSync(hedef, bag)
-    } catch {
-      return // hardlink not permitted on this filesystem — nothing to assert
-    }
+    fs.linkSync(hedef, bag)
     expect(readModelFileFromWorkspace(bag, ws)).toEqual({ error: 'denied' })
   })
 
@@ -157,7 +190,10 @@ describe('metin yolu regresyonu', () => {
     expect(isAllowedWorkspaceReadFile(p, ws)).toBe(true)
   })
 
-  it('metin tavanı yükselmedi — model tavanı 64 MiB ve ayrı', () => {
+  // Yalnız model sabiti çiviliyor. Metin tavanı `background.ts` içinde satır içi
+  // bir sayı (8 MiB) — dışa aktarılmadığı için buradan iddia edilemez, o yüzden
+  // testin adı da iki tavanı birden koruduğunu söylemiyor.
+  it('model tavanı 64 MiB sabitinde kaldı', () => {
     expect(MODEL_MAX_BYTES).toBe(64 * 1024 * 1024)
   })
 })
