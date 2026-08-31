@@ -1,5 +1,5 @@
 /**
- * The `gamachine-ws-fp-2` workspace fingerprint, host side.
+ * The `gamachine-ws-fp-3` workspace fingerprint, host side.
  *
  * Split out of `background.ts` so a test can RUN it. There are two
  * implementations of this algorithm — this one and `fingerprint_lines` in
@@ -21,44 +21,42 @@ import fs from 'fs'
 import path from 'path'
 import { createHash } from 'crypto'
 
-export const WORKSPACE_FINGERPRINT_ALGO = 'gamachine-ws-fp-2'
+export const WORKSPACE_FINGERPRINT_ALGO = 'gamachine-ws-fp-3'
 
 // Docker Desktop cannot store a name containing a character NTFS forbids, so it
 // shifts each one into the private use area by exactly 0xF000. Measured 31 Aug
-// 2026 by creating one file per candidate inside the container on a real
-// Windows-backed mount and reading the directory back from here: all 39
-// affected characters — the C0 controls 0x01-0x1F plus `" * : < > ? \ |` —
-// moved, every one by the same 0xF000, and nothing else moved.
+// 2026 in both directions on a Windows-backed mount: a container-created TAB
+// appeared here as U+F009, while a host-created U+F009 appeared in the container
+// as TAB. The container therefore always sees the canonical name; only the
+// Windows host view needs repair.
 //
-// Both sides undo it, so both hash the same name (AUDIT R9-01). Undoing on one
-// side only would leave this side hashing `ab` while the container hashes
-// `a<TAB>b` for the SAME file — a refused correct mount.
-//
-// It is a real conflation: a name genuinely containing U+F009 hashes like a
-// name containing a tab. Deliberate, and it follows the rule this file already
-// lives by — NTFS stores both as U+F009, so this side CANNOT tell them apart
-// and the distinction is not one both sides can make.
+// This is a platform gate, not an optimization. Linux and macOS have no such
+// projection, and a TAB name and a U+F009 name are genuinely different files
+// there. Mapping either onto the other would create a collision (AUDIT R11-01).
 //
 // Done in bytes because that is what everything here handles. U+F000..U+F07F
 // encodes as EF 80 80 .. EF 81 BF, and the low seven bits of the result live in
 // the last two bytes, so every measured replacement is a single byte.
 //
-// Keep the measured offsets as an explicit list, not a range. The previous
+// Keep the measured 39 offsets as an explicit list, not a range. The previous
 // range generalized a concrete measurement and swallowed `/`, manufacturing a
 // path separator from the legal filename character U+F02F.
+const IS_WINDOWS_HOST = process.platform === 'win32'
+const PROJECTED_OFFSETS = new Set([
+  0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+  0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
+  0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
+  0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
+  0x22, 0x2A, 0x3A, 0x3C, 0x3E, 0x3F, 0x5C, 0x7C,
+])
+
 function unproject(name: Buffer): Buffer {
+  if (!IS_WINDOWS_HOST) return name
   let ilk = -1
   for (let i = 0; i + 2 < name.length; i++) {
     if (name[i] === 0xEF && (name[i + 1] === 0x80 || name[i + 1] === 0x81)) { ilk = i; break }
   }
   if (ilk < 0) return name
-  const projectedOffsets = new Set([
-    0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-    0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
-    0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
-    0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
-    0x22, 0x2A, 0x3A, 0x3C, 0x3E, 0x3F, 0x5C, 0x7C,
-  ])
   const out = Buffer.alloc(name.length)
   let w = 0
   for (let i = 0; i < name.length;) {
@@ -66,7 +64,7 @@ function unproject(name: Buffer): Buffer {
       && (name[i + 1] === 0x80 || name[i + 1] === 0x81)
       && (name[i + 2] & 0xC0) === 0x80) {
       const n = ((name[i + 1] & 0x03) << 6) | (name[i + 2] & 0x3F)
-      if (projectedOffsets.has(n)) {
+      if (PROJECTED_OFFSETS.has(n)) {
         out[w++] = n
         i += 3
         continue

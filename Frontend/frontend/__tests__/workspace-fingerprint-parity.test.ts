@@ -1,5 +1,5 @@
 /**
- * The two `gamachine-ws-fp-2` implementations must agree, and this is the only
+ * The two `gamachine-ws-fp-3` implementations must agree, and this is the only
  * thing that runs BOTH of them.
  *
  * The algorithm exists twice — `main/helpers/workspace-fingerprint.ts` and
@@ -32,7 +32,7 @@
  * is one more copy of the answer, and copies are what this whole class of defect
  * is made of.
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
@@ -230,34 +230,7 @@ varsaCalis('iki uygulama ayni agac icin ayni parmak izini uretir', () => {
     expect(tsA.fingerprint).not.toBe(tsB.fingerprint)
   }, SURE)
 
-  it('Docker Desktop projeksiyonu iki tarafta da geri aliniyor', () => {
-    // Docker Desktop, NTFS'in yasakladigi bir karakter iceren adi saklayamadigi
-    // icin her birini ozel kullanim alanina 0xF000 kadar kaydiriyor: konteynerde
-    // `x<TAB>y` olan ad ana makinede `x\uf009y` goruluyor. Iki taraf da geri
-    // almazsa AYNI dosya icin farkli ad hash'lenir ve dogru bir mount reddedilir
-    // (AUDIT R9-01).
-    //
-    // Bu vaka Docker GEREKTIRMIYOR: U+F009 NTFS'te gecerli bir karakter, yani
-    // agac dogrudan burada kurulabiliyor ve iki uygulama da onu sekmeye
-    // cevirmek zorunda. Olculdu (31 Agu 2026): geri alma iki taraftan da
-    // kaldirildiginda bu vaka disinda hicbir test kirmizi olmuyordu.
-    const d = agac('projeksiyon')
-    fs.mkdirSync(d)
-    fs.writeFileSync(path.join(d, 'x\uf009y'), 'x')   // U+F009 -> sekme
-    fs.writeFileSync(path.join(d, 'p\uf03aq'), 'x')   // U+F03A -> iki nokta
-    fs.mkdirSync(path.join(d, 'k\uf07cl'))            // U+F07C -> dikey cizgi
-    fs.writeFileSync(path.join(d, '\uf041'), 'x')
-
-    const ts = tsSatirlar(d)
-    expect(ts).toEqual(pythonSatirlar(d))
-    expect(ts).toContain('x\ty\u0000f')
-    expect(ts).toContain('p:q\u0000f')
-    expect(ts).toContain('k|l\u0000d')
-    // A non-member remains private-use data; it must not impersonate ASCII A.
-    expect(ts).toContain('\uf041\u0000f')
-    expect(ts).not.toContain('A\u0000f')
-    expect(ts.join('')).not.toMatch(/[\uf009\uf03a\uf07c]/)
-
+  it('U+F02F remains filename data at the level boundary', () => {
     const flat = agac('projection-flat')
     fs.mkdirSync(path.join(flat, 'a'), { recursive: true })
     fs.writeFileSync(path.join(flat, 'a\uf02fb'), 'x')
@@ -350,6 +323,50 @@ varsaCalis('iki uygulama ayni agac icin ayni parmak izini uretir', () => {
     expect(ts.join('\n')).not.toContain('sentinel')
     expect(ts.join('\n')).not.toContain('bag-dis-hedef')
   }, SURE)
+})
+
+describe('Docker Desktop projection is corrected only on Windows hosts', () => {
+  it('unprojects the measured members on win32', (ctx) => {
+    if (process.platform !== 'win32') {
+      ctx.skip('Docker Desktop does not project these names on this platform')
+    }
+
+    const d = agac('windows-projection')
+    fs.mkdirSync(d)
+    fs.writeFileSync(path.join(d, 'x\uf009y'), 'x')
+    fs.writeFileSync(path.join(d, 'p\uf03aq'), 'x')
+    fs.mkdirSync(path.join(d, 'k\uf07cl'))
+    fs.writeFileSync(path.join(d, '\uf041'), 'x')
+
+    const lines = tsSatirlar(d)
+    expect(lines).toContain('x\ty\u0000f')
+    expect(lines).toContain('p:q\u0000f')
+    expect(lines).toContain('k|l\u0000d')
+    expect(lines).toContain('\uf041\u0000f')
+    expect(lines).not.toContain('A\u0000f')
+    expect(lines.join('')).not.toMatch(/[\uf009\uf03a\uf07c]/)
+  })
+
+  it('leaves U+F009 unchanged when the module is loaded for a non-Windows host', async () => {
+    // The platform decision is intentionally made at module load. Reload under
+    // a non-Windows platform so this branch remains exercised on Windows CI too.
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')
+    if (!platform) throw new Error('process.platform has no property descriptor')
+    Object.defineProperty(process, 'platform', { ...platform, value: 'linux' })
+    vi.resetModules()
+    try {
+      const nonWindows = await import('../main/helpers/workspace-fingerprint')
+      const d = agac('non-windows-projection')
+      fs.mkdirSync(d)
+      fs.writeFileSync(path.join(d, 'x\uf009y'), 'x')
+      const lines = nonWindows.fingerprintLines(d).map((line) => line.toString('utf8'))
+      expect(lines).toContain('x\uf009y\u0000f')
+      expect(lines).not.toContain('x\ty\u0000f')
+    } finally {
+      Object.defineProperty(process, 'platform', platform)
+      vi.resetModules()
+    }
+  })
 })
 
 // Python GEREKTIRMEZ, bu yuzden `varsaCalis` disinda: her makinede ve CI'da kosar.

@@ -1,4 +1,4 @@
-"""The `gamachine-ws-fp-2` workspace fingerprint, container side.
+"""The `gamachine-ws-fp-3` workspace fingerprint, container side.
 
 Split out of `routes/auth_routes.py` so a test can RUN it WITHOUT FastAPI.
 There are two implementations of this algorithm — this one and
@@ -26,46 +26,14 @@ import os
 # Identifies the algorithm. Both sides must implement the same version; the
 # Electron side sends nothing, so a bumped version here shows up there as a
 # mismatched `algo` and is reported as "sides disagree", not "wrong tree".
-WORKSPACE_FINGERPRINT_ALGO = "gamachine-ws-fp-2"
+WORKSPACE_FINGERPRINT_ALGO = "gamachine-ws-fp-3"
 
-# Docker Desktop cannot store a name containing a character NTFS forbids, so it
-# shifts each one into the private use area by exactly 0xF000. Measured 31 Aug
-# 2026 by creating one file per candidate inside the container on a real
-# Windows-backed mount and reading the directory from the host: all 39 affected
-# characters — the C0 controls 0x01-0x1F plus `" * : < > ? \ |` — moved, every
-# one of them by the same 0xF000, and nothing else moved.
-#
-# Both sides undo it, so both hash the same name (AUDIT R9-01). Undoing on one
-# side only would leave the host hashing `ab` while the container hashes
-# `a\tb` for the SAME file, which is a refused correct mount.
-#
-# It is a real conflation: a name genuinely containing U+F009 hashes like a name
-# containing a tab. That is deliberate and follows the rule this module already
-# lives by — the host CANNOT tell those two apart, because NTFS stores both as
-# U+F009, so the distinction is not one both sides can make.
-#
-# The offsets stay as the explicit measured list, not a range. The previous
-# range generalized a concrete measurement and swallowed `/`, manufacturing a
-# path separator from the legal filename character U+F02F.
-_PROJECTION_BASE = 0xF000
-_PROJECTED_OFFSETS = frozenset({
-    0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-    0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
-    0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
-    0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
-    0x22, 0x2A, 0x3A, 0x3C, 0x3E, 0x3F, 0x5C, 0x7C,
-})
-
-
-def unproject(name: str) -> str:
-    """Undo Docker Desktop's private-use projection of NTFS-illegal characters."""
-    if not any(ord(ch) - _PROJECTION_BASE in _PROJECTED_OFFSETS for ch in name):
-        return name
-    return "".join(
-        chr(ord(ch) - _PROJECTION_BASE)
-        if ord(ch) - _PROJECTION_BASE in _PROJECTED_OFFSETS else ch
-        for ch in name
-    )
+# Names are not normalized here: the container always sees the canonical name.
+# Measured bidirectionally on 31 Aug 2026, a container-created TAB appeared as
+# U+F009 on the Windows host, while a host-created U+F009 appeared as TAB in the
+# container. The projection is an NTFS host-side artifact; normalizing this
+# canonical container view collapsed two distinct legal Linux names (AUDIT
+# R11-01).
 
 # Not descended into. These are rewritten continuously by the Unity Editor and
 # by compilers, and the two sides sample the tree milliseconds apart, so their
@@ -197,7 +165,7 @@ def fingerprint_lines(root: str) -> list:
         return lines
     for entry in top:
         entry_kind = kind(entry)
-        lines.append(unproject(entry.name) + "\x00" + entry_kind)
+        lines.append(entry.name + "\x00" + entry_kind)
         # Only a plain directory is descended into, so a link cannot be
         # followed and nothing outside the mount is reachable — no `realpath`
         # is needed to prove it. An earlier version resolved every
@@ -214,8 +182,7 @@ def fingerprint_lines(root: str) -> list:
         except OSError:
             continue
         for child in children:
-            lines.append(unproject(entry.name) + "/"
-                         + unproject(child.name) + "\x00" + kind(child))
+            lines.append(entry.name + "/" + child.name + "\x00" + kind(child))
     # Sorted by UTF-8 BYTES, not by code point. Python orders `str` by code
     # point and JavaScript's default sort orders by UTF-16 code unit; the two
     # disagree above the BMP, which would make an emoji-named asset folder
