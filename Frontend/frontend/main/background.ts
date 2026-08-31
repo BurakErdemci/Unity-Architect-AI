@@ -14,6 +14,7 @@ import {
   okumaKarariVer,
   taniticiKapsamdaMi,
   isAllowedWorkspaceWriteFile,
+  readModelFileFromWorkspace,
 } from './helpers/file-security'
 import {
   confirmLegacyRoot,
@@ -457,6 +458,20 @@ handleSecure('read-file', async (_event, filePath: string, workspacePath?: strin
     } finally {
       if (fd !== null) { try { fs.closeSync(fd) } catch { /* kapatma hatası okumayı geçersizleştirmez */ } }
     }
+  } catch { return null }
+})
+
+// 3D model preview channel. The gate chain is the SAME one `read-file` runs;
+// only the extension whitelist and the size cap differ, and both are parameters
+// of the shared decision path in `file-security`. Every "why" for the checks
+// below is written once, at the `read-file` handler and in `file-security` —
+// not repeated here.
+handleSecure('read-model-file', async (_event, filePath: string, workspacePath?: string) => {
+  try {
+    if (!workspacePath) return null;
+    const _ws = untrustedWorkspace(workspacePath); if (_ws) return null;
+    const fullPath = path.isAbsolute(filePath) ? filePath : path.join(workspacePath, filePath);
+    return readModelFileFromWorkspace(fullPath, workspacePath)
   } catch { return null }
 })
 

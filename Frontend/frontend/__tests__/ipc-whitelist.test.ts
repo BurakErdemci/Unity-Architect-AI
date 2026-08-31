@@ -60,8 +60,18 @@ describe('IPC Whitelist — Set doğruluğu', () => {
   // çalışma alanı yolunun iki yönde çevrilmesi için eklendi
   // ('backend-workspace-path', 'host-workspace-path'). İkisi de saf eşleme,
   // dosya sistemine dokunmuyor ve ana süreçten dışarı veri sızdırmıyor.
-  it('tam olarak 26 kanal içerir', () => {
-    expect(ALLOWED_INVOKE_CHANNELS.size).toBe(26)
+  //
+  // 26 → 27, 31 Ağu 2026: 3D model önizleme için 'read-model-file' eklendi.
+  // Bu kanal dosya sistemine DOKUNUYOR, o yüzden metin okuma kapısının tüm
+  // kapılarını (kapsama, ADS, sabit bağ, fd/inode doğrulaması) paylaşıyor ve
+  // üstüne kendi uzantı beyaz listesi (MODEL_FILE_EXTENSIONS) ile kendi boyut
+  // tavanı (MODEL_MAX_BYTES) var — yani yüzey model dosyalarıyla sınırlı.
+  it('tam olarak 27 kanal içerir', () => {
+    expect(ALLOWED_INVOKE_CHANNELS.size).toBe(27)
+  })
+
+  it('read-model-file kanalı whitelist\'te', () => {
+    expect(ALLOWED_INVOKE_CHANNELS.has('read-model-file')).toBe(true)
   })
 
   it('çalışma alanı yolu çeviri kanalları whitelist\'te', () => {
