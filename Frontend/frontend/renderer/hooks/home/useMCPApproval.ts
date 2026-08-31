@@ -473,13 +473,27 @@ export const useMCPApproval = ({
   // karsilastirma bir render boyunca eski degerle yapiliyordu. Fazladan render
   // sorunu asil yerinden cozuldu — yoklama etkisi artik `poll`un kimligine
   // bagli degil.
-  const [backendFacingWorkspace, setBackendFacingWorkspace] = useState<string | null>(null);
+  //
+  // Cevap HANGI YOL icin alindigini de tasiyor (`forPath`). Ayri bir "bitti"
+  // bayragi degil, cunku bayrak effect icinde yaziliyor ve effect render'dan
+  // SONRA kosuyor: acik klasor degistiginde bir render boyunca eski yolun
+  // cevabi "bitmis" gorunurdu — kapatmaya calistigimiz pencerenin aynisi.
+  // Sahiplik alani karsilastirmasi her render'da senkron dogru.
+  const [mappedWorkspace, setMappedWorkspace] =
+    useState<{ forPath: string; path: string | null } | null>(null);
   useEffect(() => {
     let iptal = false;
-    if (!workspacePath) { setBackendFacingWorkspace(null); return; }
-    backendWorkspacePath(workspacePath).then(v => { if (!iptal) setBackendFacingWorkspace(v); });
+    if (!workspacePath) { setMappedWorkspace(null); return; }
+    backendWorkspacePath(workspacePath).then(v => {
+      if (!iptal) setMappedWorkspace({ forPath: workspacePath, path: v });
+    });
     return () => { iptal = true; };
   }, [workspacePath]);
+
+  // Ceviri henuz sonuclanmadi mi? Acik klasor YOKKEN "bekleniyor" degil:
+  // orada cevrilecek bir sey de yok, karsilastirma kalici olarak bilinemez.
+  const cevirmeBekliyor = !!workspacePath && mappedWorkspace?.forPath !== workspacePath;
+  const backendFacingWorkspace = cevirmeBekliyor ? null : (mappedWorkspace?.path ?? null);
 
   // bir DOĞRULUK sorusu ve deterministik ölçülebilmeli.
   return {
@@ -492,6 +506,24 @@ export const useMCPApproval = ({
     // HER onay kartinda kirmizi uyusmazlik bandi cikariyordu, yani gercek bir
     // capraz-proje istegi ayirt edilemez hale geliyordu (denetim, 31 Agu 2026).
     gateWorkspaceMismatch: workspaceMismatch(activeGate?.workspacePath, backendFacingWorkspace),
+    /**
+     * Karsilastirma HENUZ YAPILAMIYOR — cevap yolda.
+     *
+     * Ayri bir sinyal olmasinin sebebi olculmus bir arizadir (dis denetim
+     * bulgusu 4, 31 Agu 2026): yoklama ile ceviri iki ayri effect ve yoklama
+     * once basliyor, yani BASKA bir projeye ait bir kart ceviri sonuclanmadan
+     * cizilebiliyor. `workspaceMismatch` bilinmeyeni bilerek `false` sayiyor
+     * (gerekcesi orada), ama banner o `false`i "dogrulandi, ayni proje" diye
+     * ciziyordu: gri serit, "baska proje" yazisi yok, onay butonlari acik.
+     * Kullanici tam o pencerede onaylayabiliyordu; kart saniyenin bir kismi
+     * sonra kehribar rengine donuyordu. Kusur "bilinmeyen uyusmazlik degil"
+     * degil, bilinmeyenin BILINEN ESLESME gibi sunulmasiydi.
+     *
+     * Yalniz gate bir workspace bildirdiyse anlamli: bildirmediyse cevirinin
+     * sonucu ne olursa olsun karsilastirilacak bir sey yok, o bilinmezligi
+     * banner zaten `mcp.sourceUnknown` ile soyluyor.
+     */
+    gateWorkspaceCheckPending: !!activeGate?.workspacePath && cevirmeBekliyor,
     openWorkspacePath: workspacePath,
     resolveActiveGate,
   };

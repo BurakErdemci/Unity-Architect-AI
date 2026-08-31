@@ -172,12 +172,18 @@ export default function Home() {
   // --- Ensure Active Workspace Is Saved In Backend ---
   useEffect(() => {
     if (API && auth.user?.sessionToken && fs.workspacePath) {
-      backendWorkspacePath(fs.workspacePath).then((path) =>
-        axios.post(`${API}/save-workspace`,
+      backendWorkspacePath(fs.workspacePath).then((path) => {
+        // null means the folder is outside the Docker mount and has no
+        // backend-addressable name at all — posting the untranslated host
+        // path here is the exact split-brain defect this module exists to
+        // close (see backendWorkspacePath.ts), and WorkspaceRequest.path is
+        // required so the backend would 422 anyway.
+        if (path === null) return;
+        return axios.post(`${API}/save-workspace`,
           { user_id: auth.user.id, path },
           { headers: { 'X-Session-Token': auth.user.sessionToken } }
-        )
-      ).catch(() => {});
+        );
+      }).catch(() => {});
     }
   }, [fs.workspacePath, API, auth.user]);
 
@@ -493,6 +499,7 @@ export default function Home() {
               <McpApprovalCards
                 gate={mcp.activeGate}
                 workspaceMismatch={mcp.gateWorkspaceMismatch}
+                workspaceCheckPending={mcp.gateWorkspaceCheckPending}
                 openWorkspacePath={mcp.openWorkspacePath}
                 onResolved={mcp.resolveActiveGate}
                 apiBase={API}
@@ -732,6 +739,7 @@ export default function Home() {
               activity={chat.activity}
               apiBase={API}
               mcpGate={mcp.activeGate} mcpWorkspaceMismatch={mcp.gateWorkspaceMismatch}
+              mcpWorkspaceCheckPending={mcp.gateWorkspaceCheckPending}
               mcpOpenWorkspacePath={mcp.openWorkspacePath} onMcpResolved={mcp.resolveActiveGate}
             />
           </div>

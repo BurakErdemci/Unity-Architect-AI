@@ -328,6 +328,8 @@ const tr = {
   'mcp.commandCancelled': 'Komut iptal edildi',
   'mcp.sentDiff': 'Onayınız gönderildi — değişiklik uygulanıyor',
   'mcp.otherProject': '⚠ BAŞKA PROJE',
+  'mcp.workspaceChecking': 'PROJE DOĞRULANIYOR',
+  'mcp.workspaceCheckingHint': 'Bu isteğin açık projeye ait olup olmadığı henüz karşılaştırılmadı.',
   'mcp.sourceUnknown': 'Kaynak proje bildirilmedi',
   'mcp.openWorkspace': 'açık olan:',
   // --- Araç rozetleri (ToolBlock) ---
@@ -770,6 +772,8 @@ const en: Record<keyof typeof tr, string> = {
   'mcp.commandCancelled': 'Command cancelled',
   'mcp.sentDiff': 'Approval sent — applying the change',
   'mcp.otherProject': '⚠ DIFFERENT PROJECT',
+  'mcp.workspaceChecking': 'CHECKING PROJECT',
+  'mcp.workspaceCheckingHint': 'Whether this request belongs to the open project has not been compared yet.',
   'mcp.sourceUnknown': 'Source project not reported',
   'mcp.openWorkspace': 'currently open:',
   // --- Tool chips (ToolBlock) ---

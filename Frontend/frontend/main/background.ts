@@ -632,10 +632,47 @@ handleSecure('app-token-get', () => localAppToken)
 // So the two consumers are told apart explicitly. Electron's own file tree keeps
 // the host path, because Electron reads the disk directly. Anything the BACKEND
 // will resolve goes through here.
+//
+// The rules are lexical: nothing in the mapping module touches the disk, on
+// purpose, so it can be tested by behaviour. But containment across a bind
+// mount is a FILESYSTEM property, and the gap between the two was FINDING 3 of
+// the 31 Aug 2026 audit. A symlink at `<root>/linked-project` pointing outside
+// the mounted tree relativises to `linked-project` and was accepted as
+// `/workspace/linked-project` — but the mount exposes the real tree, so that
+// container path names a different file than the one Electron opened, and both
+// halves report success. The mirror case: when GAMACHINE_WORKSPACE is itself a
+// symlink and the folder dialog hands back the canonical spelling, a legitimate
+// selection was refused.
+//
+// So the IO half lives here, before the pure rules run, and it is applied to
+// BOTH the root and the incoming path. The handlers still decide nothing about
+// containment — they hand canonical spellings to the module and take its answer.
+function canonicalPath(p: string): string {
+  if (!p) return ''
+  try {
+    // `.native` so Windows returns the on-disk spelling (drive letter, case),
+    // which is what the two sides have to agree on.
+    return fs.realpathSync.native(p)
+  } catch {
+    // ENOENT, a broken link, or no permission to traverse. Inventing a
+    // canonical spelling for a path we could not stat would put the lexical
+    // hole straight back, so this is "no answer" and the callers refuse.
+    return ''
+  }
+}
+
+function canonicalHostRoot(): string {
+  return canonicalPath(hostRootFrom(process.env.GAMACHINE_WORKSPACE))
+}
+
 handleSecure('backend-workspace-path', (_event, hostPath: unknown) => {
   const p = String(hostPath ?? '')
   if (!useDockerBackend) return p
-  return toBackendPath(p, hostRootFrom(process.env.GAMACHINE_WORKSPACE))
+  // A path that does not exist cannot be symlink-resolved, and this direction
+  // never legitimately receives one: it is called with a folder the user just
+  // picked in the dialog. So an unresolvable input is refused ('') rather than
+  // guessed — the backend would be told a container path addressing nothing.
+  return toBackendPath(canonicalPath(p), canonicalHostRoot())
 })
 
 // The reverse, and it is not optional: the backend stores what it was given, so
@@ -645,7 +682,21 @@ handleSecure('backend-workspace-path', (_event, hostPath: unknown) => {
 handleSecure('host-workspace-path', (_event, backendPath: unknown) => {
   const p = String(backendPath ?? '')
   if (!useDockerBackend) return p
-  return toHostPath(p, hostRootFrom(process.env.GAMACHINE_WORKSPACE))
+  const root = canonicalHostRoot()
+  const candidate = toHostPath(p, root)
+  if (!candidate) return ''
+  const real = canonicalPath(candidate)
+  // This is the handler that CAN legitimately be handed a path that no longer
+  // exists: it restores the last workspace, and the folder may have been
+  // deleted or renamed since the backend stored it. Such a path has no symlink
+  // to resolve, and refusing it here would turn "your project moved" into
+  // "there was never a project". The lexical answer under an already canonical
+  // root is safe, and the caller's own `path-exists` check rejects it anyway.
+  if (!real) return candidate
+  // It does exist, so a symlink INSIDE the tree could still lead out of the
+  // mount. Re-check the resolved spelling through the same module rather than
+  // restating the containment rule here — one home for the rule, one for the IO.
+  return toBackendPath(real, root) ? real : ''
 })
 handleSecure('get-backend-base-url', () => getBackendBaseUrl())
 

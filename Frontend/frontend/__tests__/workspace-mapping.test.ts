@@ -73,6 +73,13 @@ describe('toBackendPath — yalnız bağlanan ağaç adlandırılabilir', () => 
     // içinde değil. Düz `startsWith` ile yazılsaydı burası kırılırdı.
     expect(toBackendPath(`${KOK}-yedek`, KOK)).toBe('')
   })
+
+  it('adı ".." ile BAŞLAYAN gerçek bir alt klasör kabul edilir', () => {
+    // `path.relative(KOK, KOK/..project)` = "..project" döner. Sınama düz
+    // `rel.startsWith('..')` olsaydı bu meşru klasörü reddederdi.
+    const altKlasor = path.join(KOK, '..project')
+    expect(toBackendPath(altKlasor, KOK)).toBe(`${DOCKER_WORKSPACE_MOUNT}/..project`)
+  })
 })
 
 describe('toHostPath — geri çeviri', () => {
@@ -95,6 +102,19 @@ describe('toHostPath — geri çeviri', () => {
   it('kök bilinmiyorsa cevap yoktur', () => {
     expect(toHostPath(DOCKER_WORKSPACE_MOUNT, '')).toBe('')
   })
+
+  it('".." içeren yol kökün KARDEŞİNE kaçamaz (POSIX ayırıcı)', () => {
+    // `path.join(KOK, '..', 'other')` KOK'un kardeşi, mount edilen ağacın
+    // dışında. Önek denetimi `/workspace/` ile başladığı için bunu yakalamaz;
+    // asıl denetim BİRLEŞTİRİLMİŞ sonuç üzerinde olmalı.
+    expect(toHostPath(`${DOCKER_WORKSPACE_MOUNT}/../other`, KOK)).toBe('')
+  })
+
+  it('".." içeren yol kökün KARDEŞİNE kaçamaz (ters bölü varyantı)', () => {
+    // Sonek ana-makineye özgü `path.join`'e gidiyor; Windows'ta ters bölü de
+    // aynı kaçışı açar.
+    expect(toHostPath(`${DOCKER_WORKSPACE_MOUNT}/..\\other`, KOK)).toBe('')
+  })
 })
 
 describe('gidiş-dönüş', () => {
@@ -103,5 +123,13 @@ describe('gidiş-dönüş', () => {
       const host = path.join(KOK, ...parca)
       expect(toHostPath(toBackendPath(host, KOK), KOK)).toBe(host)
     }
+  })
+
+  it('düşman girdi round-trip\'te de köke ya da cevapsızlığa çıkar, asla kardeşe değil', () => {
+    // Doğrudan `toHostPath`'e verilmiş kaçış dizesi hâlâ reddedilmeli, ve
+    // tesadüfen KOK ile aynı önek üreten bir dize de kardeşi adlandırmamalı.
+    const kacisSonuc = toHostPath(`${DOCKER_WORKSPACE_MOUNT}/../other`, KOK)
+    expect(kacisSonuc).not.toBe(DISARISI)
+    expect(kacisSonuc).toBe('')
   })
 })

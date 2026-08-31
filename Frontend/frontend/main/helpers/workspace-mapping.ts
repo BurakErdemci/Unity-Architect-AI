@@ -43,7 +43,10 @@ export function toBackendPath(hostPath: string, hostRoot: string): string {
   if (!hostPath) return ''
   if (!hostRoot) return ''
   const rel = path.relative(hostRoot, path.resolve(hostPath))
-  if (rel.startsWith('..') || path.isAbsolute(rel)) return ''
+  // A real child can legitimately be named `..project` — `path.relative`
+  // returns `..project` for it, and a bare `rel.startsWith('..')` refused it.
+  // The boundary is a `..` segment, not a `..`-prefixed string.
+  if (rel === '..' || rel.startsWith(`..${path.sep}`) || rel.startsWith('../') || path.isAbsolute(rel)) return ''
   // POSIX separators: the answer is consumed inside a Linux container.
   return rel ? `${DOCKER_WORKSPACE_MOUNT}/${rel.split(path.sep).join('/')}`
              : DOCKER_WORKSPACE_MOUNT
@@ -62,5 +65,12 @@ export function toHostPath(backendPath: string, hostRoot: string): string {
   if (backendPath === DOCKER_WORKSPACE_MOUNT) return hostRoot
   const prefix = `${DOCKER_WORKSPACE_MOUNT}/`
   if (!backendPath.startsWith(prefix)) return ''
-  return path.join(hostRoot, ...backendPath.slice(prefix.length).split('/'))
+  const candidate = path.join(hostRoot, ...backendPath.slice(prefix.length).split('/'))
+  // `path.join` collapses `..` segments, so a suffix like `../other` (or, on
+  // Windows, a host-native `\`-joined `..\other`) can land OUTSIDE hostRoot
+  // while still passing the prefix check above. Confirm containment on the
+  // JOINED result rather than trusting the prefix alone.
+  const rel = path.relative(hostRoot, candidate)
+  if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) return ''
+  return candidate
 }

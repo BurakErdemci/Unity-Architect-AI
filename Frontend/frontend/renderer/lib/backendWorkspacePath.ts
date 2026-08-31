@@ -19,6 +19,27 @@
  * project onto the mounted one: the editor worked in the folder you picked
  * while every agent and file tool worked in a different one, both reporting
  * success. Callers must treat `null` as "do not tell the backend anything".
+ *
+ * Every path that is not a real answer fails CLOSED to `null`: a missing
+ * bridge, a rejecting `invoke`, a non-string reply. The main process is the
+ * only side that knows how the backend was started, so without its answer this
+ * module knows nothing — and "nothing" must never be spelled as the host path,
+ * which is precisely the value a Docker backend cannot address.
+ *
+ * An intermediate version returned the host path when the bridge was ABSENT,
+ * on the argument that no bridge means no Electron and therefore nothing
+ * containerised. That argument does not hold: an absent `window.ipc` is also
+ * what a failed preload looks like inside a real Electron window, and the two
+ * are indistinguishable from here. Measured 31 Aug 2026: in that state the
+ * request is still sent, because `useAuth` falls back to the session token
+ * `'local'`, and the only thing that stops the bad value reaching the database
+ * is the backend answering 401. Relying on another layer's rejection is not a
+ * guard — it is a coincidence that a config change can remove.
+ *
+ * The cost is stated plainly: rendering this UI outside Electron loses
+ * workspace persistence. That is not a supported way to run the product (file
+ * access, the terminal and the app token all come through the same bridge), so
+ * the trade is a mode that does not exist against a defect that does.
  */
 // Cagri aninda okunuyor, modul yuklenirken DEGIL. Uygulamada preload her zaman
 // once kosuyor, ama erken baglama koprunun ne zaman kuruldugu hakkinda sessiz
@@ -30,17 +51,16 @@ const getIpc = () => (typeof window !== 'undefined' ? (window as any).ipc : null
 export async function backendWorkspacePath(hostPath: string): Promise<string | null> {
   if (!hostPath) return hostPath;
   const ipc = getIpc();
-  if (!ipc) return hostPath;   // no Electron: nothing is containerised
+  if (!ipc) return null;   // no bridge = no answer; see the note above
   try {
     const mapped = await ipc.invoke('backend-workspace-path', hostPath);
-    if (typeof mapped !== 'string') return hostPath;
+    if (typeof mapped !== 'string') return null;
     return mapped === '' ? null : mapped;
   } catch {
-    // The channel is whitelisted and its handler is registered before any
-    // window exists, so a throw here means something far more broken than a
-    // workspace path. Failing closed would break the app everyone uses to
-    // protect the mode almost nobody runs.
-    return hostPath;
+    // The bridge exists but failed to answer: unknown, not identity. Returning
+    // the host path here is exactly the aliasing bug this module exists to
+    // close, just reached through a different door than a missing bridge.
+    return null;
   }
 }
 
@@ -54,12 +74,14 @@ export async function backendWorkspacePath(hostPath: string): Promise<string | n
 export async function hostWorkspacePath(backendPath: string): Promise<string | null> {
   if (!backendPath) return backendPath;
   const ipc = getIpc();
-  if (!ipc) return backendPath;
+  if (!ipc) return null;   // no bridge = no answer; see the note above
   try {
     const mapped = await ipc.invoke('host-workspace-path', backendPath);
-    if (typeof mapped !== 'string') return backendPath;
+    if (typeof mapped !== 'string') return null;
     return mapped === '' ? null : mapped;
   } catch {
-    return backendPath;
+    // Same reasoning as backendWorkspacePath: a failed bridge is unknown, not
+    // identity, so it fails closed rather than handing back an unresolved path.
+    return null;
   }
 }

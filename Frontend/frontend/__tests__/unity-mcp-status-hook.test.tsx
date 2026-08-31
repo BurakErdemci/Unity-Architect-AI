@@ -117,6 +117,51 @@ describe('useAIConfig — blocked durumu', () => {
     expect(mockedAxios.post.mock.calls[0][1]).toMatchObject({ enabled: true })
   })
 
+  it('adreslenemeyen calisma alaninda kullaniciya SOYLUYOR — sessiz kalmiyor', async () => {
+    // Docker modunda mount disindaki bir klasor backend'e adlandirilamiyor.
+    // Sunucu yine kalkiyor ama paket ve autoconnect yazimlari atlaniyor, yani
+    // Unity kurulumu YARIM kaliyor. Sessiz birakmak bu depodaki en pahali
+    // bicim (denetim, 31 Agu 2026).
+    const oncekiIpc = (window as any).ipc
+    ;(window as any).ipc = { invoke: vi.fn(async () => '') }   // '' = cevap yok
+    try {
+      mockedAxios.get.mockResolvedValue(statusPayload('off'))
+      const { result } = renderHook(() => useAIConfig(API, null, showToast, '/host/disarisi'))
+      await waitFor(() => expect(result.current.unityMcpStatus).toBe('off'))
+
+      mockedAxios.post.mockResolvedValue({ data: { status: 'started', port: 8080 } })
+      await act(async () => { await result.current.toggleUnityMcp() })
+
+      const uyarilar = showToast.mock.calls.filter(c => c[1] === 'warning')
+      expect(uyarilar.length).toBe(1)
+      // Istek yine gidiyor ama yol NULL: yanlis bir yol gondermek, hic
+      // gondermemekten kotu olurdu.
+      expect(mockedAxios.post.mock.calls[0][1]).toMatchObject({ workspace_path: null })
+    } finally {
+      ;(window as any).ipc = oncekiIpc
+    }
+  })
+
+  it('TERS YON: adreslenebilen calisma alaninda uyari YOK', async () => {
+    // Kapinin bir sey korudugunun kaniti: yukaridaki test tek basina, her
+    // durumda uyari basan bir kodla da gecerdi.
+    const oncekiIpc = (window as any).ipc
+    ;(window as any).ipc = { invoke: vi.fn(async () => '/workspace') }
+    try {
+      mockedAxios.get.mockResolvedValue(statusPayload('off'))
+      const { result } = renderHook(() => useAIConfig(API, null, showToast, '/host/proje'))
+      await waitFor(() => expect(result.current.unityMcpStatus).toBe('off'))
+
+      mockedAxios.post.mockResolvedValue({ data: { status: 'started', port: 8080 } })
+      await act(async () => { await result.current.toggleUnityMcp() })
+
+      expect(showToast.mock.calls.filter(c => c[1] === 'warning').length).toBe(0)
+      expect(mockedAxios.post.mock.calls[0][1]).toMatchObject({ workspace_path: '/workspace' })
+    } finally {
+      ;(window as any).ipc = oncekiIpc
+    }
+  })
+
   it('connected ta toggle KAPATMA isteği yolluyor — yön korunuyor', async () => {
     // İki yönü de sınamak şart: yalnız "blocked açıyor" iddiası, her durumda
     // `enabled:true` yollayan bir mutasyonu yeşil bırakırdı.

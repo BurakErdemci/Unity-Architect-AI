@@ -18,7 +18,7 @@
  * ayrılmasıyla gereksizleşti.
  */
 import React, { useEffect, useRef, useState } from 'react';
-import { AlertTriangle, FolderOpen } from 'lucide-react';
+import { AlertTriangle, FolderOpen, Loader2 } from 'lucide-react';
 import { DiffViewer } from './DiffViewer';
 import { FileCreationApproval, PendingFile } from './FileCreationApproval';
 import { FileDeleteApproval } from './FileDeleteApproval';
@@ -66,6 +66,13 @@ interface McpApprovalCardsProps {
   gate: McpActiveGate | null;
   /** Gate'in workspace'i üründe açık olandan farklı mı (bilinmiyorsa false). */
   workspaceMismatch: boolean;
+  /**
+   * Karşılaştırma HENÜZ yapılamıyor (açık klasörün backend'deki karşılığı
+   * yolda). Opsiyonel: verilmezse eski davranış, yani "karşılaştırma yapıldı".
+   * `workspaceMismatch` ile aynı anda doğru olamaz — bilinmeyen bir uyuşmazlık
+   * iddia edilmiyor, yalnız eşleşme İDDİA EDİLMİYOR.
+   */
+  workspaceCheckPending?: boolean;
   /** Üründe açık olan workspace; banner'da "açık olan" satırı için. */
   openWorkspacePath: string | null;
   /** Karar verildi/kart kapandı → sıradaki isteğin gösterilmesine izin ver. */
@@ -107,23 +114,38 @@ interface McpApprovalCardsProps {
 const WorkspaceBanner: React.FC<{
   gate: McpActiveGate;
   mismatch: boolean;
+  checking: boolean;
   openWorkspacePath: string | null;
-}> = ({ gate, mismatch, openWorkspacePath }) => {
+}> = ({ gate, mismatch, checking, openWorkspacePath }) => {
   const { t } = useLang();
   // Gate workspace'i boşsa iddia edilecek bir şey yok — bilinmiyor de.
   const bilinmiyor = !gate.workspacePath;
+  // ÜÇ durum, iki değil. Üçüncüsü (`checking`) bir denetim bulgusundan doğdu
+  // (31 Ağu 2026): karşılaştırma yapılamadığı sürece şerit gri çiziliyordu ve
+  // gri, kullanıcı için "baktım, aynı proje" demek — yani kanıtlanmamış bir
+  // eşleşme kanıtlanmış gibi sunuluyordu. Kart yine de çiziliyor ve butonlar
+  // AÇIK kalıyor: kartı beklemek ya da butonları kilitlemek, cevap hiç
+  // gelmediğinde isteği 180 sn'lik sessiz redde kilitlerdi — bu bileşenin
+  // baştan beri reddettiği hâl (bkz. yukarıdaki kullanıcı kararı).
   const renk = mismatch
     ? 'border-amber-500/50 bg-amber-500/10 text-amber-300'
-    : 'border-slate-700 bg-slate-800/50 text-slate-400';
+    : checking
+      ? 'border-sky-500/40 bg-sky-500/10 text-sky-300'
+      : 'border-slate-700 bg-slate-800/50 text-slate-400';
   return (
     <div className={`flex items-start gap-2 rounded-t-lg border border-b-0 px-3 py-1.5 text-[11px] ${renk}`}>
       {mismatch ? <AlertTriangle size={13} className="mt-px shrink-0" />
+                : checking ? <Loader2 size={13} className="mt-px shrink-0 animate-spin" />
                 : <FolderOpen size={13} className="mt-px shrink-0" />}
       <div className="min-w-0">
         {mismatch && <div className="font-bold">{t('mcp.otherProject')}</div>}
+        {!mismatch && checking && <div className="font-bold">{t('mcp.workspaceChecking')}</div>}
         <div className="truncate font-mono">
           {bilinmiyor ? t('mcp.sourceUnknown') : gate.workspacePath}
         </div>
+        {!mismatch && checking && (
+          <div className="opacity-80">{t('mcp.workspaceCheckingHint')}</div>
+        )}
         {mismatch && openWorkspacePath && (
           <div className="truncate opacity-70">{t('mcp.openWorkspace')} {openWorkspacePath}</div>
         )}
@@ -135,6 +157,7 @@ const WorkspaceBanner: React.FC<{
 export const McpApprovalCards: React.FC<McpApprovalCardsProps> = ({
   gate,
   workspaceMismatch,
+  workspaceCheckPending = false,
   openWorkspacePath,
   onResolved,
   apiBase,
@@ -291,7 +314,12 @@ export const McpApprovalCards: React.FC<McpApprovalCardsProps> = ({
   );
 
   const banner = (
-    <WorkspaceBanner gate={gate} mismatch={workspaceMismatch} openWorkspacePath={openWorkspacePath} />
+    <WorkspaceBanner
+      gate={gate}
+      mismatch={workspaceMismatch}
+      checking={workspaceCheckPending && !workspaceMismatch}
+      openWorkspacePath={openWorkspacePath}
+    />
   );
 
   return (

@@ -75,6 +75,8 @@ interface ChatPanelProps {
   /** Karar bekleyen MCP isteği; `null` ise MCP kartı yok. `useMCPApproval`'dan. */
   mcpGate: McpActiveGate | null;
   mcpWorkspaceMismatch: boolean;
+  /** Karsilastirma henuz yapilamiyor; banner "dogrulaniyor" der. */
+  mcpWorkspaceCheckPending?: boolean;
   mcpOpenWorkspacePath: string | null;
   onMcpResolved: () => void;
   // Canlı aktivite (status event'leri): "🤖 Subagent çalışıyor · 45.2k token" gibi.
@@ -121,6 +123,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   apiBase,
   mcpGate,
   mcpWorkspaceMismatch,
+  mcpWorkspaceCheckPending,
   mcpOpenWorkspacePath,
   onMcpResolved,
 }) => {
@@ -534,6 +537,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
         <McpApprovalCards
           gate={mcpGate}
           workspaceMismatch={mcpWorkspaceMismatch}
+          workspaceCheckPending={mcpWorkspaceCheckPending}
           openWorkspacePath={mcpOpenWorkspacePath}
           onResolved={onMcpResolved}
           apiBase={apiBase}

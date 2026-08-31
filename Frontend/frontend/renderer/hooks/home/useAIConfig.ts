@@ -213,6 +213,15 @@ export const useAIConfig = (API: string, user: UserData | null, showToast: (msg:
       // `Packages/manifest.json`'i o yola gore cozuyor (denetim, 31 Agu 2026:
       // iki `/save-workspace` cagrisi cevrildi ama bu ucuncusu atlanmisti).
       const mcpWorkspace = workspacePath ? await backendWorkspacePath(workspacePath) : null;
+      // Iki ayri `null` var ve karistirilmamalari lazim: acik klasor YOK (once
+      // bir proje sec) ile acik klasor VAR ama backend onu adlandiramiyor
+      // (Docker'da mount disinda). Ikincisinde sunucu yine kalkiyor ama paket
+      // ve autoconnect yazimlari atlaniyor — yani Unity kurulumu sessizce
+      // yarim kaliyor. Bu depoda en pahaliya mal olan bicim tam olarak bu, o
+      // yuzden kullaniciya soyleniyor.
+      if (turningOn && workspacePath && mcpWorkspace === null) {
+        showToast(cevir('workspace.outsideDockerMount'), 'warning');
+      }
       await axios.post(`${API}/mcp/unity/toggle`, { enabled: turningOn, workspace_path: mcpWorkspace });
       if (!guncelMi()) return;
       if (turningOn) {

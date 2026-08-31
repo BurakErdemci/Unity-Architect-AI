@@ -50,8 +50,20 @@ _TS_COMMENT_RE = re.compile(r"(^|\s)//.*$")
 _DOCKERFILE_COMMENT_RE = re.compile(r"^\s*#")
 
 
+_TS_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.S)
+
+
 def _strip_ts_comments(text: str) -> str:
-    """Drop `//` comments so a promise written in prose cannot satisfy a test."""
+    """Drop `//` and `/* */` comments so a promise written in prose cannot
+    satisfy a test.
+
+    Block comments first: a `/* ... */` body containing every literal an
+    assertion looks for, guarded by `if (false)`, satisfied the whole suite
+    while proving nothing at startup (audit, 31 Aug 2026) — because only
+    line comments were being stripped, so the block's text still read like
+    live code to every regex here.
+    """
+    text = _TS_BLOCK_COMMENT_RE.sub("", text)
     out = []
     for line in text.splitlines():
         stripped = _TS_COMMENT_RE.sub("", line)
@@ -173,10 +185,19 @@ def test_the_service_does_not_run_as_root(resolved):
     # Docker accepts names as well as numbers, so a prefix check on "0:" let
     # `root:root` through — which Docker runs as uid 0 (audit, 31 Aug 2026).
     # Both halves are checked, and the uid half against names too.
+    #
+    # "0" alone under-matched: Compose's `user: "00:0"` is numeric uid zero
+    # but is neither the string "0" nor "root", so the earlier equality check
+    # let it through (audit, 31 Aug 2026). Any numeric spelling of zero — a
+    # leading-zero form ("00"), or one padded with whitespace (" 0") — is the
+    # same uid, so the check parses the uid half as an integer instead of
+    # string-matching it.
     user = str(resolved.get("user") or "")
     assert user, "no user set; the image's default would apply"
     uid = user.split(":", 1)[0].strip()
-    assert uid not in ("0", "root"), \
+    is_root_name = uid == "root"
+    is_root_uid = uid.isdigit() and int(uid) == 0
+    assert not is_root_name and not is_root_uid, \
         f"backend runs as root over a bind mount of the developer's tree: {user!r}"
 
 
@@ -185,7 +206,10 @@ def test_the_service_does_not_run_as_root(resolved):
 def test_the_final_stage_python_matches_what_the_project_targets(dockerfile_effective):
     """Last `FROM` wins. The earlier version matched the FIRST one, so a second
     stage on 3.11 would have kept it green."""
-    froms = re.findall(r"^FROM\s+(\S+)", dockerfile_effective, re.M)
+    # Dockerfile instructions are case-insensitive ("from" works as well as
+    # "FROM"), so a case-sensitive pattern is blind to a later lowercase stage
+    # that overrides the one it found — audit, 31 Aug 2026.
+    froms = re.findall(r"^FROM\s+(\S+)", dockerfile_effective, re.M | re.I)
     assert froms, "no FROM directive"
     final = froms[-1]
     m = re.match(r"python:3\.(\d+)", final)
@@ -199,7 +223,10 @@ def test_the_effective_bind_host_reaches_beyond_loopback(dockerfile_effective, r
     # Satir SONUNA kadar: `(\S+)` yalniz ilk parcayi aliyordu, yani satira
     # eklenen her sey gorunmez kaliyordu ve mutasyon yesil geciyordu (olculdu
     # 31 Agu 2026, bu testin kendi mutasyon turunda).
-    envs = re.findall(r"^ENV\s+HOST=(.+?)\s*$", dockerfile_effective, re.M)
+    # Same case-insensitivity as FROM: `env host=127.0.0.1` is a live directive
+    # and the previous pattern couldn't see it, so it silently overrode what
+    # the test believed it had pinned (audit, 31 Aug 2026).
+    envs = re.findall(r"^ENV\s+HOST=(.+?)\s*$", dockerfile_effective, re.M | re.I)
     assert envs, "the image never sets HOST; the app defaults to 127.0.0.1"
     assert envs[-1] == "0.0.0.0", f"last HOST in the image is {envs[-1]!r}"
     override = resolved["environment"].get("HOST")
@@ -207,9 +234,17 @@ def test_the_effective_bind_host_reaches_beyond_loopback(dockerfile_effective, r
 
 
 def test_the_image_declares_a_non_root_user(dockerfile_effective):
-    users = re.findall(r"^USER\s+(\S+)", dockerfile_effective, re.M)
+    # Case-insensitive for the same reason as FROM/ENV above: `user root` in
+    # lowercase is a real, later-winning directive the old pattern missed.
+    users = re.findall(r"^USER\s+(\S+)", dockerfile_effective, re.M | re.I)
     assert users, "no USER directive; the image runs as root"
-    assert users[-1] not in ("root", "0"), f"final USER is {users[-1]!r}"
+    # Aynı sayı kontrolü Compose tarafında zaten var; burada eksikti ve
+    # `USER 00` geçiyordu. Uyuşmayan iki kapı bu depodaki en sık arıza biçimi,
+    # ve bu projenin Dockerfile'ı bugün ad kullanıyor olsa da kapının kendisi
+    # tutarsız kalmamalı.
+    son = users[-1].strip()
+    assert son.lower() != "root" and not (son.isdigit() and int(son) == 0), \
+        f"final USER is {users[-1]!r}"
 
 
 # ── the Electron side ────────────────────────────────────────────────────────

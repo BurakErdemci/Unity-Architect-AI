@@ -61,6 +61,7 @@ vi.mock('axios', () => {
 
 import axios from 'axios'
 import { ChatPanel } from '../renderer/components/home/ChatPanel'
+import { McpApprovalCards } from '../renderer/components/home/McpApprovalCards'
 import {
   useMCPApproval,
   MCP_MSG_ID,
@@ -212,6 +213,21 @@ describe('fixture üreticiden okur — elle kopyalanmış sabit yok', () => {
 
 // ── Uçtan uca · hook'un ÜRETTİĞİ kayıt panelin ARADIĞI kayıt mı ─────────────
 describe('uçtan uca · köprüden gelen istek gerçekten ekrana çıkar', () => {
+  // Uçtan uca ölçüm, ürünün ortamını taklit etmeli: üründe preload HER ZAMAN
+  // koşuyor, yani `window.ipc` var. 31 Ağu 2026'da çalışma alanı çevirisi
+  // köprü yokken "cevap yok" demeye başladı (bkz. backendWorkspacePath), ve
+  // köprüsüz bir düzenek o tarihten sonra uyuşmazlığı hiç ölçemez oldu —
+  // ölçtüğü şey artık ürünün davranışı değil, düzeneğin eksiği olurdu.
+  // Docker dışı kimlik eşlemesi kuruluyor: ana süreç de tam bunu yapıyor.
+  let oncekiIpc: any
+  beforeEach(() => {
+    oncekiIpc = (window as any).ipc
+    ;(window as any).ipc = {
+      invoke: vi.fn(async (_kanal: string, arg: string) => arg),
+    }
+  })
+  afterEach(() => { (window as any).ipc = oncekiIpc })
+
   /**
    * Diğer testler yolun iki ucunu AYRI ölçüyor: hook'a bakanlar setter'ları
    * mock'luyor, panele bakanlar state'i elle veriyor. Aradaki bağ —
@@ -629,6 +645,185 @@ describe('D0 · onay kartı karşılaştırması backend ad alanında yapılır'
     await act(async () => { await new Promise(r => setTimeout(r, 20)) })
 
     expect(result.current.gateWorkspaceMismatch).toBe(true)
+  })
+})
+
+// ── D4 · çeviri SONUÇLANMADAN kart "doğrulandı" gibi görünmez ──────────────
+describe('D4 · karşılaştırma yapılamazken kart eşleşme İDDİA ETMEZ', () => {
+  /**
+   * Dış denetim bulgusu 4 (31 Ağu 2026, med), probe ile doğrulandı.
+   *
+   * Yoklama ile açık klasörün backend karşılığına çevrilmesi İKİ AYRI effect ve
+   * yoklama önce başlıyor. Gerçekten BAŞKA bir projeye ait bir gate, çeviri
+   * inmeden çizilebiliyordu: `workspaceMismatch` bilinmeyeni bilerek `false`
+   * sayıyor, banner ise o `false`i gri "eşleşiyor" şeridi diye çiziyordu —
+   * uyarı yok, "açık olan" satırı yok, onay butonları açık. Saniyenin bir
+   * kısmı sonra aynı kart kehribara dönüyordu; kullanıcı o pencerede
+   * onaylayabiliyordu.
+   *
+   * Ölçülen şey "bilinmeyen uyuşmazlık sayılsın" DEĞİL (o karar duruyor,
+   * gerekçesi `workspaceMismatch`'in docstring'inde): ölçülen, bilinmeyenin
+   * BİLİNEN EŞLEŞME gibi sunulmaması.
+   */
+  let oncekiIpc: any
+  /** Çözümü ÇAĞIRAN tarafta olan IPC — pencere sabit uykuyla değil, elle açılır. */
+  const ertelenmisIpc = () => {
+    oncekiIpc = (window as any).ipc
+    let coz: (v: string) => void = () => {}
+    const cevap = new Promise<string>(r => { coz = r })
+    ;(window as any).ipc = {
+      invoke: vi.fn((kanal: string) =>
+        kanal === 'backend-workspace-path' ? cevap : Promise.resolve(null)),
+    }
+    return { coz: (v: string) => coz(v) }
+  }
+  afterEach(() => { (window as any).ipc = oncekiIpc })
+
+  const bekle = () => act(async () => { await new Promise(r => setTimeout(r, 10)) })
+
+  /** Hook'u GERÇEK kartla birleştiren düzenek: ölçülen şey banner'ın çizimi. */
+  const Harness: React.FC = () => {
+    const [cmd, setCmd] = React.useState<any>(null)
+    const mcp = useMCPApproval({
+      API,
+      enabled: true,
+      workspacePath: '/host/game',
+      setPendingGenFiles: vi.fn(),
+      setPendingDelete: vi.fn(),
+      setPendingCommand: setCmd,
+      setPendingFix: vi.fn(),
+    } as any)
+    return React.createElement(McpApprovalCards, {
+      gate: mcp.activeGate,
+      workspaceMismatch: mcp.gateWorkspaceMismatch,
+      workspaceCheckPending: mcp.gateWorkspaceCheckPending,
+      openWorkspacePath: mcp.openWorkspacePath,
+      onResolved: mcp.resolveActiveGate,
+      apiBase: API,
+      sessionToken: 'tok',
+      showToast: vi.fn(),
+      refreshFileTree: vi.fn(),
+      pendingGenFiles: null, setPendingGenFiles: vi.fn(),
+      pendingDelete: null, setPendingDelete: vi.fn(),
+      pendingCommand: cmd, setPendingCommand: setCmd,
+      pendingFix: null, setPendingFix: vi.fn(),
+    } as any)
+  }
+
+  const bekleyenBaskaProje = (yol = '/baska/proje') => {
+    mockedAxios.get.mockResolvedValue({ data: { pending: { g9: {
+      tool: 'manage_scene', params: {}, workspace_path: yol } } } })
+  }
+
+  it('çeviri inmeden kart ÇİZİLİR ama "doğrulanıyor" der', async () => {
+    const { coz } = ertelenmisIpc()
+    bekleyenBaskaProje()
+
+    await act(async () => { render(React.createElement(Harness)) })
+    await bekle()
+
+    // Kart görünmeli: beklemek de gizlemektir ve gizlenen istek köprüde
+    // 180 sn sonra sessizce reddediliyor.
+    expect(screen.queryByText('İşlemi Çalıştır')).not.toBeNull()
+    // Ve şerit eşleşme İDDİA ETMEMELİ.
+    expect(screen.queryByText('PROJE DOĞRULANIYOR')).not.toBeNull()
+
+    coz('/workspace')
+    await bekle()
+
+    // Çeviri indi: aynı kart artık gerçek uyarısını gösteriyor.
+    expect(screen.queryByText('PROJE DOĞRULANIYOR')).toBeNull()
+    expect(screen.queryByText('⚠ BAŞKA PROJE')).not.toBeNull()
+  })
+
+  it('eşleşen projede pencere kapanınca "doğrulanıyor" DA kalkar — ters yön', async () => {
+    // Bayrağı sonsuza dek açık bırakan bir düzeltme, üstteki testi tek başına
+    // geçerdi: banner o zaman hiçbir zaman eşleşme söylemez, yani şerit
+    // kullanıcıya hiçbir şey öğretmez olurdu.
+    const { coz } = ertelenmisIpc()
+    bekleyenBaskaProje('/workspace')
+
+    await act(async () => { render(React.createElement(Harness)) })
+    await bekle()
+    expect(screen.queryByText('PROJE DOĞRULANIYOR')).not.toBeNull()
+
+    coz('/workspace')
+    await bekle()
+
+    expect(screen.queryByText('PROJE DOĞRULANIYOR')).toBeNull()
+    expect(screen.queryByText('⚠ BAŞKA PROJE')).toBeNull()
+    expect(screen.queryByText('/workspace')).not.toBeNull()
+  })
+
+  it('hook: pencere boyunca beklemede, sonrasında uyuşmazlık', async () => {
+    const { coz } = ertelenmisIpc()
+    bekleyenBaskaProje()
+
+    const { result } = renderHook(() =>
+      useMCPApproval(hookParams({ workspacePath: '/host/game' }) as any))
+    await bekle()
+
+    expect(result.current.activeGate?.gateId).toBe('g9')
+    expect(result.current.gateWorkspaceCheckPending).toBe(true)
+    // Bilinmeyen HÂLÂ uyuşmazlık değil — o karar değişmedi.
+    expect(result.current.gateWorkspaceMismatch).toBe(false)
+
+    coz('/workspace')
+    await bekle()
+
+    expect(result.current.gateWorkspaceCheckPending).toBe(false)
+    expect(result.current.gateWorkspaceMismatch).toBe(true)
+  })
+
+  it('gate workspace BİLDİRMEDİYSE beklemede denmez — karşılaştırılacak şey yok', async () => {
+    // Köprünün eski sürümü `workspace_path` göndermiyor. Orada çeviri inse de
+    // inmese de bir karşılaştırma doğmaz; "doğrulanıyor" demek, hiç gelmeyecek
+    // bir cevabı bekliyormuş gibi yapmak olurdu.
+    ertelenmisIpc()
+    bekleyenBaskaProje('')
+
+    const { result } = renderHook(() =>
+      useMCPApproval(hookParams({ workspacePath: '/host/game' }) as any))
+    await bekle()
+
+    expect(result.current.activeGate).not.toBeNull()
+    expect(result.current.gateWorkspaceCheckPending).toBe(false)
+  })
+
+  it('açık proje DEĞİŞİNCE eski projenin cevabı "doğrulandı" sayılmaz', async () => {
+    // Mutasyonla bulundu (31 Ağu 2026): bayrağı "cevap geldi mi" diye tutmak
+    // ikinci bir pencere bırakıyor — kullanıcı projeyi değiştirdiğinde ELDEKİ
+    // cevap ÖNCEKİ projeye ait, ama karşılaştırma yapılmış gibi görünüyor.
+    // Bu yüzden state cevabın HANGİ yol için alındığını da taşıyor.
+    oncekiIpc = (window as any).ipc
+    ;(window as any).ipc = {
+      invoke: vi.fn(async (_kanal: string, yol: string) =>
+        yol === '/host/game' ? '/workspace' : new Promise<string>(() => {})),
+    }
+    bekleyenBaskaProje('/workspace')
+
+    const { result, rerender } = renderHook(
+      (props: any) => useMCPApproval(hookParams(props) as any),
+      { initialProps: { workspacePath: '/host/game' } })
+    await bekle()
+    expect(result.current.gateWorkspaceCheckPending).toBe(false)
+
+    await act(async () => { rerender({ workspacePath: '/host/other' }) })
+    // Cevap YOLDA: yeni projenin backend karşılığı henüz bilinmiyor.
+    expect(result.current.gateWorkspaceCheckPending).toBe(true)
+    expect(result.current.gateWorkspaceMismatch).toBe(false)
+  })
+
+  it('bayrak kartı çizen yola KABLOLANMIŞ — opsiyonel prop sessizce düşebilir', () => {
+    // `workspaceCheckPending` opsiyonel (başka testler onu vermiyor), yani
+    // iletilmemesi tip hatası ÜRETMEZ: kaybolan bir kablo sessizdir. İki geçiş
+    // noktası da kaynaktan sınanıyor.
+    const chatPanel = readFileSync(
+      join(__dirname, '..', 'renderer', 'components', 'home', 'ChatPanel.tsx'), 'utf-8')
+    expect(chatPanel).toContain('workspaceCheckPending={mcpWorkspaceCheckPending}')
+    const home = readFileSync(join(__dirname, '..', 'renderer', 'pages', 'home.tsx'), 'utf-8')
+    expect(home).toContain('workspaceCheckPending={mcp.gateWorkspaceCheckPending}')
+    expect(home).toContain('mcpWorkspaceCheckPending={mcp.gateWorkspaceCheckPending}')
   })
 })
 

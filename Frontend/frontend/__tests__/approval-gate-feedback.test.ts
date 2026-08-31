@@ -566,8 +566,17 @@ describe('hook ikinci bir karar yolu ihraç ETMEZ', () => {
       }),
     )
 
+    // Liste bilerek TAM eşleşiyor: yeni bir anahtar eklendiğinde bu test
+    // patlıyor ve eklenen şeyin ne olduğu gözden geçiriliyor.
+    //
+    // `gateWorkspaceCheckPending` 31 Ağu 2026'da eklendi ve kapının yasakladığı
+    // şey DEĞİL. Yasak olan ikinci bir KARAR yolu (onayla/reddet); bu ise
+    // `gateWorkspaceMismatch` ile aynı kategoriden bir GÖSTERGE — karşılaştırma
+    // henüz yapılamadığında banner'ın "eşleşiyor" demesini engelliyor.
+    // Kararı hâlâ tek yol veriyor.
     expect(Object.keys(result.current).sort()).toEqual(
-      ['activeGate', 'gateWorkspaceMismatch', 'openWorkspacePath', 'poll', 'resolveActiveGate'].sort(),
+      ['activeGate', 'gateWorkspaceCheckPending', 'gateWorkspaceMismatch',
+       'openWorkspacePath', 'poll', 'resolveActiveGate'].sort(),
     )
   })
 })
