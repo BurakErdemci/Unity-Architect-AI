@@ -63,13 +63,12 @@ unity-mcp/TestProjects/** -text
 # FBX: bir model dosyası ikili de olabilir ASCII de, ve ikili olanı CRLF
 # dönüşümü bozar. Uzantının tamamı dönüşüm dışı kalıyor.
 *.fbx    -text
-# Diğer 3B biçimleri aynı gerekçeyle: .glb ikili, .gltf/.dae/.obj/.stl/.ply
-# metin — ama bunlar önizleme testlerinin sabit dosyaları, ve checkout'un
-# platforma göre değiştirdiği baytlar üzerine kurulu bir test iki platformda
-# iki farklı şey ölçer. `-text` her yerde aynı baytları garanti ediyor.
-*.glb    -text
-*.gltf   -text
-*.dae    -text
-*.obj    -text
-*.stl    -text
-*.ply    -text
+# 3D preview fixtures. The tests assert on the BYTES of these files, and a
+# checkout that rewrites line endings per platform makes one test file measure
+# two different inputs. `-text` pins the bytes everywhere.
+#
+# Scoped to the fixture directory rather than to `*.glb`/`*.obj`/… repo-wide:
+# the reason above is a property of these test inputs, not of the formats, and a
+# repo-wide rule would silently claim every model file a Unity project under
+# this repo ever gains.
+Frontend/frontend/__tests__/fixtures/** -text
