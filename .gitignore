@@ -61,3 +61,8 @@ docs/superpowers/
 .claude/worktrees/
 
 .delegate-runs/
+
+# Runtime SQLite database. It was tracked until 31 Aug 2026; the copy in git
+# held three rows from a January prototype run, so nothing was lost by
+# untracking it, but a developer database has no business being shared.
+Frontend/frontend/unity_architect.db
