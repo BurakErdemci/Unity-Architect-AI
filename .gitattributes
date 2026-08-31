@@ -60,3 +60,6 @@ unity-mcp/TestProjects/** -text
 *.anim   -text
 *.controller -text
 *.meta   -text
+# FBX: bir model dosyası ikili de olabilir ASCII de, ve ikili olanı CRLF
+# dönüşümü bozar. Uzantının tamamı dönüşüm dışı kalıyor.
+*.fbx    -text
