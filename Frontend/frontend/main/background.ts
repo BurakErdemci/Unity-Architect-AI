@@ -24,7 +24,23 @@ import {
 import { applyContentSecurityPolicy } from './helpers/csp'
 import * as pty from 'node-pty'
 
-const localAppToken = randomUUID()
+const useDockerBackend = process.env.USE_DOCKER_BACKEND === 'true'
+
+// A fresh token per launch is the whole point: it is never written to disk and
+// it dies with the process. That stays true for the normal path, where the
+// backend is a child process and inherits this value through its env.
+//
+// Docker mode is the one case where inheritance is impossible — the backend is
+// already running in a container that this process did not start. There the
+// value has to come from the outside, from the same variable Compose reads, or
+// the two sides simply hold different secrets and every request 401s. That was
+// the actual state of Docker mode until 31 Aug 2026: it had never worked.
+//
+// The env var is honoured ONLY in Docker mode, so the normal path cannot have
+// its per-launch randomness weakened by a stray variable in someone's shell.
+const localAppToken = useDockerBackend && process.env.LOCAL_APP_TOKEN
+  ? process.env.LOCAL_APP_TOKEN
+  : randomUUID()
 
 const isProd = process.env.NODE_ENV === 'production'
 let pyBackendProcess: ChildProcess | null = null
@@ -672,11 +688,24 @@ function getBackendPaths(): { pythonExec: string; pythonScript: string; backendD
 // --- BACKEND BAŞLATMA ---
 async function startPythonBackend() {
   // Docker modu: Python spawn etme, doğrudan Docker backend'e bağlan
-  if (process.env.USE_DOCKER_BACKEND === 'true') {
+  if (useDockerBackend) {
+    // Fail here, with the fix in the message, rather than connecting to a
+    // healthy container that will reject every subsequent call. A 401 storm
+    // reads like a broken app; this reads like a missing step.
+    if (!process.env.LOCAL_APP_TOKEN) {
+      throw new Error(
+        'USE_DOCKER_BACKEND=true but LOCAL_APP_TOKEN is unset. The container and this ' +
+        'process must share one token — export the same value for both, then start ' +
+        'Compose. See docs/building.md.'
+      )
+    }
     const dockerPort = parseInt(process.env.DOCKER_BACKEND_PORT || '8000', 10)
     console.log(`--- DOCKER BACKEND MODU: port ${dockerPort} ---`)
     backendPort = dockerPort
-    await waitForBackendHealth(30000)
+    // A cold `docker compose up --build` installs the whole requirements set,
+    // which is minutes, not seconds. 30 s timed out on a first run and looked
+    // like a failure; the health probe is cheap, so waiting longer is free.
+    await waitForBackendHealth(180000)
     return
   }
 

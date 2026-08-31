@@ -80,6 +80,58 @@ The packaged app does **not** require Python or .NET — the backend is a single
 
 ---
 
+## Running the backend in Docker (development only)
+
+For working on the Python side without installing Python 3.13 and building a
+venv. The Electron app still runs on the host; only the backend moves into a
+container.
+
+```bash
+# One token, shared by both sides — see below for why this is the whole trick.
+export LOCAL_APP_TOKEN=$(python -c "import uuid; print(uuid.uuid4())")
+export GAMACHINE_WORKSPACE=/path/to/your/unity/project   # optional, defaults to the repo
+
+docker compose up --build            # first build installs every wheel: minutes
+
+cd Frontend/frontend && npm run dev:docker
+```
+
+Compose refuses to start if `LOCAL_APP_TOKEN` is unset, and the Electron side
+throws with the same instruction. Neither will hand you a container that looks
+healthy and then rejects everything.
+
+### The one thing that makes this work
+
+Electron mints a random `LOCAL_APP_TOKEN` per launch and passes it to the
+backend **process it spawns**. In Docker mode it spawns nothing, so the
+container has to be told the same secret from outside — hence the exported
+variable that both Compose and the Electron process read. This is the reason
+Docker mode never worked before 31 Aug 2026: Compose set
+`REQUIRE_LOCAL_APP_TOKEN=1` and never supplied a token, so every request was
+rejected.
+
+The environment variable is honoured **only** when `USE_DOCKER_BACKEND=true`.
+On the normal path the token stays random per launch, never written to disk.
+
+### What does not work in the container, and why
+
+| | Works | Why |
+|---|---|---|
+| Cloud API providers (Gemini, Anthropic, OpenAI, DeepSeek…) | ✅ | plain HTTP, nothing local needed |
+| Subscription CLIs (Claude Code, Codex, Cursor, Copilot, Kimi, agy) | ❌ | installed on your machine and signed in as you; neither the binaries nor the sessions exist in the image |
+| Unity MCP | ⚠️ | the Editor runs on the host, so the container reaches it through `host.docker.internal` (`UNITY_MCP_URL` overrides it) |
+| File tools | ⚠️ | they see `/workspace`, i.e. whatever `GAMACHINE_WORKSPACE` points at — not your whole disk |
+| OmniSharp / C# analysis | ❌ | not installed in the image |
+
+So: use Docker mode to work on backend code with an API model. It is not a way
+to run the product.
+
+`Backend/tests/test_docker_contract.py` guards the four settings that were each
+independently wrong before this worked; all seven of its assertions were
+verified by mutation.
+
+---
+
 ---
 
 [← Back to the README](../README.md)

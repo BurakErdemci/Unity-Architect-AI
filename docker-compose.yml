@@ -1,18 +1,41 @@
-version: "3.9"
+# Backend in a container, Electron on the host. Start this first, then run
+# `npm run dev:docker` in Frontend/frontend.
+#
+#   export LOCAL_APP_TOKEN=$(python -c "import uuid;print(uuid.uuid4())")
+#   docker compose up --build
+#
+# The `version:` key is gone on purpose: Compose v2 ignores it and warns.
 
 services:
   backend:
     build: ./Backend
     ports:
+      # Loopback only. This backend has one weak credential and no rate
+      # limiting; it is not something to expose on a LAN.
       - "127.0.0.1:8000:8000"
     volumes:
       - backend-data:/data
+      # The Unity project the agent works on. Without this the container has no
+      # files to read or write, so every file tool operates on an empty image.
+      - ${GAMACHINE_WORKSPACE:-.}:/workspace
     env_file:
       - path: ./Backend/.env
         required: false
     environment:
       - DB_PATH=/data/unity_master_v3.db
       - REQUIRE_LOCAL_APP_TOKEN=1
+      # THE thing that was missing. Electron mints a fresh token per launch and
+      # hands it to the backend process it spawns; in Docker mode it spawns
+      # nothing, so the container never learned the token and rejected every
+      # request. Now both sides read this one variable. `:?` fails the run with
+      # a readable message instead of starting a container that 401s forever.
+      - LOCAL_APP_TOKEN=${LOCAL_APP_TOKEN:?set LOCAL_APP_TOKEN to the same value the Electron app will use}
+      # The Unity Editor runs on the host, so the container's own localhost is
+      # the wrong address.
+      - UNITY_MCP_URL=${UNITY_MCP_URL:-http://host.docker.internal:8080/mcp}
+    extra_hosts:
+      # Docker Desktop resolves host.docker.internal already; Linux does not.
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
 
 volumes:
