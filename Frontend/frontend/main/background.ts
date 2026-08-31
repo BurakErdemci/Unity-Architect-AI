@@ -29,6 +29,10 @@ import {
   toBackendPath,
   toHostPath,
 } from './helpers/workspace-mapping'
+import {
+  WORKSPACE_FINGERPRINT_ALGO,
+  hostWorkspaceFingerprint,
+} from './helpers/workspace-fingerprint'
 
 const useDockerBackend = process.env.USE_DOCKER_BACKEND === 'true'
 
@@ -797,76 +801,6 @@ async function assertBackendSharesOurToken(): Promise<void> {
 // on. A marker file would be conclusive on every platform and is deliberately
 // not written — a Unity project reacts to new files by importing them.
 
-const WORKSPACE_FINGERPRINT_ALGO = 'gamachine-ws-fp-1'
-const FINGERPRINT_MAX_ENTRIES = 4096
-// Mirrors `_NO_DESCEND` in Backend/app/routes/auth_routes.py. Both sides list
-// these directories at level 1 and do not descend: the Editor and the compilers
-// rewrite them continuously, and the two samples are taken milliseconds apart.
-const FINGERPRINT_NO_DESCEND = new Set([
-  'Library', 'Temp', 'Logs', 'obj', 'bin', 'Build', 'Builds',
-  '.git', '.vs', 'node_modules',
-])
-
-function direntKind(dir: string, entry: fs.Dirent): string {
-  if (entry.isSymbolicLink()) return 'l'
-  if (entry.isDirectory()) return 'd'
-  if (entry.isFile()) return 'f'
-  // A dirent can come back UNKNOWN on filesystems that do not fill d_type, and
-  // Node does not stat to resolve it while Python's os.scandir does. Without
-  // this fallback the two sides would classify the same entry differently and
-  // report a mismatch for the correct tree.
-  try {
-    const st = fs.lstatSync(path.join(dir, entry.name))
-    if (st.isSymbolicLink()) return 'l'
-    if (st.isDirectory()) return 'd'
-    if (st.isFile()) return 'f'
-  } catch {
-    // Unreadable; 'o' on both sides is the same answer Python reaches.
-  }
-  return 'o'
-}
-
-/** `<relpath>\t<kind>` lines for a root's children and its children's children. */
-function fingerprintLines(root: string): string[] {
-  const lines: string[] = []
-  let top: fs.Dirent[]
-  try {
-    top = fs.readdirSync(root, { withFileTypes: true })
-  } catch {
-    return lines
-  }
-  for (const entry of top) {
-    const kind = direntKind(root, entry)
-    lines.push(`${entry.name}\t${kind}`)
-    if (kind !== 'd' || FINGERPRINT_NO_DESCEND.has(entry.name)) continue
-    const childDir = path.join(root, entry.name)
-    let children: fs.Dirent[]
-    try {
-      children = fs.readdirSync(childDir, { withFileTypes: true })
-    } catch {
-      // Contributes no children, matching the backend's own behaviour for a
-      // directory it cannot list.
-      continue
-    }
-    for (const child of children) {
-      lines.push(`${entry.name}/${child.name}\t${direntKind(childDir, child)}`)
-    }
-  }
-  // Byte order, not the default sort. JavaScript compares UTF-16 code units and
-  // Python compares code points; they disagree above the BMP, so an emoji-named
-  // asset folder would sort differently on the two sides and hash differently.
-  lines.sort((a, b) => Buffer.compare(Buffer.from(a, 'utf8'), Buffer.from(b, 'utf8')))
-  return lines
-}
-
-function hostWorkspaceFingerprint(root: string): { entries: number; truncated: boolean; fingerprint: string } {
-  const all = fingerprintLines(root)
-  const truncated = all.length > FINGERPRINT_MAX_ENTRIES
-  const kept = all.slice(0, FINGERPRINT_MAX_ENTRIES)
-  const digest = createHash('sha256').update(kept.join('\n'), 'utf8').digest('hex')
-  return { entries: kept.length, truncated, fingerprint: digest }
-}
-
 async function fetchBackendWorkspaceFingerprint(): Promise<any> {
   const response = await axios.get(`${getBackendBaseUrl()}/health/workspace`, {
     timeout: 20000,
@@ -1084,8 +1018,28 @@ if (!gotTheLock) {
       try {
         await startPythonBackend()
       } catch (err) {
-        console.error('--- BACKEND BAŞLATILAMADI, PENCERE YINE DE AÇILIYOR ---', err)
+        console.error('--- BACKEND BAŞLATILAMADI ---', err)
         backendPort = null
+        // Docker mode stops here instead of opening the window, and says why in
+        // a dialog. Every refusal on that path (no workspace, nothing mounted,
+        // algorithm drift, a wrong tree behind the mount) names a fix the user
+        // has to apply in a SHELL — `docker compose down` then `up` — and the
+        // window renders none of that: the message was thrown, caught here,
+        // logged, and the renderer showed its generic "the backend is
+        // unreachable, please restart the app". Restarting is precisely the
+        // thing that does not work, because `restart: unless-stopped` keeps the
+        // stale container alive across it. There is also nothing useful to do in
+        // the window: with the mount wrong, every editor action would be aimed
+        // at the wrong project. Non-Docker startup keeps the old lenient
+        // behaviour — the window opens and the renderer shows the hint.
+        if (useDockerBackend) {
+          dialog.showErrorBox(
+            'Docker backend refused to start',
+            (err as any)?.message || String(err)
+          )
+          app.quit()
+          return
+        }
       }
 
       // Pencere ikonu: prod'da paketlenmiş resources/icon.ico, dev'de proje resources'ı.

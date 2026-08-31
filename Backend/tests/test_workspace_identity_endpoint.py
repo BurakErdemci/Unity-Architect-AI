@@ -137,7 +137,6 @@ def test_the_right_token_gets_the_digest_of_the_mounted_tree(client, monkeypatch
     body = response.json()
     assert body["mounted"] is True
     assert body["algo"] == auth_routes.WORKSPACE_FINGERPRINT_ALGO
-    assert body["truncated"] is False
     assert body["entries"] == len(EXPECTED_A_LINES)
     assert body["fingerprint"] == _digest(EXPECTED_A_LINES)
 
@@ -229,21 +228,34 @@ _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.S)
 _LINE_COMMENT = re.compile(r"(^|\s)//.*$")
 
 
-def _electron_main() -> str:
-    """`background.ts` as live code: block comments first, then line comments.
+def _electron_source(*parts: str) -> str:
+    """An Electron-side file as live code: block comments first, then line ones.
 
     Line comments are anchored to start-of-line-or-whitespace so a URL scheme
     survives — `http://host` has no space before the slashes, `  // dead` does.
     Both halves are needed: with only line stripping, a `/* ... */` block
     containing the literals below satisfies every assertion while nothing runs.
     """
-    path = os.path.join(_ROOT, "Frontend", "frontend", "main", "background.ts")
+    path = os.path.join(_ROOT, "Frontend", "frontend", "main", *parts)
     with open(path, encoding="utf-8") as fh:
         text = _BLOCK_COMMENT.sub("", fh.read())
     return "\n".join(
         stripped for stripped in (_LINE_COMMENT.sub("", l) for l in text.splitlines())
         if stripped.strip()
     )
+
+
+def _electron_main() -> str:
+    return _electron_source("background.ts")
+
+
+def _electron_fingerprint() -> str:
+    """The fingerprint module. It was inside `background.ts` until 31 Aug 2026;
+    it moved out so `__tests__/workspace-fingerprint-parity.test.ts` can IMPORT
+    and RUN it against this file's implementation. These textual assertions are
+    the weaker half of that pair — they survive because they also read in CI
+    where the parity test's Python interpreter may be absent, and they say so."""
+    return _electron_source("helpers", "workspace-fingerprint.ts")
 
 
 def test_the_docker_startup_path_actually_asks_which_tree_is_mounted():
@@ -349,7 +361,7 @@ def test_both_sides_agree_on_the_algorithm_name_and_the_directories_they_skip():
     """The fingerprint is only meaningful if the two implementations are the
     same one. A rename on one side alone turns every correct setup into a
     refusal at startup."""
-    src = _electron_main()
+    src = _electron_fingerprint()
     assert f"'{auth_routes.WORKSPACE_FINGERPRINT_ALGO}'" in src, \
         "the Electron side does not use the algorithm name the backend reports"
     for name in auth_routes._NO_DESCEND:
@@ -365,3 +377,186 @@ def test_both_sides_agree_on_the_algorithm_name_and_the_directories_they_skip():
     # its use.
     assert re.search(r"FINGERPRINT_NO_DESCEND\.has\(", src), \
         "the skip list is declared but never consulted; the two sides will disagree"
+
+
+# ── the entry cap that used to exist ─────────────────────────────────────────
+#
+# AUDIT R5-01, 31 Aug 2026. Both sides collected the whole two-level list,
+# sorted it, and then hashed only `lines[:4096]`, while Electron accepts on
+# digest equality alone — it never read `truncated` or `entries`. So two trees
+# agreeing on their first 4096 byte-sorted lines passed the guard no matter how
+# they differed afterwards, and one late-sorting file was enough. The cap was
+# not even buying traversal: the walk and the sort had already run.
+
+
+class _FakeEntry:
+    """A file dirent. Enough for `_fingerprint_lines`, which asks nothing else."""
+
+    def __init__(self, name, root):
+        self.name = name
+        self.path = os.path.join(root, name)
+
+    def is_symlink(self):
+        return False
+
+    def is_dir(self, follow_symlinks=False):
+        return False
+
+    def is_file(self, follow_symlinks=False):
+        return True
+
+
+def _serve_entries(monkeypatch, names, root="/workspace"):
+    """Feeds a directory listing in without creating thousands of real files.
+
+    The property under test is what the algorithm does with the list it already
+    collected, so the source of the list is not the subject — and 8000 real
+    files per run would make this suite slow enough to be skipped."""
+    entries = [_FakeEntry(name, root) for name in names]
+    monkeypatch.setattr(auth_routes.os, "scandir", lambda path: iter(entries))
+
+
+def test_a_difference_past_the_first_4096_entries_still_moves_the_digest(
+        client, monkeypatch, tmp_path):
+    """The exact collision the cap created. `zz-...` sorts last in both trees, so
+    it lands past entry 4096 and the old code hashed neither name.
+
+    Asked through the endpoint, not through the helper: the cap lived in the
+    handler, so a helper-level check would stay green while the shipped answer
+    still collided."""
+    _build_tree(str(tmp_path), PROJECT_A)
+    monkeypatch.setattr(auth_routes, "CONTAINER_WORKSPACE_MOUNT", str(tmp_path))
+    common = [f"a{i:04d}" for i in range(4096)]
+
+    def ask(last):
+        _serve_entries(monkeypatch, common + [last], root=str(tmp_path))
+        return client.get("/health/workspace",
+                          headers={"X-Session-Token": TOKEN}).json()["fingerprint"]
+
+    assert ask("zz-only-in-A") != ask("zz-only-in-B"), \
+        "two trees differing only after entry 4096 hashed the same; the cap is back"
+
+
+def test_the_reported_entry_count_is_the_whole_tree(client, monkeypatch, tmp_path):
+    """`entries` is what the mismatch message quotes to the user. Under the cap
+    it saturated at 4096 and said the same thing about every large project."""
+    _build_tree(str(tmp_path), PROJECT_A)
+    monkeypatch.setattr(auth_routes, "CONTAINER_WORKSPACE_MOUNT", str(tmp_path))
+    _serve_entries(monkeypatch, [f"a{i:04d}" for i in range(5000)], root=str(tmp_path))
+    body = client.get("/health/workspace", headers={"X-Session-Token": TOKEN}).json()
+    assert body["entries"] == 5000
+
+
+def test_the_answer_no_longer_advertises_a_truncation_flag(client, monkeypatch, tmp_path):
+    """A `truncated` field would mean a digest that covers only part of the tree
+    exists again — and the caller compares digests, so it would be believed."""
+    _build_tree(str(tmp_path), PROJECT_A)
+    assert "truncated" not in _ask(client, monkeypatch, tmp_path).json()
+
+
+def test_electron_hashes_every_line_it_collected():
+    """Python-side only proves half of it. The two implementations must agree
+    exactly, and nothing else in either suite compares them, so the Electron
+    hash input is pinned here in the file that owns the algorithm."""
+    src = _electron_fingerprint()
+    body = re.search(
+        r"function hostWorkspaceFingerprint\([^)]*\)[^{]*\{(.*?)\n\}", src, re.S)
+    assert body, "hostWorkspaceFingerprint not found in its expected shape"
+    b = body.group(1)
+    assert ".slice(" not in b, "the Electron digest covers a prefix of the tree again"
+    assert "MAX_ENTRIES" not in src, \
+        "an entry cap is declared again; the backend has none and the two will disagree"
+
+
+# ── filenames the two sides have to spell identically ────────────────────────
+#
+# AUDIT R5-04, 31 Aug 2026. A POSIX filename is a byte string with no encoding
+# guarantee. `os.scandir` gives undecodable bytes back as lone surrogates
+# (b"\xff" -> "\udcff") and `line.encode("utf-8")` with the strict default
+# raises UnicodeEncodeError on those; nothing caught it, so one legal Linux
+# filename anywhere in the tree turned the endpoint into an HTTP 500 and failed
+# Docker-mode startup outright.
+#
+# Not crashing is only half of the fix. If Python keeps the original bytes and
+# Electron decodes to UTF-16 (replacing the byte with U+FFFD, irreversibly), the
+# two sides disagree about a tree that is in fact identical — an outage traded
+# for a false "wrong mount" refusal. So both halves are pinned.
+
+_UNDECODABLE = b"raw-\xff-name".decode("utf-8", "surrogateescape")
+
+
+def test_an_undecodable_filename_is_fingerprinted_rather_than_raising(monkeypatch):
+    _serve_entries(monkeypatch, [_UNDECODABLE, "plain.cs"])
+    lines = auth_routes._fingerprint_lines("/workspace")
+    assert auth_routes._fingerprint_digest(lines)  # the crash was here
+
+
+def test_the_digest_is_taken_over_the_bytes_that_are_on_disk(monkeypatch):
+    """Written out as literal bytes rather than by calling the implementation:
+    a round-trip through the code under test would agree with any handler,
+    including one that silently substitutes U+FFFD and diverges from Electron.
+
+    Measured 31 Aug 2026 by running the shipped TypeScript (sliced out of
+    background.ts, not reimplemented) over the same dirent stream: both sides
+    produced this digest."""
+    _serve_entries(monkeypatch, [_UNDECODABLE])
+    lines = auth_routes._fingerprint_lines("/workspace")
+    assert auth_routes._fingerprint_digest(lines) == \
+        hashlib.sha256(b"raw-\xff-name\tf").hexdigest()
+
+
+def test_the_endpoint_answers_instead_of_500ing_on_such_a_name(client, monkeypatch, tmp_path):
+    """The unit above proves the helper. This proves the HTTP answer, which is
+    what Docker-mode startup actually consumes and what returned 500."""
+    _build_tree(str(tmp_path), PROJECT_A)
+    monkeypatch.setattr(auth_routes, "CONTAINER_WORKSPACE_MOUNT", str(tmp_path))
+    _serve_entries(monkeypatch, [_UNDECODABLE, "plain.cs"], root=str(tmp_path))
+    response = client.get("/health/workspace", headers={"X-Session-Token": TOKEN})
+    assert response.status_code == 200
+    assert response.json()["fingerprint"]
+
+
+def test_both_sides_keep_filename_bytes_instead_of_decoding_them():
+    """The one property that makes the two implementations the same one, and the
+    one nothing else checks. Electron must read dirents as buffers and order
+    them by bytes; the backend must use the error handler that is the exact
+    inverse of scandir's decode. Either side alone silently diverges — that is
+    how the NO_DESCEND drift happened on 31 Aug 2026 with every test green."""
+    src = _electron_fingerprint()
+    assert re.search(r"encoding:\s*'buffer'", src), \
+        "Electron decodes filenames to UTF-16; undecodable bytes become U+FFFD"
+    assert "Buffer.compare" in src, "the Electron sort is not byte order"
+
+    backend = open(
+        os.path.join(_ROOT, "Backend", "app", "routes", "auth_routes.py"),
+        encoding="utf-8",
+    ).read()
+    assert backend.count('"surrogateescape"') >= 2, \
+        "the backend must use surrogateescape when sorting AND when hashing"
+
+
+# ── the refusal has to reach a human ─────────────────────────────────────────
+
+def test_a_docker_startup_refusal_is_shown_rather_than_only_logged():
+    """AUDIT R5-03, 31 Aug 2026. `assertBackendMountsOurWorkspace` builds a
+    message naming `docker compose down` and `up`, then throws — and the throw
+    landed in the generic startup catch, which logged it, cleared `backendPort`
+    and opened the window anyway. The user read "the backend is unreachable,
+    please restart the app". Restarting is exactly what does not work: the stale
+    container survives it, which is the whole reason the message exists.
+
+    Docker mode only. The ordinary path keeps opening its window."""
+    src = _electron_main()
+    catch = re.search(
+        r"await startPythonBackend\(\).*?catch \([^)]*\) \{(.*?)\n      \}", src, re.S)
+    assert catch, "the startup catch is not where this test can find it"
+    b = catch.group(1)
+    # The exact condition, not merely the name: a mutation round on 31 Aug 2026
+    # turned the guard into `if (false && useDockerBackend)` and this test
+    # stayed green while nothing was shown and the window opened as before.
+    assert re.search(r"if \(useDockerBackend\) \{", b), \
+        "the ordinary path must be untouched; the handling has to be gated on Docker mode"
+    assert re.search(r"dialog\.(showErrorBox|showMessageBox)", b), \
+        "the actionable message never reaches the user"
+    assert re.search(r"\bapp\.quit\(\)|\breturn\b", b), \
+        "opening the window after a Docker refusal shows the wrong advice anyway"

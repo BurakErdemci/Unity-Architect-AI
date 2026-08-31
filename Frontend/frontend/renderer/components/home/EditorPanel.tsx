@@ -59,27 +59,43 @@ const LSP_TO_MONACO_KIND: Record<number, number> = {
  * Relative is preferred over translating through the IPC bridge because it
  * needs no bridge at all: it is correct in both modes with one code path, and
  * cannot fail closed in the middle of a keystroke-rate completion request.
+ *
+ * Containment is decided on path COMPONENTS, mirroring
+ * `main/helpers/workspace-mapping.ts#toBackendPath` (which solves the same
+ * problem with `path.relative`). That module cannot be imported here: it pulls
+ * in Node's `path`, and this renderer is a plain Next.js `output: 'export'`
+ * bundle (`renderer/next.config.js`) with no `path-browserify` and no webpack
+ * `resolve.fallback` for it — no other renderer file imports `path`, and
+ * adding the first one here would break the renderer build rather than fix a
+ * path bug. So the component-boundary rule is restated with string ops
+ * instead of `path.relative`; a plain `absolutePath.startsWith(workspacePath)`
+ * is a STRING-prefix check, not a path-component one, and treats
+ * `/work-two/...` as inside `/work`.
  */
 export const workspaceRelativePath = (absolutePath: string, workspacePath: string | null): string => {
-  if (!workspacePath) return absolutePath.split('/').pop() || '';
-  if (absolutePath.startsWith(workspacePath)) {
-    let rel = absolutePath.substring(workspacePath.length);
-    if (rel.startsWith('/') || rel.startsWith('\\')) {
-      rel = rel.substring(1);
-    }
-    // POSIX separators, always. `_abs()` joins this to the persisted root, and
-    // in Docker that root is inside Linux: `os.path.join('/workspace',
-    // 'Assets\\Player.cs')` there is ONE file name containing backslashes, not
-    // a path — so a Windows host would still address nothing. Windows itself
-    // accepts `/`, so the normalisation costs nothing with Docker off, and the
-    // backend already reports diagnostics with `/` (`omnisharp_manager`
-    // replaces separators before sending), so both directions now agree.
-    return rel.replace(/\\/g, '/');
-  }
-  // Deliberately NOT a basename: with no workspace the absolute path is the
-  // only true thing we can say, `_abs()` keeps an absolute path as-is, and a
-  // basename would make the backend join it to some unrelated persisted root.
-  return absolutePath.split('/').pop() || '';
+  // An already-relative input has nothing to make relative TO — returning it
+  // unchanged is the only truthful answer, same as an outside-workspace one.
+  // The absolute-path test is inlined rather than reused from `MUTLAK_YOL`
+  // below: this keeps the function callable on its own, with no reference
+  // outside its own scope.
+  if (!workspacePath || !/^([a-zA-Z]:[\\/]|[\\/])/.test(absolutePath)) return absolutePath;
+
+  // POSIX separators, always. `_abs()` joins this to the persisted root, and
+  // in Docker that root is inside Linux: `os.path.join('/workspace',
+  // 'Assets\\Player.cs')` there is ONE file name containing backslashes, not
+  // a path — so a Windows host would still address nothing. Windows itself
+  // accepts `/`, so the normalisation costs nothing with Docker off, and the
+  // backend already reports diagnostics with `/` (`omnisharp_manager`
+  // replaces separators before sending), so both directions now agree.
+  const absNorm = absolutePath.replace(/\\/g, '/').replace(/\/+$/, '');
+  const wsNorm = workspacePath.replace(/\\/g, '/').replace(/\/+$/, '');
+  const prefix = `${wsNorm}/`;
+  // A boundary on `/` after the shared root, not a bare string prefix: a
+  // sibling folder that merely shares the leading characters of the workspace
+  // path (`/work-two` under `/work`, `C:/GameTwo` under `C:/Game`) fails this
+  // and falls through to the absolute-path return below, same as a no-workspace input.
+  if (!absNorm.startsWith(prefix)) return absolutePath;
+  return absNorm.slice(prefix.length);
 };
 
 const MUTLAK_YOL = /^([a-zA-Z]:[\\/]|[\\/])/;

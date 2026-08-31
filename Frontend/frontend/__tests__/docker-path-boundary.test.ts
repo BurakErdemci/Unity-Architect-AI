@@ -123,6 +123,42 @@ describe('D4-01 giden yön: üç IntelliSense kardeşi de workspace-göreli yaz�
     // ordinary user hits when opening a loose file through the file picker.
     expect(workspaceRelativePath(DOSYA_HOST, null)).toBe(DOSYA_HOST);
   });
+
+  it('workspace yokken, birden çok bileşenli POSIX yol da tabana indirgenmez', () => {
+    // `DOSYA_HOST` ters bölülü olduğu için `split('/').pop()` onu zaten
+    // değiştirmeden döndürür — bu, taban-indirgeme mutasyonunu YAKALAMAZ.
+    // Birden çok `/` bileşeni olan bu örnek asıl denetim bulgusunun kendisi.
+    expect(workspaceRelativePath('/tmp/Loose.cs', null)).toBe('/tmp/Loose.cs');
+  });
+});
+
+describe('R5-02: workspaceRelativePath sınır ihlalleri (audit probe probe_lsp_path_shapes.py)', () => {
+  it('önek KARDEŞİ içeri sayılmaz — mutlak yol olduğu gibi kalır (POSIX)', () => {
+    // `/work-two/Assets/Player.cs` düz `startsWith('/work')` ile "içeride"
+    // görünürdü; `/` sınırı olmadan bu bir dize öneki, bir yol bileşeni değil.
+    expect(workspaceRelativePath('/work-two/Assets/Player.cs', '/work'))
+      .toBe('/work-two/Assets/Player.cs');
+  });
+
+  it('önek KARDEŞİ içeri sayılmaz — mutlak yol olduğu gibi kalır (Windows)', () => {
+    expect(workspaceRelativePath('C:\\GameTwo\\Player.cs', 'C:\\Game'))
+      .toBe('C:\\GameTwo\\Player.cs');
+  });
+
+  it('workspace DIŞINDAKİ (önekle ilgisiz) yol tabana İNDİRGENMEZ', () => {
+    // Yorum "Deliberately NOT a basename" diyordu ama kod tabana indirgemeye
+    // devam ediyordu — `_abs()` tabanı kendi köküne birleştirip başka bir
+    // dosyayı açardı.
+    expect(workspaceRelativePath('C:\\tmp\\Loose.cs', WS_HOST)).toBe('C:\\tmp\\Loose.cs');
+  });
+
+  it('zaten GÖRELİ olan girdi değişmeden kalır', () => {
+    expect(workspaceRelativePath(DOSYA_GORELI, WS_HOST)).toBe(DOSYA_GORELI);
+  });
+
+  it('kontrol: gerçekten İÇERİDEKİ dosya hâlâ göreli yazımını alır', () => {
+    expect(workspaceRelativePath(DOSYA_HOST, WS_HOST)).toBe(DOSYA_GORELI);
+  });
 });
 
 describe('D4-01 dönüş yönü: backend yazımı host yazımına çevrilir', () => {

@@ -24,22 +24,43 @@ _NO_DESCEND = frozenset({
     ".git", ".vs", "node_modules",
 })
 
-# A ceiling on work and on response size. Applied after sorting, so both sides
-# truncate the same prefix of the same list.
-_MAX_ENTRIES = 4096
+# There is deliberately NO entry cap here any more. There used to be one
+# (`_MAX_ENTRIES = 4096`, applied after sorting) and it bought nothing: the walk
+# and the sort had already happened, so it saved no traversal, and the response
+# carries a digest rather than the lines, so it saved no payload either. What it
+# cost was the whole point of the check — two trees whose first 4096 byte-sorted
+# lines agreed hashed identically, and the Electron side accepts on digest
+# equality alone. A Unity project passes 4096 entries across the root and one
+# descended level without trying, so a single late-sorting file was enough to
+# make a wrong mount pass. Hashing every collected line is what the cap was
+# preventing and what identity requires.
 
 
 def _kind(entry: "os.DirEntry") -> str:
-    """One character per entry, resolved WITHOUT following symlinks.
+    """One character per entry, classified by what it BEHAVES as.
 
-    Following them would let a link inside the tree be classified by its target,
-    which is exactly the cross-tree confusion this endpoint exists to detect.
+    Link-ness is deliberately not part of the fingerprint, and the reason is
+    that the two sides look at the same tree through different filesystems.
+    Measured 31 Aug 2026 by the cross-language parity test, on a Windows host:
+    a directory junction is reported as a link by Node (`isSymbolicLink()` is
+    true for any reparse point) and as a plain directory by Python. In the real
+    deployment the split is wider still — the host walks NTFS while the
+    container walks the same tree through Docker Desktop's translation layer,
+    which presents a junction as an ordinary directory. So encoding link-ness
+    made the two sides disagree about a tree that IS the same, and startup
+    refused a CORRECT setup while telling the user to `docker compose down`,
+    which cannot help.
+
+    An earlier version resolved without following, on the argument that a link
+    classified by its target hides cross-tree confusion. That argument belongs
+    to a containment check, and this is not one: containment is enforced by
+    `workspace-mapping` plus realpath in the main process. This function answers
+    only "are these two directories the same tree", and for that question a
+    junction and the directory it names are the same answer.
     """
-    if entry.is_symlink():
-        return "l"
-    if entry.is_dir(follow_symlinks=False):
+    if entry.is_dir():
         return "d"
-    if entry.is_file(follow_symlinks=False):
+    if entry.is_file():
         return "f"
     return "o"
 
@@ -84,8 +105,24 @@ def _fingerprint_lines(root: str) -> list:
     # point and JavaScript's default sort orders by UTF-16 code unit; the two
     # disagree above the BMP, which would make an emoji-named asset folder
     # produce a spurious mismatch on one platform only.
-    lines.sort(key=lambda line: line.encode("utf-8"))
+    #
+    # `surrogateescape` is not decoration. A Linux filename is a byte string with
+    # no encoding guarantee, and `os.scandir` hands undecodable bytes back as
+    # lone surrogates (b"\xff" -> "\udcff"). Encoding those with the strict
+    # default raises UnicodeEncodeError, which the endpoint did not catch, so one
+    # legal filename anywhere in the tree turned this into an HTTP 500 and failed
+    # Docker-mode startup outright. The error handler is the exact inverse of the
+    # decode, so the bytes hashed here are the bytes on disk — which is also what
+    # the Electron side hashes, since it reads its dirents as raw buffers.
+    lines.sort(key=lambda line: line.encode("utf-8", "surrogateescape"))
     return lines
+
+
+def _fingerprint_digest(lines: list) -> str:
+    """sha256 over the raw on-disk bytes of the sorted lines, newline-joined."""
+    return hashlib.sha256(
+        "\n".join(lines).encode("utf-8", "surrogateescape")
+    ).hexdigest()
 
 
 def create_auth_router(db):
@@ -169,14 +206,10 @@ def create_auth_router(db):
             # apart from "wrong mount": they have different fixes, and this
             # endpoint also answers on the non-Docker path where there is no
             # mount and nothing is wrong.
-            return {**base, "mounted": False, "entries": 0,
-                    "truncated": False, "fingerprint": ""}
+            return {**base, "mounted": False, "entries": 0, "fingerprint": ""}
         lines = _fingerprint_lines(CONTAINER_WORKSPACE_MOUNT)
-        truncated = len(lines) > _MAX_ENTRIES
-        lines = lines[:_MAX_ENTRIES]
-        digest = hashlib.sha256("\n".join(lines).encode("utf-8")).hexdigest()
         return {**base, "mounted": True, "entries": len(lines),
-                "truncated": truncated, "fingerprint": digest}
+                "fingerprint": _fingerprint_digest(lines)}
 
     @router.post("/login")
     async def login():
