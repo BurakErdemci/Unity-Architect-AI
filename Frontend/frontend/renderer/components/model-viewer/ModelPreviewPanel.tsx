@@ -1,9 +1,14 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
+// The `.js` suffix is required by three's exports map under this tsconfig.
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { Loader2 } from 'lucide-react';
 import { useLang } from '../../lib/i18n';
 import { extensionOf } from './extensions';
 import { disposeObject, parseModel, playableClip, type ParsedModel } from './loaders';
+import { createPlayback, type Playback } from './playback';
+import { PlaybackControls } from './PlaybackControls';
+import { DEFAULT_SPEED, timeAtFraction, type Speed } from './timeline';
 
 export interface ModelPreviewPanelProps {
   file: { path: string; name: string };
@@ -19,16 +24,32 @@ const BACKGROUND = 0x0b0d12;
 // sphere touches the frustum edge; the margin keeps the silhouette off the rim.
 const FRAME_FILL = 0.72;
 
+// Slider refresh interval, ms. The mixer advances every frame either way; this
+// only caps how often the thumb's React state is rewritten, and a few hundred
+// pixels of track cannot show more than this.
+const TIMELINE_TICK_MS = 50;
+
 interface Stage {
   renderer: THREE.WebGLRenderer;
   scene: THREE.Scene;
   camera: THREE.PerspectiveCamera;
+  controls: OrbitControls;
   /** Everything a single file contributes hangs here and nowhere else. */
   content: THREE.Group;
   grid: THREE.GridHelper;
   render: () => void;
-  mixer: THREE.AnimationMixer | null;
+  playback: Playback | null;
+  /** Mirrors the play/pause state where the rAF loop can read it un-staled. */
+  playing: boolean;
   frame: number | null;
+  /** Start the rAF loop if it is not already running. */
+  wake: () => void;
+}
+
+interface Framing {
+  center: THREE.Vector3;
+  /** Camera-to-centre distance the framing chose; the zoom limits derive from it. */
+  distance: number;
 }
 
 /**
@@ -41,9 +62,9 @@ const frameObject = (
   camera: THREE.PerspectiveCamera,
   grid: THREE.GridHelper,
   object: THREE.Object3D,
-): void => {
+): Framing | null => {
   const box = new THREE.Box3().setFromObject(object);
-  if (box.isEmpty()) return;
+  if (box.isEmpty()) return null;
 
   const size = box.getSize(new THREE.Vector3());
   const center = box.getCenter(new THREE.Vector3());
@@ -68,18 +89,31 @@ const frameObject = (
   // floor around it whatever the file's unit is.
   grid.scale.setScalar(Math.max(size.x, size.z, radius) / 5);
   grid.position.set(center.x, box.min.y, center.z);
+
+  return { center, distance };
+};
+
+/**
+ * Re-aim the orbit rig at a freshly framed model. Damping is switched off for
+ * the one settling update on purpose: with it on, `update()` only *decays* the
+ * pending rotation instead of dropping it, so the previous file's half-finished
+ * drag would bleed into the new one's opening shot.
+ */
+const reseatControls = (controls: OrbitControls, framing: Framing): void => {
+  controls.enableDamping = false;
+  controls.target.copy(framing.center);
+  controls.minDistance = framing.distance / 50;
+  controls.maxDistance = framing.distance * 10;
+  controls.update();
+  controls.enableDamping = true;
 };
 
 /** Return the stage to "no file loaded": stop the clock, free the GPU side. */
 const clearContent = (stage: Stage): void => {
   if (stage.frame !== null) { cancelAnimationFrame(stage.frame); stage.frame = null; }
-  if (stage.mixer) {
-    stage.mixer.stopAllAction();
-    // stopAllAction leaves the mixer's per-root binding cache populated, which
-    // keeps the whole object graph reachable after the scene has let go of it.
-    stage.mixer.uncacheRoot(stage.mixer.getRoot() as THREE.Object3D);
-    stage.mixer = null;
-  }
+  stage.playback?.dispose();
+  stage.playback = null;
+  stage.playing = false;
   for (const child of [...stage.content.children]) {
     stage.content.remove(child);
     disposeObject(child);
@@ -97,6 +131,11 @@ export const ModelPreviewPanel: React.FC<ModelPreviewPanelProps> = ({ file, work
   // generic message; channel errors carry none (Task 5 words those).
   const [errorDetail, setErrorDetail] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
+  // 0 = the file has no playable clip, which is what hides the transport bar.
+  const [duration, setDuration] = useState(0);
+  const [time, setTime] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const [speed, setSpeed] = useState<Speed>(DEFAULT_SPEED);
 
   // Renderer lifetime is the PANEL's, not the file's: browsers cap live WebGL
   // contexts at ~16, and clicking through a model folder would burn one per
@@ -137,13 +176,54 @@ export const ModelPreviewPanel: React.FC<ModelPreviewPanelProps> = ({ file, work
     renderer.domElement.style.display = 'block';
     host.appendChild(renderer.domElement);
 
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+
     const stage: Stage = {
-      renderer, scene, camera, content, grid,
+      renderer, scene, camera, controls, content, grid,
       render: () => renderer.render(scene, camera),
-      mixer: null,
+      playback: null,
+      playing: false,
       frame: null,
+      wake: () => {},
     };
     stageRef.current = stage;
+
+    // The loop is demand-driven rather than always-on: it runs while the clip
+    // is playing or the damped camera is still settling, and parks itself the
+    // frame after both stop. Idle cost is then zero — a still model with a
+    // still camera schedules no callback at all, which is what Task 3's
+    // render-on-resize path bought and this must not spend.
+    const clock = new THREE.Clock();
+    let lastEmit = 0;
+    const tick = () => {
+      const moved = controls.update();
+      let running = false;
+      const delta = clock.getDelta();
+      if (stage.playback && stage.playing) {
+        const at = stage.playback.advance(delta);
+        running = true;
+        const now = Date.now();
+        if (now - lastEmit >= TIMELINE_TICK_MS) { lastEmit = now; setTime(at); }
+      }
+      if (moved || running) {
+        stage.render();
+        stage.frame = requestAnimationFrame(tick);
+      } else {
+        stage.frame = null;
+      }
+    };
+    stage.wake = () => {
+      if (stage.frame !== null) return;
+      // Drop the gap the loop spent parked, or the clip would jump forward by
+      // however long the user sat still.
+      clock.getDelta();
+      stage.frame = requestAnimationFrame(tick);
+    };
+    // Every OrbitControls gesture ends in a `change`, so this is what restarts
+    // the loop for damping without polling for it.
+    controls.addEventListener('change', stage.wake);
 
     const resize = () => {
       const w = host.clientWidth || 1;
@@ -160,9 +240,7 @@ export const ModelPreviewPanel: React.FC<ModelPreviewPanelProps> = ({ file, work
       renderer.setSize(w, h);
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
-      // Only an animated scene runs a rAF loop, so a static model repaints
-      // exactly here and once at load — a permanent loop for a still image is
-      // work with no output.
+      // A parked loop means nothing else would repaint the new viewport.
       stage.render();
     };
     resize();
@@ -189,7 +267,9 @@ export const ModelPreviewPanel: React.FC<ModelPreviewPanelProps> = ({ file, work
     return () => {
       observer?.disconnect();
       dprQuery?.removeEventListener('change', onRatioChange);
+      controls.removeEventListener('change', stage.wake);
       clearContent(stage);
+      controls.dispose();
       grid.geometry.dispose();
       (Array.isArray(grid.material) ? grid.material : [grid.material]).forEach(m => m.dispose());
       scene.clear();
@@ -204,6 +284,10 @@ export const ModelPreviewPanel: React.FC<ModelPreviewPanelProps> = ({ file, work
     setLoading(true);
     setFailed(false);
     setErrorDetail(null);
+    setDuration(0);
+    setTime(0);
+    setPlaying(false);
+    setSpeed(DEFAULT_SPEED);
 
     const fail = (detail: string | null) => {
       if (cancelled) return;
@@ -235,20 +319,17 @@ export const ModelPreviewPanel: React.FC<ModelPreviewPanelProps> = ({ file, work
       if (!stage) { disposeObject(parsed.object); setLoading(false); return; }
 
       stage.content.add(parsed.object);
-      frameObject(stage.camera, stage.grid, parsed.object);
+      const framing = frameObject(stage.camera, stage.grid, parsed.object);
+      if (framing) reseatControls(stage.controls, framing);
 
       const clip = playableClip(parsed.clips);
       if (clip) {
-        const mixer = new THREE.AnimationMixer(parsed.object);
-        mixer.clipAction(clip).setLoop(THREE.LoopRepeat, Infinity).play();
-        stage.mixer = mixer;
-        const clock = new THREE.Clock();
-        const tick = () => {
-          stage.frame = requestAnimationFrame(tick);
-          mixer.update(clock.getDelta());
-          stage.render();
-        };
-        tick();
+        stage.playback = createPlayback(parsed.object, clip);
+        stage.playback.setSpeed(DEFAULT_SPEED);
+        stage.playing = true;
+        setDuration(stage.playback.duration);
+        setPlaying(true);
+        stage.wake();
       } else {
         stage.render();
       }
@@ -263,6 +344,30 @@ export const ModelPreviewPanel: React.FC<ModelPreviewPanelProps> = ({ file, work
       stage.render();
     };
   }, [file.path, file.name, workspacePath]);
+
+  const togglePlay = useCallback(() => {
+    const stage = stageRef.current;
+    if (!stage?.playback) return;
+    const next = !stage.playing;
+    stage.playing = next;
+    setPlaying(next);
+    if (next) stage.wake();
+    else setTime(stage.playback.time());
+  }, []);
+
+  const seek = useCallback((fraction: number) => {
+    const stage = stageRef.current;
+    if (!stage?.playback) return;
+    const at = stage.playback.seek(timeAtFraction(fraction, stage.playback.duration));
+    setTime(at);
+    // While paused the loop is parked, so nothing else would draw the new pose.
+    if (!stage.playing) stage.render();
+  }, []);
+
+  const changeSpeed = useCallback((next: Speed) => {
+    setSpeed(next);
+    stageRef.current?.playback?.setSpeed(next);
+  }, []);
 
   return (
     <div className="flex-1 min-h-0 w-full relative bg-[#0B0D12]">
@@ -280,6 +385,17 @@ export const ModelPreviewPanel: React.FC<ModelPreviewPanelProps> = ({ file, work
             <span className="text-[10px] font-mono text-slate-500 break-all max-w-full">{errorDetail}</span>
           )}
         </div>
+      )}
+      {duration > 0 && !failed && (
+        <PlaybackControls
+          duration={duration}
+          time={time}
+          playing={playing}
+          speed={speed}
+          onTogglePlay={togglePlay}
+          onSeek={seek}
+          onSpeedChange={changeSpeed}
+        />
       )}
     </div>
   );
