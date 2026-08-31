@@ -65,6 +65,45 @@ If more than one project is open, you can choose which instance receives command
 
 ---
 
+## Fork provenance (measured 31 Aug 2026)
+
+`unity-mcp/` is a **vendored copy**, not a submodule: there is no upstream remote
+and no pinned commit anywhere in the tree. Everything below was measured, because
+nothing recorded it before.
+
+| What | Value |
+|---|---|
+| Vendored at | `dc539b6`, 30 May 2026 — a plain file copy |
+| `Server/pyproject.toml` | `9.6.8` — byte-identical to upstream tag `v9.6.8` |
+| `MCPForUnity/package.json` | `9.6.9-beta.7` — **no upstream tag carries this**; it comes from upstream's `beta` branch, which is also its default branch |
+| Local commits since | **45**, touching this directory |
+
+Two consequences, and they are the reason this section exists:
+
+**The two halves report different versions, and the split is ours.** Upstream
+`v9.6.8` has both files at `9.6.8`; here the Unity plugin is ahead. So the
+mismatch was introduced on this side and is not inherited. It is currently
+harmless — nothing reads either version at runtime — but anyone comparing the
+tree against a tag has to know which half to compare.
+
+**Do not "just pull upstream".** Those 45 commits are real work, not drift:
+`manage_input` (the agent can play the game), the `execute_code` schema fix, the
+`manage_sprite` line that became upstream PR #1338, and the brand rename. A merge
+that treats this directory as a clean copy silently reverts them.
+
+The workable path, if a sync is ever wanted: add upstream as a remote, diff this
+tree against `v9.6.8` to recover the true local patch set, then replay that set
+onto the newer tag. That has never been done, and this note does not claim it is
+cheap — it claims that doing it blind is expensive.
+
+```bash
+# Where the divergence actually is:
+git log --oneline -- unity-mcp | wc -l          # 45 local commits
+gh api repos/CoplayDev/unity-mcp/tags -q '.[].name' | head   # upstream is on v10.x now
+```
+
+---
+
 ---
 
 [← Back to the README](../README.md)
