@@ -3,9 +3,15 @@ import * as THREE from 'three';
 // The `.js` suffix is required by three's exports map under this tsconfig.
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { Loader2 } from 'lucide-react';
-import { useLang } from '../../lib/i18n';
-import { extensionOf } from './extensions';
-import { disposeObject, parseModel, playableClip, type ParsedModel } from './loaders';
+import { useLang, type TKey } from '../../lib/i18n';
+import { extensionOf, routeForFile } from './extensions';
+import {
+  disposeObject,
+  ModelParseError,
+  parseModel,
+  playableClip,
+  type ParsedModel,
+} from './loaders';
 import { createPlayback, type Playback } from './playback';
 import { PlaybackControls } from './PlaybackControls';
 import { DEFAULT_SPEED, timeAtFraction, type Speed } from './timeline';
@@ -45,6 +51,18 @@ interface Stage {
   /** Start the rAF loop if it is not already running. */
   wake: () => void;
 }
+
+/**
+ * Channel refusals the user can act on. `denied` is deliberately absent: it is
+ * the containment gate refusing a path outside the workspace, and naming the
+ * boundary a probe just hit tells the probe where the boundary is. Anything
+ * unlisted — including a code added to the gate later — falls to the generic
+ * wording rather than to a blank panel.
+ */
+const CHANNEL_ERROR_KEYS: Record<string, TKey> = {
+  'too-large': 'preview.tooLarge',
+  unsupported: 'preview.unsupportedFormat',
+};
 
 interface Framing {
   center: THREE.Vector3;
@@ -127,10 +145,11 @@ export const ModelPreviewPanel: React.FC<ModelPreviewPanelProps> = ({ file, work
   const hostRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<Stage | null>(null);
   const [loading, setLoading] = useState(true);
-  // null = no error. A string is the parser's own one-liner, shown under the
-  // generic message; channel errors carry none (Task 5 words those).
+  // null = nothing to say. Otherwise the i18n key of the message that replaces
+  // the viewport; `errorDetail` is the parser's own one-liner underneath it,
+  // which only a genuine parse failure has.
+  const [errorKey, setErrorKey] = useState<TKey | null>(null);
   const [errorDetail, setErrorDetail] = useState<string | null>(null);
-  const [failed, setFailed] = useState(false);
   // 0 = the file has no playable clip, which is what hides the transport bar.
   const [duration, setDuration] = useState(0);
   const [time, setTime] = useState(0);
@@ -282,38 +301,71 @@ export const ModelPreviewPanel: React.FC<ModelPreviewPanelProps> = ({ file, work
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    setFailed(false);
+    setErrorKey(null);
     setErrorDetail(null);
     setDuration(0);
     setTime(0);
     setPlaying(false);
     setSpeed(DEFAULT_SPEED);
 
-    const fail = (detail: string | null) => {
+    const fail = (key: TKey, detail: string | null = null) => {
       if (cancelled) return;
-      setFailed(true);
+      setErrorKey(key);
       setErrorDetail(detail);
       setLoading(false);
     };
+
+    const teardown = () => {
+      cancelled = true;
+      const stage = stageRef.current;
+      if (!stage) return;
+      clearContent(stage);
+      stage.render();
+    };
+
+    // .blend and .3ds reach this panel so the click has an answer, but there is
+    // no loader for either. Explaining that here — before the channel — keeps
+    // the main process from reading a file whose bytes nothing can use.
+    if (routeForFile(file.name) === 'blocked-model') {
+      fail('preview.blockedFormat');
+      return teardown;
+    }
 
     void (async () => {
       const ipc = (window as any).ipc;
       const result = ipc ? await ipc.invoke('read-model-file', file.path, workspacePath) : null;
       if (cancelled) return;
-      // `{ error }` codes and a null (handler threw) collapse into one state
-      // here; Task 5 turns the codes into distinct wording.
-      if (!result || result.error || !result.data) { fail(null); return; }
+      if (!result || result.error || !result.data) {
+        // A null result is the handler having thrown, which says nothing the
+        // user can act on: generic, same as a containment refusal.
+        fail((result?.error && CHANNEL_ERROR_KEYS[result.error]) || 'preview.loadError');
+        return;
+      }
 
       let parsed: ParsedModel;
       try {
-        parsed = parseModel(extensionOf(file.name), result.data);
+        parsed = await parseModel(extensionOf(file.name), result.data);
       } catch (err) {
+        if (err instanceof ModelParseError && err.code === 'external-resources') {
+          fail('preview.gltfExternal');
+          return;
+        }
         // First line only: three's messages are single-line, but a stack-laden
         // Error from anywhere else would blow the panel's layout open.
-        fail(String(err instanceof Error ? err.message : err).split(/\r?\n/)[0]);
+        fail('preview.loadError', String(err instanceof Error ? err.message : err).split(/\r?\n/)[0]);
         return;
       }
       if (cancelled) { disposeObject(parsed.object); return; }
+
+      // An empty bounding box means the file parsed and carries no drawable
+      // vertex — a materials-only .dae, an .obj of nothing but comments. Framing
+      // it is impossible, so without this the panel is an empty dark rectangle
+      // that looks exactly like a load that never finished.
+      if (new THREE.Box3().setFromObject(parsed.object).isEmpty()) {
+        disposeObject(parsed.object);
+        fail('preview.emptyModel');
+        return;
+      }
 
       const stage = stageRef.current;
       if (!stage) { disposeObject(parsed.object); setLoading(false); return; }
@@ -336,13 +388,7 @@ export const ModelPreviewPanel: React.FC<ModelPreviewPanelProps> = ({ file, work
       setLoading(false);
     })();
 
-    return () => {
-      cancelled = true;
-      const stage = stageRef.current;
-      if (!stage) return;
-      clearContent(stage);
-      stage.render();
-    };
+    return teardown;
   }, [file.path, file.name, workspacePath]);
 
   const togglePlay = useCallback(() => {
@@ -378,15 +424,15 @@ export const ModelPreviewPanel: React.FC<ModelPreviewPanelProps> = ({ file, work
           {t('preview.loading')}
         </div>
       )}
-      {failed && (
+      {errorKey && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-8 text-center">
-          <span className="text-[12px] font-semibold text-slate-300">{t('preview.loadError')}</span>
+          <span className="text-[12px] font-semibold text-slate-300">{t(errorKey)}</span>
           {errorDetail && (
             <span className="text-[10px] font-mono text-slate-500 break-all max-w-full">{errorDetail}</span>
           )}
         </div>
       )}
-      {duration > 0 && !failed && (
+      {duration > 0 && !errorKey && (
         <PlaybackControls
           duration={duration}
           time={time}

@@ -10,16 +10,23 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { cevir } from '../renderer/lib/i18n'
+import { cevir, translations } from '../renderer/lib/i18n'
 import { ModelPreviewPanel } from '../renderer/components/model-viewer/ModelPreviewPanel'
 
 const invoke = vi.fn()
 ;(globalThis as any).window.ipc = { invoke }
 
-const fbxBytes = (): ArrayBuffer => {
-  const buf = readFileSync(resolve(__dirname, 'fixtures', 'animated-triangle.fbx'))
-  return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer
+// The copy puts the bytes in jsdom's realm, where an `instanceof ArrayBuffer`
+// inside three actually holds; see model-format-dispatch.test.ts for the
+// measurement.
+const bytes = (name: string): ArrayBuffer => {
+  const buf = readFileSync(resolve(__dirname, 'fixtures', name))
+  const out = new ArrayBuffer(buf.byteLength)
+  new Uint8Array(out).set(buf)
+  return out
 }
+
+const fbxBytes = (): ArrayBuffer => bytes('animated-triangle.fbx')
 
 const draw = (name = 'hero.fbx', workspacePath: string | null = 'C:\\proj') =>
   render(
@@ -58,10 +65,40 @@ describe('ModelPreviewPanel load', () => {
     expect(screen.queryByText(LOAD_ERROR)).toBeNull()
   })
 
-  it('falls back to the generic message for a channel refusal', async () => {
-    // 'denied' / 'too-large' / 'unsupported' all land here for now; Task 5 is
-    // what tells them apart.
+  it('falls back to the generic message for a containment refusal', async () => {
+    // 'denied' keeps the generic wording on purpose: it is the workspace
+    // boundary refusing a path, and describing the boundary to whoever probed
+    // it is the one thing this message must not do.
     invoke.mockResolvedValue({ error: 'denied' })
+    draw()
+    await waitFor(() => expect(screen.getByText(LOAD_ERROR)).toBeTruthy())
+  })
+
+  it('says the file is over the size cap for too-large', async () => {
+    invoke.mockResolvedValue({ error: 'too-large' })
+    draw()
+    await waitFor(() => expect(screen.getByText(cevir('preview.tooLarge'))).toBeTruthy())
+    expect(screen.queryByText(LOAD_ERROR)).toBeNull()
+  })
+
+  it('names the size cap in both languages', () => {
+    // The number is the contract with the main-process gate; a message that
+    // omits it leaves the user guessing which files are too big.
+    for (const lang of ['tr', 'en'] as const) {
+      expect(translations[lang]['preview.tooLarge']).toMatch(/64 MiB/)
+    }
+  })
+
+  it('says the type is not previewable for unsupported', async () => {
+    invoke.mockResolvedValue({ error: 'unsupported' })
+    draw()
+    await waitFor(() => expect(screen.getByText(cevir('preview.unsupportedFormat'))).toBeTruthy())
+  })
+
+  it('falls back to the generic message for an error code it has never seen', async () => {
+    // The gate may grow a code before this panel does; the failure mode has to
+    // be a wrong-but-honest message, not a blank panel.
+    invoke.mockResolvedValue({ error: 'quarantined-by-the-future' })
     draw()
     await waitFor(() => expect(screen.getByText(LOAD_ERROR)).toBeTruthy())
   })
@@ -79,11 +116,26 @@ describe('ModelPreviewPanel load', () => {
     expect(screen.getByText(/FBXLoader/)).toBeTruthy()
   })
 
-  it('reports an extension it has no loader for instead of rendering blank', async () => {
-    invoke.mockResolvedValue({ path: 'x', name: 'hero.glb', data: new ArrayBuffer(8) })
+  it('renders a .glb through the panel with no error left behind', async () => {
+    invoke.mockResolvedValue({ path: 'x', name: 'hero.glb', data: bytes('triangle.glb') })
     draw('hero.glb')
-    await waitFor(() => expect(screen.getByText(LOAD_ERROR)).toBeTruthy())
-    expect(screen.getByText(/\.glb/)).toBeTruthy()
+    await waitFor(() => expect(screen.queryByText(cevir('preview.loading'))).toBeNull())
+    expect(screen.queryByText(LOAD_ERROR)).toBeNull()
+  })
+
+  it('tells the user to export as .glb when the .gltf is only half the file', async () => {
+    invoke.mockResolvedValue({ path: 'x', name: 'hero.gltf', data: bytes('triangle-external.gltf') })
+    draw('hero.gltf')
+    await waitFor(() => expect(screen.getByText(cevir('preview.gltfExternal'))).toBeTruthy())
+    // The loader's own words would be about a failed fetch, which explains
+    // nothing the user can act on.
+    expect(screen.queryByText(LOAD_ERROR)).toBeNull()
+  })
+
+  it('says nothing is visible when the file parses to no geometry', async () => {
+    invoke.mockResolvedValue({ path: 'x', name: 'empty.obj', data: bytes('nothing.obj') })
+    draw('empty.obj')
+    await waitFor(() => expect(screen.getByText(cevir('preview.emptyModel'))).toBeTruthy())
   })
 
   it('re-reads when the previewed file changes', async () => {
@@ -98,5 +150,49 @@ describe('ModelPreviewPanel load', () => {
       />,
     )
     await waitFor(() => expect(invoke).toHaveBeenLastCalledWith('read-model-file', 'C:\\proj\\Assets\\second.fbx', 'C:\\proj'))
+  })
+})
+
+describe('a format only Blender can read', () => {
+  beforeEach(() => { invoke.mockReset() })
+
+  it('explains .blend without ever touching the channel', async () => {
+    draw('scene.blend')
+    await waitFor(() => expect(screen.getByText(cevir('preview.blockedFormat'))).toBeTruthy())
+    // The point of the branch. Reading the file would cost a main-process read
+    // and a full buffer over IPC for bytes no loader in this app can use.
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
+  it('explains .3ds without ever touching the channel', async () => {
+    draw('prop.3ds')
+    await waitFor(() => expect(screen.getByText(cevir('preview.blockedFormat'))).toBeTruthy())
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
+  it('leaves no loading state hanging behind the message', async () => {
+    draw('scene.blend')
+    await waitFor(() => expect(screen.queryByText(cevir('preview.loading'))).toBeNull())
+  })
+
+  it('goes back to reading the channel when the next file is previewable', async () => {
+    invoke.mockResolvedValue({ path: 'x', name: 'hero.fbx', data: fbxBytes() })
+    const view = draw('scene.blend')
+    await waitFor(() => expect(screen.getByText(cevir('preview.blockedFormat'))).toBeTruthy())
+    view.rerender(
+      <ModelPreviewPanel
+        file={{ path: 'C:\\proj\\Assets\\hero.fbx', name: 'hero.fbx' }}
+        workspacePath={'C:\\proj'}
+        onClose={() => {}}
+      />,
+    )
+    await waitFor(() => expect(invoke).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(screen.queryByText(cevir('preview.blockedFormat'))).toBeNull())
+  })
+
+  it('points at Blender in both languages', () => {
+    for (const lang of ['tr', 'en'] as const) {
+      expect(translations[lang]['preview.blockedFormat']).toMatch(/Blender/)
+    }
   })
 })
