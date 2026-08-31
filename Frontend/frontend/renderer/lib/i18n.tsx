@@ -278,6 +278,7 @@ const tr = {
   'file.openFailed': 'Dosya açılamadı: {yol}',
   'workspace.missing': 'Önceki çalışma klasörü bulunamadı. Lütfen yeni bir klasör seçin.',
   'workspace.outsideDockerMount': 'Bu klasör Docker\'a bağlanan proje klasörünün dışında, o yüzden backend ona erişemez. Dosyaları burada düzenleyebilirsin ama ajanlar çalışamaz. GAMACHINE_WORKSPACE ile bağlanan klasörü seç.',
+  'chat.videoOutsideDockerMount': '"{ad}" videosu Docker\'a bağlanan proje klasörünün dışında, o yüzden backend dosyaya erişemez. Video gönderilmedi — dosyayı proje klasörüne taşıyıp tekrar ekleyebilirsin.',
   // --- Dışa aktarma (useFileSystem + ExportModal) ---
   'export.fileDone': 'Başarıyla dışa aktarıldı: {ad}',
   'export.toUnity': "Dosya Unity'ye aktarıldı.",
@@ -722,6 +723,7 @@ const en: Record<keyof typeof tr, string> = {
   'file.openFailed': 'Could not open file: {yol}',
   'workspace.missing': 'The previous workspace folder was not found. Please pick a new one.',
   'workspace.outsideDockerMount': 'This folder is outside the project mounted into Docker, so the backend cannot reach it. You can edit files here, but agents cannot run. Pick the folder GAMACHINE_WORKSPACE points at.',
+  'chat.videoOutsideDockerMount': '"{ad}" is outside the project mounted into Docker, so the backend cannot reach the file. It was not sent — move it into the project folder and attach it again.',
   // --- Export (useFileSystem + ExportModal) ---
   'export.fileDone': 'Exported successfully: {ad}',
   'export.toUnity': 'File exported to Unity.',

@@ -7,6 +7,7 @@ import { confirmDialog } from '../../components/ui/ConfirmDialog';
 import { deliveryFromFetch, gateFailure } from './gateResponse';
 import { cevir } from '../../lib/i18n';
 import { parseContextReport } from '../../lib/contextReport';
+import { backendWorkspacePath } from '../../lib/backendWorkspacePath';
 
 const ipc = typeof window !== 'undefined' ? (window as any).ipc : null;
 
@@ -220,6 +221,38 @@ export const useChat = (
     let currentAiMsg: Message = { id: aiMsgId, role: 'assistant', content: '', smells: [], timestamp: new Date().toISOString(), thinking: null, tool_calls: [], slashCommand: slashCard };
     setMessages(prev => [...prev, currentAiMsg]);
 
+    // D4-02 (audit, high): a `{kind:'path', path}` video entry carries a HOST
+    // path from the folder picker (`open-video-dialog`). In Docker mode the
+    // backend only sees the one bind-mounted tree, so it must be translated
+    // exactly like every other filesystem path BEFORE it leaves this process
+    // — sending the untranslated host spelling is the defect itself, since
+    // `video_extract.py` runs `os.path.isfile()` on it INSIDE the container.
+    //
+    // A `null` translation means the file is outside the mount and there is
+    // no container name for it at all (Docker mounts exactly one tree). That
+    // is refused here rather than sent — uploading the file's bytes as a
+    // fallback transport is deliberately out of scope. `{kind:'url', ...}`
+    // entries are not filesystem paths and pass through untouched. Outside
+    // Docker mode `backendWorkspacePath` is an identity function, so this
+    // loop is a no-op for the ordinary (non-Docker) user.
+    let videosToSend = videos;
+    if (videos && videos.length > 0) {
+      const resolved: any[] = [];
+      for (const v of videos) {
+        if (v && v.kind === 'path') {
+          const mapped = await backendWorkspacePath(v.path);
+          if (mapped === null) {
+            showToast(cevir('chat.videoOutsideDockerMount', { ad: v.name || v.path }), 'warning');
+            continue;
+          }
+          resolved.push({ ...v, path: mapped });
+        } else {
+          resolved.push(v);
+        }
+      }
+      videosToSend = resolved;
+    }
+
     try {
       abortControllerRef.current = new AbortController();
       const response = await fetch(`${API}/chat-stream`, {
@@ -236,7 +269,7 @@ export const useChat = (
             : ['low', 'medium', 'high'].includes(thinkingLevel) ? thinkingLevel : 'medium'),
           generation_mode: genMode, generation_confirmed: false,
           images: images,
-          videos: videos,
+          videos: videosToSend,
           // effort_level: birleşik seçicinin TAM değeri (auto/off/minimal/low..max).
           // Backend her provider dalında effort_caps kayıtçısıyla gerçek parametreye çevirir.
           effort_level: thinkingLevel,

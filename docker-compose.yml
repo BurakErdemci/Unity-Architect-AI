@@ -55,6 +55,19 @@ services:
     extra_hosts:
       # Docker Desktop resolves host.docker.internal already; Linux does not.
       - "host.docker.internal:host-gateway"
+    # ⚠️ This is also the line that makes a stale workspace possible. A bind
+    # source is fixed when the container is CREATED, and `unless-stopped` keeps
+    # the container alive across the shell that started it — so exporting a new
+    # GAMACHINE_WORKSPACE and running `up` again REUSES the old container with
+    # the old bind. Compose is behaving correctly; the surprise is that nothing
+    # about the running system reflects the new variable.
+    #
+    # `docker compose down` first is what recreates the service. FINDING D4-03
+    # (31 Aug 2026): before the app checked, the mapping onto /workspace
+    # succeeded while the backend read and wrote the previous project, and both
+    # halves reported success. The Electron side now refuses to start when the
+    # tree behind the mount is not the one it is configured for — see
+    # `/health/workspace` in Backend/app/routes/auth_routes.py.
     restart: unless-stopped
 
 volumes:

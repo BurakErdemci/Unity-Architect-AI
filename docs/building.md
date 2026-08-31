@@ -128,6 +128,46 @@ public `/health`. Reaching `/health` only proves *a* backend is listening; a
 container left running by `restart: unless-stopped` outlives the shell that
 exported its token and answers it happily, then rejects every real call.
 
+### Changing `GAMACHINE_WORKSPACE` — `down` first, always
+
+```bash
+docker compose down                  # ← not optional
+export GAMACHINE_WORKSPACE=/absolute/path/to/the/other/project
+docker compose up
+```
+
+A bind source is fixed when the container is **created**, and `restart:
+unless-stopped` keeps the old container alive across the shell that started it.
+So `docker compose up` on its own reuses the existing container with the *old*
+mount. Exporting the new variable changes what the Electron app believes is
+mounted and nothing about what actually is.
+
+Before 31 Aug 2026 that combination was silent and expensive (FINDING D4-03):
+you exported a new workspace, relaunched, selected project B, the app mapped it
+onto `/workspace` successfully — and the live backend read and wrote project A.
+The editor showed one project while every agent, command and backend file tool
+worked in another, both halves reporting success.
+
+The app now refuses to start in that state. At startup it compares a fingerprint
+of the host tree it is configured for against one the backend computes over its
+own `/workspace` (authenticated `GET /health/workspace`), and the error names
+`docker compose down` as the fix.
+
+Be clear about what that check is worth. A **mismatch** is strong: the two
+directories do not have the same layout, so they are not the same tree. A
+**match** is much weaker — it compares entry names and kinds two levels deep, so
+two copies of one project, or two untouched projects from the same template,
+look identical to it, and file contents are never read at all. It reliably
+catches "you forgot to recreate the service"; it is not a proof of identity.
+
+It is read-only on purpose: a marker file would be conclusive on every platform,
+but a Unity project reacts to new files — the Editor's asset importer picks them
+up. Comparing inode numbers would also be conclusive on a Linux bind mount, but
+Docker Desktop synthesises them, so it would reject the *correct* tree on macOS
+and Windows. None of this runs when `USE_DOCKER_BACKEND` is unset: the check
+lives on the Docker startup path only, so the ordinary path makes no extra
+request and pays no extra startup cost.
+
 ### Where the token actually lives — read this before treating it as ephemeral
 
 Per-launch randomness is not the same as "never persisted", and the code has

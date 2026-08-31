@@ -814,16 +814,76 @@ describe('D4 · karşılaştırma yapılamazken kart eşleşme İDDİA ETMEZ', (
     expect(result.current.gateWorkspaceMismatch).toBe(false)
   })
 
-  it('bayrak kartı çizen yola KABLOLANMIŞ — opsiyonel prop sessizce düşebilir', () => {
-    // `workspaceCheckPending` opsiyonel (başka testler onu vermiyor), yani
-    // iletilmemesi tip hatası ÜRETMEZ: kaybolan bir kablo sessizdir. İki geçiş
-    // noktası da kaynaktan sınanıyor.
-    const chatPanel = readFileSync(
-      join(__dirname, '..', 'renderer', 'components', 'home', 'ChatPanel.tsx'), 'utf-8')
-    expect(chatPanel).toContain('workspaceCheckPending={mcpWorkspaceCheckPending}')
-    const home = readFileSync(join(__dirname, '..', 'renderer', 'pages', 'home.tsx'), 'utf-8')
-    expect(home).toContain('workspaceCheckPending={mcp.gateWorkspaceCheckPending}')
-    expect(home).toContain('mcpWorkspaceCheckPending={mcp.gateWorkspaceCheckPending}')
+  /**
+   * ⚠️ Denetim bulgusu `wiring-gate-reads-comments` (31 Ağu 2026): bu test
+   * eskiden `readFileSync` + `toContain` ile ÜÇ alt dize arıyordu. Propları
+   * JSX yorumuna taşımak (`{/* workspaceCheckPending={mcp.gateWorkspaceCheckPending} *\/}`)
+   * üçünü de metinde bıraktığı için test YEŞİL kalıyordu ve hiçbir karta
+   * `workspaceCheckPending` ulaşmıyordu — dize aramak yorumla kodu ayırt
+   * etmiyor. Düzeltme iki bacağı AYRI yöntemle kapatıyor:
+   *
+   *  - ChatPanel → McpApprovalCards bacağı GERÇEKTEN RENDER EDİLİYOR: prop
+   *    veriliyor, banner metni ekranda aranıyor. Yorum satırındaki bir prop
+   *    gerçek DOM'a hiçbir zaman ulaşamaz, o yüzden bu ikisi yorumla
+   *    kandırılamaz.
+   *  - home.tsx bacağı render EDİLEMİYOR (Electron IPC + auth + Monaco birden
+   *    gerekiyor — dosyadaki diğer AST testleriyle aynı sınır). Onun yerine
+   *    `typescript` paketinin ayrıştırıcısıyla İLGİLİ JSX elemanının
+   *    ATTRIBUTE düğümü aranıyor: bir yorumun İÇİNDEKİ metin ayrıştırıcı
+   *    tarafından hiç JsxAttribute üretmez, yani "prop yorumda" hâli burada
+   *    `null` döner ve test KIRMIZI olur — dize aramanın aksine.
+   *
+   * SINIR: AST kontrolü, kodun VAR OLDUĞUNU ve doğru elemana bağlı olduğunu
+   * kanıtlıyor; home.tsx'in gerçekten mount edilip `mcp.gateWorkspaceCheckPending`
+   * değerinin doğru aktığını kanıtlamıyor (bu depoda o mount hiçbir testte
+   * yapılamıyor). Bu bir DOĞRULUK kanıtı değil, "prop kablosu koptu mu"
+   * tripwire'ı — üstteki ChatPanel render'ı ile karıştırılmasın.
+   */
+  it('ChatPanel → McpApprovalCards: workspaceCheckPending GERÇEKTEN render edilir', () => {
+    renderMcpEdit({ mcpWorkspaceCheckPending: true, mcpWorkspaceMismatch: false })
+    expect(screen.queryByText('PROJE DOĞRULANIYOR')).not.toBeNull()
+  })
+
+  it('ters yön: prop verilmezse "doğrulanıyor" hiç çizilmez', () => {
+    renderMcpEdit()
+    expect(screen.queryByText('PROJE DOĞRULANIYOR')).toBeNull()
+  })
+
+  it('home.tsx: iki geçiş noktası GERÇEK JSX attribute\'una bağlı — ast ile, dize ile değil', () => {
+    const findJsxElement = (sf: ts.SourceFile, name: string): ts.JsxOpeningLikeElement | null => {
+      let found: ts.JsxOpeningLikeElement | null = null
+      const visit = (n: ts.Node): void => {
+        if ((ts.isJsxSelfClosingElement(n) || ts.isJsxOpeningElement(n)) &&
+            ts.isIdentifier(n.tagName) && n.tagName.text === name) found = n
+        ts.forEachChild(n, visit)
+      }
+      visit(sf)
+      return found
+    }
+    // Attribute düğümünü BULUYOR, dize aramıyor: yorum içindeki bir prop hiç
+    // JsxAttribute üretmediği için burada `null` döner.
+    const jsxAttrExpr = (el: ts.JsxOpeningLikeElement, attrName: string): string | null => {
+      for (const p of el.attributes.properties) {
+        if (ts.isJsxAttribute(p) && p.name.getText() === attrName) {
+          return p.initializer && ts.isJsxExpression(p.initializer) && p.initializer.expression
+            ? p.initializer.expression.getText()
+            : null
+        }
+      }
+      return null
+    }
+
+    const path = join(__dirname, '..', 'renderer', 'pages', 'home.tsx')
+    const src = readFileSync(path, 'utf-8')
+    const sf = ts.createSourceFile(path, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+
+    const cards = findJsxElement(sf, 'McpApprovalCards')
+    expect(cards, 'home.tsx McpApprovalCards elemanını içermiyor').not.toBeNull()
+    expect(jsxAttrExpr(cards!, 'workspaceCheckPending')).toBe('mcp.gateWorkspaceCheckPending')
+
+    const panel = findJsxElement(sf, 'ChatPanel')
+    expect(panel, 'home.tsx ChatPanel elemanını içermiyor').not.toBeNull()
+    expect(jsxAttrExpr(panel!, 'mcpWorkspaceCheckPending')).toBe('mcp.gateWorkspaceCheckPending')
   })
 })
 

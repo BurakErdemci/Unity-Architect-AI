@@ -102,10 +102,22 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
     } catch (err) { console.error("Last workspace hatası:", err); }
   }, [API, user]);
 
+  // The workspace the user last ASKED for. Every step of `selectWorkspace`
+  // awaits something (existence check, directory read, host→backend mapping),
+  // so two selections overlap freely: auto-restore starts one while the user
+  // picks another, and a slow first mapping made the slower selection the LAST
+  // writer — the database left on A while the UI showed B, with no error on
+  // either side. Keying each awaited result to the path it was computed for is
+  // the same guard `useMCPApproval` uses for its mapped workspace.
+  const selectionRef = useRef<string | null>(null);
+
   const selectWorkspace = useCallback(async (path: string) => {
+    selectionRef.current = path;
+    const gecerliMi = () => selectionRef.current === path;
     // Klasör hâlâ var mı? (silinmiş/taşınmış workspace'i otomatik yüklemeyi engelle)
     if (ipc) {
       const exists = await ipc.invoke('path-exists', path);
+      if (!gecerliMi()) return;
       if (!exists) {
         showToast(cevir('workspace.missing'), 'warning');
         // Geçersiz yolu temizle ki bir daha otomatik yüklenmeye çalışılmasın
@@ -118,12 +130,16 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
     setRootFolderPath(path);
     if (ipc) {
       const entries = await ipc.invoke('read-directory', path, path);
+      if (!gecerliMi()) return;
       setFileTree(entries || []);
     }
     setExpandedDirs(new Set());
     setDirContents({});
     if (user?.sessionToken && API) {
       const backendPath = await backendWorkspacePath(path);
+      // A mapping that arrives after the user moved on describes a workspace
+      // nobody is in: neither the warning nor the write belongs to it.
+      if (!gecerliMi()) return;
       // null = Docker modu bu klasörü backend'e ADLANDIRAMIYOR (mount dışında).
       // Eski yolu göndermek, düzenleyicinin bir projede, ajanların başka bir
       // projede çalışması demekti — ikisi de başarılı görünerek.

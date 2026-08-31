@@ -78,6 +78,37 @@ def _strip_dockerfile_comments(text: str) -> str:
                      if l.strip() and not _DOCKERFILE_COMMENT_RE.match(l))
 
 
+_LINE_CONTINUATION_RE = re.compile(r"\\\s*$")
+
+
+def _join_line_continuations(text: str) -> str:
+    """Join a `\\`-continued instruction across lines, the way Docker's own
+    parser does, so a directive split over two lines is not read as ending on
+    the backslash itself.
+
+    Audit, 31 Aug 2026: `USER \\` on one line and `root` on the next made the
+    single-line `USER` regex capture `\\` as the final user — a backslash is
+    neither `root` nor a zero uid, so the non-root check passed while Docker
+    resolves `root`. Run AFTER comment stripping: a whole-line comment is not
+    part of an instruction, continued or not, and stripping it first keeps
+    this function simple (it never has to special-case a `#` line landing
+    mid-continuation).
+    """
+    out: list[str] = []
+    pending: str | None = None
+    for line in text.splitlines():
+        current = f"{pending} {line.strip()}" if pending is not None else line
+        pending = None
+        m = _LINE_CONTINUATION_RE.search(current)
+        if m:
+            pending = current[:m.start()].rstrip()
+        else:
+            out.append(current)
+    if pending is not None:
+        out.append(pending)
+    return "\n".join(out)
+
+
 def _compose_env() -> dict:
     return {
         **os.environ,
@@ -106,7 +137,7 @@ def resolved() -> dict:
 
 @pytest.fixture(scope="module")
 def dockerfile_effective() -> str:
-    return _strip_dockerfile_comments(_read("Backend", "Dockerfile"))
+    return _join_line_continuations(_strip_dockerfile_comments(_read("Backend", "Dockerfile")))
 
 
 @pytest.fixture(scope="module")
@@ -144,6 +175,13 @@ def test_a_missing_workspace_makes_compose_refuse(resolved):
 # ── reachability and mounts ──────────────────────────────────────────────────
 
 def test_the_port_is_published_to_loopback_only(resolved):
+    # `network_mode: host` makes the whole `ports:` section decorative: the
+    # container shares the host's network stack directly, so every port the
+    # process binds is already reachable regardless of what `ports` says
+    # (audit, 31 Aug 2026). Checked before reading `ports` because a mode this
+    # broad would make the loopback assertion below pass for the wrong reason.
+    assert resolved.get("network_mode") != "host", \
+        "network_mode: host bypasses the loopback-only port publication entirely"
     ports = resolved.get("ports") or []
     assert ports, "no published port in the resolved model"
     for p in ports:
@@ -226,7 +264,14 @@ def test_the_effective_bind_host_reaches_beyond_loopback(dockerfile_effective, r
     # Same case-insensitivity as FROM: `env host=127.0.0.1` is a live directive
     # and the previous pattern couldn't see it, so it silently overrode what
     # the test believed it had pinned (audit, 31 Aug 2026).
-    envs = re.findall(r"^ENV\s+HOST=(.+?)\s*$", dockerfile_effective, re.M | re.I)
+    #
+    # Docker also accepts the legacy space form (`ENV HOST 127.0.0.1`, no
+    # `=`) as an equally live directive — the old pattern only matched
+    # `ENV HOST=`, so appending the legacy form left the earlier `=0.0.0.0`
+    # looking like the winner while Docker actually resolves the later,
+    # unmatched line (audit, 31 Aug 2026). Both forms set the same key, so
+    # both have to be visible for "last wins" to be true rather than assumed.
+    envs = re.findall(r"^ENV\s+HOST(?:=|\s+)(.+?)\s*$", dockerfile_effective, re.M | re.I)
     assert envs, "the image never sets HOST; the app defaults to 127.0.0.1"
     assert envs[-1] == "0.0.0.0", f"last HOST in the image is {envs[-1]!r}"
     override = resolved["environment"].get("HOST")
@@ -245,6 +290,24 @@ def test_the_image_declares_a_non_root_user(dockerfile_effective):
     son = users[-1].strip()
     assert son.lower() != "root" and not (son.isdigit() and int(son) == 0), \
         f"final USER is {users[-1]!r}"
+
+
+# Stated limits of the two USER/root tests above, left open rather than closed
+# silently (31 Aug 2026 audit asked for exactly this):
+#
+# - Neither test can see past `CMD`. A CMD or an ENTRYPOINT script that calls
+#   `sudo`/`su`/setuid back to root at runtime would defeat both checks while
+#   every directive still reads as non-root. Not closed here: this Dockerfile
+#   has no entrypoint script and a literal `CMD ["python", "main.py"]`
+#   (verified by reading the file above, not by a regex), so the gap is
+#   currently theoretical. A check for a privilege-escalating entrypoint that
+#   does not exist is speculative test surface, not a contract.
+# - `FROM python:3.13-slim` is resolved by tag at build time; this suite does
+#   not pin or verify the resulting image digest. A compromised upstream tag
+#   would not be caught by anything here. Not closed: digest pinning is a
+#   supply-chain policy decision, not a regex fix, and this file's job is
+#   "does the configuration mean what it says," not "is the upstream image
+#   trustworthy."
 
 
 # ── the Electron side ────────────────────────────────────────────────────────
@@ -277,6 +340,13 @@ def test_startup_proves_the_backend_holds_the_same_token(electron_main):
     dal = re.search(r"if \(useDockerBackend\) \{(.*?)\n  \}", electron_main, re.S)
     assert dal and "assertBackendSharesOurToken" in dal.group(1), \
         "the token check must run on the Docker startup path, not merely exist"
+    # Naming the call was not enough either: dropping `await` leaves the name
+    # in the source (this assertion alone would stay green) while startup
+    # moves on before the promise settles, so the rejection it throws on
+    # arrives after the caller has already treated the backend as ready
+    # (audit, 31 Aug 2026).
+    assert "await assertBackendSharesOurToken()" in dal.group(1), \
+        "the call must be awaited, or startup proceeds before the check can reject"
     # Naming the helper proved nothing about its body: an early return or an
     # empty function satisfied every assertion while startup verified no
     # identity at all (audit, 31 Aug 2026). So the body is checked for the three

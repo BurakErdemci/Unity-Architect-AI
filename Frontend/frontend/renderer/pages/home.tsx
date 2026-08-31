@@ -12,7 +12,7 @@ import { sohbetKilitliMi } from '../lib/providerGate';
 import { getUnsavedEditorContext } from '../lib/editor-context';
 
 import { Sidebar } from '../components/home/Sidebar';
-import { EditorPanel } from '../components/home/EditorPanel';
+import { EditorPanel, hostOpenTarget, workspaceRelativePath } from '../components/home/EditorPanel';
 import { TerminalPanel } from '../components/home/TerminalPanel';
 import { ChatPanel } from '../components/home/ChatPanel';
 import { SettingsModal } from '../components/home/SettingsModal';
@@ -33,7 +33,6 @@ import { useAIConfig } from '../hooks/home/useAIConfig';
 import { useMCPApproval } from '../hooks/home/useMCPApproval';
 import { useAutoScroll } from '../hooks/home/useAutoScroll';
 import { McpApprovalCards } from '../components/home/McpApprovalCards';
-import { backendWorkspacePath } from '../lib/backendWorkspacePath';
 
 const ipc = typeof window !== 'undefined' ? (window as any).ipc : null;
 const globalStyles = `
@@ -67,17 +66,11 @@ const getBrandRgb = (modelName?: string, provider?: string): string => {
   return BRAND_RGB[(provider || '').toLowerCase()] || '96, 165, 250';
 };
 
-const getRelativePath = (absolutePath: string, workspacePath: string | null): string => {
-  if (!workspacePath) return absolutePath.split('/').pop() || '';
-  if (absolutePath.startsWith(workspacePath)) {
-    let rel = absolutePath.substring(workspacePath.length);
-    if (rel.startsWith('/') || rel.startsWith('\\')) {
-      rel = rel.substring(1);
-    }
-    return rel;
-  }
-  return absolutePath.split('/').pop() || '';
-};
+// One definition, four call sites: `/lsp/change` here and the three
+// IntelliSense siblings in EditorPanel. It lives there because that is where
+// three of the four are; a second copy here is how the siblings drifted apart
+// in the first place.
+const getRelativePath = workspaceRelativePath;
 
 export default function Home() {
   // `toasts` ve `dismissToast` bilerek alınıyor: hook ikisini de döndürüyordu,
@@ -169,23 +162,14 @@ export default function Home() {
     }
   }, [fs.lastWorkspacePath, fs.workspacePath, backendReady]);
 
-  // --- Ensure Active Workspace Is Saved In Backend ---
-  useEffect(() => {
-    if (API && auth.user?.sessionToken && fs.workspacePath) {
-      backendWorkspacePath(fs.workspacePath).then((path) => {
-        // null means the folder is outside the Docker mount and has no
-        // backend-addressable name at all — posting the untranslated host
-        // path here is the exact split-brain defect this module exists to
-        // close (see backendWorkspacePath.ts), and WorkspaceRequest.path is
-        // required so the backend would 422 anyway.
-        if (path === null) return;
-        return axios.post(`${API}/save-workspace`,
-          { user_id: auth.user.id, path },
-          { headers: { 'X-Session-Token': auth.user.sessionToken } }
-        );
-      }).catch(() => {});
-    }
-  }, [fs.workspacePath, API, auth.user]);
+  // The workspace is persisted by `useFileSystem.selectWorkspace` and by
+  // nothing else. This page used to run a second writer here, on a
+  // `fs.workspacePath` effect: every ordinary selection produced TWO mappings
+  // and TWO posts of the same value, and because each one awaited the bridge
+  // before posting, selections A then B could land in the order B, A - the
+  // database on A while the UI showed B. `setWorkspacePath` has exactly one
+  // caller (`selectWorkspace`; `closeWorkspace` only clears it), so the effect
+  // covered no case that writer does not.
 
   // --- Electron Menu IPC Listeners ---
   useEffect(() => {
@@ -406,10 +390,15 @@ export default function Home() {
 
   const handleLogout = () => { fs.closeWorkspace(); };
 
-  const handleProblemClick = (problem: any) => {
-    if (problem.file && fs.workspacePath) {
-      fs.openFile(problem.file);
-    }
+  const handleProblemClick = async (problem: any) => {
+    if (!problem.file || !fs.workspacePath) return;
+    // `problem.file` is the BACKEND's spelling. Usually relative (the manager
+    // sends `os.path.relpath` output) and then mode-independent, but when the
+    // backend has no workspace root it reports the absolute container path,
+    // which names nothing on this side of the mount. Same rule as a definition
+    // result, in one shared place, so the two return legs cannot drift.
+    const hedef = await hostOpenTarget(problem.file);
+    if (hedef) fs.openFile(hedef);
   };
 
   const handleSendMessage = async (msg?: string, images?: string[], videos?: any[]) => {

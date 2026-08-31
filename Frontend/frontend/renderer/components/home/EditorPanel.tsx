@@ -8,6 +8,7 @@ import { motion } from 'framer-motion';
 import { Plus, Activity, Cpu, Sparkles } from 'lucide-react';
 import { defineUnityTheme, THEME_NAME } from './monaco-theme';
 import { useLang } from '../../lib/i18n';
+import { hostWorkspacePath } from '../../lib/backendWorkspacePath';
 
 // Açık dosyanın uzantısına göre Monaco dili — .md/.json/.yaml vb. artık editörde
 // açılabildiği için csharp'a sabitlemek yanlış vurgu yapıyordu.
@@ -41,6 +42,165 @@ const LSP_TO_MONACO_KIND: Record<number, number> = {
   13: 15, 14: 17, 15: 27, 16: 19, 17: 20, 18: 21, 19: 23, 20: 16, 21: 14,
   22: 6, 23: 10, 24: 11, 25: 24,
 };
+
+/**
+ * The workspace-relative spelling of a path the renderer holds.
+ *
+ * Every `/lsp/*` body carries this spelling and never an absolute one. The
+ * backend's `_abs()` joins a relative path to the workspace root it persisted,
+ * so the same string addresses the right file whether the backend runs on the
+ * host or in a container where the project is bind-mounted at `/workspace`; an
+ * absolute path is kept as-is by `_abs()`, which is how a `C:\...` spelling
+ * reached a Linux container and resolved to nothing. `/lsp/change` already sent
+ * the relative spelling — the three IntelliSense siblings did not, and a rule
+ * that one call site follows and its siblings do not is this repo's most
+ * expensive defect shape.
+ *
+ * Relative is preferred over translating through the IPC bridge because it
+ * needs no bridge at all: it is correct in both modes with one code path, and
+ * cannot fail closed in the middle of a keystroke-rate completion request.
+ */
+export const workspaceRelativePath = (absolutePath: string, workspacePath: string | null): string => {
+  if (!workspacePath) return absolutePath.split('/').pop() || '';
+  if (absolutePath.startsWith(workspacePath)) {
+    let rel = absolutePath.substring(workspacePath.length);
+    if (rel.startsWith('/') || rel.startsWith('\\')) {
+      rel = rel.substring(1);
+    }
+    // POSIX separators, always. `_abs()` joins this to the persisted root, and
+    // in Docker that root is inside Linux: `os.path.join('/workspace',
+    // 'Assets\\Player.cs')` there is ONE file name containing backslashes, not
+    // a path — so a Windows host would still address nothing. Windows itself
+    // accepts `/`, so the normalisation costs nothing with Docker off, and the
+    // backend already reports diagnostics with `/` (`omnisharp_manager`
+    // replaces separators before sending), so both directions now agree.
+    return rel.replace(/\\/g, '/');
+  }
+  // Deliberately NOT a basename: with no workspace the absolute path is the
+  // only true thing we can say, `_abs()` keeps an absolute path as-is, and a
+  // basename would make the backend join it to some unrelated persisted root.
+  return absolutePath.split('/').pop() || '';
+};
+
+const MUTLAK_YOL = /^([a-zA-Z]:[\\/]|[\\/])/;
+
+/**
+ * The return leg: a path the BACKEND named, turned into something the host side
+ * can open — or `null`, meaning do not open anything.
+ *
+ * Two shapes arrive here and they are not the same problem. A relative path
+ * (diagnostics report `os.path.relpath` output) is mode-independent: the
+ * `read-file` handler joins it to the host workspace, so it must pass through
+ * untouched. An absolute path (a definition result, or a diagnostic reported
+ * while the backend had no workspace root) is spelled in the backend's view of
+ * the disk and is meaningless on the host under Docker — it must be translated,
+ * and `null` from the translator means there is no host answer, not "use what
+ * you had". With Docker off the translation is identity, so this leg keeps
+ * today's behaviour exactly.
+ */
+export async function hostOpenTarget(backendPath: string | null | undefined): Promise<string | null> {
+  if (!backendPath) return null;
+  if (!MUTLAK_YOL.test(backendPath)) return backendPath;
+  return hostWorkspacePath(backendPath);
+}
+
+export interface LspContext {
+  apiUrl?: string | null;
+  sessionToken?: string | null;
+  openedFilePath: string | null;
+  workspacePath: string | null;
+  openFile?: (path: string) => void;
+}
+
+// Bir LSP isteğinin uçuşta kalabileceği en uzun süre. Sunucu tarafında C# analizi
+// başlatılamadığında istek uzun süre asılabiliyordu ve istemcide hiçbir üst sınır
+// yoktu: Monaco her imleç hareketinde yeni bir hover isteği ürettiği için istekler
+// birikiyor, Chromium'un host başına 6 bağlantı sınırına dayanıyor ve editör
+// tümden yanıt veremez hale geliyordu (ölçüldü 2026-07-27).
+const LSP_TIMEOUT_MS = 8000;
+
+/**
+ * The IntelliSense side of the editor, lifted out of the component so the three
+ * sibling call sites can be exercised without mounting Monaco. `getCtx` is read
+ * per request: auth token and open file both change after mount.
+ */
+export function createLspBridge(getCtx: () => LspContext) {
+  const lspPost = async (ep: string, body: any, token?: any) => {
+    const { apiUrl: api, sessionToken: sess } = getCtx();
+    if (!api) return null;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), LSP_TIMEOUT_MS);
+    // Monaco imleç hareket edince kendi CancellationToken'ını iptal ediyor. Bu
+    // dinlenmezse iptal edilmiş bir hover'ın HTTP isteği uçuşta kalmaya devam eder.
+    const onCancel = token?.onCancellationRequested?.(() => ctrl.abort());
+    try {
+      const r = await fetch(`${api}/lsp/${ep}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Session-Token': sess || '' },
+        body: JSON.stringify(body),
+        signal: ctrl.signal,
+      });
+      return r.ok ? r.json() : null;
+    } catch { return null; }
+    finally {
+      clearTimeout(timer);
+      onCancel?.dispose?.();
+    }
+  };
+
+  // The one place the three siblings agree on how a document is named to the
+  // backend. Adding a fourth request means calling this, not re-deriving it.
+  const docBody = (model: any, position: any) => {
+    const { openedFilePath, workspacePath } = getCtx();
+    return {
+      path: openedFilePath ? workspaceRelativePath(openedFilePath, workspacePath) : openedFilePath,
+      text: model.getValue(),
+      line: position.lineNumber,
+      column: position.column,
+    };
+  };
+
+  const registerCsProviders = (monaco: any) => {
+    // Monaco global'ine kaydolur — HMR/remount'ta çift kayıt olmasın
+    if ((window as any).__csProvidersRegistered) return;
+    (window as any).__csProvidersRegistered = true;
+
+    monaco.languages.registerCompletionItemProvider('csharp', {
+      triggerCharacters: ['.'],
+      provideCompletionItems: async (model: any, position: any, _ctx: any, token: any) => {
+        const data = await lspPost('completion', docBody(model, position), token);
+        const word = model.getWordUntilPosition(position);
+        const range = { startLineNumber: position.lineNumber, endLineNumber: position.lineNumber,
+                        startColumn: word.startColumn, endColumn: word.endColumn };
+        return { suggestions: (data?.items || []).map((it: any) => ({
+          label: it.label,
+          kind: LSP_TO_MONACO_KIND[it.kind] ?? 18,
+          insertText: it.insertText, detail: it.detail, range })) };
+      },
+    });
+
+    monaco.languages.registerHoverProvider('csharp', {
+      provideHover: async (model: any, position: any, token: any) => {
+        const data = await lspPost('hover', docBody(model, position), token);
+        return data?.contents ? { contents: [{ value: data.contents }] } : null;
+      },
+    });
+
+    monaco.languages.registerDefinitionProvider('csharp', {
+      provideDefinition: async (model: any, position: any, token: any) => {
+        const data = await lspPost('definition', docBody(model, position), token);
+        if (!data?.location) return null;
+        // Cross-model çözümü yerine dosyayı uygulama içinde aç — ama yol
+        // BACKEND'in yazımıyla geliyor, host'unkiyle değil.
+        const hedef = await hostOpenTarget(data.location.file);
+        if (hedef) getCtx().openFile?.(hedef);
+        return null;
+      },
+    });
+  };
+
+  return { lspPost, registerCsProviders };
+}
 
 interface EditorPanelProps {
   code: string;
@@ -78,86 +238,12 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
 
   // Provider closure'ları bir kez kaydedilir; güncel prop'ları ref üzerinden görsünler
   // (auth token ve açık dosya mount'tan SONRA değişiyor — closure bayat kalmasın).
-  const lspCtxRef = React.useRef({ apiUrl, sessionToken, openedFilePath, openFile });
+  const lspCtxRef = React.useRef<LspContext>({ apiUrl, sessionToken, openedFilePath, workspacePath, openFile });
   React.useEffect(() => {
-    lspCtxRef.current = { apiUrl, sessionToken, openedFilePath, openFile };
-  }, [apiUrl, sessionToken, openedFilePath, openFile]);
+    lspCtxRef.current = { apiUrl, sessionToken, openedFilePath, workspacePath, openFile };
+  }, [apiUrl, sessionToken, openedFilePath, workspacePath, openFile]);
 
-  // Bir LSP isteğinin uçuşta kalabileceği en uzun süre. Sunucu tarafında C# analizi
-  // başlatılamadığında istek uzun süre asılabiliyordu ve istemcide hiçbir üst sınır
-  // yoktu: Monaco her imleç hareketinde yeni bir hover isteği ürettiği için istekler
-  // birikiyor, Chromium'un host başına 6 bağlantı sınırına dayanıyor ve editör
-  // tümden yanıt veremez hale geliyordu (ölçüldü 2026-07-27).
-  const LSP_TIMEOUT_MS = 8000;
-
-  const lspPost = async (ep: string, body: any, token?: any) => {
-    const { apiUrl: api, sessionToken: sess } = lspCtxRef.current;
-    if (!api) return null;
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), LSP_TIMEOUT_MS);
-    // Monaco imleç hareket edince kendi CancellationToken'ını iptal ediyor. Bu
-    // dinlenmezse iptal edilmiş bir hover'ın HTTP isteği uçuşta kalmaya devam eder.
-    const onCancel = token?.onCancellationRequested?.(() => ctrl.abort());
-    try {
-      const r = await fetch(`${api}/lsp/${ep}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Session-Token': sess || '' },
-        body: JSON.stringify(body),
-        signal: ctrl.signal,
-      });
-      return r.ok ? r.json() : null;
-    } catch { return null; }
-    finally {
-      clearTimeout(timer);
-      onCancel?.dispose?.();
-    }
-  };
-
-  const registerCsProviders = (monaco: any) => {
-    // Monaco global'ine kaydolur — HMR/remount'ta çift kayıt olmasın
-    if ((window as any).__csProvidersRegistered) return;
-    (window as any).__csProvidersRegistered = true;
-
-    monaco.languages.registerCompletionItemProvider('csharp', {
-      triggerCharacters: ['.'],
-      provideCompletionItems: async (model: any, position: any, _ctx: any, token: any) => {
-        const data = await lspPost('completion', {
-          path: lspCtxRef.current.openedFilePath, text: model.getValue(),
-          line: position.lineNumber, column: position.column,
-        }, token);
-        const word = model.getWordUntilPosition(position);
-        const range = { startLineNumber: position.lineNumber, endLineNumber: position.lineNumber,
-                        startColumn: word.startColumn, endColumn: word.endColumn };
-        return { suggestions: (data?.items || []).map((it: any) => ({
-          label: it.label,
-          kind: LSP_TO_MONACO_KIND[it.kind] ?? 18,
-          insertText: it.insertText, detail: it.detail, range })) };
-      },
-    });
-
-    monaco.languages.registerHoverProvider('csharp', {
-      provideHover: async (model: any, position: any, token: any) => {
-        const data = await lspPost('hover', {
-          path: lspCtxRef.current.openedFilePath, text: model.getValue(),
-          line: position.lineNumber, column: position.column,
-        }, token);
-        return data?.contents ? { contents: [{ value: data.contents }] } : null;
-      },
-    });
-
-    monaco.languages.registerDefinitionProvider('csharp', {
-      provideDefinition: async (model: any, position: any, token: any) => {
-        const data = await lspPost('definition', {
-          path: lspCtxRef.current.openedFilePath, text: model.getValue(),
-          line: position.lineNumber, column: position.column,
-        }, token);
-        if (!data?.location) return null;
-        // Cross-model çözümü yerine dosyayı uygulama içinde aç
-        lspCtxRef.current.openFile?.(data.location.file);
-        return null;
-      },
-    });
-  };
+  const lspBridgeRef = React.useRef(createLspBridge(() => lspCtxRef.current));
 
   // Dosya değişince stale marker'ları temizle
   React.useEffect(() => {
@@ -293,7 +379,7 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
                 editorRef.current = editor;
                 monacoRef.current = monaco;
                 defineUnityTheme(monaco);
-                registerCsProviders(monaco);
+                lspBridgeRef.current.registerCsProviders(monaco);
 
                 // İlk açılışta marker'ları tetikle
                 setModelChangedTrigger(prev => prev + 1);

@@ -2,7 +2,7 @@ import path from 'path'
 import fs from 'fs'
 import os from 'os'
 import net from 'net'
-import { randomUUID } from 'crypto'
+import { randomUUID, createHash } from 'crypto'
 import { app, ipcMain, dialog, shell } from 'electron'
 import serve from 'electron-serve'
 import { createWindow } from './helpers'
@@ -765,6 +765,171 @@ async function assertBackendSharesOurToken(): Promise<void> {
   }
 }
 
+// ── Which tree is behind the mount ───────────────────────────────────────────
+//
+// FINDING D4-03. This process trusts its OWN environment as the truth about
+// what is mounted: canonicalHostRoot() reads the current GAMACHINE_WORKSPACE
+// and the handlers map that root onto the container mount. But a container's
+// bind source is fixed when the container is CREATED, and `restart:
+// unless-stopped` keeps one alive across the shell that started it. Export a
+// new GAMACHINE_WORKSPACE, relaunch, pick project B: the mapping succeeds and
+// the live backend reads and writes project A. Both halves report success.
+//
+// assertBackendSharesOurToken does not cover it — a shared token says nothing
+// about which tree is mounted.
+//
+// The container cannot be asked its bind source; from inside, only the mount
+// exists. So identity is established by comparing something observable on both
+// sides: a fingerprint of the directory layout, computed here over the host
+// root and by GET /health/workspace over the container mount.
+//
+// WHAT THE COMPARISON PROVES. A mismatch is strong evidence of two different
+// trees (confirmed once, because the tree can change between the two samples).
+// A match is WEAK: it proves the two directories agree on entry names and kinds
+// two levels down, not that they are the same directory. Two copies of one
+// project, or two untouched projects from the same template, are identical to
+// it. File content is never read, so trees with matching layout and completely
+// different contents pass.
+//
+// Stronger read-only options were considered and rejected: st_dev/st_ino is
+// conclusive across a Linux bind mount but Docker Desktop synthesises inode
+// numbers, so it would fail the CORRECT tree on the platforms this is developed
+// on. A marker file would be conclusive on every platform and is deliberately
+// not written — a Unity project reacts to new files by importing them.
+
+const WORKSPACE_FINGERPRINT_ALGO = 'gamachine-ws-fp-1'
+const FINGERPRINT_MAX_ENTRIES = 4096
+// Mirrors `_NO_DESCEND` in Backend/app/routes/auth_routes.py. Both sides list
+// these directories at level 1 and do not descend: the Editor and the compilers
+// rewrite them continuously, and the two samples are taken milliseconds apart.
+const FINGERPRINT_NO_DESCEND = new Set([
+  'Library', 'Temp', 'Logs', 'obj', 'bin', 'Build', 'Builds',
+  '.git', '.vs', 'node_modules',
+])
+
+function direntKind(dir: string, entry: fs.Dirent): string {
+  if (entry.isSymbolicLink()) return 'l'
+  if (entry.isDirectory()) return 'd'
+  if (entry.isFile()) return 'f'
+  // A dirent can come back UNKNOWN on filesystems that do not fill d_type, and
+  // Node does not stat to resolve it while Python's os.scandir does. Without
+  // this fallback the two sides would classify the same entry differently and
+  // report a mismatch for the correct tree.
+  try {
+    const st = fs.lstatSync(path.join(dir, entry.name))
+    if (st.isSymbolicLink()) return 'l'
+    if (st.isDirectory()) return 'd'
+    if (st.isFile()) return 'f'
+  } catch {
+    // Unreadable; 'o' on both sides is the same answer Python reaches.
+  }
+  return 'o'
+}
+
+/** `<relpath>\t<kind>` lines for a root's children and its children's children. */
+function fingerprintLines(root: string): string[] {
+  const lines: string[] = []
+  let top: fs.Dirent[]
+  try {
+    top = fs.readdirSync(root, { withFileTypes: true })
+  } catch {
+    return lines
+  }
+  for (const entry of top) {
+    const kind = direntKind(root, entry)
+    lines.push(`${entry.name}\t${kind}`)
+    if (kind !== 'd' || FINGERPRINT_NO_DESCEND.has(entry.name)) continue
+    const childDir = path.join(root, entry.name)
+    let children: fs.Dirent[]
+    try {
+      children = fs.readdirSync(childDir, { withFileTypes: true })
+    } catch {
+      // Contributes no children, matching the backend's own behaviour for a
+      // directory it cannot list.
+      continue
+    }
+    for (const child of children) {
+      lines.push(`${entry.name}/${child.name}\t${direntKind(childDir, child)}`)
+    }
+  }
+  // Byte order, not the default sort. JavaScript compares UTF-16 code units and
+  // Python compares code points; they disagree above the BMP, so an emoji-named
+  // asset folder would sort differently on the two sides and hash differently.
+  lines.sort((a, b) => Buffer.compare(Buffer.from(a, 'utf8'), Buffer.from(b, 'utf8')))
+  return lines
+}
+
+function hostWorkspaceFingerprint(root: string): { entries: number; truncated: boolean; fingerprint: string } {
+  const all = fingerprintLines(root)
+  const truncated = all.length > FINGERPRINT_MAX_ENTRIES
+  const kept = all.slice(0, FINGERPRINT_MAX_ENTRIES)
+  const digest = createHash('sha256').update(kept.join('\n'), 'utf8').digest('hex')
+  return { entries: kept.length, truncated, fingerprint: digest }
+}
+
+async function fetchBackendWorkspaceFingerprint(): Promise<any> {
+  const response = await axios.get(`${getBackendBaseUrl()}/health/workspace`, {
+    timeout: 20000,
+    headers: { 'X-Session-Token': localAppToken },
+  })
+  return response.data ?? {}
+}
+
+/** Refuses to proceed when the container's mount is not the tree we think it is. */
+async function assertBackendMountsOurWorkspace(): Promise<void> {
+  const hostRoot = canonicalHostRoot()
+  if (!hostRoot) {
+    throw new Error(
+      'USE_DOCKER_BACKEND=true but GAMACHINE_WORKSPACE is unset, relative, or does not ' +
+      'exist on this machine. Export the absolute path of the project Compose mounts, ' +
+      'then run `docker compose down` and `docker compose up` so the service is recreated ' +
+      'with that bind. See docs/building.md.'
+    )
+  }
+
+  const recreate =
+    'Run `docker compose down`, then `docker compose up`, so the service is RECREATED ' +
+    'with the new bind. A bind source is fixed when the container is created, and ' +
+    '`restart: unless-stopped` keeps the old container alive across the shell that ' +
+    'started it, so `up` alone reuses it. See docs/building.md.'
+
+  // Two rounds before refusing. A single mismatch can mean the tree changed
+  // between the host sample and the container sample rather than that the
+  // mount is wrong; a wrong mount reproduces, a passing write does not.
+  let last = ''
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const ours = hostWorkspaceFingerprint(hostRoot)
+    const theirs = await fetchBackendWorkspaceFingerprint()
+
+    if (theirs.mounted !== true) {
+      throw new Error(
+        `The backend has nothing mounted at ${DOCKER_WORKSPACE_MOUNT}, so it cannot see ` +
+        `${hostRoot} or any other project. ` + recreate
+      )
+    }
+    if (theirs.algo !== WORKSPACE_FINGERPRINT_ALGO) {
+      throw new Error(
+        `The backend computes workspace identity with '${theirs.algo}' and this app uses ` +
+        `'${WORKSPACE_FINGERPRINT_ALGO}', so the two answers cannot be compared. The ` +
+        'container is running older backend code than this app expects. ' + recreate
+      )
+    }
+    if (theirs.fingerprint === ours.fingerprint) return
+
+    last =
+      `host ${hostRoot} -> ${ours.fingerprint.slice(0, 12)} (${ours.entries} entries), ` +
+      `container ${DOCKER_WORKSPACE_MOUNT} -> ${String(theirs.fingerprint).slice(0, 12)} ` +
+      `(${theirs.entries} entries)`
+    console.warn(`--- WORKSPACE IDENTITY MISMATCH (attempt ${attempt + 1}) --- ${last}`)
+  }
+
+  throw new Error(
+    `The container is serving a DIFFERENT tree at ${DOCKER_WORKSPACE_MOUNT} than the one ` +
+    `this app is configured for. Everything would look fine while the editor worked in ` +
+    `one project and the agents worked in another. ${recreate}\n\nMeasured twice: ${last}`
+  )
+}
+
 // --- BACKEND YOLLARINI BUL ---
 function getBackendPaths(): { pythonExec: string; pythonScript: string; backendDir: string; sitePackages: string } {
   const isWin = process.platform === 'win32'
@@ -816,6 +981,12 @@ async function startPythonBackend() {
     // answers this happily and then 401s every real call — measured 31 Aug 2026,
     // every startup signal green while the app was unusable.
     await assertBackendSharesOurToken()
+    // Sharing a token proves the two sides are the same INSTALLATION; it says
+    // nothing about which tree is behind the mount. FINDING D4-03: a container
+    // kept alive by `restart: unless-stopped` still serves the bind source it
+    // was created with, so a newly exported GAMACHINE_WORKSPACE changes only
+    // what this process believes.
+    await assertBackendMountsOurWorkspace()
     return
   }
 
