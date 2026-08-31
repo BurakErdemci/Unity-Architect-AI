@@ -3,11 +3,21 @@
  * thing that runs BOTH of them.
  *
  * The algorithm exists twice — `main/helpers/workspace-fingerprint.ts` and
- * `_fingerprint_lines` in `Backend/app/routes/auth_routes.py` — and Docker
+ * `fingerprint_lines` in `Backend/app/workspace_fingerprint.py` — and Docker
  * startup compares their answers to refuse a container still serving an older
  * bind mount. Both failure directions are real: disagreeing about the same tree
  * refuses a correct setup, agreeing about different trees makes the guard
  * worthless.
+ *
+ * KNOWN LIMIT, and it is structural: this file runs both implementations on ONE
+ * machine, while production runs the TypeScript one on the user's OS and the
+ * Python one on Linux inside the container. A disagreement that only appears
+ * across that boundary is invisible here. Two such defects have already shipped
+ * past this suite — a junction, and then a FIFO and a Unix socket — and both
+ * were found by bind-mounting a tree into a real container and comparing, not
+ * by this test. Closing the gap in CI would mean running Docker in the frontend
+ * job; that has not been done, so the boundary cases are measured by hand and
+ * recorded in `kind`'s docstring on both sides.
  *
  * They already diverged once, during development, while every suite was green
  * and `tsc` was clean (31 Aug 2026): a descent clause was lost on the
@@ -27,7 +37,7 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import { execFileSync } from 'child_process'
-import { hostWorkspaceFingerprint, fingerprintLines } from '../main/helpers/workspace-fingerprint'
+import { hostWorkspaceFingerprint, fingerprintLines, direntKind } from '../main/helpers/workspace-fingerprint'
 
 const REPO = path.resolve(__dirname, '..', '..', '..')
 const BACKEND = path.join(REPO, 'Backend')
@@ -142,9 +152,11 @@ afterAll(() => {
   if (kok) fs.rmSync(kok, { recursive: true, force: true })
 })
 
-// The suite needs the backend venv. Skipping is loud rather than silent: a
-// parity test that quietly disappears is worse than no parity test, because the
-// green tick then means something it does not mean.
+// The suite needs SOME Python 3 — no venv, no backend dependencies; the module
+// it runs is stdlib-only for exactly this reason. Skipping is loud rather than
+// silent, and under `CI` it does not skip at all: `pythonBul()` above throws,
+// because a parity test that quietly disappears from the gate is worse than no
+// parity test — the green tick then means something it does not mean.
 const varsaCalis = PY ? describe : describe.skip
 
 // Her vaka Python'u ALT SUREC olarak baslatiyor; tam takim paralel kosarken bu
@@ -225,11 +237,18 @@ varsaCalis('iki uygulama ayni agac icin ayni parmak izini uretir', () => {
   // ozet karsilastiriliyordu, ikisi birlikte kaydigi icin fark gorunmuyordu
   // (AUDIT R6-01). Artik uretilen SATIRLAR karsilastiriliyor.
   //
-  // Kural baglantilik uzerinden degil, cozumlenmis hedefin kok icinde kalmasi
-  // uzerinden yazili. Sebebi olculdu (31 Agu 2026, tek bir Windows junction'i):
-  // Node isSymbolicLink() -> true, Python is_symlink() -> False. Yani iki taraf
-  // "bag nedir" sorusunda anlasmiyor; "hedef kok icinde mi" sorusunda tastamam
-  // anlasiyor. Bu yuzden "bagsa inme" kurali ana makinenin KENDI icinde ayrisir.
+  // Kural: duz klasor `d`, duz dosya `f`, BASKA HER SEY `o` — ve `o`nun icine
+  // hic inilmiyor. Yani bir bag, neye bakarsa baksin `o`.
+  //
+  // Ayri bir `l` turu denendi ve gercek konteynere karsi olculdunce dustu
+  // (31 Agu 2026): symlink ve junction'da anlasiyordu ama FIFO ve Unix
+  // soketinde ana makine `l`, konteyner `o` diyordu. Sebep, Windows'un bu
+  // nesneleri BIRBIRINDEN AYIRAMAMASI: Docker Desktop ucunu de reparse point
+  // olarak sakliyor ve Node her etiketi isSymbolicLink() altinda topluyor.
+  // Ayrimi bir taraf yapamiyorsa o ayrim parmak izine girmez.
+  //
+  // Bu vakalar junction kuruyor; FIFO/soket ayrimi bu dosyada OLCULEMEZ
+  // (yukaridaki bilinen sinir), elle konteynerle olculdu.
 
   // Kurulamazsa ATLA, gecme. Onceki hâli `false` donuyordu ve cagiran `return`
   // ediyordu; bir `it` geri donunce vitest onu GECTI sayiyor, yani iki vaka da
@@ -250,7 +269,7 @@ varsaCalis('iki uygulama ayni agac icin ayni parmak izini uretir', () => {
     }
   }
 
-  it("kok ICINE bakan bag: iki taraf da 'l' diyor ve icine INMIYOR", (ctx) => {
+  it("kok ICINE bakan bag: iki taraf da 'o' diyor ve icine INMIYOR", (ctx) => {
     const d = agac('bag-ic')
     fs.mkdirSync(path.join(d, 'gercek'), { recursive: true })
     fs.writeFileSync(path.join(d, 'gercek', 'a.txt'), 'x')
@@ -258,7 +277,7 @@ varsaCalis('iki uygulama ayni agac icin ayni parmak izini uretir', () => {
 
     const ts = tsSatirlar(d)
     expect(ts).toEqual(pythonSatirlar(d))
-    expect(ts).toContain('bag\tl')
+    expect(ts).toContain('bag\to')
     // Hedef ICERIDE olmasina ragmen inilmiyor: kural hedefe degil bagin
     // kendisine bakiyor. Icerideki hedef zaten kendi adiyla listeleniyor
     // (`gercek/a.txt`), yani bilgi kaybi yok — yalniz ikinci kez sayilmiyor.
@@ -266,7 +285,7 @@ varsaCalis('iki uygulama ayni agac icin ayni parmak izini uretir', () => {
     expect(ts).toContain('gercek/a.txt\tf')
   }, SURE)
 
-  it("kok DISINA bakan bag: 'l' olarak listeleniyor, hedefi parmak izine GIRMIYOR", (ctx) => {
+  it("kok DISINA bakan bag: 'o' olarak listeleniyor, hedefi parmak izine GIRMIYOR", (ctx) => {
     // R6-01'in ta kendisi. `direntKind` baglari takip etmeye baslayinca bu
     // junction 'd' olarak siniflandi ve icine INILDI, yani mount DISINDAKI
     // dosyalar, tek iddiasi calisma alanini tarif etmek olan bir parmak izine
@@ -280,7 +299,7 @@ varsaCalis('iki uygulama ayni agac icin ayni parmak izini uretir', () => {
 
     const ts = tsSatirlar(d)
     expect(ts).toEqual(pythonSatirlar(d))
-    expect(ts).toContain('kacis\tl')
+    expect(ts).toContain('kacis\to')
     expect(ts.filter((l) => l.startsWith('kacis/'))).toEqual([])
     // Hedefin ADI da girmiyor: iki tarafta farkli yaziliyor (`C:\...` burada,
     // ulasilamaz `/mnt/host/c/...` konteynerde), yani hedefi ozete katmak
@@ -288,4 +307,54 @@ varsaCalis('iki uygulama ayni agac icin ayni parmak izini uretir', () => {
     expect(ts.join('\n')).not.toContain('sentinel')
     expect(ts.join('\n')).not.toContain('bag-dis-hedef')
   }, SURE)
+})
+
+// Python GEREKTIRMEZ, bu yuzden `varsaCalis` disinda: her makinede ve CI'da kosar.
+//
+// Neden ayri: `direntKind`'in UNKNOWN dali hicbir testin ULASMADIGI bir daldi.
+// Olculdu (31 Agu 2026) — o dala bir mutasyon uygulandi ('o' yerine 'd'
+// dondurulup) ve yedi vakanin yedisi YESIL kaldi, cunku Windows'ta hizli yol
+// zaten 'o' donduruyor ve fallback'e hic inilmiyor. Ulasilmayan bir dal,
+// olculmemis bir daldir; d_type doldurmayan dosya sistemlerinde (bazi ag ve
+// Linux dosya sistemleri) tam olarak orasi calisir.
+describe('direntKind: dirent turu UNKNOWN geldiginde', () => {
+  // Gercek bir junction'a bakan, ama uc sorunun ucune de false diyen bir dirent
+  // — d_type doldurmayan bir dosya sisteminin urettigi seyin ta kendisi.
+  const bilinmeyenDirent = (ad: string) => ({
+    name: Buffer.from(ad),
+    isSymbolicLink: () => false,
+    isDirectory: () => false,
+    isFile: () => false,
+  }) as unknown as fs.Dirent<Buffer>
+
+  it("bag oldugunu lstat ile bulup 'o' donuyor, 'd' degil", () => {
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), 'gm-unknown-'))
+    try {
+      fs.mkdirSync(path.join(d, 'gercek'))
+      try {
+        fs.symlinkSync(path.join(d, 'gercek'), path.join(d, 'bag'), 'junction')
+      } catch {
+        return   // ayricalik yoksa asagidaki duz klasor vakasi yine kosuyor
+      }
+      // 'd' donseydi bu girdinin ICINE INILIRDI; korunan sey bu.
+      expect(direntKind(Buffer.from(d), bilinmeyenDirent('bag'))).toBe('o')
+    } finally {
+      fs.rmSync(d, { recursive: true, force: true })
+    }
+  })
+
+  it("duz klasor ve duz dosya icin yine 'd' ve 'f' donuyor", () => {
+    // Fallback'in yalniz 'o' uretmedigi de bir iddia: hepsini 'o' yapan bir
+    // uygulama yukaridaki testi gecer ve dogru agaci reddederdi.
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), 'gm-unknown2-'))
+    try {
+      fs.mkdirSync(path.join(d, 'klasor'))
+      fs.writeFileSync(path.join(d, 'dosya.txt'), 'x')
+      expect(direntKind(Buffer.from(d), bilinmeyenDirent('klasor'))).toBe('d')
+      expect(direntKind(Buffer.from(d), bilinmeyenDirent('dosya.txt'))).toBe('f')
+      expect(direntKind(Buffer.from(d), bilinmeyenDirent('yok.txt'))).toBe('o')
+    } finally {
+      fs.rmSync(d, { recursive: true, force: true })
+    }
+  })
 })

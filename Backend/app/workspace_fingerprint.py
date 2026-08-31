@@ -80,36 +80,50 @@ def is_link(entry) -> bool:
 
 
 def kind(entry) -> str:
-    """One character per entry: `l` link, `d` directory, `f` file, `o` other.
+    """`d` plain directory, `f` plain file, `o` anything else. Three answers.
 
-    A link is `l` REGARDLESS of what it points at, and is never followed. The
-    target is deliberately absent from the fingerprint: the same junction is
-    spelled `C:\\...` on the host and resolves to an unreachable
-    `/mnt/host/c/...` inside the container, so hashing the target would
-    guarantee the mismatch this whole check exists to avoid.
+    THE RULE: the fingerprint encodes only distinctions BOTH SIDES CAN MAKE.
+    Everything that is not a plain directory or a plain file collapses into
+    `o`, and `o` is never descended into.
 
-    Measured 31 Aug 2026 against a REAL container over a real bind mount — the
-    first round in this series where a Docker daemon was reachable — with one
-    junction pointing inside the workspace and one pointing outside:
+    That is not tidiness, it is the result of three measurements against a real
+    container over a real bind mount (31 Aug 2026). The first two rounds of this
+    question each encoded a distinction one side could not make:
 
-        entry            host (Windows)      container (Linux)
-        ordinary dir     d + children        d + children
-        junction         d + children        o          <- diverged
-        junction         d                   o          <- diverged
+        entry     rule A: behavioural    rule B: separate `l`   this rule
+                  host / container       host / container       host / container
+        junction  d+children / o  BAD    l / l          ok      o / o
+        symlink   d+children / o  BAD    l / l          ok      o / o
+        FIFO      f / o           BAD    l / o          BAD     o / o
+        socket    f / o           BAD    l / o          BAD     o / o
 
-    The container receives a junction as a symlink to `/mnt/host/...`, which
-    does not exist there, so it is neither a directory nor a file. Classifying
-    by behaviour therefore made ANY workspace containing a junction fail Docker
-    startup — including a junction pointing INSIDE the workspace, which is an
-    entirely ordinary thing for a Unity project to contain. That is the exact
-    failure this guard exists to prevent, produced by the guard itself.
+    Rule B failed because Windows cannot tell those objects apart AT ALL:
+    Docker Desktop stores a symlink, a FIFO and a socket alike as reparse
+    points (tags 0x80000024 and 0x80000023 for the last two), and Node's
+    `Dirent.isSymbolicLink()` collapses every tag into "link". So the host says
+    "link" to all of them while the container says "link, pipe, socket" — the
+    host is not withholding the distinction, it does not have it.
 
-    With `l` on both sides the same tree measured equal on both sides, the
-    outside file stayed out, and no `realpath` call is needed at all: nothing
-    is ever descended into, so nothing can escape the mount by construction.
+    The audit's proposed repair was to map FIFO and socket to `l` on this side
+    to match the Windows view. That would have repaired Windows and broken
+    Linux: on a Linux host Node sees a FIFO as neither link nor directory nor
+    file and answers `o`, so this side answering `l` would be a NEW mismatch.
+    Merging into `o` is symmetric and holds on both host platforms.
+
+    Nothing is lost for identity. A link, a pipe and a socket are equally
+    "not a tree I descend into", and their names still count at level 1, so
+    creating or deleting one still moves the digest. Link TARGETS are absent on
+    purpose: the same junction is spelled `C:\\...` on the host and resolves to
+    an unreachable `/mnt/host/c/...` in the container, so hashing targets would
+    guarantee the mismatch this check exists to prevent.
+
+    Measured after the merge, across 10 entry shapes including FIFO, socket,
+    dangling link, hardlink and a trailing-space name: zero divergence.
     """
+    # Asked BEFORE `is_dir()`, which follows links by default and would answer
+    # `d` for a link to a directory — and then it would be descended into.
     if is_link(entry):
-        return "l"
+        return "o"
     if entry.is_dir():
         return "d"
     if entry.is_file():
@@ -145,9 +159,9 @@ def fingerprint_lines(root: str) -> list:
     for entry in top:
         entry_kind = kind(entry)
         lines.append(f"{entry.name}\t{entry_kind}")
-        # `l` is excluded here as much as `f` and `o` are: a link is never
-        # followed, so nothing outside the mount can be reached and no
-        # `realpath` is needed to prove it. An earlier version resolved every
+        # Only a plain directory is descended into, so a link cannot be
+        # followed and nothing outside the mount is reachable — no `realpath`
+        # is needed to prove it. An earlier version resolved every
         # candidate and compared it against the resolved root; that machinery
         # existed only because links were classified as directories, and it
         # brought a bug of its own — a workspace at a filesystem root kept its

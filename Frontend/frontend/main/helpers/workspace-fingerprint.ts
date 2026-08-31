@@ -52,24 +52,31 @@ const FP_SLASH = Buffer.from('/')
 const FP_PATH_SEP = Buffer.from(path.sep)
 
 /**
- * `l` link, `d` directory, `f` file, `o` other. Mirrors `kind` in
+ * `d` plain directory, `f` plain file, `o` anything else. Mirrors `kind` in
  * Backend/app/workspace_fingerprint.py, which carries the full reasoning.
  *
- * A link is `l` whatever it points at, and is never followed. The target is
- * deliberately not in the fingerprint: the same junction is spelled `C:\...`
- * here and arrives inside the container as an unreachable `/mnt/host/c/...`,
- * so hashing targets would guarantee the mismatch this check exists to avoid.
+ * THE RULE: the fingerprint encodes only distinctions BOTH SIDES CAN MAKE.
+ * Anything that is not a plain directory or a plain file collapses into `o`,
+ * and `o` is never descended into.
  *
- * The previous version classified by behaviour, following the link and
- * answering `d`. Measured 31 Aug 2026 against a real container over a real
- * bind mount: the container sees a junction as a dangling symlink, so it
- * answered `o` while this side answered `d` and enumerated the children. Any
- * workspace containing a junction — including one pointing at its OWN
- * subdirectory — therefore failed Docker startup, which is precisely the
- * failure the guard exists to prevent.
+ * A separate `l` kind was tried and measured against a real container on 31 Aug
+ * 2026. It agreed for symlinks and junctions and FAILED for a FIFO and a Unix
+ * socket: this side answered `l` for both while the container answered `o`, so
+ * a workspace containing either was refused. The cause is that Windows cannot
+ * tell those objects apart at all — Docker Desktop stores symlinks, FIFOs and
+ * sockets alike as reparse points, and `Dirent.isSymbolicLink()` collapses
+ * every reparse tag into "link". Merging into `o` is the symmetric answer and
+ * holds on a Linux host too, where a FIFO reaches `o` through the fallback
+ * below rather than through the link check.
+ *
+ * Link TARGETS are absent on purpose: the same junction is spelled `C:\...`
+ * here and arrives in the container as an unreachable `/mnt/host/c/...`, so
+ * hashing targets would guarantee the mismatch this check exists to prevent.
  */
 export function direntKind(dir: Buffer, entry: fs.Dirent<Buffer>): string {
-  if (entry.isSymbolicLink()) return 'l'
+  // Asked FIRST. `isDirectory()` on a dirent does not follow, but the fallback
+  // below would, and a link answering `d` is a link that gets descended into.
+  if (entry.isSymbolicLink()) return 'o'
   if (entry.isDirectory()) return 'd'
   if (entry.isFile()) return 'f'
   // A dirent can come back UNKNOWN on filesystems that do not fill d_type,
@@ -77,17 +84,16 @@ export function direntKind(dir: Buffer, entry: fs.Dirent<Buffer>): string {
   // sides would classify the same entry differently for a correct tree.
   const full = Buffer.concat([dir, FP_PATH_SEP, entry.name])
   try {
-    // `lstat`, NOT `stat`: the answer has to be able to come back `l`. A
-    // `stat` here follows the link and reports the target's type, so an
-    // UNKNOWN dirent that is really a link would be recorded as a directory
-    // and then descended into — the same defect this file just removed,
+    // `lstat`, NOT `stat`: `stat` follows the link and reports the TARGET's
+    // type, so an UNKNOWN dirent that is really a link to a directory would be
+    // recorded as `d` and then descended into — the defect this file removed,
     // surviving in the one branch nobody looks at.
     const st = fs.lstatSync(full)
-    if (st.isSymbolicLink()) return 'l'
+    if (st.isSymbolicLink()) return 'o'
     if (st.isDirectory()) return 'd'
     if (st.isFile()) return 'f'
   } catch {
-    // Unreadable; 'o' on both sides is the answer Python reaches too.
+    // Unreadable; `o` is the answer the container reaches for it too.
   }
   return 'o'
 }
@@ -108,9 +114,9 @@ export function fingerprintLines(root: string): Buffer[] {
     // The skip list is ASCII, so a lossy decode cannot invent a match here; the
     // bytes that would decode differently are not in the set either way.
     if (kind !== 'd' || FINGERPRINT_NO_DESCEND.has(entry.name.toString('utf8'))) continue
-    // `l` is excluded by this gate as much as `f` and `o` are: a link is never
-    // followed, so nothing outside the mount is reachable and no `realpath` is
-    // needed to prove it. An earlier version resolved every candidate against
+    // Only a plain directory is descended into, so a link cannot be followed
+    // and nothing outside the mount is reachable — no `realpath` is needed to
+    // prove it. An earlier version resolved every candidate against
     // the resolved root; that machinery existed only because links counted as
     // directories, and it carried a defect of its own — a workspace at a
     // filesystem root keeps its trailing separator here and does not in the
