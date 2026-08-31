@@ -56,6 +56,27 @@ export const TEXT_FILE_EXTENSIONS = [
 ]
 
 /**
+ * Extension whitelist for the 3D model read channel.
+ *
+ * Whitelist, not blacklist: a model channel that could also hand back `.env` or
+ * `.pem` is an exfiltration surface even when the file sits inside the
+ * workspace, so the model gate names what it accepts instead of what it refuses.
+ * Renderer keeps a mirror of this list (`MODEL_EXTENSIONS`); a test asserts the
+ * two stay set-equal.
+ */
+export const MODEL_FILE_EXTENSIONS = [
+  '.fbx', '.glb', '.gltf', '.dae', '.obj', '.stl', '.ply',
+]
+
+/**
+ * The model channel's own size cap, independent of the 8 MiB text cap.
+ *
+ * The bytes cross IPC as an ArrayBuffer, which is *copied* into the renderer
+ * heap; an unbounded read therefore inflates both Electron processes at once.
+ */
+export const MODEL_MAX_BYTES = 64 * 1024 * 1024
+
+/**
  * Yazma/okuma izni sadece workspace içindeki Assets/Scripts/*.cs dosyalarına verilir.
  * Path traversal, symlink ve dışarı çıkış girişimlerini engeller.
  */
@@ -146,8 +167,25 @@ export function alternatifVeriAkisiMi(
   return surucusuz.includes(':')
 }
 
+/**
+ * Which kind of read the gate is deciding on.
+ * The gates are identical; only the extension whitelist differs.
+ */
+export type OkumaTuru = 'metin' | 'model'
+
+/**
+ * Why the gate refused. `unsupported` is the extension whitelist alone; the
+ * path-level gates (containment, ADS, hardlink) get their own code so a caller
+ * can tell "wrong file type" apart from "this file is out of bounds".
+ */
+export type RedSebebi = 'unsupported' | 'denied'
+
 /** Okuma kapısının kararı ve o kararın DAYANDIĞI çözülmüş yol. */
-export type OkumaKarari = { izinli: boolean; cozulmusYol: string }
+export type OkumaKarari = {
+  izinli: boolean
+  cozulmusYol: string
+  sebep?: RedSebebi
+}
 
 /**
  * Okuma kapısının tek karar noktası: yolu BİR KEZ çözer, kararı o çözülmüş yol
@@ -165,8 +203,13 @@ export type OkumaKarari = { izinli: boolean; cozulmusYol: string }
  * doğrulaması (`background.ts`) — o yola değil inode'a bakıyor, dolayısıyla
  * açıştan sonra yapılan bir takas kararı geriye dönük bozamıyor.
  */
-export function okumaKarariVer(filePath: string, workspacePath: string): OkumaKarari {
-  const reddet = (yol: string): OkumaKarari => ({ izinli: false, cozulmusYol: yol })
+export function okumaKarariVer(
+  filePath: string,
+  workspacePath: string,
+  tur: OkumaTuru = 'metin',
+): OkumaKarari {
+  const reddet = (yol: string, sebep: RedSebebi = 'denied'): OkumaKarari =>
+    ({ izinli: false, cozulmusYol: yol, sebep })
   try {
     if (!filePath || !workspacePath) return reddet('')
 
@@ -206,10 +249,14 @@ export function okumaKarariVer(filePath: string, workspacePath: string): OkumaKa
       /* yol henüz yok ya da okunamıyor — kararı fd üzerindeki kontrol verecek */
     }
 
-    return {
-      izinli: TEXT_FILE_EXTENSIONS.includes(path.extname(cozulmus).toLowerCase()),
-      cozulmusYol: cozulmus,
+    // Only the whitelist differs between the two read kinds; every gate above
+    // this line is shared, so the two decisions cannot drift apart.
+    const beyazListe = tur === 'model' ? MODEL_FILE_EXTENSIONS : TEXT_FILE_EXTENSIONS
+    if (!beyazListe.includes(path.extname(cozulmus).toLowerCase())) {
+      return reddet(cozulmus, 'unsupported')
     }
+
+    return { izinli: true, cozulmusYol: cozulmus }
   } catch {
     return reddet('')
   }
@@ -260,6 +307,65 @@ export function taniticiKapsamdaMi(
     return kimlik.ino === acilanStat.ino && kimlik.dev === acilanStat.dev
   } catch {
     return false
+  }
+}
+
+export type ModelOkumaSonucu =
+  | { path: string; name: string; data: ArrayBuffer }
+  | { error: 'unsupported' | 'too-large' | 'denied' }
+
+/**
+ * The model read, gate chain included, from one open file descriptor.
+ *
+ * ⚠️ Deliberately NOT inlined in `background.ts`: the main process is not loaded
+ * under the test runner, so anything left there cannot be exercised — a lesson
+ * this repo has already paid for twice (see `taniticiKapsamdaMi`). The handler
+ * keeps the sender-trust and workspace-trust guards and delegates the rest here.
+ *
+ * The fd is opened ONCE and every later question (size, hardlink, containment,
+ * the read itself) is asked of that descriptor. Reopening by path after a check
+ * would reintroduce the measured check/use race.
+ */
+export function readModelFileFromWorkspace(
+  fullPath: string,
+  workspacePath: string,
+): ModelOkumaSonucu {
+  const karar = okumaKarariVer(fullPath, workspacePath, 'model')
+  if (!karar.izinli) return { error: karar.sebep ?? 'denied' }
+
+  let fd: number | null = null
+  try {
+    fd = fs.openSync(karar.cozulmusYol, 'r')
+    const st = fs.fstatSync(fd)
+    if (!st.isFile()) return { error: 'denied' }
+    if (st.size > MODEL_MAX_BYTES) return { error: 'too-large' }
+    // Rechecked on the fd: catches a second name created between the gate and
+    // the open.
+    if (st.nlink > 1) return { error: 'denied' }
+    if (!taniticiKapsamdaMi(st, karar.cozulmusYol, workspacePath)) {
+      return { error: 'denied' }
+    }
+
+    // Read EXACTLY the size the cap was checked against, not "until EOF":
+    // `readFileSync(fd)` would follow a file that grew after `fstatSync` and so
+    // hand back more bytes than `MODEL_MAX_BYTES` allows. Reading into an
+    // ArrayBuffer of our own also keeps Buffer's shared pool out of the payload.
+    const data = new ArrayBuffer(st.size)
+    const view = new Uint8Array(data)
+    let okunan = 0
+    while (okunan < st.size) {
+      const n = fs.readSync(fd, view, okunan, st.size - okunan, okunan)
+      if (n <= 0) break
+      okunan += n
+    }
+    if (okunan !== st.size) return { error: 'denied' }
+    // `fullPath` is returned rather than the resolved path, for the same reason
+    // the text handler does it: the file tree addresses files by this name.
+    return { path: fullPath, name: path.basename(fullPath), data }
+  } catch {
+    return { error: 'denied' }
+  } finally {
+    if (fd !== null) { try { fs.closeSync(fd) } catch { /* close failure does not invalidate the read */ } }
   }
 }
 
