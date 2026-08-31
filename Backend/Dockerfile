@@ -38,9 +38,22 @@ ENV DB_PATH=/data/unity_master_v3.db
 # write, it writes onto the developer's own checkout; running as uid 0 there is
 # a blast radius nobody chose. The uid is overridable from Compose because a
 # bind mount on Linux needs the container user to match the host owner.
-RUN useradd --create-home --uid 1000 app \
+#
+# ⚠️ The writable dirs are group-writable and owned by GID 0, not chowned to a
+# single uid. Compose replaces the process credentials with the host's uid,
+# and the first version only chowned to 1000: on any Linux account whose uid is
+# not 1000 — which docs/building.md instructs everyone to configure — the
+# process could not write its own HOME, `write_local_app_token` failed, and
+# `REQUIRE_LOCAL_APP_TOKEN=1` turned that into a fatal startup error. So the
+# advertised Linux setup could not start at all. Caught by the verification
+# round of the 31 Aug 2026 audit; root group ownership plus g+w is the standard
+# arbitrary-uid pattern and works for every uid without weakening file modes to
+# world-writable.
+ENV HOME=/home/app
+RUN useradd --create-home --uid 1000 --gid 0 app \
     && mkdir -p /data /workspace \
-    && chown -R app:app /app /data /workspace
+    && chown -R app:0 /app /data /workspace /home/app \
+    && chmod -R g+rwX /app /data /workspace /home/app
 USER app
 
 # The mounted source is read-only, and a read-only tree makes bytecode writes

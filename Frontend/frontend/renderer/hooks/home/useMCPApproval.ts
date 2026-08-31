@@ -22,6 +22,7 @@ import { useEffect, useRef, useCallback, useState } from 'react';
 import axios from 'axios';
 import { PendingFile } from '../../components/home/FileCreationApproval';
 import { cevir } from '../../lib/i18n';
+import { backendWorkspacePath } from '../../lib/backendWorkspacePath';
 
 /**
  * Ekranda karar bekleyen MCP isteği. Kartı çizen taraf gate kimliğini ve
@@ -398,6 +399,10 @@ export const useMCPApproval = ({
     }
   }, [API, dismissActive, showToast, setPendingGenFiles, setPendingDelete, setPendingCommand, setPendingFix]);
 
+  // Zamanlayicinin cagirdigi guncel `poll`. Bkz. asagidaki etkinin gerekcesi.
+  const pollFnRef = useRef(poll);
+  pollFnRef.current = poll;
+
   /**
    * Yoklamayı başlat/durdur. Koşulsuz açmanın maliyeti ÖLÇÜLDÜ (2026-07-29): rota
    * katmanında `/mcp-pending` çağrı başına **0,174 ms** (2000 çağrı / 0,347 sn,
@@ -419,12 +424,19 @@ export const useMCPApproval = ({
     // İlk yoklama beklemeden: hook mount olmadan önce açılmış bir gate varsa
     // (köprü ürün penceresinden bağımsız çalışıyor) kart bir tam saniye geç
     // gelirdi. Açık kart kontrolü tekrar işlemeyi zaten engelliyor.
-    void poll();
-    pollingRef.current = setInterval(poll, POLL_INTERVAL_MS);
+    // Zamanlayıcı `poll`un KİMLİĞİNE bağlı değil, bir ref üzerinden çağırıyor.
+    // `poll`un bağımlılıkları çağıran taraftan geliyor (`showToast`,
+    // `setPending*`) ve çoğu her render'da yeniden üretiliyor; bu etki `poll`a
+    // bağlıyken her render aralığı yıkıp yeniden kuruyor ve ARADA fazladan bir
+    // yoklama atıyordu. Ölçüldü 31 Ağu 2026: hook'a küçük bir durum eklemek
+    // `/mcp-pending` çağrı sayısını 1'den 2'ye çıkardı.
+    const tick = () => { void pollFnRef.current(); };
+    tick();
+    pollingRef.current = setInterval(tick, POLL_INTERVAL_MS);
     return () => {
       if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null; }
     };
-  }, [API, enabled, poll]);
+  }, [API, enabled]);
 
   /**
    * Karar verildikten (ya da kart kapatıldıktan) sonra çağrılır: kartı kaldırır
@@ -452,12 +464,34 @@ export const useMCPApproval = ({
 
   // `poll` dışarı da veriliyor: polling'in kendisi zamanlayıcıya bağlı, ama
   // "gate kimliği kartla birlikte taşınıyor mu" sorusu zamanlayıcıdan bağımsız
+  // Urunde acik olan klasorun BACKEND'in gordugu hali. Normal yolda
+  // `workspacePath`in aynisi; Docker modunda mount yolu. null = backend bu
+  // klasoru adresleyemiyor, o zaman karsilastirilacak bir sey de yok.
+  //
+  // State, ref DEGIL. Once ref denendi (fazladan render dogurmasin diye) ve
+  // TEST YAKALADI: kart geldiginde ref henuz doldurulmamis olabiliyor, yani
+  // karsilastirma bir render boyunca eski degerle yapiliyordu. Fazladan render
+  // sorunu asil yerinden cozuldu — yoklama etkisi artik `poll`un kimligine
+  // bagli degil.
+  const [backendFacingWorkspace, setBackendFacingWorkspace] = useState<string | null>(null);
+  useEffect(() => {
+    let iptal = false;
+    if (!workspacePath) { setBackendFacingWorkspace(null); return; }
+    backendWorkspacePath(workspacePath).then(v => { if (!iptal) setBackendFacingWorkspace(v); });
+    return () => { iptal = true; };
+  }, [workspacePath]);
+
   // bir DOĞRULUK sorusu ve deterministik ölçülebilmeli.
   return {
     poll,
     activeGate,
     /** Gate'in workspace'i üründe açık olandan farklı mı (bilinmiyorsa false). */
-    gateWorkspaceMismatch: workspaceMismatch(activeGate?.workspacePath, workspacePath),
+    // Karsilastirma BACKEND ad alaninda yapilir. Gate'in tasidigi deger
+    // backend'in kendi yolu (Docker'da `/workspace`); `workspacePath` ise
+    // bilerek ana makinenin yolu. Ikisini ham karsilastirmak Docker modunda
+    // HER onay kartinda kirmizi uyusmazlik bandi cikariyordu, yani gercek bir
+    // capraz-proje istegi ayirt edilemez hale geliyordu (denetim, 31 Agu 2026).
+    gateWorkspaceMismatch: workspaceMismatch(activeGate?.workspacePath, backendFacingWorkspace),
     openWorkspacePath: workspacePath,
     resolveActiveGate,
   };

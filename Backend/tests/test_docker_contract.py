@@ -35,27 +35,35 @@ def _read(*parts: str) -> str:
         return fh.read()
 
 
-# `#` for the Dockerfile, `//` for TypeScript. Both are anchored to
-# start-of-line-or-whitespace so a URL scheme survives: `http://host` has no
-# space before the slashes, `  // dead code` does. Without the `//` half a
-# mutation that merely COMMENTED OUT the startup token check left this suite
-# green — measured 31 Aug 2026, and it is the very class the audit flagged.
-_COMMENT_RE = re.compile(r"(^|\s)(#|//).*$")
+# Two strippers, because the two languages disagree about what a comment is.
+#
+# Dockerfile: `#` opens a comment ONLY at the start of a line. Mid-line it is an
+# ordinary character — `ENV HOST=0.0.0.0 #x` sets HOST to `0.0.0.0 #x`, it does
+# not set it to `0.0.0.0`. A stripper that removed mid-line `#` therefore
+# INVENTED a passing value out of a broken one (audit, 31 Aug 2026).
+#
+# TypeScript: `//` opens a comment anywhere, but a URL scheme has to survive, so
+# the match is anchored to start-of-line-or-whitespace: `http://host` has no
+# space before the slashes, `  // dead code` does. Without this half, merely
+# commenting out the startup token check left the whole suite green.
+_TS_COMMENT_RE = re.compile(r"(^|\s)//.*$")
+_DOCKERFILE_COMMENT_RE = re.compile(r"^\s*#")
 
 
-def _strip_line_comments(text: str) -> str:
-    """Drop comments so a promise written in prose cannot satisfy a test.
-
-    Deliberately naive about comment markers inside quotes: no line these tests
-    read needs one, and a cleverer parser here would be untested code guarding
-    tested code.
-    """
+def _strip_ts_comments(text: str) -> str:
+    """Drop `//` comments so a promise written in prose cannot satisfy a test."""
     out = []
     for line in text.splitlines():
-        stripped = _COMMENT_RE.sub("", line)
+        stripped = _TS_COMMENT_RE.sub("", line)
         if stripped.strip():
             out.append(stripped)
     return "\n".join(out)
+
+
+def _strip_dockerfile_comments(text: str) -> str:
+    """Drop whole-line `#` comments, and only those — see above."""
+    return "\n".join(l for l in text.splitlines()
+                     if l.strip() and not _DOCKERFILE_COMMENT_RE.match(l))
 
 
 def _compose_env() -> dict:
@@ -86,12 +94,12 @@ def resolved() -> dict:
 
 @pytest.fixture(scope="module")
 def dockerfile_effective() -> str:
-    return _strip_line_comments(_read("Backend", "Dockerfile"))
+    return _strip_dockerfile_comments(_read("Backend", "Dockerfile"))
 
 
 @pytest.fixture(scope="module")
 def electron_main() -> str:
-    return _strip_line_comments(_read("Frontend", "frontend", "main", "background.ts"))
+    return _strip_ts_comments(_read("Frontend", "frontend", "main", "background.ts"))
 
 
 # ── the credential, which is what was actually broken ────────────────────────
@@ -143,8 +151,13 @@ def test_the_backend_source_is_mounted_so_a_host_edit_is_what_runs(resolved):
     vols = {v.get("target"): v for v in resolved.get("volumes") or []}
     assert "/app" in vols, "backend source not mounted; the container runs a build snapshot"
     assert vols["/app"].get("read_only") is True, "the source mount must be read-only"
-    assert resolved["environment"].get("UVICORN_RELOAD"), \
-        "a mounted source without reload still does not reach the running process"
+    # Truthiness is the WRONG oracle here: `"0"` is a non-empty string, so it
+    # satisfied `assert env.get(...)` while `main.py` reads it as reload OFF —
+    # host edits stop reaching the process and the test stays green. Compare
+    # against the set main.py actually accepts (audit, 31 Aug 2026).
+    reload_flag = str(resolved["environment"].get("UVICORN_RELOAD", "")).lower()
+    assert reload_flag in {"1", "true", "yes", "on"}, \
+        f"UVICORN_RELOAD={reload_flag!r} is not a value main.py treats as enabled"
 
 
 def test_the_unity_address_is_not_the_container_own_localhost(resolved):
@@ -157,8 +170,13 @@ def test_the_unity_address_is_not_the_container_own_localhost(resolved):
 
 
 def test_the_service_does_not_run_as_root(resolved):
+    # Docker accepts names as well as numbers, so a prefix check on "0:" let
+    # `root:root` through — which Docker runs as uid 0 (audit, 31 Aug 2026).
+    # Both halves are checked, and the uid half against names too.
     user = str(resolved.get("user") or "")
-    assert user and not user.startswith("0:") and user != "0", \
+    assert user, "no user set; the image's default would apply"
+    uid = user.split(":", 1)[0].strip()
+    assert uid not in ("0", "root"), \
         f"backend runs as root over a bind mount of the developer's tree: {user!r}"
 
 
@@ -178,7 +196,10 @@ def test_the_final_stage_python_matches_what_the_project_targets(dockerfile_effe
 def test_the_effective_bind_host_reaches_beyond_loopback(dockerfile_effective, resolved):
     """Last `ENV HOST=` wins in the image, and Compose can override it after
     that — so both layers are checked, not just the first line in the file."""
-    envs = re.findall(r"^ENV\s+HOST=(\S+)", dockerfile_effective, re.M)
+    # Satir SONUNA kadar: `(\S+)` yalniz ilk parcayi aliyordu, yani satira
+    # eklenen her sey gorunmez kaliyordu ve mutasyon yesil geciyordu (olculdu
+    # 31 Agu 2026, bu testin kendi mutasyon turunda).
+    envs = re.findall(r"^ENV\s+HOST=(.+?)\s*$", dockerfile_effective, re.M)
     assert envs, "the image never sets HOST; the app defaults to 127.0.0.1"
     assert envs[-1] == "0.0.0.0", f"last HOST in the image is {envs[-1]!r}"
     override = resolved["environment"].get("HOST")
@@ -218,19 +239,60 @@ def test_startup_proves_the_backend_holds_the_same_token(electron_main):
     """`/health` is unauthenticated, so reaching it says nothing about WHICH
     secret the backend holds. A container left running by `restart:
     unless-stopped` answered it happily and then 401'd every real call."""
-    assert "assertBackendSharesOurToken" in electron_main
-    assert "/health/auth" in electron_main
     dal = re.search(r"if \(useDockerBackend\) \{(.*?)\n  \}", electron_main, re.S)
     assert dal and "assertBackendSharesOurToken" in dal.group(1), \
         "the token check must run on the Docker startup path, not merely exist"
+    # Naming the helper proved nothing about its body: an early return or an
+    # empty function satisfied every assertion while startup verified no
+    # identity at all (audit, 31 Aug 2026). So the body is checked for the three
+    # things that make it a real check — the authenticated endpoint, the token
+    # on the wire, and a throw on rejection.
+    govde = re.search(
+        r"async function assertBackendSharesOurToken\(\)[^{]*\{(.*?)\n\}",
+        electron_main, re.S)
+    assert govde, "assertBackendSharesOurToken not found in its expected shape"
+    b = govde.group(1)
+    assert "/health/auth" in b, "the check must call the authenticated endpoint"
+    assert "localAppToken" in b and "X-Session-Token" in b, \
+        "the check must actually send this process's token"
+    assert "throw" in b, "a rejected token must stop startup, not be logged and ignored"
 
 
-def test_the_mount_point_agrees_with_compose(electron_main):
-    """The one string that has to be identical on both sides of the boundary."""
-    assert re.search(r"DOCKER_WORKSPACE_MOUNT\s*=\s*'/workspace'", electron_main)
+def test_the_mount_point_agrees_with_compose():
+    """The one string that has to be identical on both sides of the boundary.
+
+    Read from the mapping module, which is where the Electron side now gets it
+    — the constant used to be declared inline in `background.ts`."""
+    src = _read("Frontend", "frontend", "main", "helpers", "workspace-mapping.ts")
+    assert re.search(r"DOCKER_WORKSPACE_MOUNT\s*=\s*'/workspace'", _strip_ts_comments(src))
+
+
+def test_the_path_mapping_is_delegated_to_the_tested_module(electron_main):
+    """The mapping logic must NOT live inline in the IPC handlers.
+
+    It did, and the only assertion reachable from here was "the source contains
+    `return ''`" — worthless, as a mutation proved: the handler had two such
+    returns, so breaking one kept this suite green. The behaviour is covered by
+    `Frontend/frontend/__tests__/workspace-mapping.test.ts`, whose assertions
+    were each verified by mutation; this one only pins that the handlers still
+    call into that module rather than growing a second copy of the rules.
+    """
+    for fn in ("toBackendPath", "toHostPath", "hostRootFrom"):
+        assert fn in electron_main, f"{fn} is not used by the Electron main process"
+    assert "workspace-mapping" in electron_main, "the mapping module must be imported"
+    ileri = re.search(r"handleSecure\('backend-workspace-path'.*?\n\}\)",
+                      electron_main, re.S)
+    assert ileri and "toBackendPath(" in ileri.group(0), \
+        "the forward handler must delegate, not reimplement"
+    geri = re.search(r"handleSecure\('host-workspace-path'.*?\n\}\)",
+                     electron_main, re.S)
+    assert geri and "toHostPath(" in geri.group(0), \
+        "the reverse handler must delegate, not reimplement"
 
 
 def test_the_workspace_path_is_translated_before_the_backend_sees_it(electron_main):
     assert "'backend-workspace-path'" in electron_main
     assert "'host-workspace-path'" in electron_main, \
         "without the reverse mapping the stored path cannot be reopened on the host"
+
+

@@ -585,6 +585,53 @@ describe('D3 · ChatPanel\'in erken return\'leri MCP kartını yutmaz', () => {
   })
 })
 
+// ── D0 · Docker modunda ad alanı farkı UYUŞMAZLIK DEĞİLDİR ─────────────────
+describe('D0 · onay kartı karşılaştırması backend ad alanında yapılır', () => {
+  // Gate'in taşıdığı workspace backend'in kendi yolu; Docker modunda bu
+  // `/workspace`. Ürünün açık olduğu klasör ise bilerek ana makinenin yolu.
+  // İkisini ham karşılaştırmak, Docker'da HER kartı kırmızı uyuşmazlık bandıyla
+  // çiziyordu — yani gerçek bir çapraz-proje isteği ayırt edilemez oluyordu
+  // (denetim doğrulama turu, 31 Ağu 2026).
+  const ipcKur = (esleme: Record<string, string>) => {
+    ipcYedekle()
+    ;(window as any).ipc = {
+      invoke: vi.fn(async (kanal: string, arg: string) =>
+        kanal === 'backend-workspace-path' ? (esleme[arg] ?? arg) : arg),
+    }
+  }
+
+  let oncekiIpc: any
+  const ipcYedekle = () => { oncekiIpc = (window as any).ipc }
+  afterEach(() => { (window as any).ipc = oncekiIpc })
+
+  it('eşlenen yol gate ile aynıysa uyuşmazlık YOK', async () => {
+    ipcKur({ '/host/game': '/workspace' })
+    mockedAxios.get.mockResolvedValue({ data: { pending: { g1: {
+      tool: 'manage_scene', params: {}, workspace_path: '/workspace' } } } })
+
+    const { result } = renderHook(() =>
+      useMCPApproval(hookParams({ workspacePath: '/host/game' }) as any))
+    await act(async () => { await new Promise(r => setTimeout(r, 20)) })
+
+    expect(result.current.activeGate?.workspacePath).toBe('/workspace')
+    expect(result.current.gateWorkspaceMismatch).toBe(false)
+  })
+
+  it('gerçekten başka bir proje ise uyuşmazlık HÂLÂ bildirilir — ters yön', async () => {
+    // Kapının hâlâ bir şey koruduğunun kanıtı: yukarıdaki test tek başına,
+    // uyuşmazlığı tamamen kapatan bir değişiklikle de geçerdi.
+    ipcKur({ '/host/game': '/workspace' })
+    mockedAxios.get.mockResolvedValue({ data: { pending: { g2: {
+      tool: 'manage_scene', params: {}, workspace_path: '/baska/proje' } } } })
+
+    const { result } = renderHook(() =>
+      useMCPApproval(hookParams({ workspacePath: '/host/game' }) as any))
+    await act(async () => { await new Promise(r => setTimeout(r, 20)) })
+
+    expect(result.current.gateWorkspaceMismatch).toBe(true)
+  })
+})
+
 // ── D1 · polling sağlayıcıdan ve loading'den bağımsız ───────────────────────
 describe('D1 · kart yoklaması sağlayıcıdan ve sohbet durumundan bağımsızdır', () => {
   it('sohbet BOŞTAYKEN de yoklama yapar', async () => {

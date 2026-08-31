@@ -3,6 +3,7 @@ import axios from 'axios';
 import { AIConfig, AvailableModels, ProviderReady, UserData } from '../../components/home/types';
 import { apiHataMesaji } from '../../lib/apiError';
 import { cevir } from '../../lib/i18n';
+import { backendWorkspacePath } from '../../lib/backendWorkspacePath';
 
 /**
  * Backend'in `GET /mcp/unity/status` sözleşmesi (`unity_mcp_manager.get_status`).
@@ -207,7 +208,12 @@ export const useAIConfig = (API: string, user: UserData | null, showToast: (msg:
     const nesil = ++fetchNesilRef.current;
     const guncelMi = () => nesil === fetchNesilRef.current && mountedRef.current;
     try {
-      await axios.post(`${API}/mcp/unity/toggle`, { enabled: turningOn, workspace_path: workspacePath || null });
+      // Backend'in ADRESLEYEBILECEGI yol gonderilir. Docker modunda bu
+      // konteynerdeki mount; ana makinenin yolu orada yok ve kurulum
+      // `Packages/manifest.json`'i o yola gore cozuyor (denetim, 31 Agu 2026:
+      // iki `/save-workspace` cagrisi cevrildi ama bu ucuncusu atlanmisti).
+      const mcpWorkspace = workspacePath ? await backendWorkspacePath(workspacePath) : null;
+      await axios.post(`${API}/mcp/unity/toggle`, { enabled: turningOn, workspace_path: mcpWorkspace });
       if (!guncelMi()) return;
       if (turningOn) {
         setUnityMcpStatus('starting');

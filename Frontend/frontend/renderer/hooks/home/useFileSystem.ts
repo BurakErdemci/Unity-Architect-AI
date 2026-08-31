@@ -123,12 +123,20 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
     setExpandedDirs(new Set());
     setDirContents({});
     if (user?.sessionToken && API) {
-      try {
-        await axios.post(`${API}/save-workspace`,
-          { user_id: user.id, path: await backendWorkspacePath(path) },
-          { headers: { 'X-Session-Token': user.sessionToken } }
-        );
-      } catch (err) { console.error("Workspace kaydetme hatası:", err); }
+      const backendPath = await backendWorkspacePath(path);
+      // null = Docker modu bu klasörü backend'e ADLANDIRAMIYOR (mount dışında).
+      // Eski yolu göndermek, düzenleyicinin bir projede, ajanların başka bir
+      // projede çalışması demekti — ikisi de başarılı görünerek.
+      if (backendPath === null) {
+        showToast(cevir('workspace.outsideDockerMount'), 'warning');
+      } else {
+        try {
+          await axios.post(`${API}/save-workspace`,
+            { user_id: user.id, path: backendPath },
+            { headers: { 'X-Session-Token': user.sessionToken } }
+          );
+        } catch (err) { console.error("Workspace kaydetme hatası:", err); }
+      }
     }
   }, [API, user]);
 

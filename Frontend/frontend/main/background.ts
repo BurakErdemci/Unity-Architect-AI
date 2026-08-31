@@ -23,12 +23,15 @@ import {
 } from './helpers/ipc-trust'
 import { applyContentSecurityPolicy } from './helpers/csp'
 import * as pty from 'node-pty'
+import {
+  DOCKER_WORKSPACE_MOUNT,
+  hostRootFrom,
+  toBackendPath,
+  toHostPath,
+} from './helpers/workspace-mapping'
 
 const useDockerBackend = process.env.USE_DOCKER_BACKEND === 'true'
 
-// Where docker-compose.yml mounts the workspace inside the container. The two
-// must agree; `test_docker_contract.py` asserts they do.
-const DOCKER_WORKSPACE_MOUNT = '/workspace'
 
 // A fresh token per launch is the whole point: it is never written to disk and
 // it dies with the process. That stays true for the normal path, where the
@@ -629,8 +632,11 @@ handleSecure('app-token-get', () => localAppToken)
 // So the two consumers are told apart explicitly. Electron's own file tree keeps
 // the host path, because Electron reads the disk directly. Anything the BACKEND
 // will resolve goes through here.
-handleSecure('backend-workspace-path', (_event, hostPath: unknown) =>
-  useDockerBackend ? DOCKER_WORKSPACE_MOUNT : String(hostPath ?? ''))
+handleSecure('backend-workspace-path', (_event, hostPath: unknown) => {
+  const p = String(hostPath ?? '')
+  if (!useDockerBackend) return p
+  return toBackendPath(p, hostRootFrom(process.env.GAMACHINE_WORKSPACE))
+})
 
 // The reverse, and it is not optional: the backend stores what it was given, so
 // in Docker mode "last workspace" comes back as `/workspace` — a path that does
@@ -638,12 +644,8 @@ handleSecure('backend-workspace-path', (_event, hostPath: unknown) =>
 // and quietly drop the user's last project every launch.
 handleSecure('host-workspace-path', (_event, backendPath: unknown) => {
   const p = String(backendPath ?? '')
-  if (!useDockerBackend || p !== DOCKER_WORKSPACE_MOUNT) return p
-  // Compose mounts exactly this variable, so it is the only correct answer.
-  // Empty means the user started Compose with the default `.`, and the host
-  // side of that default is not knowable from here — better to return nothing
-  // than a guess that opens the wrong folder.
-  return process.env.GAMACHINE_WORKSPACE || ''
+  if (!useDockerBackend) return p
+  return toHostPath(p, hostRootFrom(process.env.GAMACHINE_WORKSPACE))
 })
 handleSecure('get-backend-base-url', () => getBackendBaseUrl())
 

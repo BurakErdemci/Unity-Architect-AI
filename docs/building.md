@@ -89,10 +89,13 @@ container.
 ```bash
 # One token, shared by both sides — see below for why this is the whole trick.
 export LOCAL_APP_TOKEN=$(python -c "import uuid; print(uuid.uuid4())")
-# Required, with no default: the project the agent will work on.
-export GAMACHINE_WORKSPACE=/path/to/your/unity/project
-# Linux only: match your own uid so the container can write the bind mount.
-export GAMACHINE_UID=$(id -u) GAMACHINE_GID=$(id -g)
+# Required, with no default, and it MUST be absolute: the project the agent
+# will work on. A relative path resolves against the Compose project directory
+# for Compose and against Frontend/frontend for Electron — the same string then
+# names two different folders, so the app refuses it rather than guess.
+export GAMACHINE_WORKSPACE=/absolute/path/to/your/unity/project
+# Linux only: run as your own uid so the container can write the bind mount.
+export GAMACHINE_UID=$(id -u)
 
 docker compose up --build            # first build installs every wheel: minutes
 
@@ -150,6 +153,7 @@ with the process.
 |---|---|---|
 | Cloud API providers (Gemini, Anthropic, OpenAI, DeepSeek…) | ✅ | plain HTTP, nothing local needed |
 | File tools | ✅ | the app translates the selected folder to `/workspace` before the backend sees it; the backend can reach that tree and nothing else |
+| Picking a folder **outside** `GAMACHINE_WORKSPACE` | ❌ | Docker mounts exactly one tree, so the backend has no name for anything else. The app says so and does not save it — it will not let the editor work in one project while the agents work in another |
 | Editing backend code | ✅ | source is mounted read-only with autoreload |
 | Subscription CLIs (Claude Code, Codex, Cursor, Copilot, Kimi, agy) | ❌ | installed on your machine and signed in as you; neither the binaries nor the sessions exist in the image |
 | Unity MCP | ⚠️ | the Editor runs on the host, so the container reaches it through `host.docker.internal` (`UNITY_MCP_URL` overrides it) |

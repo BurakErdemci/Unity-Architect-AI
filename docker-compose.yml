@@ -16,7 +16,12 @@ services:
     # Match the host owner of the bind mounts on Linux, or the non-root user in
     # the image cannot write the workspace. Docker Desktop mediates ownership
     # itself, so the default is fine there.
-    user: "${GAMACHINE_UID:-1000}:${GAMACHINE_GID:-1000}"
+    #
+    # The GID defaults to 0 on purpose: the image's writable directories are
+    # owned by root group and group-writable, which is what lets an ARBITRARY
+    # uid run. Overriding the GID to something else takes that away — only do it
+    # when the host files really need that group.
+    user: "${GAMACHINE_UID:-1000}:${GAMACHINE_GID:-0}"
     volumes:
       - backend-data:/data
       # The Unity project the agent works on. Without this the container has no
