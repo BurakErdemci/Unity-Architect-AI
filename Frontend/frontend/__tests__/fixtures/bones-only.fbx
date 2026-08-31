@@ -1,0 +1,75 @@
+; Hand-written ASCII FBX 7.4 test fixture: two bones and a 1-second clip, with
+; NO geometry anywhere — the shape Mixamo's "without skin" export has, and the
+; shape a bought animation pack is made of. Its bounding box is empty, so it is
+; what pins the skeleton path; see the test that loads it.
+FBXHeaderExtension:  {
+	FBXHeaderVersion: 1003
+	FBXVersion: 7400
+}
+GlobalSettings:  {
+	Version: 1000
+	Properties70:  {
+		P: "UpAxis", "int", "Integer", "",1
+		P: "UpAxisSign", "int", "Integer", "",1
+		P: "FrontAxis", "int", "Integer", "",2
+		P: "FrontAxisSign", "int", "Integer", "",1
+		P: "CoordAxis", "int", "Integer", "",0
+		P: "CoordAxisSign", "int", "Integer", "",1
+		P: "UnitScaleFactor", "double", "Number", "",1
+	}
+}
+Definitions:  {
+	Version: 100
+	Count: 6
+}
+Objects:  {
+	Model: 2000, "Model::Hips", "LimbNode" {
+		Version: 232
+		Properties70:  {
+			P: "Lcl Translation", "Lcl Translation", "", "A",0,0,0
+		}
+		Shading: T
+		Culling: "CullingOff"
+	}
+	Model: 2001, "Model::Spine", "LimbNode" {
+		Version: 232
+		Properties70:  {
+			P: "Lcl Translation", "Lcl Translation", "", "A",0,10,0
+		}
+		Shading: T
+		Culling: "CullingOff"
+	}
+	AnimationStack: 3000, "AnimStack::Take 001", "" {
+		Properties70:  {
+			P: "LocalStop", "KTime", "Time", "",46186158000
+		}
+	}
+	AnimationLayer: 3100, "AnimLayer::BaseLayer", "" {
+	}
+	AnimationCurveNode: 3200, "AnimCurveNode::T", "" {
+		Properties70:  {
+			P: "d|X", "Number", "", "A",0
+			P: "d|Y", "Number", "", "A",10
+			P: "d|Z", "Number", "", "A",0
+		}
+	}
+	AnimationCurve: 3300, "AnimCurve::", "" {
+		Default: 10
+		KeyVer: 4009
+		KeyTime: *2 {
+			a: 0,46186158000
+		}
+		KeyValueFloat: *2 {
+			a: 10,14
+		}
+	}
+}
+Connections:  {
+	C: "OO",2000,0
+	C: "OO",2001,2000
+	C: "OO",3000,0
+	C: "OO",3100,3000
+	C: "OO",3200,3100
+	C: "OP",3200,2001, "Lcl Translation"
+	C: "OP",3300,3200, "d|Y"
+}

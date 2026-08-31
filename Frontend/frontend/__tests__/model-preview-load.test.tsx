@@ -138,6 +138,16 @@ describe('ModelPreviewPanel load', () => {
     await waitFor(() => expect(screen.getByText(cevir('preview.emptyModel'))).toBeTruthy())
   })
 
+  it('does not call an animation-only file empty', async () => {
+    // Bones and clips, no mesh: Mixamo's "without skin" export, and the bulk of
+    // a bought animation pack. It used to hit the empty-file message.
+    invoke.mockResolvedValue({ path: 'x', name: 'run.fbx', data: bytes('bones-only.fbx') })
+    draw('run.fbx')
+    await waitFor(() => expect(screen.queryByText(cevir('preview.loading'))).toBeNull())
+    expect(screen.queryByText(cevir('preview.emptyModel'))).toBeNull()
+    expect(screen.queryByText(LOAD_ERROR)).toBeNull()
+  })
+
   it('re-reads when the previewed file changes', async () => {
     invoke.mockResolvedValue({ path: 'x', name: 'hero.fbx', data: fbxBytes() })
     const view = draw()

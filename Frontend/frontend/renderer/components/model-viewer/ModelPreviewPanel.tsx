@@ -6,6 +6,7 @@ import { Loader2 } from 'lucide-react';
 import { useLang, type TKey } from '../../lib/i18n';
 import { extensionOf, routeForFile } from './extensions';
 import {
+  boneBounds,
   disposeObject,
   ModelParseError,
   parseModel,
@@ -159,6 +160,30 @@ const clearContent = (stage: Stage): void => {
   stage.grid.position.set(0, 0, 0);
 };
 
+export interface ViewableBounds {
+  /** What the camera and grid are sized against. */
+  box: THREE.Box3;
+  /** The file's shape is its rig alone, so the bones need drawing themselves. */
+  skeleton: boolean;
+}
+
+/**
+ * What there is to look at in a parsed file, or null when the answer is
+ * nothing. Split from mounting because the panel must be able to reach the
+ * "nothing visible" message with no stage to mount onto — under jsdom there
+ * never is one, and that is where the message is pinned.
+ *
+ * @param box the object's drawable bounds, which the caller already measured.
+ */
+export const viewableBounds = (
+  parsed: ParsedModel,
+  box: THREE.Box3,
+): ViewableBounds | null => {
+  if (!box.isEmpty()) return { box, skeleton: false };
+  const bones = boneBounds(parsed.object);
+  return bones ? { box: bones, skeleton: true } : null;
+};
+
 /**
  * Everything that happens once a file has parsed: hang it on the stage, frame
  * it, re-aim the orbit rig, and start the clip if the file has a playable one.
@@ -171,10 +196,21 @@ const clearContent = (stage: Stage): void => {
 export const mountParsedModel = (
   stage: MountTarget,
   parsed: ParsedModel,
-  box: THREE.Box3,
+  bounds: ViewableBounds,
 ): number => {
   stage.content.add(parsed.object);
-  reseatControls(stage.controls, frameObject(stage.camera, stage.grid, box));
+  if (bounds.skeleton) {
+    const helper = new THREE.SkeletonHelper(parsed.object);
+    // The helper rewrites its line vertices from the bones' world matrices in
+    // its own updateMatrixWorld, which the renderer calls while walking the
+    // graph in child order — so it must be added AFTER the rig it reads, and
+    // every render (playing or a paused seek) then draws the current pose.
+    // Its bounding sphere is computed once from those vertices and never
+    // invalidated again, so a clip that travels would cull itself away.
+    helper.frustumCulled = false;
+    stage.content.add(helper);
+  }
+  reseatControls(stage.controls, frameObject(stage.camera, stage.grid, bounds.box));
 
   const clip = playableClip(parsed.clips);
   if (!clip) {
@@ -423,12 +459,12 @@ export const ModelPreviewPanel: React.FC<ModelPreviewPanelProps> = ({ file, work
       }
       if (cancelled) { disposeObject(parsed.object); return; }
 
-      // An empty bounding box means the file parsed and carries no drawable
-      // vertex — a materials-only .dae, an .obj of nothing but comments. Framing
-      // it is impossible, so without this the panel is an empty dark rectangle
-      // that looks exactly like a load that never finished.
-      const box = new THREE.Box3().setFromObject(parsed.object);
-      if (box.isEmpty()) {
+      // Nothing to draw and no rig either — a materials-only .dae, an .obj of
+      // nothing but comments. Framing it is impossible, so without this the
+      // panel is an empty dark rectangle that looks exactly like a load that
+      // never finished.
+      const bounds = viewableBounds(parsed, new THREE.Box3().setFromObject(parsed.object));
+      if (!bounds) {
         disposeObject(parsed.object);
         fail('preview.emptyModel');
         return;
@@ -437,7 +473,7 @@ export const ModelPreviewPanel: React.FC<ModelPreviewPanelProps> = ({ file, work
       const stage = stageRef.current;
       if (!stage) { disposeObject(parsed.object); setLoading(false); return; }
 
-      const clipDuration = mountParsedModel(stage, parsed, box);
+      const clipDuration = mountParsedModel(stage, parsed, bounds);
       if (clipDuration > 0) {
         setDuration(clipDuration);
         setPlaying(true);

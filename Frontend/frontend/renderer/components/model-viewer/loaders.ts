@@ -302,6 +302,32 @@ export const playableClip = (clips: THREE.AnimationClip[]): THREE.AnimationClip 
 };
 
 /**
+ * Bounds of the bone hierarchy under `object`, or null when it has no bones.
+ *
+ * This is what makes an animation-only FBX viewable — Mixamo's "without skin"
+ * export, and the bulk of a bought clip pack: bones and clips, not one vertex.
+ * Such a file's `Box3.setFromObject` is EMPTY (measured, three 0.185.1: the box
+ * grows from geometry attributes, and a Bone has none), so the panel had nothing
+ * to frame and showed its "nothing visible" state on the format the preview is
+ * most often pointed at.
+ *
+ * Bone world POSITIONS are therefore the measurement, which needs the matrices
+ * current — the caller may hand us an object straight out of a loader.
+ */
+export const boneBounds = (object: THREE.Object3D): THREE.Box3 | null => {
+  object.updateMatrixWorld(true);
+  const box = new THREE.Box3();
+  const at = new THREE.Vector3();
+  let found = false;
+  object.traverse(child => {
+    if ((child as THREE.Bone).isBone !== true) return;
+    found = true;
+    box.expandByPoint(at.setFromMatrixPosition(child.matrixWorld));
+  });
+  return found ? box : null;
+};
+
+/**
  * Release every GPU-backed resource under `object`. The usage pattern this
  * exists for is clicking through a folder of 200 models: without it each one
  * leaves its buffers and textures live for the rest of the session.
