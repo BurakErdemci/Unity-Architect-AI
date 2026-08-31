@@ -110,10 +110,27 @@ describe('toHostPath — geri çeviri', () => {
     expect(toHostPath(`${DOCKER_WORKSPACE_MOUNT}/../other`, KOK)).toBe('')
   })
 
-  it('".." içeren yol kökün KARDEŞİNE kaçamaz (ters bölü varyantı)', () => {
-    // Sonek ana-makineye özgü `path.join`'e gidiyor; Windows'ta ters bölü de
-    // aynı kaçışı açar.
-    expect(toHostPath(`${DOCKER_WORKSPACE_MOUNT}/..\\other`, KOK)).toBe('')
+  it('ters bölülü sonek: Windows\'ta kaçış, POSIX\'te sıradan bir dosya adı', () => {
+    // Sonek ana-makineye özgü `path.join`'e gidiyor, ve ters bölünün ne
+    // olduğu PLATFORMA bağlı. Bu iddia bir sure kosulsuz yaziliydi ve CI'nin
+    // ilk kosusunda Linux'ta kirmizi verdi (31 Agu 2026) — testin kendi yorumu
+    // "Windows'ta" dedigi halde iddia her yerde ayni seyi bekliyordu.
+    //
+    // Iki davranis da DOGRU, ve ikisi de urunun degil platformun karari:
+    //   Windows : `..\other` bir ayirici tasiyor, `path.join` `..`yi cozuyor,
+    //             sonuc kokun KARDESI olur -> kapsama denetimi reddediyor.
+    //   POSIX   : `..\other` tek bir GECERLI dosya adi. Reddetmek, mesru bir
+    //             dosyayi reddetmek olurdu; dogru cevap onu koke baglamak.
+    const cevap = toHostPath(`${DOCKER_WORKSPACE_MOUNT}/..\\other`, KOK)
+    if (process.platform === 'win32') {
+      expect(cevap).toBe('')
+    } else {
+      // Bos DEGIL, ve kokun icinde kaliyor — yani "reddetmedi" ile
+      // "yanlis yere goturdu" ayirt ediliyor.
+      expect(cevap).not.toBe('')
+      expect(cevap.startsWith(`${KOK}/`)).toBe(true)
+      expect(cevap).toBe(`${KOK}/..\\other`)
+    }
   })
 })
 
