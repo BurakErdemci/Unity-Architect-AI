@@ -173,12 +173,18 @@ class TestBaglanti(unittest.TestCase):
 
     def test_a_403_download_produces_the_refusal_message_end_to_end(self):
         orig = ve._run
+        orig_missing = ve.missing_binaries
 
         def fake_run(cmd, timeout, check=True):
             raise subprocess.CalledProcessError(
                 1, cmd, stderr=b"ERROR: unable to download video data: HTTP Error 403: Forbidden")
 
         ve._run = fake_run
+        # `extract` refuses before it ever downloads when yt-dlp/ffmpeg are absent,
+        # so on a bare CI runner this test measured the binary gate instead of the
+        # 403 path and reported `video_binary_missing` (measured 31 Aug 2026).
+        ve.missing_binaries = lambda need_ytdlp: []
+        self.addCleanup(lambda: setattr(ve, "missing_binaries", orig_missing))
         self.addCleanup(lambda: setattr(ve, "_run", orig))
         with self.assertRaises(ve.VideoPipelineError) as ctx:
             ve.extract({"kind": "url", "url": "https://www.youtube.com/shorts/abc"}, ".", "tag")

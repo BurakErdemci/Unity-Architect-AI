@@ -59,13 +59,20 @@ def test_the_vendor_dir_sits_under_backend():
     assert "/Backend/vendor/bin/" in yol
 
 
+# `missing_binaries` derives the filename from `os.name`, so a fixture hardcoding
+# `.exe` measures nothing off Windows: on the Linux CI runner the probe looked for
+# a bare `yt-dlp`, missed the file this test had just written, and went red for a
+# reason that had nothing to do with the claim (measured 31 Aug 2026).
+YTDLP_EXE = "yt-dlp.exe" if os.name == "nt" else "yt-dlp"
+
+
 def test_a_binary_in_the_vendor_dir_is_found_without_touching_PATH(tmp_path):
     """Asıl iddia: PATH boş olsa bile vendor'daki ikili bulunuyor."""
-    sahte = tmp_path / "yt-dlp.exe"
+    sahte = tmp_path / YTDLP_EXE
     sahte.write_bytes(b"x")
     with mock.patch.object(video_bin, "_candidate_dirs", lambda: [str(tmp_path)]), \
          mock.patch.object(video_bin.shutil, "which", lambda _n: None):
-        assert video_bin._find("yt-dlp", "yt-dlp.exe") == str(sahte)
+        assert video_bin._find("yt-dlp", YTDLP_EXE) == str(sahte)
         assert video_bin.missing_binaries(need_ytdlp=True) == ["ffmpeg"]
 
 
