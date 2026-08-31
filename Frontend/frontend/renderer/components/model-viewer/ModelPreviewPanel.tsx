@@ -40,13 +40,21 @@ export const ModelPreviewPanel: React.FC<ModelPreviewPanelProps> = ({ file }) =>
     key.position.set(4, 6, 3);
     scene.add(key);
 
-    renderer.setPixelRatio(window.devicePixelRatio || 1);
     host.appendChild(renderer.domElement);
 
     const resize = () => {
       const w = host.clientWidth || 1;
       const h = host.clientHeight || 1;
-      renderer.setSize(w, h, false);
+      // Re-read on every resize rather than once at mount: dragging the window
+      // to a display with different scaling changes the ratio while the CSS
+      // size stays put, and a stale ratio renders at the wrong resolution.
+      renderer.setPixelRatio(window.devicePixelRatio || 1);
+      // setSize must be left to update the canvas style (updateStyle defaults
+      // true). With updateStyle:false the canvas keeps its device-pixel
+      // dimensions as its LAYOUT size, so at any ratio above 1 — Retina,
+      // Windows at 125% — it is drawn 25-100% too large and the parent's
+      // overflow-hidden clips it.
+      renderer.setSize(w, h);
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
       renderer.render(scene, camera);
@@ -58,8 +66,23 @@ export const ModelPreviewPanel: React.FC<ModelPreviewPanelProps> = ({ file }) =>
     const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(resize) : null;
     observer?.observe(host);
 
+    // A pixel-ratio change on its own moves no element, so the observer never
+    // fires; this query is what notices a move between differently scaled
+    // monitors. It matches only the ratio in force at setup, so it has to be
+    // rebuilt after each change.
+    let dprQuery: MediaQueryList | null = null;
+    const onRatioChange = () => { resize(); watchRatio(); };
+    const watchRatio = () => {
+      if (typeof window.matchMedia !== 'function') return;
+      dprQuery?.removeEventListener('change', onRatioChange);
+      dprQuery = window.matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+      dprQuery.addEventListener('change', onRatioChange);
+    };
+    watchRatio();
+
     return () => {
       observer?.disconnect();
+      dprQuery?.removeEventListener('change', onRatioChange);
       grid.geometry.dispose();
       (Array.isArray(grid.material) ? grid.material : [grid.material]).forEach(m => m.dispose());
       scene.clear();
