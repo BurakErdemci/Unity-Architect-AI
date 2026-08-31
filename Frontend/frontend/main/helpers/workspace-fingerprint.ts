@@ -90,6 +90,59 @@ export function direntKind(dir: Buffer, entry: fs.Dirent<Buffer>): string {
   return 'o'
 }
 
+/**
+ * Does `full` resolve to something still under `rootReal`?
+ *
+ * This is the descent rule, and it is phrased in terms of the RESOLVED TARGET
+ * rather than link-ness on purpose. Measured 31 Aug 2026, on one Windows
+ * directory junction, with the two shipped runtimes:
+ *
+ *     Node   isSymbolicLink() -> true
+ *     Python is_symlink()     -> False
+ *
+ * So the two sides do not agree on what a link IS, and any rule of the form
+ * "if it is a link, do not descend" makes them walk different trees and report
+ * a mismatch for a correct setup — the very failure this guard exists to
+ * prevent, reintroduced by its own fix. The earlier `l` kind died of the same
+ * cause. Containment is the one question both runtimes answered identically in
+ * that measurement (in-root junction: inside on both; out-of-root junction:
+ * outside on both), because both resolve reparse points and both canonicalise
+ * case, so the rule is built on containment.
+ *
+ * What this buys (AUDIT R6-01): once `direntKind` began following links, a
+ * top-level junction pointing out of the workspace was classified `d` and then
+ * descended into, so files outside the mount entered a fingerprint whose whole
+ * claim is to describe the workspace, with unbounded breadth — a link to a
+ * large external tree was enumerated on every Docker start.
+ *
+ * Boundary, stated rather than pretended: for a link whose target leaves the
+ * mount the two sides are NOT guaranteed to agree, because the container may
+ * see that same path as an ordinary directory through Docker Desktop's
+ * translation layer and descend. That case could not be measured (no daemon
+ * was reachable on 31 Aug 2026), so it is documented as outside the guarantee
+ * rather than claimed either way. Its failure mode is a loud mismatch at
+ * startup, not a wrong tree accepted in silence.
+ *
+ * Kept in bytes like everything else here, and `realpath` is asked only for
+ * level-1 directories we are about to descend into — a handful per project,
+ * not once per entry.
+ */
+function staysInside(rootReal: Buffer, full: Buffer): boolean {
+  let target: Buffer
+  try {
+    target = fs.realpathSync.native(full, 'buffer') as Buffer
+  } catch {
+    // Unresolvable: contributes no children, the same as a directory we cannot
+    // list below.
+    return false
+  }
+  if (target.equals(rootReal)) return true
+  const sepAt = rootReal.length
+  return target.length > sepAt + FP_PATH_SEP.length
+    && target.subarray(0, sepAt).equals(rootReal)
+    && target.subarray(sepAt, sepAt + FP_PATH_SEP.length).equals(FP_PATH_SEP)
+}
+
 /** `<relpath>\t<kind>` lines for a root's children and its children's children. */
 export function fingerprintLines(root: string): Buffer[] {
   const lines: Buffer[] = []
@@ -100,6 +153,15 @@ export function fingerprintLines(root: string): Buffer[] {
   } catch {
     return lines
   }
+  // Without a resolved root there is nothing to be inside of, so no descent is
+  // possible; the level-1 listing is still meaningful. Mirrors `root_real =
+  // None` in Backend/app/workspace_fingerprint.py.
+  let rootReal: Buffer | null = null
+  try {
+    rootReal = fs.realpathSync.native(rootBuf, 'buffer') as Buffer
+  } catch {
+    rootReal = null
+  }
   for (const entry of top) {
     const kind = direntKind(rootBuf, entry)
     lines.push(Buffer.concat([entry.name, FP_TAB, Buffer.from(kind)]))
@@ -107,6 +169,7 @@ export function fingerprintLines(root: string): Buffer[] {
     // bytes that would decode differently are not in the set either way.
     if (kind !== 'd' || FINGERPRINT_NO_DESCEND.has(entry.name.toString('utf8'))) continue
     const childDir = Buffer.concat([rootBuf, FP_PATH_SEP, entry.name])
+    if (rootReal === null || !staysInside(rootReal, childDir)) continue
     let children: fs.Dirent<Buffer>[]
     try {
       children = fs.readdirSync(childDir, { withFileTypes: true, encoding: 'buffer' })

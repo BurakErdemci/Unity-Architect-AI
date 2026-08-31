@@ -527,8 +527,13 @@ def test_both_sides_keep_filename_bytes_instead_of_decoding_them():
         "Electron decodes filenames to UTF-16; undecodable bytes become U+FFFD"
     assert "Buffer.compare" in src, "the Electron sort is not byte order"
 
+    # Read from the module that actually holds the walk. It moved out of
+    # `routes/auth_routes.py` on 31 Aug 2026 so this file's Python could be run
+    # without FastAPI; pointed at the old path, this assertion went red, which
+    # is the behaviour a source-text oracle is supposed to have when its
+    # subject moves — silence here would have meant it was measuring nothing.
     backend = open(
-        os.path.join(_ROOT, "Backend", "app", "routes", "auth_routes.py"),
+        os.path.join(_ROOT, "Backend", "app", "workspace_fingerprint.py"),
         encoding="utf-8",
     ).read()
     assert backend.count('"surrogateescape"') >= 2, \

@@ -27,32 +27,72 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import { execFileSync } from 'child_process'
-import { hostWorkspaceFingerprint } from '../main/helpers/workspace-fingerprint'
+import { hostWorkspaceFingerprint, fingerprintLines } from '../main/helpers/workspace-fingerprint'
 
 const REPO = path.resolve(__dirname, '..', '..', '..')
 const BACKEND = path.join(REPO, 'Backend')
 
-/** The interpreter that owns the backend's dependencies, or '' if absent. */
+/**
+ * ANY working Python 3, or '' if there is none.
+ *
+ * It used to accept only `Backend/venv/...`, and that made the whole suite
+ * disappear from the gate: the frontend CI job installs Node and nothing else,
+ * so `describe.skip` was selected, six cases reported "skipped", and `vitest`
+ * stayed green (AUDIT R6-02, 31 Aug 2026). A parity test that does not run in
+ * CI is not a gate.
+ *
+ * The venv is no longer needed. `Backend/app/workspace_fingerprint.py` imports
+ * the standard library and nothing else — it was split out of
+ * `routes/auth_routes.py`, which drags in FastAPI, precisely so a bare
+ * interpreter can run it. So a PATH `python3` is enough, and CI has one.
+ *
+ * Candidates are probed by RUNNING them rather than by `existsSync`: on Windows
+ * a bare `python` is often an App Execution Alias that exists as a file and
+ * exits without an interpreter.
+ */
 function pythonBul(): string {
   const adaylar = [
     path.join(BACKEND, 'venv', 'Scripts', 'python.exe'),
     path.join(BACKEND, 'venv', 'bin', 'python3'),
+    'python3',
+    'python',
   ]
-  for (const c of adaylar) if (fs.existsSync(c)) return c
+  for (const c of adaylar) {
+    try {
+      const v = execFileSync(c, ['-c', 'import sys; print(sys.version_info[0])'],
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
+      if (v.trim() === '3') return c
+    } catch {
+      // Absent, or not an interpreter. Try the next one.
+    }
+  }
   return ''
 }
 
 const PY = pythonBul()
 
+// In CI an absent interpreter is a BROKEN GATE, not an unmeasurable
+// environment: the workflow installs Python on purpose, so if it is missing
+// something regressed in the workflow and skipping would hide exactly that.
+// Locally, skipping stays the right answer — a contributor without Python
+// should not see a red suite for a tool they were never asked to install.
+if (!PY && process.env.CI) {
+  throw new Error(
+    'No Python 3 found, but CI is set. This suite is the only thing that runs ' +
+    'both fingerprint implementations, so a missing interpreter disables the ' +
+    'check rather than passing it. Restore the Python setup step in the ' +
+    'frontend job of .github/workflows/test.yml.')
+}
+
 /** Runs the SHIPPED backend implementation over `root`. */
 function pythonParmakIzi(root: string): { entries: number; fingerprint: string } {
   const kod = [
-    'import sys, json, hashlib, os',
+    'import sys, json, os',
     'sys.path.insert(0, os.path.join(os.getcwd(), "app"))',
-    'from routes.auth_routes import _fingerprint_lines, _fingerprint_digest',
+    'from workspace_fingerprint import fingerprint_lines, fingerprint_digest',
     'root = sys.argv[1]',
-    'lines = _fingerprint_lines(root)',
-    'print(json.dumps({"entries": len(lines), "fingerprint": _fingerprint_digest(lines)}))',
+    'lines = fingerprint_lines(root)',
+    'print(json.dumps({"entries": len(lines), "fingerprint": fingerprint_digest(lines)}))',
   ].join('\n')
   const out = execFileSync(PY, ['-c', kod, root], {
     cwd: BACKEND,
@@ -60,6 +100,35 @@ function pythonParmakIzi(root: string): { entries: number; fingerprint: string }
     env: { ...process.env, PYTHONUTF8: '1' },
   })
   return JSON.parse(out.trim().split('\n').pop() as string)
+}
+
+/**
+ * The backend's `<relpath>\t<kind>` lines, not just their digest.
+ *
+ * Comparing digests alone cannot see WHAT was walked, and that is how the
+ * previous link case passed while the property it named was false: both sides
+ * followed the junction, so both digests moved together and the assertion was
+ * happy (AUDIT R6-01). The line list is what makes "did anything outside the
+ * root get in" answerable.
+ */
+function pythonSatirlar(root: string): string[] {
+  const kod = [
+    'import sys, json, os',
+    'sys.path.insert(0, os.path.join(os.getcwd(), "app"))',
+    'from workspace_fingerprint import fingerprint_lines',
+    'print(json.dumps(fingerprint_lines(sys.argv[1])))',
+  ].join('\n')
+  const out = execFileSync(PY, ['-c', kod, root], {
+    cwd: BACKEND,
+    encoding: 'utf8',
+    env: { ...process.env, PYTHONUTF8: '1' },
+  })
+  return JSON.parse(out.trim().split('\n').pop() as string)
+}
+
+/** The same lines from the Electron side, decoded for comparison. */
+function tsSatirlar(root: string): string[] {
+  return fingerprintLines(root).map((b) => b.toString('utf8'))
 }
 
 let kok = ''
@@ -149,16 +218,61 @@ varsaCalis('iki uygulama ayni agac icin ayni parmak izini uretir', () => {
     expect(tsA.fingerprint).not.toBe(tsB.fingerprint)
   }, SURE)
 
-  it('sembolik bag icerigi degil KENDISI siniflandiriliyor', () => {
-    // Iki taraf da bagi takip etmeden 'l' demeli. Biri takip ederse bir tarafta
-    // 'd', digerinde 'l' cikar ve dogru agac reddedilir.
-    const d = agac('bag')
-    fs.mkdirSync(path.join(d, 'gercek'), { recursive: true })
+  // ── baglantilar ────────────────────────────────────────────────────────────
+  //
+  // Bu iki vakanin oncesi, "bagin KENDISI siniflandiriliyor" baslikli ve iki
+  // tarafin da bagi TAKIP ettigi hâlde yesil kalan tek bir vakaydi: yalniz iki
+  // ozet karsilastiriliyordu, ikisi birlikte kaydigi icin fark gorunmuyordu
+  // (AUDIT R6-01). Artik uretilen SATIRLAR karsilastiriliyor.
+  //
+  // Kural baglantilik uzerinden degil, cozumlenmis hedefin kok icinde kalmasi
+  // uzerinden yazili. Sebebi olculdu (31 Agu 2026, tek bir Windows junction'i):
+  // Node isSymbolicLink() -> true, Python is_symlink() -> False. Yani iki taraf
+  // "bag nedir" sorusunda anlasmiyor; "hedef kok icinde mi" sorusunda tastamam
+  // anlasiyor. Bu yuzden "bagsa inme" kurali ana makinenin KENDI icinde ayrisir.
+
+  const junctionKur = (hedef: string, ad: string): boolean => {
     try {
-      fs.symlinkSync(path.join(d, 'gercek'), path.join(d, 'bag'), 'junction')
+      fs.symlinkSync(hedef, ad, 'junction')
+      return true
     } catch {
-      return   // ayricalik yoksa bu vaka olculemez; sessiz gecmek yerine cikiyoruz
+      return false   // ayricalik yok; vaka olculemiyor
     }
-    expect(hostWorkspaceFingerprint(d)).toEqual(pythonParmakIzi(d))
+  }
+
+  it('kok ICINE bakan bag: iki taraf da ayni satirlari uretiyor ve iceri iniyor', () => {
+    const d = agac('bag-ic')
+    fs.mkdirSync(path.join(d, 'gercek'), { recursive: true })
+    fs.writeFileSync(path.join(d, 'gercek', 'a.txt'), 'x')
+    if (!junctionKur(path.join(d, 'gercek'), path.join(d, 'bag'))) return
+
+    const ts = tsSatirlar(d)
+    expect(ts).toEqual(pythonSatirlar(d))
+    // Tur davranisa gore 'd' — olculmus kirilmayi duzelten sey buydu ('l' bir
+    // tarafta cikip digerinde cikmiyordu).
+    expect(ts).toContain('bag\td')
+    // Hedef kokun icinde, dolayisiyla ININIYOR: icerik zaten calisma alaninin
+    // parcasi ve iki taraf da ayni seyi goruyor.
+    expect(ts).toContain('bag/a.txt\tf')
+  }, SURE)
+
+  it('kok DISINA bakan bag: listeleniyor ama icine INILMIYOR', () => {
+    // R6-01'in ta kendisi. `direntKind` baglari takip etmeye baslayinca bu
+    // junction 'd' olarak siniflandi ve icine INILDI, yani mount DISINDAKI
+    // dosyalar, tek iddiasi calisma alanini tarif etmek olan bir parmak izine
+    // girdi — ustelik genisligi sinirsizdi.
+    const d = agac('bag-dis')
+    const disari = agac('bag-dis-hedef')
+    fs.mkdirSync(d, { recursive: true })
+    fs.mkdirSync(disari, { recursive: true })
+    fs.writeFileSync(path.join(disari, 'sentinel.txt'), 'x')
+    if (!junctionKur(disari, path.join(d, 'kacis'))) return
+
+    const ts = tsSatirlar(d)
+    expect(ts).toEqual(pythonSatirlar(d))
+    expect(ts).toContain('kacis\td')
+    // Asil iddia: disaridaki hicbir sey iceri girmiyor.
+    expect(ts).not.toContain('kacis/sentinel.txt\tf')
+    expect(ts.filter((l) => l.startsWith('kacis/'))).toEqual([])
   }, SURE)
 })

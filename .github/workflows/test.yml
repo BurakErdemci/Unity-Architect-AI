@@ -174,6 +174,21 @@ jobs:
         working-directory: Frontend/frontend
         run: npm ci --ignore-scripts
 
+      # `__tests__/workspace-fingerprint-parity.test.ts` is the ONLY thing that
+      # runs both `gamachine-ws-fp-1` implementations, and it needs a Python to
+      # run the backend one. Without this step it selected `describe.skip`, its
+      # six cases reported "skipped", and `vitest` stayed green — a gate that
+      # measured nothing (AUDIT R6-02, 31 Aug 2026). The test now fails outright
+      # when `CI` is set and no interpreter is found, so deleting this step
+      # turns the suite red instead of quietly disarming it.
+      #
+      # No dependencies are installed and no venv is built: the module it
+      # imports (`Backend/app/workspace_fingerprint.py`) is standard library
+      # only, which is why it was split out of the FastAPI route file.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
       - name: TypeScript (tsc --noEmit)
         working-directory: Frontend/frontend
         run: npx tsc --noEmit
