@@ -1,5 +1,5 @@
 /**
- * The `gamachine-ws-fp-1` workspace fingerprint, host side.
+ * The `gamachine-ws-fp-2` workspace fingerprint, host side.
  *
  * Split out of `background.ts` so a test can RUN it. There are two
  * implementations of this algorithm — this one and `fingerprint_lines` in
@@ -41,13 +41,24 @@ export const WORKSPACE_FINGERPRINT_ALGO = 'gamachine-ws-fp-2'
 //
 // Done in bytes because that is what everything here handles. U+F000..U+F07F
 // encodes as EF 80 80 .. EF 81 BF, and the low seven bits of the result live in
-// the last two bytes, so the replacement is always a single byte.
+// the last two bytes, so every measured replacement is a single byte.
+//
+// Keep the measured offsets as an explicit list, not a range. The previous
+// range generalized a concrete measurement and swallowed `/`, manufacturing a
+// path separator from the legal filename character U+F02F.
 function unproject(name: Buffer): Buffer {
   let ilk = -1
   for (let i = 0; i + 2 < name.length; i++) {
     if (name[i] === 0xEF && (name[i + 1] === 0x80 || name[i + 1] === 0x81)) { ilk = i; break }
   }
   if (ilk < 0) return name
+  const projectedOffsets = new Set([
+    0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+    0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
+    0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
+    0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
+    0x22, 0x2A, 0x3A, 0x3C, 0x3E, 0x3F, 0x5C, 0x7C,
+  ])
   const out = Buffer.alloc(name.length)
   let w = 0
   for (let i = 0; i < name.length;) {
@@ -55,7 +66,7 @@ function unproject(name: Buffer): Buffer {
       && (name[i + 1] === 0x80 || name[i + 1] === 0x81)
       && (name[i + 2] & 0xC0) === 0x80) {
       const n = ((name[i + 1] & 0x03) << 6) | (name[i + 2] & 0x3F)
-      if (n >= 0x01 && n <= 0x7F) {
+      if (projectedOffsets.has(n)) {
         out[w++] = n
         i += 3
         continue

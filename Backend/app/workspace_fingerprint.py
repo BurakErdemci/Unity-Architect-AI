@@ -44,18 +44,26 @@ WORKSPACE_FINGERPRINT_ALGO = "gamachine-ws-fp-2"
 # lives by — the host CANNOT tell those two apart, because NTFS stores both as
 # U+F009, so the distinction is not one both sides can make.
 #
-# Capped at 0x7F because that is the whole measured set and it keeps the mapping
-# a single byte on the Electron side, where names are handled as raw buffers.
+# The offsets stay as the explicit measured list, not a range. The previous
+# range generalized a concrete measurement and swallowed `/`, manufacturing a
+# path separator from the legal filename character U+F02F.
 _PROJECTION_BASE = 0xF000
-_PROJECTION_TOP = 0xF07F
+_PROJECTED_OFFSETS = frozenset({
+    0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+    0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
+    0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
+    0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
+    0x22, 0x2A, 0x3A, 0x3C, 0x3E, 0x3F, 0x5C, 0x7C,
+})
 
 
 def unproject(name: str) -> str:
     """Undo Docker Desktop's private-use projection of NTFS-illegal characters."""
-    if not any("\uf001" <= ch <= "\uf07f" for ch in name):
+    if not any(ord(ch) - _PROJECTION_BASE in _PROJECTED_OFFSETS for ch in name):
         return name
     return "".join(
-        chr(ord(ch) - _PROJECTION_BASE) if "\uf001" <= ch <= "\uf07f" else ch
+        chr(ord(ch) - _PROJECTION_BASE)
+        if ord(ch) - _PROJECTION_BASE in _PROJECTED_OFFSETS else ch
         for ch in name
     )
 

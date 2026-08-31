@@ -246,14 +246,31 @@ varsaCalis('iki uygulama ayni agac icin ayni parmak izini uretir', () => {
     fs.writeFileSync(path.join(d, 'x\uf009y'), 'x')   // U+F009 -> sekme
     fs.writeFileSync(path.join(d, 'p\uf03aq'), 'x')   // U+F03A -> iki nokta
     fs.mkdirSync(path.join(d, 'k\uf07cl'))            // U+F07C -> dikey cizgi
+    fs.writeFileSync(path.join(d, '\uf041'), 'x')
 
     const ts = tsSatirlar(d)
     expect(ts).toEqual(pythonSatirlar(d))
     expect(ts).toContain('x\ty\u0000f')
     expect(ts).toContain('p:q\u0000f')
     expect(ts).toContain('k|l\u0000d')
-    // Ozel kullanim karakteri hicbir kayitta kalmamali.
-    expect(ts.join('')).not.toMatch(/[\uf001-\uf07f]/)
+    // A non-member remains private-use data; it must not impersonate ASCII A.
+    expect(ts).toContain('\uf041\u0000f')
+    expect(ts).not.toContain('A\u0000f')
+    expect(ts.join('')).not.toMatch(/[\uf009\uf03a\uf07c]/)
+
+    const flat = agac('projection-flat')
+    fs.mkdirSync(path.join(flat, 'a'), { recursive: true })
+    fs.writeFileSync(path.join(flat, 'a\uf02fb'), 'x')
+    const nested = agac('projection-nested')
+    fs.mkdirSync(path.join(nested, 'a'), { recursive: true })
+    fs.writeFileSync(path.join(nested, 'a', 'b'), 'x')
+
+    const flatTs = hostWorkspaceFingerprint(flat)
+    const nestedTs = hostWorkspaceFingerprint(nested)
+    expect(flatTs).toEqual(pythonParmakIzi(flat))
+    expect(nestedTs).toEqual(pythonParmakIzi(nested))
+    // U+F02F is filename data, so it cannot become the level separator `/`.
+    expect(flatTs.fingerprint).not.toBe(nestedTs.fingerprint)
   }, SURE)
 
   // ── baglantilar ────────────────────────────────────────────────────────────

@@ -175,7 +175,7 @@ jobs:
         run: npm ci --ignore-scripts
 
       # `__tests__/workspace-fingerprint-parity.test.ts` is the ONLY thing that
-      # runs both `gamachine-ws-fp-1` implementations, and it needs a Python to
+      # runs both `gamachine-ws-fp-2` implementations, and it needs a Python to
       # run the backend one. Without this step it selected `describe.skip`, its
       # six cases reported "skipped", and `vitest` stayed green — a gate that
       # measured nothing (AUDIT R6-02, 31 Aug 2026).
