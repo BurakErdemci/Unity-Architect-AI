@@ -71,7 +71,7 @@ interface Framing {
 }
 
 /**
- * Point the camera at `object` from its standing angle, far enough to see all
+ * Point the camera at `box` from its standing angle, far enough to see all
  * of it, and put the grid under its feet at a matching scale. Both are needed
  * together: FBX is routinely authored in centimetres, so a character arrives
  * ~170 units tall and a fixed 10-unit grid would be a speck beneath it.
@@ -79,11 +79,11 @@ interface Framing {
 const frameObject = (
   camera: THREE.PerspectiveCamera,
   grid: THREE.GridHelper,
-  object: THREE.Object3D,
-): Framing | null => {
-  const box = new THREE.Box3().setFromObject(object);
-  if (box.isEmpty()) return null;
-
+  // Handed in rather than measured here: the load path already needs the box to
+  // decide whether the file has anything in it, and walking a rigged mesh's
+  // vertices twice per file is the kind of cost a folder of 200 models notices.
+  box: THREE.Box3,
+): Framing => {
   const size = box.getSize(new THREE.Vector3());
   const center = box.getCenter(new THREE.Vector3());
   const radius = Math.max(size.length() / 2, 1e-4);
@@ -361,7 +361,8 @@ export const ModelPreviewPanel: React.FC<ModelPreviewPanelProps> = ({ file, work
       // vertex — a materials-only .dae, an .obj of nothing but comments. Framing
       // it is impossible, so without this the panel is an empty dark rectangle
       // that looks exactly like a load that never finished.
-      if (new THREE.Box3().setFromObject(parsed.object).isEmpty()) {
+      const box = new THREE.Box3().setFromObject(parsed.object);
+      if (box.isEmpty()) {
         disposeObject(parsed.object);
         fail('preview.emptyModel');
         return;
@@ -371,8 +372,7 @@ export const ModelPreviewPanel: React.FC<ModelPreviewPanelProps> = ({ file, work
       if (!stage) { disposeObject(parsed.object); setLoading(false); return; }
 
       stage.content.add(parsed.object);
-      const framing = frameObject(stage.camera, stage.grid, parsed.object);
-      if (framing) reseatControls(stage.controls, framing);
+      reseatControls(stage.controls, frameObject(stage.camera, stage.grid, box));
 
       const clip = playableClip(parsed.clips);
       if (clip) {
