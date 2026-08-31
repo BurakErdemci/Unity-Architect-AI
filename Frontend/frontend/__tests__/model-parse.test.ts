@@ -23,44 +23,44 @@ const meshes = (root: THREE.Object3D): THREE.Mesh[] => {
 }
 
 describe('parseModel', () => {
-  it('returns the mesh hierarchy of an FBX file', () => {
-    const { object } = parseModel('.fbx', fixture('animated-triangle.fbx'))
+  it('returns the mesh hierarchy of an FBX file', async () => {
+    const { object } = await parseModel('.fbx', fixture('animated-triangle.fbx'))
     const found = meshes(object)
     expect(found).toHaveLength(1)
     expect(found[0].name).toBe('Triangle')
     expect(found[0].geometry.getAttribute('position').count).toBe(3)
   })
 
-  it('returns the file animation clips', () => {
-    const { clips } = parseModel('.fbx', fixture('animated-triangle.fbx'))
+  it('returns the file animation clips', async () => {
+    const { clips } = await parseModel('.fbx', fixture('animated-triangle.fbx'))
     expect(clips.map(c => c.name)).toEqual(['Take 001'])
     expect(clips[0].duration).toBeCloseTo(1, 3)
     expect(clips[0].tracks.length).toBeGreaterThan(0)
   })
 
-  it('substitutes a neutral gray standard material where the file resolved none', () => {
+  it('substitutes a neutral gray standard material where the file resolved none', async () => {
     // The fixture has no Material object, so the loader hands back its own
     // near-white placeholder — which reads as a blown-out surface, not as
     // "untextured", under this scene's lighting.
-    const { object } = parseModel('.fbx', fixture('animated-triangle.fbx'))
+    const { object } = await parseModel('.fbx', fixture('animated-triangle.fbx'))
     const material = meshes(object)[0].material as THREE.MeshStandardMaterial
     expect(material.isMeshStandardMaterial).toBe(true)
     expect(material.color.getHex()).toBe(FALLBACK_MATERIAL_COLOR)
   })
 
-  it('accepts the extension case-insensitively', () => {
-    expect(() => parseModel('.FBX', fixture('animated-triangle.fbx'))).not.toThrow()
+  it('accepts the extension case-insensitively', async () => {
+    await expect(parseModel('.FBX', fixture('animated-triangle.fbx'))).resolves.toBeTruthy()
   })
 
-  it('rejects an extension it has no loader for, naming it', () => {
-    expect(() => parseModel('.glb', new ArrayBuffer(8))).toThrow(/\.glb/)
+  it('rejects an extension it has no loader for, naming it', async () => {
+    await expect(parseModel('.abc', new ArrayBuffer(8))).rejects.toThrow(/\.abc/)
   })
 
-  it('surfaces the parser failure for a file that is not an FBX', () => {
+  it('surfaces the parser failure for a file that is not an FBX', async () => {
     const junk = new TextEncoder().encode('this is a text file, not a model').buffer as ArrayBuffer
     // The message is what the panel prints under its generic error line, so it
     // has to be a real one-liner and not an empty throw.
-    expect(() => parseModel('.fbx', junk)).toThrow(/FBXLoader/)
+    await expect(parseModel('.fbx', junk)).rejects.toThrow(/FBXLoader/)
   })
 })
 
@@ -98,8 +98,8 @@ describe('disposeObject', () => {
     for (const spy of spies) expect(spy).toHaveBeenCalledTimes(1)
   })
 
-  it('frees everything a parsed FBX allocated', () => {
-    const { object } = parseModel('.fbx', fixture('animated-triangle.fbx'))
+  it('frees everything a parsed FBX allocated', async () => {
+    const { object } = await parseModel('.fbx', fixture('animated-triangle.fbx'))
     const mesh = meshes(object)[0]
     const geometrySpy = vi.spyOn(mesh.geometry, 'dispose')
     const materialSpy = vi.spyOn(mesh.material as THREE.Material, 'dispose')

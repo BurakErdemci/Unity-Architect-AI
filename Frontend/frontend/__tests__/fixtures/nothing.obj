@@ -1,0 +1,3 @@
+# An OBJ with no vertices at all. Parses cleanly, draws nothing — the case the
+# panel's "nothing visible" state exists for.
+o Empty
