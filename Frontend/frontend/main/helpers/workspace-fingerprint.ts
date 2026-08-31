@@ -2,8 +2,8 @@
  * The `gamachine-ws-fp-1` workspace fingerprint, host side.
  *
  * Split out of `background.ts` so a test can RUN it. There are two
- * implementations of this algorithm — this one and `_fingerprint_lines` in
- * `Backend/app/routes/auth_routes.py` — and they are compared at Docker startup
+ * implementations of this algorithm — this one and `fingerprint_lines` in
+ * `Backend/app/workspace_fingerprint.py` — and they are compared at Docker startup
  * to refuse a container still serving an older bind mount. If they ever
  * disagree about a tree that is in fact the same, the app refuses a correct
  * setup; if they agree about trees that differ, the guard is worthless.
@@ -29,7 +29,7 @@ export const WORKSPACE_FINGERPRINT_ALGO = 'gamachine-ws-fp-1'
 // this function's caller accepts on digest equality alone. One late-sorting file
 // in a project that exceeds 4096 entries (an ordinary Unity project does, across
 // the root and one descended level) was enough to pass a wrong mount.
-// Mirrors `_NO_DESCEND` in Backend/app/routes/auth_routes.py. Both sides list
+// Mirrors `NO_DESCEND` in Backend/app/workspace_fingerprint.py. Both sides list
 // these directories at level 1 and do not descend: the Editor and the compilers
 // rewrite them continuously, and the two samples are taken milliseconds apart.
 const FINGERPRINT_NO_DESCEND = new Set([
@@ -51,96 +51,45 @@ const FP_NEWLINE = Buffer.from('\n')
 const FP_SLASH = Buffer.from('/')
 const FP_PATH_SEP = Buffer.from(path.sep)
 
+/**
+ * `l` link, `d` directory, `f` file, `o` other. Mirrors `kind` in
+ * Backend/app/workspace_fingerprint.py, which carries the full reasoning.
+ *
+ * A link is `l` whatever it points at, and is never followed. The target is
+ * deliberately not in the fingerprint: the same junction is spelled `C:\...`
+ * here and arrives inside the container as an unreachable `/mnt/host/c/...`,
+ * so hashing targets would guarantee the mismatch this check exists to avoid.
+ *
+ * The previous version classified by behaviour, following the link and
+ * answering `d`. Measured 31 Aug 2026 against a real container over a real
+ * bind mount: the container sees a junction as a dangling symlink, so it
+ * answered `o` while this side answered `d` and enumerated the children. Any
+ * workspace containing a junction — including one pointing at its OWN
+ * subdirectory — therefore failed Docker startup, which is precisely the
+ * failure the guard exists to prevent.
+ */
 export function direntKind(dir: Buffer, entry: fs.Dirent<Buffer>): string {
-  // Link-ness is NOT part of the fingerprint — see `_kind` in
-  // Backend/app/routes/auth_routes.py for the full reasoning. Short version,
-  // measured 31 Aug 2026 by the parity test: `isSymbolicLink()` is true for any
-  // Windows reparse point, so a directory junction read `l` here and `d` on the
-  // Python side, and in production the container sees that same junction as an
-  // ordinary directory through Docker Desktop's translation layer. Encoding it
-  // made the guard refuse a correct setup.
-  const full = Buffer.concat([dir, FP_PATH_SEP, entry.name])
-  if (entry.isSymbolicLink()) {
-    // Follow it, the way `os.DirEntry.is_dir()` does by default.
-    try {
-      const st = fs.statSync(full)
-      if (st.isDirectory()) return 'd'
-      if (st.isFile()) return 'f'
-    } catch {
-      // A broken link resolves to nothing on either side.
-    }
-    return 'o'
-  }
+  if (entry.isSymbolicLink()) return 'l'
   if (entry.isDirectory()) return 'd'
   if (entry.isFile()) return 'f'
-  // A dirent can come back UNKNOWN on filesystems that do not fill d_type, and
-  // Node does not stat to resolve it while Python's os.scandir does. Without
-  // this fallback the two sides would classify the same entry differently and
-  // report a mismatch for the correct tree.
+  // A dirent can come back UNKNOWN on filesystems that do not fill d_type,
+  // while Python's `os.scandir` resolves it. Without this fallback the two
+  // sides would classify the same entry differently for a correct tree.
+  const full = Buffer.concat([dir, FP_PATH_SEP, entry.name])
   try {
-    // `stat`, not `lstat`: same "classify by behaviour" rule as above, and the
-    // same reason. An lstat here could still answer `l`, which is the one
-    // answer the two sides are not allowed to disagree about.
-    const st = fs.statSync(full)
+    // `lstat`, NOT `stat`: the answer has to be able to come back `l`. A
+    // `stat` here follows the link and reports the target's type, so an
+    // UNKNOWN dirent that is really a link would be recorded as a directory
+    // and then descended into — the same defect this file just removed,
+    // surviving in the one branch nobody looks at.
+    const st = fs.lstatSync(full)
+    if (st.isSymbolicLink()) return 'l'
     if (st.isDirectory()) return 'd'
     if (st.isFile()) return 'f'
   } catch {
-    // Unreadable; 'o' on both sides is the same answer Python reaches.
+    // Unreadable; 'o' on both sides is the answer Python reaches too.
   }
   return 'o'
-}
-
-/**
- * Does `full` resolve to something still under `rootReal`?
- *
- * This is the descent rule, and it is phrased in terms of the RESOLVED TARGET
- * rather than link-ness on purpose. Measured 31 Aug 2026, on one Windows
- * directory junction, with the two shipped runtimes:
- *
- *     Node   isSymbolicLink() -> true
- *     Python is_symlink()     -> False
- *
- * So the two sides do not agree on what a link IS, and any rule of the form
- * "if it is a link, do not descend" makes them walk different trees and report
- * a mismatch for a correct setup — the very failure this guard exists to
- * prevent, reintroduced by its own fix. The earlier `l` kind died of the same
- * cause. Containment is the one question both runtimes answered identically in
- * that measurement (in-root junction: inside on both; out-of-root junction:
- * outside on both), because both resolve reparse points and both canonicalise
- * case, so the rule is built on containment.
- *
- * What this buys (AUDIT R6-01): once `direntKind` began following links, a
- * top-level junction pointing out of the workspace was classified `d` and then
- * descended into, so files outside the mount entered a fingerprint whose whole
- * claim is to describe the workspace, with unbounded breadth — a link to a
- * large external tree was enumerated on every Docker start.
- *
- * Boundary, stated rather than pretended: for a link whose target leaves the
- * mount the two sides are NOT guaranteed to agree, because the container may
- * see that same path as an ordinary directory through Docker Desktop's
- * translation layer and descend. That case could not be measured (no daemon
- * was reachable on 31 Aug 2026), so it is documented as outside the guarantee
- * rather than claimed either way. Its failure mode is a loud mismatch at
- * startup, not a wrong tree accepted in silence.
- *
- * Kept in bytes like everything else here, and `realpath` is asked only for
- * level-1 directories we are about to descend into — a handful per project,
- * not once per entry.
- */
-function staysInside(rootReal: Buffer, full: Buffer): boolean {
-  let target: Buffer
-  try {
-    target = fs.realpathSync.native(full, 'buffer') as Buffer
-  } catch {
-    // Unresolvable: contributes no children, the same as a directory we cannot
-    // list below.
-    return false
-  }
-  if (target.equals(rootReal)) return true
-  const sepAt = rootReal.length
-  return target.length > sepAt + FP_PATH_SEP.length
-    && target.subarray(0, sepAt).equals(rootReal)
-    && target.subarray(sepAt, sepAt + FP_PATH_SEP.length).equals(FP_PATH_SEP)
 }
 
 /** `<relpath>\t<kind>` lines for a root's children and its children's children. */
@@ -153,23 +102,21 @@ export function fingerprintLines(root: string): Buffer[] {
   } catch {
     return lines
   }
-  // Without a resolved root there is nothing to be inside of, so no descent is
-  // possible; the level-1 listing is still meaningful. Mirrors `root_real =
-  // None` in Backend/app/workspace_fingerprint.py.
-  let rootReal: Buffer | null = null
-  try {
-    rootReal = fs.realpathSync.native(rootBuf, 'buffer') as Buffer
-  } catch {
-    rootReal = null
-  }
   for (const entry of top) {
     const kind = direntKind(rootBuf, entry)
     lines.push(Buffer.concat([entry.name, FP_TAB, Buffer.from(kind)]))
     // The skip list is ASCII, so a lossy decode cannot invent a match here; the
     // bytes that would decode differently are not in the set either way.
     if (kind !== 'd' || FINGERPRINT_NO_DESCEND.has(entry.name.toString('utf8'))) continue
+    // `l` is excluded by this gate as much as `f` and `o` are: a link is never
+    // followed, so nothing outside the mount is reachable and no `realpath` is
+    // needed to prove it. An earlier version resolved every candidate against
+    // the resolved root; that machinery existed only because links counted as
+    // directories, and it carried a defect of its own — a workspace at a
+    // filesystem root keeps its trailing separator here and does not in the
+    // container, so this side refused every descent while the backend
+    // performed them (AUDIT R7-02). Not following links removes the question.
     const childDir = Buffer.concat([rootBuf, FP_PATH_SEP, entry.name])
-    if (rootReal === null || !staysInside(rootReal, childDir)) continue
     let children: fs.Dirent<Buffer>[]
     try {
       children = fs.readdirSync(childDir, { withFileTypes: true, encoding: 'buffer' })

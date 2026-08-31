@@ -178,9 +178,22 @@ jobs:
       # runs both `gamachine-ws-fp-1` implementations, and it needs a Python to
       # run the backend one. Without this step it selected `describe.skip`, its
       # six cases reported "skipped", and `vitest` stayed green — a gate that
-      # measured nothing (AUDIT R6-02, 31 Aug 2026). The test now fails outright
-      # when `CI` is set and no interpreter is found, so deleting this step
-      # turns the suite red instead of quietly disarming it.
+      # measured nothing (AUDIT R6-02, 31 Aug 2026).
+      #
+      # This step PINS the interpreter to 3.13 so the CI measurement matches
+      # the version the backend targets, instead of silently drifting with
+      # whatever Python the runner image happens to ship. It is NOT the sole
+      # source of Python on the runner, so deleting it does not disarm the
+      # gate: `ubuntu-latest` already ships a `python3` on PATH (the Ubuntu
+      # 24.04 image lists Python 3.12.3), and the parity test's interpreter
+      # search (`pythonBul()`) probes `python3`/`python` from PATH, so the
+      # suite would keep finding an interpreter and stay green, just measured
+      # against a different Python version.
+      # https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2404-Readme.md
+      #
+      # What actually disarms the gate is an environment with no Python at
+      # all — that is why the test throws at module load when `CI` is set,
+      # instead of falling back to `describe.skip`.
       #
       # No dependencies are installed and no venv is built: the module it
       # imports (`Backend/app/workspace_fingerprint.py`) is standard library

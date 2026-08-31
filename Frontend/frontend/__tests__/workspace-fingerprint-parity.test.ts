@@ -231,32 +231,42 @@ varsaCalis('iki uygulama ayni agac icin ayni parmak izini uretir', () => {
   // "bag nedir" sorusunda anlasmiyor; "hedef kok icinde mi" sorusunda tastamam
   // anlasiyor. Bu yuzden "bagsa inme" kurali ana makinenin KENDI icinde ayrisir.
 
-  const junctionKur = (hedef: string, ad: string): boolean => {
+  // Kurulamazsa ATLA, gecme. Onceki hâli `false` donuyordu ve cagiran `return`
+  // ediyordu; bir `it` geri donunce vitest onu GECTI sayiyor, yani iki vaka da
+  // TEK BIR iddia calistirmadan yesil rapor ediliyordu (AUDIT R7-01). Testin
+  // basligi o durumda yanlis bir cumleye donusuyordu — bu serinin en sik
+  // kusuru, ve bu kez onu duzelten testin kendisinde.
+  //
+  // POSIX'te 'junction' turu yok sayilir ve siradan bir symlink kurulur, yani
+  // Ubuntu CI bu vakalari gercekten kosuyor. Atlama yalnizca ayricaligi olmayan
+  // bir Windows makinesinde devreye giriyor.
+  const junctionKur = (ctx: { skip: (not?: string) => void },
+                       hedef: string, ad: string): void => {
     try {
       fs.symlinkSync(hedef, ad, 'junction')
-      return true
-    } catch {
-      return false   // ayricalik yok; vaka olculemiyor
+    } catch (e) {
+      ctx.skip(`baglanti kurulamadi (${(e as NodeJS.ErrnoException).code}); ` +
+        'bu makinede junction/symlink ayricaligi yok')
     }
   }
 
-  it('kok ICINE bakan bag: iki taraf da ayni satirlari uretiyor ve iceri iniyor', () => {
+  it("kok ICINE bakan bag: iki taraf da 'l' diyor ve icine INMIYOR", (ctx) => {
     const d = agac('bag-ic')
     fs.mkdirSync(path.join(d, 'gercek'), { recursive: true })
     fs.writeFileSync(path.join(d, 'gercek', 'a.txt'), 'x')
-    if (!junctionKur(path.join(d, 'gercek'), path.join(d, 'bag'))) return
+    junctionKur(ctx, path.join(d, 'gercek'), path.join(d, 'bag'))
 
     const ts = tsSatirlar(d)
     expect(ts).toEqual(pythonSatirlar(d))
-    // Tur davranisa gore 'd' — olculmus kirilmayi duzelten sey buydu ('l' bir
-    // tarafta cikip digerinde cikmiyordu).
-    expect(ts).toContain('bag\td')
-    // Hedef kokun icinde, dolayisiyla ININIYOR: icerik zaten calisma alaninin
-    // parcasi ve iki taraf da ayni seyi goruyor.
-    expect(ts).toContain('bag/a.txt\tf')
+    expect(ts).toContain('bag\tl')
+    // Hedef ICERIDE olmasina ragmen inilmiyor: kural hedefe degil bagin
+    // kendisine bakiyor. Icerideki hedef zaten kendi adiyla listeleniyor
+    // (`gercek/a.txt`), yani bilgi kaybi yok — yalniz ikinci kez sayilmiyor.
+    expect(ts.filter((l) => l.startsWith('bag/'))).toEqual([])
+    expect(ts).toContain('gercek/a.txt\tf')
   }, SURE)
 
-  it('kok DISINA bakan bag: listeleniyor ama icine INILMIYOR', () => {
+  it("kok DISINA bakan bag: 'l' olarak listeleniyor, hedefi parmak izine GIRMIYOR", (ctx) => {
     // R6-01'in ta kendisi. `direntKind` baglari takip etmeye baslayinca bu
     // junction 'd' olarak siniflandi ve icine INILDI, yani mount DISINDAKI
     // dosyalar, tek iddiasi calisma alanini tarif etmek olan bir parmak izine
@@ -266,13 +276,16 @@ varsaCalis('iki uygulama ayni agac icin ayni parmak izini uretir', () => {
     fs.mkdirSync(d, { recursive: true })
     fs.mkdirSync(disari, { recursive: true })
     fs.writeFileSync(path.join(disari, 'sentinel.txt'), 'x')
-    if (!junctionKur(disari, path.join(d, 'kacis'))) return
+    junctionKur(ctx, disari, path.join(d, 'kacis'))
 
     const ts = tsSatirlar(d)
     expect(ts).toEqual(pythonSatirlar(d))
-    expect(ts).toContain('kacis\td')
-    // Asil iddia: disaridaki hicbir sey iceri girmiyor.
-    expect(ts).not.toContain('kacis/sentinel.txt\tf')
+    expect(ts).toContain('kacis\tl')
     expect(ts.filter((l) => l.startsWith('kacis/'))).toEqual([])
+    // Hedefin ADI da girmiyor: iki tarafta farkli yaziliyor (`C:\...` burada,
+    // ulasilamaz `/mnt/host/c/...` konteynerde), yani hedefi ozete katmak
+    // korumanin onlemek icin var oldugu uyusmazligi garanti ederdi.
+    expect(ts.join('\n')).not.toContain('sentinel')
+    expect(ts.join('\n')).not.toContain('bag-dis-hedef')
   }, SURE)
 })

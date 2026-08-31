@@ -50,77 +50,71 @@ NO_DESCEND = frozenset({
 # preventing and what identity requires.
 
 
-def kind(entry) -> str:
-    """One character per entry, classified by what it BEHAVES as.
+def is_link(entry) -> bool:
+    """Is this entry a link, by the only definition all three runtimes share?
 
-    Link-ness is deliberately not part of the fingerprint, and the reason is
-    that the two sides look at the same tree through different filesystems.
-    Measured 31 Aug 2026 by the cross-language parity test, on a Windows host:
-    a directory junction is reported as a link by Node (`isSymbolicLink()` is
-    true for any reparse point) and as a plain directory by Python. In the real
-    deployment the split is wider still — the host walks NTFS while the
-    container walks the same tree through Docker Desktop's translation layer,
-    which presents a junction as an ordinary directory. So encoding link-ness
-    made the two sides disagree about a tree that IS the same, and startup
-    refused a CORRECT setup while telling the user to `docker compose down`,
-    which cannot help.
+    `os.path.isjunction` is not belt-and-braces, it is the whole reason this
+    function exists. Measured 31 Aug 2026 on one Windows directory junction:
 
-    An earlier version resolved without following, on the argument that a link
-    classified by its target hides cross-tree confusion. That argument belongs
-    to a containment check, and this is not one: containment is enforced by
-    `workspace-mapping` plus realpath in the main process. This function answers
-    only "are these two directories the same tree", and for that question a
-    junction and the directory it names are the same answer.
+        Node    entry.isSymbolicLink()              -> True
+        Python  entry.is_symlink()                  -> False
+        Python  os.path.isjunction(entry.path)      -> True
+
+    `is_symlink()` alone answers False for a junction, and an earlier round read
+    that single measurement as proof that the two sides could never agree about
+    what a link IS — so link-ness was abandoned as a rule and descent was gated
+    on resolved-target containment instead. The measurement was right and the
+    conclusion was wrong: Python can see a junction, just not through
+    `is_symlink()`. `os.path.isjunction` arrived in 3.12 and this backend pins
+    3.13. On POSIX it simply returns False, so the disjunction costs nothing
+    there.
     """
+    if entry.is_symlink():
+        return True
+    try:
+        return os.path.isjunction(entry.path)
+    except OSError:
+        # Vanished between the listing and the question. Not a link we can
+        # name; `kind` falls through to its own guarded answers.
+        return False
+
+
+def kind(entry) -> str:
+    """One character per entry: `l` link, `d` directory, `f` file, `o` other.
+
+    A link is `l` REGARDLESS of what it points at, and is never followed. The
+    target is deliberately absent from the fingerprint: the same junction is
+    spelled `C:\\...` on the host and resolves to an unreachable
+    `/mnt/host/c/...` inside the container, so hashing the target would
+    guarantee the mismatch this whole check exists to avoid.
+
+    Measured 31 Aug 2026 against a REAL container over a real bind mount — the
+    first round in this series where a Docker daemon was reachable — with one
+    junction pointing inside the workspace and one pointing outside:
+
+        entry            host (Windows)      container (Linux)
+        ordinary dir     d + children        d + children
+        junction         d + children        o          <- diverged
+        junction         d                   o          <- diverged
+
+    The container receives a junction as a symlink to `/mnt/host/...`, which
+    does not exist there, so it is neither a directory nor a file. Classifying
+    by behaviour therefore made ANY workspace containing a junction fail Docker
+    startup — including a junction pointing INSIDE the workspace, which is an
+    entirely ordinary thing for a Unity project to contain. That is the exact
+    failure this guard exists to prevent, produced by the guard itself.
+
+    With `l` on both sides the same tree measured equal on both sides, the
+    outside file stayed out, and no `realpath` call is needed at all: nothing
+    is ever descended into, so nothing can escape the mount by construction.
+    """
+    if is_link(entry):
+        return "l"
     if entry.is_dir():
         return "d"
     if entry.is_file():
         return "f"
     return "o"
-
-
-def stays_inside(root_real: str, path: str) -> bool:
-    """Does `path` resolve to something still under `root_real`?
-
-    This is the descent rule, and it is phrased in terms of the RESOLVED TARGET
-    rather than link-ness on purpose. Measured 31 Aug 2026, on one Windows
-    directory junction, with the two shipped runtimes:
-
-        Node   isSymbolicLink() -> true
-        Python is_symlink()     -> False
-
-    So the two sides do not agree on what a link IS, and any rule of the form
-    "if it is a link, do not descend" makes them walk different trees and
-    report a mismatch for a correct setup — which is the failure this whole
-    guard exists to avoid, reintroduced by its own fix. The earlier `l` kind
-    died of the same cause.
-
-    Containment is the one question both runtimes answered identically in that
-    same measurement (in-root junction: inside on both; out-of-root junction:
-    outside on both), because both resolve reparse points and both canonicalise
-    case. So the rule is built on containment.
-
-    What this buys (AUDIT R6-01): once `kind` began following links, a
-    top-level junction pointing out of the workspace was classified `d` and
-    then DESCENDED INTO, so files outside the mount entered a fingerprint whose
-    entire claim is to describe the workspace. Breadth was unbounded — a link
-    to a large external tree was enumerated on every Docker start.
-
-    Boundary, stated rather than pretended: for a link whose target leaves the
-    mount, the two sides are NOT guaranteed to agree. The host stops here,
-    while the container may see the same path as an ordinary directory through
-    Docker Desktop's translation layer and descend. That case could not be
-    measured (no daemon was reachable on 31 Aug 2026), so it is documented as
-    outside the guarantee instead of being claimed either way. The failure mode
-    is a loud mismatch at startup, not a wrong tree accepted silently.
-    """
-    try:
-        target = os.path.realpath(path, strict=True)
-    except (OSError, ValueError):
-        # Unresolvable: contributes no children, which is also what an
-        # unlistable directory does below.
-        return False
-    return target == root_real or target.startswith(root_real + os.sep)
 
 
 def fingerprint_lines(root: str) -> list:
@@ -148,18 +142,19 @@ def fingerprint_lines(root: str) -> list:
         top = list(os.scandir(root))
     except OSError:
         return lines
-    try:
-        root_real = os.path.realpath(root, strict=True)
-    except (OSError, ValueError):
-        # Without a resolved root there is nothing to be inside of, so no
-        # descent is possible. The level-1 listing is still meaningful.
-        root_real = None
     for entry in top:
         entry_kind = kind(entry)
         lines.append(f"{entry.name}\t{entry_kind}")
+        # `l` is excluded here as much as `f` and `o` are: a link is never
+        # followed, so nothing outside the mount can be reached and no
+        # `realpath` is needed to prove it. An earlier version resolved every
+        # candidate and compared it against the resolved root; that machinery
+        # existed only because links were classified as directories, and it
+        # brought a bug of its own — a workspace at a filesystem root kept its
+        # trailing separator on the host and did not in the container, so the
+        # host refused every descent while the backend performed them
+        # (AUDIT R7-02). Not descending into links removes the question.
         if entry_kind != "d" or entry.name in NO_DESCEND:
-            continue
-        if root_real is None or not stays_inside(root_real, entry.path):
             continue
         try:
             children = list(os.scandir(entry.path))
