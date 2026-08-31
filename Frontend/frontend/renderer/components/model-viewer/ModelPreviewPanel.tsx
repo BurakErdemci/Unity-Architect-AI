@@ -35,11 +35,24 @@ const FRAME_FILL = 0.72;
 // pixels of track cannot show more than this.
 const TIMELINE_TICK_MS = 50;
 
-interface Stage {
-  renderer: THREE.WebGLRenderer;
-  scene: THREE.Scene;
+/**
+ * The orbit rig as this file uses it. Structural rather than `OrbitControls`
+ * on purpose: the concrete class needs a canvas, and a canvas is what jsdom
+ * cannot give, so naming only the members that are touched is what lets the
+ * mount path be exercised at all.
+ */
+export interface OrbitRig {
+  enableDamping: boolean;
+  target: THREE.Vector3;
+  minDistance: number;
+  maxDistance: number;
+  update: () => boolean;
+}
+
+/** The slice of the stage that mounting one parsed file writes to. */
+export interface MountTarget {
   camera: THREE.PerspectiveCamera;
-  controls: OrbitControls;
+  controls: OrbitRig;
   /** Everything a single file contributes hangs here and nowhere else. */
   content: THREE.Group;
   grid: THREE.GridHelper;
@@ -47,9 +60,15 @@ interface Stage {
   playback: Playback | null;
   /** Mirrors the play/pause state where the rAF loop can read it un-staled. */
   playing: boolean;
-  frame: number | null;
   /** Start the rAF loop if it is not already running. */
   wake: () => void;
+}
+
+interface Stage extends MountTarget {
+  renderer: THREE.WebGLRenderer;
+  scene: THREE.Scene;
+  controls: OrbitControls;
+  frame: number | null;
 }
 
 /**
@@ -117,7 +136,7 @@ const frameObject = (
  * pending rotation instead of dropping it, so the previous file's half-finished
  * drag would bleed into the new one's opening shot.
  */
-const reseatControls = (controls: OrbitControls, framing: Framing): void => {
+const reseatControls = (controls: OrbitRig, framing: Framing): void => {
   controls.enableDamping = false;
   controls.target.copy(framing.center);
   controls.minDistance = framing.distance / 50;
@@ -138,6 +157,37 @@ const clearContent = (stage: Stage): void => {
   }
   stage.grid.scale.setScalar(1);
   stage.grid.position.set(0, 0, 0);
+};
+
+/**
+ * Everything that happens once a file has parsed: hang it on the stage, frame
+ * it, re-aim the orbit rig, and start the clip if the file has a playable one.
+ * Split out of the load effect because that effect cannot get past
+ * `new WebGLRenderer` under jsdom — which left the panel's entire success path
+ * with no automated coverage. Returns the clip length (0 = nothing to play)
+ * rather than writing React state: the caller owns the component, this owns
+ * the scene.
+ */
+export const mountParsedModel = (
+  stage: MountTarget,
+  parsed: ParsedModel,
+  box: THREE.Box3,
+): number => {
+  stage.content.add(parsed.object);
+  reseatControls(stage.controls, frameObject(stage.camera, stage.grid, box));
+
+  const clip = playableClip(parsed.clips);
+  if (!clip) {
+    // Nothing will animate, so the parked loop has to be told once.
+    stage.render();
+    return 0;
+  }
+
+  stage.playback = createPlayback(parsed.object, clip);
+  stage.playback.setSpeed(DEFAULT_SPEED);
+  stage.playing = true;
+  stage.wake();
+  return stage.playback.duration;
 };
 
 export const ModelPreviewPanel: React.FC<ModelPreviewPanelProps> = ({ file, workspacePath }) => {
@@ -387,19 +437,10 @@ export const ModelPreviewPanel: React.FC<ModelPreviewPanelProps> = ({ file, work
       const stage = stageRef.current;
       if (!stage) { disposeObject(parsed.object); setLoading(false); return; }
 
-      stage.content.add(parsed.object);
-      reseatControls(stage.controls, frameObject(stage.camera, stage.grid, box));
-
-      const clip = playableClip(parsed.clips);
-      if (clip) {
-        stage.playback = createPlayback(parsed.object, clip);
-        stage.playback.setSpeed(DEFAULT_SPEED);
-        stage.playing = true;
-        setDuration(stage.playback.duration);
+      const clipDuration = mountParsedModel(stage, parsed, box);
+      if (clipDuration > 0) {
+        setDuration(clipDuration);
         setPlaying(true);
-        stage.wake();
-      } else {
-        stage.render();
       }
       setLoading(false);
     })();
