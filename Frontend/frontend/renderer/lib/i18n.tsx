@@ -465,6 +465,10 @@ const tr = {
   // 3D model önizleme paneli
   'preview.loading': 'Model yükleniyor…',
   'preview.loadError': 'Model açılamadı.',
+  'preview.play': 'Oynat',
+  'preview.pause': 'Duraklat',
+  'preview.timeline': 'Zaman çizgisi',
+  'preview.speed': 'Oynatma hızı',
 } as const;
 
 const en: Record<keyof typeof tr, string> = {
@@ -912,6 +916,10 @@ const en: Record<keyof typeof tr, string> = {
   'composer.addImage': 'Add image',
   'preview.loading': 'Loading model…',
   'preview.loadError': 'This model could not be opened.',
+  'preview.play': 'Play',
+  'preview.pause': 'Pause',
+  'preview.timeline': 'Timeline',
+  'preview.speed': 'Playback speed',
 };
 
 export const translations: Record<Lang, Record<string, string>> = { tr, en };
