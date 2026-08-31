@@ -55,8 +55,18 @@ describe('IPC Whitelist — izinsiz kanallar engellenir', () => {
 })
 
 describe('IPC Whitelist — Set doğruluğu', () => {
-  it('tam olarak 24 kanal içerir', () => {
-    expect(ALLOWED_INVOKE_CHANNELS.size).toBe(24)
+  // Sayı bilerek sabit: yeni bir IPC kanalı yüzeyi genişletiyor ve bu test
+  // patlamadan kimse fark etmiyor. 24 → 26, 31 Ağu 2026: Docker modunda
+  // çalışma alanı yolunun iki yönde çevrilmesi için eklendi
+  // ('backend-workspace-path', 'host-workspace-path'). İkisi de saf eşleme,
+  // dosya sistemine dokunmuyor ve ana süreçten dışarı veri sızdırmıyor.
+  it('tam olarak 26 kanal içerir', () => {
+    expect(ALLOWED_INVOKE_CHANNELS.size).toBe(26)
+  })
+
+  it('çalışma alanı yolu çeviri kanalları whitelist\'te', () => {
+    expect(ALLOWED_INVOKE_CHANNELS.has('backend-workspace-path')).toBe(true)
+    expect(ALLOWED_INVOKE_CHANNELS.has('host-workspace-path')).toBe(true)
   })
 
   it('git-status kanalı whitelist\'te', () => {

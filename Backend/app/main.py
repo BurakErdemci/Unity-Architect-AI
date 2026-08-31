@@ -278,11 +278,22 @@ def health_check():
 
 
 
+
 if __name__ == "__main__":
     host = os.environ.get("HOST", "127.0.0.1")
     port = int(os.environ.get("PORT", "8000"))
     # MCP server subprocess'leri bu URL'yi kullanır
     os.environ["ANTIGRAVITY_URL"] = f"http://{host}:{port}"
+    # Opt-in autoreload, for the Docker dev container where the source is bind
+    # mounted: without it a host edit reaches the container's filesystem and
+    # still does not reach the running process, which was the whole point of
+    # mounting it. Off by default and refused in a frozen build, because reload
+    # NEEDS the import string and that is exactly what PyInstaller cannot
+    # resolve (see below).
+    if (os.environ.get("UVICORN_RELOAD", "").lower() in {"1", "true", "yes", "on"}
+            and not getattr(sys, "frozen", False)):
+        uvicorn.run("main:app", host=host, port=port, reload=True)
+        raise SystemExit(0)
     # app objesini doğrudan ver — string "main:app" frozen binary'de import edilemiyor
     # ("Could not import module 'main'"). reload=False olduğu için obje geçişi sorunsuz.
     uvicorn.run(

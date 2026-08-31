@@ -5,6 +5,7 @@ import { PendingFile } from '../../components/home/FileCreationApproval';
 import { splitCodeIntoFiles } from '../../components/home/export-utils';
 import { confirmDialog } from '../../components/ui/ConfirmDialog';
 import { cevir } from '../../lib/i18n';
+import { backendWorkspacePath, hostWorkspacePath } from '../../lib/backendWorkspacePath';
 
 const ipc = typeof window !== 'undefined' ? (window as any).ipc : null;
 
@@ -93,7 +94,11 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
       const res = await axios.get(`${API}/last-workspace/${userId}`, {
         headers: { 'X-Session-Token': user.sessionToken }
       });
-      if (res.data?.path) setLastWorkspacePath(res.data.path);
+      const stored = res.data?.path;
+      if (stored) {
+        const host = await hostWorkspacePath(stored);
+        if (host) setLastWorkspacePath(host);
+      }
     } catch (err) { console.error("Last workspace hatası:", err); }
   }, [API, user]);
 
@@ -119,8 +124,8 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
     setDirContents({});
     if (user?.sessionToken && API) {
       try {
-        await axios.post(`${API}/save-workspace`, 
-          { user_id: user.id, path },
+        await axios.post(`${API}/save-workspace`,
+          { user_id: user.id, path: await backendWorkspacePath(path) },
           { headers: { 'X-Session-Token': user.sessionToken } }
         );
       } catch (err) { console.error("Workspace kaydetme hatası:", err); }

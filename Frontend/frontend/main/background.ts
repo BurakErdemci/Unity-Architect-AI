@@ -26,6 +26,10 @@ import * as pty from 'node-pty'
 
 const useDockerBackend = process.env.USE_DOCKER_BACKEND === 'true'
 
+// Where docker-compose.yml mounts the workspace inside the container. The two
+// must agree; `test_docker_contract.py` asserts they do.
+const DOCKER_WORKSPACE_MOUNT = '/workspace'
+
 // A fresh token per launch is the whole point: it is never written to disk and
 // it dies with the process. That stays true for the normal path, where the
 // backend is a child process and inherits this value through its env.
@@ -615,6 +619,32 @@ handleSecure('path-exists', async (_event, targetPath: string) => {
 })
 
 handleSecure('app-token-get', () => localAppToken)
+
+// The renderer picks a folder with a HOST path, but in Docker mode the backend
+// is a different filesystem namespace where that path does not exist — only the
+// mount does. Sending the host path unchanged is what an audit caught on
+// 31 Aug 2026: the mount was there, the contract test was green, and the file
+// tools addressed a path no process in the container could see.
+//
+// So the two consumers are told apart explicitly. Electron's own file tree keeps
+// the host path, because Electron reads the disk directly. Anything the BACKEND
+// will resolve goes through here.
+handleSecure('backend-workspace-path', (_event, hostPath: unknown) =>
+  useDockerBackend ? DOCKER_WORKSPACE_MOUNT : String(hostPath ?? ''))
+
+// The reverse, and it is not optional: the backend stores what it was given, so
+// in Docker mode "last workspace" comes back as `/workspace` — a path that does
+// not exist on the host. Without this the restore would fail its existence check
+// and quietly drop the user's last project every launch.
+handleSecure('host-workspace-path', (_event, backendPath: unknown) => {
+  const p = String(backendPath ?? '')
+  if (!useDockerBackend || p !== DOCKER_WORKSPACE_MOUNT) return p
+  // Compose mounts exactly this variable, so it is the only correct answer.
+  // Empty means the user started Compose with the default `.`, and the host
+  // side of that default is not knowable from here — better to return nothing
+  // than a guess that opens the wrong folder.
+  return process.env.GAMACHINE_WORKSPACE || ''
+})
 handleSecure('get-backend-base-url', () => getBackendBaseUrl())
 
 function findAvailablePort(): Promise<number> {
@@ -659,6 +689,27 @@ async function waitForBackendHealth(timeoutMs: number): Promise<void> {
   }
 
   throw new Error(`Backend ${timeoutMs}ms içinde hazır olmadı.`)
+}
+
+/** Proves the reachable backend holds the same token this process does. */
+async function assertBackendSharesOurToken(): Promise<void> {
+  try {
+    await axios.get(`${getBackendBaseUrl()}/health/auth`, {
+      timeout: 5000,
+      headers: { 'X-Session-Token': localAppToken },
+    })
+  } catch (error) {
+    const status = (error as { response?: { status?: number } })?.response?.status
+    if (status === 401 || status === 503) {
+      throw new Error(
+        'The backend on this port is running with a different LOCAL_APP_TOKEN. ' +
+        'It is almost certainly a container left over from an earlier session ' +
+        '(`restart: unless-stopped`). Run `docker compose down`, export the token, ' +
+        'and bring it back up. See docs/building.md.'
+      )
+    }
+    throw error
+  }
 }
 
 // --- BACKEND YOLLARINI BUL ---
@@ -706,6 +757,12 @@ async function startPythonBackend() {
     // which is minutes, not seconds. 30 s timed out on a first run and looked
     // like a failure; the health probe is cheap, so waiting longer is free.
     await waitForBackendHealth(180000)
+    // `/health` is unauthenticated, so reaching it proves a backend is there and
+    // nothing about WHICH secret it holds. `restart: unless-stopped` outlives the
+    // shell that exported the token, so a container from an earlier session
+    // answers this happily and then 401s every real call — measured 31 Aug 2026,
+    // every startup signal green while the app was unusable.
+    await assertBackendSharesOurToken()
     return
   }
 

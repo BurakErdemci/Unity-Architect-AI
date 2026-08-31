@@ -89,16 +89,23 @@ container.
 ```bash
 # One token, shared by both sides — see below for why this is the whole trick.
 export LOCAL_APP_TOKEN=$(python -c "import uuid; print(uuid.uuid4())")
-export GAMACHINE_WORKSPACE=/path/to/your/unity/project   # optional, defaults to the repo
+# Required, with no default: the project the agent will work on.
+export GAMACHINE_WORKSPACE=/path/to/your/unity/project
+# Linux only: match your own uid so the container can write the bind mount.
+export GAMACHINE_UID=$(id -u) GAMACHINE_GID=$(id -g)
 
 docker compose up --build            # first build installs every wheel: minutes
 
 cd Frontend/frontend && npm run dev:docker
 ```
 
-Compose refuses to start if `LOCAL_APP_TOKEN` is unset, and the Electron side
-throws with the same instruction. Neither will hand you a container that looks
-healthy and then rejects everything.
+Compose refuses to start if either `LOCAL_APP_TOKEN` or `GAMACHINE_WORKSPACE` is
+unset, and the Electron side throws with the same instruction. Neither will hand
+you a container that looks healthy and then rejects everything.
+
+Backend source is bind-mounted read-only with autoreload on, so editing a file
+on the host restarts the server in the container. Changing `requirements.txt`
+still needs `docker compose up --build`.
 
 ### The one thing that makes this work
 
@@ -110,25 +117,51 @@ Docker mode never worked before 31 Aug 2026: Compose set
 `REQUIRE_LOCAL_APP_TOKEN=1` and never supplied a token, so every request was
 rejected.
 
-The environment variable is honoured **only** when `USE_DOCKER_BACKEND=true`.
-On the normal path the token stays random per launch, never written to disk.
+The environment variable is honoured **only** when `USE_DOCKER_BACKEND=true`, so
+the normal path keeps a fresh random token per launch.
+
+At startup the app now calls an authenticated `/health/auth` as well as the
+public `/health`. Reaching `/health` only proves *a* backend is listening; a
+container left running by `restart: unless-stopped` outlives the shell that
+exported its token and answers it happily, then rejects every real call.
+
+### Where the token actually lives — read this before treating it as ephemeral
+
+Per-launch randomness is not the same as "never persisted", and the code has
+always persisted it:
+
+- `Backend/app/main.py` writes it to a `0600` file on **every** path — the
+  container's `/root`-equivalent home in Docker mode, your own home
+  (`~/.unity_architect_ai/local-app-token`) on the normal path. It has to: the
+  MCP server is started by the CLIs and does not inherit our environment.
+  The file survives until a later backend start overwrites or removes it.
+- In Docker mode the value is additionally part of the service definition, so
+  anything that can inspect the running service can read it, and
+  `docker compose config` prints it in the clear.
+
+None of that is new to Docker mode except the last point, but an earlier version
+of this document claimed the token was "never written to disk", which was simply
+false. Treat it as a local secret with a real lifetime, not a value that dies
+with the process.
 
 ### What does not work in the container, and why
 
 | | Works | Why |
 |---|---|---|
 | Cloud API providers (Gemini, Anthropic, OpenAI, DeepSeek…) | ✅ | plain HTTP, nothing local needed |
+| File tools | ✅ | the app translates the selected folder to `/workspace` before the backend sees it; the backend can reach that tree and nothing else |
+| Editing backend code | ✅ | source is mounted read-only with autoreload |
 | Subscription CLIs (Claude Code, Codex, Cursor, Copilot, Kimi, agy) | ❌ | installed on your machine and signed in as you; neither the binaries nor the sessions exist in the image |
 | Unity MCP | ⚠️ | the Editor runs on the host, so the container reaches it through `host.docker.internal` (`UNITY_MCP_URL` overrides it) |
-| File tools | ⚠️ | they see `/workspace`, i.e. whatever `GAMACHINE_WORKSPACE` points at — not your whole disk |
 | OmniSharp / C# analysis | ❌ | not installed in the image |
 
 So: use Docker mode to work on backend code with an API model. It is not a way
 to run the product.
 
-`Backend/tests/test_docker_contract.py` guards the four settings that were each
-independently wrong before this worked; all seven of its assertions were
-verified by mutation.
+`Backend/tests/test_docker_contract.py` guards this contract. Where Compose can
+answer, it asks Compose — the resolved model, not the file text — because the
+first version of that file asserted on raw text and an audit showed every
+assertion could stay green while the property it named was false.
 
 ---
 

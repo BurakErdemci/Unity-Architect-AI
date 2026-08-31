@@ -23,11 +23,29 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# A baseline copy so the image runs on its own. Compose then bind-mounts the
+# checkout over it, which is the only way a host edit reaches the container: the
+# app starts uvicorn with reload disabled and nothing else carries source in.
+# Measured 31 Aug 2026 — without the mount this image was a snapshot, so "use
+# Docker to work on the Python side" was false for every edit after the build.
 COPY app/ ./
 
 # The SQLite file lives on a volume so a rebuild does not discard the history.
 VOLUME /data
 ENV DB_PATH=/data/unity_master_v3.db
+
+# Not root. The workspace arrives as a bind mount, so anything this process can
+# write, it writes onto the developer's own checkout; running as uid 0 there is
+# a blast radius nobody chose. The uid is overridable from Compose because a
+# bind mount on Linux needs the container user to match the host owner.
+RUN useradd --create-home --uid 1000 app \
+    && mkdir -p /data /workspace \
+    && chown -R app:app /app /data /workspace
+USER app
+
+# The mounted source is read-only, and a read-only tree makes bytecode writes
+# fail noisily for no benefit.
+ENV PYTHONDONTWRITEBYTECODE=1
 
 # 0.0.0.0, not the app's 127.0.0.1 default: bound to loopback the port is
 # published but nothing on the host can reach it. Measured 31 Aug 2026 — the

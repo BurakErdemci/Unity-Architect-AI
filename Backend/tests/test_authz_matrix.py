@@ -246,8 +246,23 @@ def gate(monkeypatch):
         raise HTTPException(GATE_PASSED, "AUTH_GATE_PASSED")
 
     monkeypatch.setattr(auth_utils, "_check_token", sentinel)
+    # Her modül, yalnız `routes.*` DEĞİL. Filtre 31 Ağu 2026'ya kadar
+    # `name.startswith("routes.")` idi; `main.py` içine konan korumalı bir uç
+    # sentinel'i hiç almıyordu.
+    #
+    # Sonucu YANLIŞ ALARM, kaçırma değil — ölçüldü: `/health/auth` main.py'deyken
+    # geçerli token'la 200 döndü ve test patladı. Yani kapı doğru kurulmuş bir uç
+    # "kapısı çağrılmıyor" diye raporlanıyordu. Kaçırma olsaydı çok daha kötüydü,
+    # ama yanlış alarm da ucuz değil: bu testin verdiği alarma güvenilmezse
+    # gerçek bulgusu da görmezden gelinir.
+    #
+    # Kimlik karşılaştırması (`is real_check`) isim desenine tercih edildi: bir
+    # modülün `_check_token`'ı gerçekten AYNI fonksiyon nesnesi mi, ona bakıyor —
+    # aynı adı taşıyan ilgisiz bir sembolü yamamak yeni bir arıza sınıfı olurdu.
     for name, module in list(sys.modules.items()):
-        if name.startswith("routes.") and hasattr(module, "_check_token"):
+        if module is auth_utils or not hasattr(module, "_check_token"):
+            continue
+        if getattr(module, "_check_token", None) is real_check:
             monkeypatch.setattr(module, "_check_token", sentinel)
     yield
 

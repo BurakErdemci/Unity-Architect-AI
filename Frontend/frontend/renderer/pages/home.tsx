@@ -33,6 +33,7 @@ import { useAIConfig } from '../hooks/home/useAIConfig';
 import { useMCPApproval } from '../hooks/home/useMCPApproval';
 import { useAutoScroll } from '../hooks/home/useAutoScroll';
 import { McpApprovalCards } from '../components/home/McpApprovalCards';
+import { backendWorkspacePath } from '../lib/backendWorkspacePath';
 
 const ipc = typeof window !== 'undefined' ? (window as any).ipc : null;
 const globalStyles = `
@@ -171,9 +172,11 @@ export default function Home() {
   // --- Ensure Active Workspace Is Saved In Backend ---
   useEffect(() => {
     if (API && auth.user?.sessionToken && fs.workspacePath) {
-      axios.post(`${API}/save-workspace`, 
-        { user_id: auth.user.id, path: fs.workspacePath },
-        { headers: { 'X-Session-Token': auth.user.sessionToken } }
+      backendWorkspacePath(fs.workspacePath).then((path) =>
+        axios.post(`${API}/save-workspace`,
+          { user_id: auth.user.id, path },
+          { headers: { 'X-Session-Token': auth.user.sessionToken } }
+        )
       ).catch(() => {});
     }
   }, [fs.workspacePath, API, auth.user]);

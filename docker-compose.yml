@@ -13,11 +13,22 @@ services:
       # Loopback only. This backend has one weak credential and no rate
       # limiting; it is not something to expose on a LAN.
       - "127.0.0.1:8000:8000"
+    # Match the host owner of the bind mounts on Linux, or the non-root user in
+    # the image cannot write the workspace. Docker Desktop mediates ownership
+    # itself, so the default is fine there.
+    user: "${GAMACHINE_UID:-1000}:${GAMACHINE_GID:-1000}"
     volumes:
       - backend-data:/data
       # The Unity project the agent works on. Without this the container has no
       # files to read or write, so every file tool operates on an empty image.
-      - ${GAMACHINE_WORKSPACE:-.}:/workspace
+      #
+      # No default: `.` used to be one, which silently mounted the product's own
+      # source tree — application code, Compose file, release scripts — writable
+      # into the container. A workspace has to be chosen, not inherited.
+      - ${GAMACHINE_WORKSPACE:?set GAMACHINE_WORKSPACE to the project the agent should work on}:/workspace
+      # The backend source itself, read-only, so a host edit is the code that
+      # runs. Without it the container serves whatever the last build copied in.
+      - ./Backend/app:/app:ro
     env_file:
       - path: ./Backend/.env
         required: false
@@ -33,6 +44,9 @@ services:
       # The Unity Editor runs on the host, so the container's own localhost is
       # the wrong address.
       - UNITY_MCP_URL=${UNITY_MCP_URL:-http://host.docker.internal:8080/mcp}
+      # Pairs with the read-only source mount below: an edit on the host reaches
+      # the process, not just the container's filesystem.
+      - UVICORN_RELOAD=1
     extra_hosts:
       # Docker Desktop resolves host.docker.internal already; Linux does not.
       - "host.docker.internal:host-gateway"
