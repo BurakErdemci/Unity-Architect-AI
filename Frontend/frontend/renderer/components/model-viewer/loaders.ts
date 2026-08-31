@@ -69,11 +69,18 @@ const createManager = (): THREE.LoadingManager => {
   return manager;
 };
 
-const grayMaterial = (): THREE.MeshStandardMaterial =>
+/**
+ * @param vertexColors keep the mesh's per-vertex colour attribute in play. A
+ * material with this off IGNORES a `color` attribute the geometry carries, so a
+ * vertex-coloured OBJ or PLY would arrive flat gray with nothing saying its
+ * colours had been dropped.
+ */
+const grayMaterial = (vertexColors = false): THREE.MeshStandardMaterial =>
   new THREE.MeshStandardMaterial({
     color: FALLBACK_MATERIAL_COLOR,
     roughness: 0.75,
     metalness: 0.05,
+    vertexColors,
   });
 
 /** What FBX and Collada both mark an unresolved material with. */
@@ -95,8 +102,15 @@ const applyMaterialFallback = (
   object: THREE.Object3D,
   unresolved: (m: THREE.Material | null | undefined) => boolean = namedDefault,
 ): void => {
-  let fallback: THREE.MeshStandardMaterial | null = null;
-  const gray = () => (fallback ??= grayMaterial());
+  // Two cached instances, not one: the replacement has to keep whatever the
+  // replaced material said about vertex colours, and that answer differs per
+  // mesh within a single file.
+  let plain: THREE.MeshStandardMaterial | null = null;
+  let colored: THREE.MeshStandardMaterial | null = null;
+  const gray = (replaced?: THREE.Material | null) =>
+    (replaced as THREE.MeshStandardMaterial | null | undefined)?.vertexColors === true
+      ? (colored ??= grayMaterial(true))
+      : (plain ??= grayMaterial());
 
   object.traverse(child => {
     if (!isMesh(child)) return;
@@ -105,14 +119,16 @@ const applyMaterialFallback = (
       if (child.material.length === 0) { child.material = gray(); return; }
       child.material = child.material.map(m => {
         if (!unresolved(m)) return m;
+        const replacement = gray(m);
         m?.dispose();
-        return gray();
+        return replacement;
       });
       return;
     }
     if (unresolved(child.material)) {
+      const replacement = gray(child.material);
       child.material?.dispose();
-      child.material = gray();
+      child.material = replacement;
     }
   });
 };
@@ -142,8 +158,15 @@ interface GltfResourceRef {
  * promise to keep.
  */
 const assertSelfContained = (json: unknown): void => {
-  const doc = json as { buffers?: GltfResourceRef[]; images?: GltfResourceRef[] };
-  const external = [...(doc.buffers ?? []), ...(doc.images ?? [])]
+  const doc = json as { buffers?: unknown; images?: unknown };
+  // A hand-edited or truncated document can put anything under these keys, and
+  // `{"buffers": 5}` is not iterable: spreading it threw a TypeError from OUR
+  // code, which the panel then printed as the model's failure. Reading a
+  // non-array as "no references" hands the file to GLTFLoader, so a malformed
+  // glTF fails as a malformed glTF.
+  const refs = (value: unknown): GltfResourceRef[] =>
+    (Array.isArray(value) ? value : []) as GltfResourceRef[];
+  const external = [...refs(doc.buffers), ...refs(doc.images)]
     .map(ref => ref?.uri)
     // A data: URI is embedded content, not a reference to a sibling file.
     .filter((uri): uri is string => typeof uri === 'string' && !uri.startsWith('data:'));
@@ -221,7 +244,12 @@ const meshFromGeometry = (geometry: THREE.BufferGeometry): ParsedModel => {
   // PLY files routinely ship positions only; without normals every lit material
   // renders the mesh black, which looks identical to a failed load.
   if (!geometry.getAttribute('normal')) geometry.computeVertexNormals();
-  return { object: new THREE.Mesh(geometry, grayMaterial()), clips: [] };
+  // Neither format carries a material, so the geometry's own `color` attribute
+  // is the only place a vertex-coloured scan's colours survive to.
+  return {
+    object: new THREE.Mesh(geometry, grayMaterial(geometry.getAttribute('color') != null)),
+    clips: [],
+  };
 };
 
 /**

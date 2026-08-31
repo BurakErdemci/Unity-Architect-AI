@@ -12,6 +12,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import * as THREE from 'three'
 import { parseModel, ModelParseError, FALLBACK_MATERIAL_COLOR } from '../renderer/components/model-viewer/loaders'
+import { MODEL_EXTENSIONS } from '../renderer/components/model-viewer/extensions'
 
 // MEASURED here, 31 Aug 2026: every parse in this file finishes in single-digit
 // milliseconds once three is imported, but one run of the FULL suite had one of
@@ -32,6 +33,20 @@ const fixture = (name: string): ArrayBuffer => {
   const buf = readFileSync(resolve(__dirname, 'fixtures', name))
   const out = new ArrayBuffer(buf.byteLength)
   new Uint8Array(out).set(buf)
+  return out
+}
+
+/**
+ * An inline fixture, allocated in the same realm as `fixture()` and for the same
+ * reason. MEASURED: `TextEncoder().encode(s).buffer` is a Node-realm
+ * ArrayBuffer, and PLYLoader's `instanceof ArrayBuffer` is false for it under
+ * jsdom — the loader then treats the bytes as an already-decoded string and
+ * quietly returns a colour-less geometry.
+ */
+const bytes = (text: string): ArrayBuffer => {
+  const encoded = new TextEncoder().encode(text)
+  const out = new ArrayBuffer(encoded.byteLength)
+  new Uint8Array(out).set(encoded)
   return out
 }
 
@@ -98,6 +113,40 @@ describe('parseModel dispatch', () => {
   })
 })
 
+/**
+ * The gap: an extension gets added to `MODEL_EXTENSIONS` and the main-process
+ * mirror, the read channel starts handing back its bytes, and `parseModel` has
+ * no case for it — so every file of that type falls to the default and the user
+ * sees a generic failure on a format the app claims to support. Nothing above
+ * would be red, because every test above names its formats one at a time.
+ */
+describe('every listed extension reaches a handler', () => {
+  const GENERIC = /Unsupported model format/
+
+  // Not a valid file of any format on purpose: what is measured is WHICH code
+  // answers, not that it succeeds. A real handler answers with its own parser's
+  // complaint, or — for the tolerant ones — an empty but successful parse.
+  const junk = () => bytes('not a model')
+
+  for (const ext of MODEL_EXTENSIONS) {
+    it(`${ext} is dispatched to a loader, not to the default case`, async () => {
+      const outcome = await parseModel(ext, junk()).then(() => null, (e: unknown) => e)
+      if (outcome === null) return
+      expect(String((outcome as Error)?.message ?? outcome)).not.toMatch(GENERIC)
+    })
+  }
+
+  it('an extension with no handler DOES fall to the default case', async () => {
+    // The counterweight: without it the loop above would pass just as happily
+    // against a `parseModel` that resolved for everything.
+    await expect(parseModel('.blend', junk())).rejects.toThrow(GENERIC)
+  })
+
+  it('the list under test is not empty', () => {
+    expect(MODEL_EXTENSIONS.length).toBeGreaterThan(0)
+  })
+})
+
 describe('parseModel materials', () => {
   it('gives the geometry-only formats the neutral gray material', async () => {
     for (const [ext, name] of [['.stl', 'triangle.stl'], ['.ply', 'triangle.ply']]) {
@@ -122,6 +171,48 @@ describe('parseModel materials', () => {
   it("replaces glTF's shared default material, which is white at metalness 1", async () => {
     const material = (await onlyMesh('.glb', 'triangle.glb')).material as THREE.MeshStandardMaterial
     expect(material.color.getHex()).toBe(FALLBACK_MATERIAL_COLOR)
+  })
+
+  /**
+   * The fallback material is what a vertex-coloured file loses its colours to.
+   * Both formats below store the colour on the GEOMETRY, and a material with
+   * `vertexColors` off ignores that attribute silently — the model still draws,
+   * just flat gray, so nothing on screen says anything was dropped.
+   */
+  it('carries vertexColors onto the .obj fallback material', async () => {
+    const obj = 'v 0 0 0 1 0 0\nv 1 0 0 0 1 0\nv 0 1 0 0 0 1\nf 1 2 3\n'
+    const mesh = meshes((await parseModel('.obj', bytes(obj))).object)[0]
+    const material = mesh.material as THREE.MeshStandardMaterial
+
+    expect(mesh.geometry.getAttribute('color')).toBeTruthy()
+    expect(material.color.getHex()).toBe(FALLBACK_MATERIAL_COLOR)
+    expect(material.vertexColors).toBe(true)
+  })
+
+  it('leaves vertexColors off when the .obj has no per-vertex colour', async () => {
+    const material = (await onlyMesh('.obj', 'triangle.obj')).material as THREE.MeshStandardMaterial
+    expect(material.vertexColors).toBe(false)
+  })
+
+  it('carries vertexColors onto the .ply fallback material', async () => {
+    // PLY has no material at all, so the geometry attribute is the only signal.
+    const ply = [
+      'ply', 'format ascii 1.0', 'element vertex 3',
+      'property float x', 'property float y', 'property float z',
+      'property uchar red', 'property uchar green', 'property uchar blue',
+      'element face 1', 'property list uchar int vertex_indices', 'end_header',
+      '0 0 0 255 0 0', '1 0 0 0 255 0', '0 1 0 0 0 255', '3 0 1 2', '',
+    ].join('\n')
+    const mesh = meshes((await parseModel('.ply', bytes(ply))).object)[0]
+    const material = mesh.material as THREE.MeshStandardMaterial
+
+    expect(mesh.geometry.getAttribute('color')).toBeTruthy()
+    expect(material.vertexColors).toBe(true)
+  })
+
+  it('leaves vertexColors off for a .ply without colour', async () => {
+    const material = (await onlyMesh('.ply', 'triangle.ply')).material as THREE.MeshStandardMaterial
+    expect(material.vertexColors).toBe(false)
   })
 
   it('keeps a material the .gltf actually authored', async () => {
@@ -165,9 +256,19 @@ describe('a .gltf that is only half the file', () => {
   it('leaves a malformed .gltf as an ordinary parse failure', async () => {
     // Only the missing-sibling case earns the dedicated wording; broken JSON
     // must keep printing the parser's own one-liner.
-    const junk = new TextEncoder().encode('{ not json').buffer as ArrayBuffer
-    const err = await parseModel('.gltf', junk).catch(e => e)
+    const err = await parseModel('.gltf', bytes('{ not json')).catch(e => e)
     expect(err).toBeInstanceOf(Error)
     expect(err).not.toBeInstanceOf(ModelParseError)
+  })
+
+  it('survives a document whose `buffers` is not a list', async () => {
+    // Valid JSON, invalid glTF. The external-resource check used to SPREAD
+    // whatever sat under that key, so `5` produced a TypeError from our own
+    // code and the panel printed it as the model's failure. It has to stay the
+    // loader's complaint about a malformed document.
+    const err = await parseModel('.gltf', bytes('{"buffers": 5, "images": 7}')).catch(e => e)
+    expect(err).toBeInstanceOf(Error)
+    expect(err).not.toBeInstanceOf(ModelParseError)
+    expect((err as Error).message).not.toMatch(/is not iterable/)
   })
 })
