@@ -462,6 +462,9 @@ const tr = {
   'skills.commands': 'Komutlar',
   'skills.title': 'Skills & Komutlar',
   'composer.addImage': 'Resim Ekle',
+  // 3D model önizleme paneli
+  'preview.loading': 'Model yükleniyor…',
+  'preview.loadError': 'Model açılamadı.',
 } as const;
 
 const en: Record<keyof typeof tr, string> = {
@@ -907,6 +910,8 @@ const en: Record<keyof typeof tr, string> = {
   'skills.commands': 'Commands',
   'skills.title': 'Skills & Commands',
   'composer.addImage': 'Add image',
+  'preview.loading': 'Loading model…',
+  'preview.loadError': 'This model could not be opened.',
 };
 
 export const translations: Record<Lang, Record<string, string>> = { tr, en };
