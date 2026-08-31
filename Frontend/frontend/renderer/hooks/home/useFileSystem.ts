@@ -6,6 +6,7 @@ import { splitCodeIntoFiles } from '../../components/home/export-utils';
 import { confirmDialog } from '../../components/ui/ConfirmDialog';
 import { cevir } from '../../lib/i18n';
 import { backendWorkspacePath, hostWorkspacePath } from '../../lib/backendWorkspacePath';
+import { routeForFile } from '../../components/model-viewer/extensions';
 
 const ipc = typeof window !== 'undefined' ? (window as any).ipc : null;
 
@@ -213,6 +214,13 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
   }, []);
 
   const openFile = useCallback(async (filePath: string) => {
+    // The file tree routes by extension before it calls anything; this is the
+    // OTHER way into the content area — chat file links and problem-list
+    // entries call `openFile` directly. Without the same routing here a 3D
+    // file goes to `read-file`, which answers `unsupported`, and the user gets
+    // a refusal for a format the app can now display. Routing is a decision
+    // about the path alone, so it precedes the channel check.
+    if (routeForFile(filePath) !== 'text') { openPreview(filePath); return; }
     if (!ipc) return;
     const result = await ipc.invoke('read-file', filePath, workspacePath);
     if (result?.error === 'unsupported') {
@@ -243,7 +251,7 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
     // TAHMİN ETMİYOR — ne bilmediğimizi söylüyor ve yolu gösteriyor ki
     // kullanıcı kendisi karar verebilsin.
     showToast(cevir('file.openFailed', { yol: filePath }), 'warning');
-  }, [workspacePath, showToast]);
+  }, [workspacePath, showToast, openPreview]);
 
   const toggleDir = useCallback(async (dirPath: string) => {
     const next = new Set(expandedDirs);

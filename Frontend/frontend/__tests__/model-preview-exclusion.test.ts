@@ -65,6 +65,32 @@ describe('preview / editor mutual exclusion', () => {
     expect(result.current.openedFilePath).toBeNull()
   })
 
+  // The file tree routes by extension before it calls anything, but it is not
+  // the only door: chat file links and problem-list entries call `openFile`
+  // directly. That door used to hand a .fbx to `read-file`, which answers
+  // `unsupported` — a refusal for a format this app can now display.
+  it('openFile routes a 3D file to the preview and never asks read-file for it', async () => {
+    const { result } = mount()
+    await act(async () => { await result.current.openFile('C:\\proj\\Assets\\hero.fbx') })
+    expect(result.current.previewFile).toEqual({ path: 'C:\\proj\\Assets\\hero.fbx', name: 'hero.fbx' })
+    expect(result.current.openedFilePath).toBeNull()
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
+  it('openFile routes an unrenderable 3D format to the preview too — the panel explains it', async () => {
+    const { result } = mount()
+    await act(async () => { await result.current.openFile('Assets/Models/scene.blend') })
+    expect(result.current.previewFile?.name).toBe('scene.blend')
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
+  it('openFile still sends a text file down the read-file channel', async () => {
+    const { result } = mount()
+    await act(async () => { await result.current.openFile('Assets/Scripts/Player.cs') })
+    expect(invoke).toHaveBeenCalledWith('read-file', 'Assets/Scripts/Player.cs', null)
+    expect(result.current.openedFilePath).toBe('Assets/Scripts/Player.cs')
+  })
+
   it('closePreview empties the content area', () => {
     const { result } = mount()
     act(() => { result.current.openPreview('Assets/Models/hero.fbx') })

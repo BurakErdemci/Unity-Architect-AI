@@ -264,6 +264,13 @@ export const ModelPreviewPanel: React.FC<ModelPreviewPanelProps> = ({ file, work
     };
     resize();
 
+    // three reinstalls its GL state on `webglcontextrestored`, but nothing
+    // repaints: the rAF loop parks itself whenever the clip is paused and the
+    // camera is still, so after a loss/restore the panel stays black until the
+    // user happens to drag it. Resizing redraws at the current size.
+    const onContextRestored = () => resize();
+    renderer.domElement.addEventListener('webglcontextrestored', onContextRestored);
+
     // ResizeObserver, not a window listener: the panel also changes width when
     // the sidebar or chat pane toggles, which fires no window resize.
     const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(resize) : null;
@@ -286,12 +293,21 @@ export const ModelPreviewPanel: React.FC<ModelPreviewPanelProps> = ({ file, work
     return () => {
       observer?.disconnect();
       dprQuery?.removeEventListener('change', onRatioChange);
+      renderer.domElement.removeEventListener('webglcontextrestored', onContextRestored);
       controls.removeEventListener('change', stage.wake);
       clearContent(stage);
       controls.dispose();
       grid.geometry.dispose();
       (Array.isArray(grid.material) ? grid.material : [grid.material]).forEach(m => m.dispose());
       scene.clear();
+      // `dispose()` frees three's own caches and NOT the GL context (three
+      // 0.185.1, WebGLRenderer.js:1074-1097): only the WEBGL_lose_context
+      // extension releases it. This panel unmounts on every preview close and
+      // on every switch back to a text file, so without the explicit loss the
+      // contexts pile up against the browser's ~16 cap and older viewers get
+      // killed off. It has to precede dispose(), which tears down the state
+      // the extension lookup needs.
+      renderer.forceContextLoss();
       renderer.dispose();
       renderer.domElement.remove();
       stageRef.current = null;

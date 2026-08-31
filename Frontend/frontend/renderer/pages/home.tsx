@@ -11,6 +11,7 @@ import {
 import { LangContext, aktifDilAyarla, ceviriUygula, osDilindenDil, type Lang, type TValues } from '../lib/i18n';
 import { sohbetKilitliMi } from '../lib/providerGate';
 import { getUnsavedEditorContext } from '../lib/editor-context';
+import { contentPane } from '../lib/contentPane';
 
 import { Sidebar } from '../components/home/Sidebar';
 import { EditorPanel, hostOpenTarget, workspaceRelativePath } from '../components/home/EditorPanel';
@@ -516,6 +517,7 @@ export default function Home() {
     );
   }
 
+  const pane = contentPane(fs.previewFile, diffFile, fs.openedFilePath);
 
   return (
     <LangContext.Provider value={langCtxValue}>
@@ -637,9 +639,9 @@ export default function Home() {
         </div>
 
         <div className="flex-1 overflow-hidden relative flex flex-col bg-[#0B0D12]">
-          {fs.previewFile ? (
+          {pane === 'preview' && fs.previewFile ? (
             <ModelPreviewPanel file={fs.previewFile} workspacePath={fs.workspacePath} onClose={fs.closePreview} />
-          ) : (fs.openedFilePath || diffFile) ? (
+          ) : pane === 'editor' ? (
             <EditorPanel
               code={fs.code} setCode={fs.setCode} openedFilePath={fs.openedFilePath} isEditorFocused={isEditorFocused} setIsEditorFocused={setIsEditorFocused}
               workspacePath={fs.workspacePath} problems={flattenedProblems} diffFile={diffFile}
