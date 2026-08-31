@@ -1,4 +1,4 @@
-"""The `gamachine-ws-fp-1` workspace fingerprint, container side.
+"""The `gamachine-ws-fp-2` workspace fingerprint, container side.
 
 Split out of `routes/auth_routes.py` so a test can RUN it WITHOUT FastAPI.
 There are two implementations of this algorithm — this one and
@@ -26,7 +26,38 @@ import os
 # Identifies the algorithm. Both sides must implement the same version; the
 # Electron side sends nothing, so a bumped version here shows up there as a
 # mismatched `algo` and is reported as "sides disagree", not "wrong tree".
-WORKSPACE_FINGERPRINT_ALGO = "gamachine-ws-fp-1"
+WORKSPACE_FINGERPRINT_ALGO = "gamachine-ws-fp-2"
+
+# Docker Desktop cannot store a name containing a character NTFS forbids, so it
+# shifts each one into the private use area by exactly 0xF000. Measured 31 Aug
+# 2026 by creating one file per candidate inside the container on a real
+# Windows-backed mount and reading the directory from the host: all 39 affected
+# characters — the C0 controls 0x01-0x1F plus `" * : < > ? \ |` — moved, every
+# one of them by the same 0xF000, and nothing else moved.
+#
+# Both sides undo it, so both hash the same name (AUDIT R9-01). Undoing on one
+# side only would leave the host hashing `ab` while the container hashes
+# `a\tb` for the SAME file, which is a refused correct mount.
+#
+# It is a real conflation: a name genuinely containing U+F009 hashes like a name
+# containing a tab. That is deliberate and follows the rule this module already
+# lives by — the host CANNOT tell those two apart, because NTFS stores both as
+# U+F009, so the distinction is not one both sides can make.
+#
+# Capped at 0x7F because that is the whole measured set and it keeps the mapping
+# a single byte on the Electron side, where names are handled as raw buffers.
+_PROJECTION_BASE = 0xF000
+_PROJECTION_TOP = 0xF07F
+
+
+def unproject(name: str) -> str:
+    """Undo Docker Desktop's private-use projection of NTFS-illegal characters."""
+    if not any("\uf001" <= ch <= "\uf07f" for ch in name):
+        return name
+    return "".join(
+        chr(ord(ch) - _PROJECTION_BASE) if "\uf001" <= ch <= "\uf07f" else ch
+        for ch in name
+    )
 
 # Not descended into. These are rewritten continuously by the Unity Editor and
 # by compilers, and the two sides sample the tree milliseconds apart, so their
@@ -158,7 +189,7 @@ def fingerprint_lines(root: str) -> list:
         return lines
     for entry in top:
         entry_kind = kind(entry)
-        lines.append(f"{entry.name}\t{entry_kind}")
+        lines.append(unproject(entry.name) + "\x00" + entry_kind)
         # Only a plain directory is descended into, so a link cannot be
         # followed and nothing outside the mount is reachable — no `realpath`
         # is needed to prove it. An earlier version resolved every
@@ -175,7 +206,8 @@ def fingerprint_lines(root: str) -> list:
         except OSError:
             continue
         for child in children:
-            lines.append(f"{entry.name}/{child.name}\t{kind(child)}")
+            lines.append(unproject(entry.name) + "/"
+                         + unproject(child.name) + "\x00" + kind(child))
     # Sorted by UTF-8 BYTES, not by code point. Python orders `str` by code
     # point and JavaScript's default sort orders by UTF-16 code unit; the two
     # disagree above the BMP, which would make an emoji-named asset folder
@@ -194,7 +226,27 @@ def fingerprint_lines(root: str) -> list:
 
 
 def fingerprint_digest(lines: list) -> str:
-    """sha256 over the raw on-disk bytes of the sorted lines, newline-joined."""
+    """sha256 over the sorted records, concatenated with no separator.
+
+    None is needed. Each record is `<relpath>\\0<kind>` and NUL is the one byte
+    a filename cannot contain on either platform, so the concatenation parses
+    back one way only: read to the NUL for the path, take the next character as
+    the kind, and the record after it begins.
+
+    The previous encoding joined `<relpath>\\t<kind>` records with newlines, and
+    neither separator was escaped while both are legal in a POSIX filename. That
+    made the digest NON-INJECTIVE, which is the "agrees about trees that differ"
+    failure the module docstring names. Measured 31 Aug 2026 (AUDIT R9-01), on a
+    real bind mount:
+
+        one file named  a<TAB>f<LF>b   -> record  "a\\tf\\nb\\tf"
+        two files named a  and  b      -> records "a\\tf", "b\\tf"
+                                       -> joined  "a\\tf\\nb\\tf"
+
+    Same bytes, same digest, different trees — and startup accepts on digest
+    equality alone, so a wrong mount passed. Entry counts differed (1 versus 2)
+    and nothing compared them.
+    """
     return hashlib.sha256(
-        "\n".join(lines).encode("utf-8", "surrogateescape")
+        "".join(lines).encode("utf-8", "surrogateescape")
     ).hexdigest()

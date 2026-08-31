@@ -88,21 +88,32 @@ PROJECT_A = {
 # test cannot fail when that code is wrong — and the depth rule is exactly the
 # part a well-meaning simplification would flatten.
 #
-# Order is by UTF-8 BYTES of the whole line, tab included: `Assets\td` sorts
-# before `Assets/Art\td` because 0x09 < 0x2F.
+# Order is by UTF-8 BYTES of the whole record, separator included: `Assets\x00d`
+# sorts before `Assets/Art\x00d` because 0x00 < 0x2F.
+#
+# Records are `<relpath>\x00<kind>`, written out literally rather than produced
+# by the code under test: a round trip through the implementation agrees with
+# any encoding, including a broken one.
+#
+# NUL, not a tab, and no separator between records. Measured 31 Aug 2026
+# (AUDIT R9-01): with a tab field separator and a newline record separator —
+# both legal in a POSIX filename and neither escaped — one file named
+# `a<TAB>f<LF>b` hashed identically to two files named `a` and `b`, and startup
+# accepts on digest equality alone. NUL is the one byte a name cannot contain,
+# so the concatenation parses back one way only.
 EXPECTED_A_LINES = [
-    "Assets\td",
-    "Assets/Art\td",
-    "Assets/Scripts\td",
-    "Library\td",            # listed, but NOT descended into: junk.tmp is absent
-    "Packages\td",
-    "Packages/manifest.json\tf",
-    "ProjectA.sln\tf",
+    "Assets\x00d",
+    "Assets/Art\x00d",
+    "Assets/Scripts\x00d",
+    "Library\x00d",            # listed, but NOT descended into: junk.tmp is absent
+    "Packages\x00d",
+    "Packages/manifest.json\x00f",
+    "ProjectA.sln\x00f",
 ]
 
 
 def _digest(lines):
-    return hashlib.sha256("\n".join(lines).encode("utf-8")).hexdigest()
+    return hashlib.sha256("".join(lines).encode("utf-8")).hexdigest()
 
 
 def _ask(client, monkeypatch, root, token=TOKEN):
@@ -502,7 +513,7 @@ def test_the_digest_is_taken_over_the_bytes_that_are_on_disk(monkeypatch):
     _serve_entries(monkeypatch, [_UNDECODABLE])
     lines = auth_routes._fingerprint_lines("/workspace")
     assert auth_routes._fingerprint_digest(lines) == \
-        hashlib.sha256(b"raw-\xff-name\tf").hexdigest()
+        hashlib.sha256(b"raw-\xff-name\x00f").hexdigest()
 
 
 def test_the_endpoint_answers_instead_of_500ing_on_such_a_name(client, monkeypatch, tmp_path):

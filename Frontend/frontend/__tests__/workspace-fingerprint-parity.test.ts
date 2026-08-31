@@ -1,5 +1,5 @@
 /**
- * The two `gamachine-ws-fp-1` implementations must agree, and this is the only
+ * The two `gamachine-ws-fp-2` implementations must agree, and this is the only
  * thing that runs BOTH of them.
  *
  * The algorithm exists twice — `main/helpers/workspace-fingerprint.ts` and
@@ -113,7 +113,7 @@ function pythonParmakIzi(root: string): { entries: number; fingerprint: string }
 }
 
 /**
- * The backend's `<relpath>\t<kind>` lines, not just their digest.
+ * The backend's `<relpath>\0<kind>` records, not just their digest.
  *
  * Comparing digests alone cannot see WHAT was walked, and that is how the
  * previous link case passed while the property it named was false: both sides
@@ -230,6 +230,32 @@ varsaCalis('iki uygulama ayni agac icin ayni parmak izini uretir', () => {
     expect(tsA.fingerprint).not.toBe(tsB.fingerprint)
   }, SURE)
 
+  it('Docker Desktop projeksiyonu iki tarafta da geri aliniyor', () => {
+    // Docker Desktop, NTFS'in yasakladigi bir karakter iceren adi saklayamadigi
+    // icin her birini ozel kullanim alanina 0xF000 kadar kaydiriyor: konteynerde
+    // `x<TAB>y` olan ad ana makinede `x\uf009y` goruluyor. Iki taraf da geri
+    // almazsa AYNI dosya icin farkli ad hash'lenir ve dogru bir mount reddedilir
+    // (AUDIT R9-01).
+    //
+    // Bu vaka Docker GEREKTIRMIYOR: U+F009 NTFS'te gecerli bir karakter, yani
+    // agac dogrudan burada kurulabiliyor ve iki uygulama da onu sekmeye
+    // cevirmek zorunda. Olculdu (31 Agu 2026): geri alma iki taraftan da
+    // kaldirildiginda bu vaka disinda hicbir test kirmizi olmuyordu.
+    const d = agac('projeksiyon')
+    fs.mkdirSync(d)
+    fs.writeFileSync(path.join(d, 'x\uf009y'), 'x')   // U+F009 -> sekme
+    fs.writeFileSync(path.join(d, 'p\uf03aq'), 'x')   // U+F03A -> iki nokta
+    fs.mkdirSync(path.join(d, 'k\uf07cl'))            // U+F07C -> dikey cizgi
+
+    const ts = tsSatirlar(d)
+    expect(ts).toEqual(pythonSatirlar(d))
+    expect(ts).toContain('x\ty\u0000f')
+    expect(ts).toContain('p:q\u0000f')
+    expect(ts).toContain('k|l\u0000d')
+    // Ozel kullanim karakteri hicbir kayitta kalmamali.
+    expect(ts.join('')).not.toMatch(/[\uf001-\uf07f]/)
+  }, SURE)
+
   // ── baglantilar ────────────────────────────────────────────────────────────
   //
   // Bu iki vakanin oncesi, "bagin KENDISI siniflandiriliyor" baslikli ve iki
@@ -277,12 +303,12 @@ varsaCalis('iki uygulama ayni agac icin ayni parmak izini uretir', () => {
 
     const ts = tsSatirlar(d)
     expect(ts).toEqual(pythonSatirlar(d))
-    expect(ts).toContain('bag\to')
+    expect(ts).toContain('bag\u0000o')
     // Hedef ICERIDE olmasina ragmen inilmiyor: kural hedefe degil bagin
     // kendisine bakiyor. Icerideki hedef zaten kendi adiyla listeleniyor
     // (`gercek/a.txt`), yani bilgi kaybi yok — yalniz ikinci kez sayilmiyor.
     expect(ts.filter((l) => l.startsWith('bag/'))).toEqual([])
-    expect(ts).toContain('gercek/a.txt\tf')
+    expect(ts).toContain('gercek/a.txt\u0000f')
   }, SURE)
 
   it("kok DISINA bakan bag: 'o' olarak listeleniyor, hedefi parmak izine GIRMIYOR", (ctx) => {
@@ -299,7 +325,7 @@ varsaCalis('iki uygulama ayni agac icin ayni parmak izini uretir', () => {
 
     const ts = tsSatirlar(d)
     expect(ts).toEqual(pythonSatirlar(d))
-    expect(ts).toContain('kacis\to')
+    expect(ts).toContain('kacis\u0000o')
     expect(ts.filter((l) => l.startsWith('kacis/'))).toEqual([])
     // Hedefin ADI da girmiyor: iki tarafta farkli yaziliyor (`C:\...` burada,
     // ulasilamaz `/mnt/host/c/...` konteynerde), yani hedefi ozete katmak
@@ -327,14 +353,19 @@ describe('direntKind: dirent turu UNKNOWN geldiginde', () => {
     isFile: () => false,
   }) as unknown as fs.Dirent<Buffer>
 
-  it("bag oldugunu lstat ile bulup 'o' donuyor, 'd' degil", () => {
+  it("bag oldugunu lstat ile bulup 'o' donuyor, 'd' degil", (ctx) => {
     const d = fs.mkdtempSync(path.join(os.tmpdir(), 'gm-unknown-'))
     try {
       fs.mkdirSync(path.join(d, 'gercek'))
       try {
         fs.symlinkSync(path.join(d, 'gercek'), path.join(d, 'bag'), 'junction')
-      } catch {
-        return   // ayricalik yoksa asagidaki duz klasor vakasi yine kosuyor
+      } catch (e) {
+        // ATLA, gecme. Bare `return` yaziyordu ve bir `it` geri donunce vitest
+        // onu GECMIS sayiyor — yani ayricaligi olmayan bir makinede bu test
+        // TEK BIR iddia calistirmadan yesil rapor ediyordu (AUDIT R9-02).
+        // Ayni kusuru bir onceki turda `junctionKur`da duzeltmistim ve burada
+        // tekrar ettim: kardes cagri yeri kaliminin testlerdeki hali.
+        ctx.skip(`baglanti kurulamadi (${(e as NodeJS.ErrnoException).code})`)
       }
       // 'd' donseydi bu girdinin ICINE INILIRDI; korunan sey bu.
       expect(direntKind(Buffer.from(d), bilinmeyenDirent('bag'))).toBe('o')

@@ -21,7 +21,50 @@ import fs from 'fs'
 import path from 'path'
 import { createHash } from 'crypto'
 
-export const WORKSPACE_FINGERPRINT_ALGO = 'gamachine-ws-fp-1'
+export const WORKSPACE_FINGERPRINT_ALGO = 'gamachine-ws-fp-2'
+
+// Docker Desktop cannot store a name containing a character NTFS forbids, so it
+// shifts each one into the private use area by exactly 0xF000. Measured 31 Aug
+// 2026 by creating one file per candidate inside the container on a real
+// Windows-backed mount and reading the directory back from here: all 39
+// affected characters — the C0 controls 0x01-0x1F plus `" * : < > ? \ |` —
+// moved, every one by the same 0xF000, and nothing else moved.
+//
+// Both sides undo it, so both hash the same name (AUDIT R9-01). Undoing on one
+// side only would leave this side hashing `ab` while the container hashes
+// `a<TAB>b` for the SAME file — a refused correct mount.
+//
+// It is a real conflation: a name genuinely containing U+F009 hashes like a
+// name containing a tab. Deliberate, and it follows the rule this file already
+// lives by — NTFS stores both as U+F009, so this side CANNOT tell them apart
+// and the distinction is not one both sides can make.
+//
+// Done in bytes because that is what everything here handles. U+F000..U+F07F
+// encodes as EF 80 80 .. EF 81 BF, and the low seven bits of the result live in
+// the last two bytes, so the replacement is always a single byte.
+function unproject(name: Buffer): Buffer {
+  let ilk = -1
+  for (let i = 0; i + 2 < name.length; i++) {
+    if (name[i] === 0xEF && (name[i + 1] === 0x80 || name[i + 1] === 0x81)) { ilk = i; break }
+  }
+  if (ilk < 0) return name
+  const out = Buffer.alloc(name.length)
+  let w = 0
+  for (let i = 0; i < name.length;) {
+    if (i + 2 < name.length && name[i] === 0xEF
+      && (name[i + 1] === 0x80 || name[i + 1] === 0x81)
+      && (name[i + 2] & 0xC0) === 0x80) {
+      const n = ((name[i + 1] & 0x03) << 6) | (name[i + 2] & 0x3F)
+      if (n >= 0x01 && n <= 0x7F) {
+        out[w++] = n
+        i += 3
+        continue
+      }
+    }
+    out[w++] = name[i++]
+  }
+  return out.subarray(0, w)
+}
 // There is deliberately no entry cap. The previous `lines.slice(0, 4096)` was
 // applied AFTER the walk and the sort, so it saved no traversal, and the digest
 // rather than the lines goes over the wire, so it saved no payload — while two
@@ -46,8 +89,17 @@ const FINGERPRINT_NO_DESCEND = new Set([
 // refusal at startup instead of the crash that used to happen on the Python
 // side. Reading dirents with `encoding: 'buffer'` keeps the on-disk bytes, which
 // is exactly what the backend hashes.
-const FP_TAB = Buffer.from('\t')
-const FP_NEWLINE = Buffer.from('\n')
+// NUL, not a tab, and the records are concatenated with nothing between them.
+// NUL is the one byte a filename cannot contain on either platform, so
+// `<relpath>\0<kind>` records parse back one way only and the digest is
+// injective.
+//
+// The previous encoding used a tab between path and kind and a newline between
+// records, and neither was escaped while both are legal in a POSIX filename.
+// Measured 31 Aug 2026 (AUDIT R9-01) on a real bind mount: one file named
+// `a<TAB>f<LF>b` hashed identically to two files named `a` and `b`, and
+// `background.ts` accepts on digest equality alone — so a wrong mount passed.
+const FP_NUL = Buffer.from([0])
 const FP_SLASH = Buffer.from('/')
 const FP_PATH_SEP = Buffer.from(path.sep)
 
@@ -110,7 +162,7 @@ export function fingerprintLines(root: string): Buffer[] {
   }
   for (const entry of top) {
     const kind = direntKind(rootBuf, entry)
-    lines.push(Buffer.concat([entry.name, FP_TAB, Buffer.from(kind)]))
+    lines.push(Buffer.concat([unproject(entry.name), FP_NUL, Buffer.from(kind)]))
     // The skip list is ASCII, so a lossy decode cannot invent a match here; the
     // bytes that would decode differently are not in the set either way.
     if (kind !== 'd' || FINGERPRINT_NO_DESCEND.has(entry.name.toString('utf8'))) continue
@@ -133,7 +185,8 @@ export function fingerprintLines(root: string): Buffer[] {
     }
     for (const child of children) {
       lines.push(Buffer.concat([
-        entry.name, FP_SLASH, child.name, FP_TAB, Buffer.from(direntKind(childDir, child)),
+        unproject(entry.name), FP_SLASH, unproject(child.name),
+        FP_NUL, Buffer.from(direntKind(childDir, child)),
       ]))
     }
   }
@@ -146,11 +199,9 @@ export function fingerprintLines(root: string): Buffer[] {
 
 export function hostWorkspaceFingerprint(root: string): { entries: number; fingerprint: string } {
   const lines = fingerprintLines(root)
-  const parts: Buffer[] = []
-  for (const line of lines) {
-    if (parts.length) parts.push(FP_NEWLINE)
-    parts.push(line)
-  }
-  const digest = createHash('sha256').update(Buffer.concat(parts)).digest('hex')
+  // Concatenated with NOTHING between records: each already ends `\0<kind>`,
+  // and NUL cannot occur in a name, so the stream parses back one way only.
+  // Mirrors `fingerprint_digest` in Backend/app/workspace_fingerprint.py.
+  const digest = createHash('sha256').update(Buffer.concat(lines)).digest('hex')
   return { entries: lines.length, fingerprint: digest }
 }
