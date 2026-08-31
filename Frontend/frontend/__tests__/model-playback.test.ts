@@ -10,6 +10,7 @@
 import { describe, it, expect } from 'vitest'
 import * as THREE from 'three'
 import { createPlayback } from '../renderer/components/model-viewer/playback'
+import { timeAtFraction } from '../renderer/components/model-viewer/timeline'
 
 const DURATION = 2
 
@@ -23,6 +24,22 @@ const rig = () => {
     [0, 0, 0, 0, 10, 0, 0, 0, 0],
   )
   return { root, clip: new THREE.AnimationClip('rise', DURATION, [track]) }
+}
+
+/**
+ * A one-shot: rises and stays up, so the last pose is nothing like the first.
+ * That difference is the point — the looping rig above cannot tell "seeked to
+ * the end" apart from "wrapped back to the start".
+ */
+const oneShot = () => {
+  const root = new THREE.Object3D()
+  root.name = 'Root'
+  const track = new THREE.VectorKeyframeTrack(
+    'Root.position',
+    [0, 1, 2],
+    [0, 0, 0, 0, 5, 0, 0, 10, 0],
+  )
+  return { root, clip: new THREE.AnimationClip('jump', DURATION, [track]) }
 }
 
 describe('createPlayback', () => {
@@ -40,6 +57,14 @@ describe('createPlayback', () => {
 
     expect(playback.seek(0.5)).toBeCloseTo(0.5, 6)
     expect(root.position.y).toBeCloseTo(5, 6)
+  })
+
+  it('poses the LAST frame when the slider is dragged fully right', () => {
+    const { root, clip } = oneShot()
+    const playback = createPlayback(root, clip)
+    playback.seek(timeAtFraction(1, DURATION))
+    // 0 here would mean the user asking to see the finish got the opening pose.
+    expect(root.position.y).toBeCloseTo(10, 6)
   })
 
   it('wraps a seek past the end onto the loop', () => {

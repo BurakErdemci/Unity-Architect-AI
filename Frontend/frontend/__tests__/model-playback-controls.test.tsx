@@ -6,10 +6,12 @@
  * Wording is pulled from the i18n table rather than typed in, so a copy edit
  * does not turn into a red test.
  */
+import { useState } from 'react'
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { cevir } from '../renderer/lib/i18n'
 import { PlaybackControls } from '../renderer/components/model-viewer/PlaybackControls'
+import { timeAtFraction } from '../renderer/components/model-viewer/timeline'
 
 const PLAY = cevir('preview.play')
 const PAUSE = cevir('preview.pause')
@@ -104,6 +106,45 @@ describe('PlaybackControls', () => {
     expect(select.value).toBe('0.5')
     fireEvent.change(select, { target: { value: '2' } })
     expect(props.onSpeedChange).toHaveBeenCalledWith(2)
+  })
+
+  /**
+   * The bar's seek feeds a clip time back into its own `time` prop, so a drag
+   * is a round trip through timeAtFraction and fractionAtTime. This harness
+   * closes that loop the way the panel does, minus the mixer.
+   */
+  const Scrubbable: React.FC<{ duration: number }> = ({ duration }) => {
+    const [time, setTime] = useState(0)
+    return (
+      <PlaybackControls
+        duration={duration} time={time} playing={false} speed={1}
+        onTogglePlay={() => {}}
+        onSeek={f => setTime(timeAtFraction(f, duration))}
+        onSpeedChange={() => {}}
+      />
+    )
+  }
+
+  it('holds the thumb at the right-hand end through a drag there', () => {
+    render(<Scrubbable duration={4} />)
+    const el = slider()
+    fireEvent.change(el, { target: { value: el.max } })
+    // A seek that wrapped to time 0 would snap the thumb to `min` here while
+    // the pointer still held the end, and every further move would re-pin it.
+    expect(el.value).toBe(el.max)
+
+    // A second move at the same end — what a real drag sends — must not undo it.
+    fireEvent.change(el, { target: { value: el.max } })
+    expect(el.value).toBe(el.max)
+  })
+
+  it('shows the end of the clip on the timecode after a drag to the right', () => {
+    render(<Scrubbable duration={4} />)
+    expect(screen.getByText('0:00.0')).toBeTruthy()
+    fireEvent.change(slider(), { target: { value: slider().max } })
+    // Both readouts now say 0:04.0 — the position has caught up with the length.
+    expect(screen.getAllByText('0:04.0')).toHaveLength(2)
+    expect(screen.queryByText('0:00.0')).toBeNull()
   })
 
   it('labels every control, so none of them is an unnamed icon', () => {

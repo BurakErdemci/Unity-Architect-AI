@@ -35,14 +35,36 @@ export const fractionAtTime = (time: number, duration: number): number =>
   hasDuration(duration) ? wrapTime(time, duration) / duration : 0;
 
 /**
- * The clip time a slider fraction points at, already wrapped. Dragging fully
- * right therefore lands on 0: for a looping clip the end and the start are the
- * same instant, and returning `duration` would only let the next mixer update
- * do the wrap one frame later.
+ * The last instant still INSIDE the clip. `duration` itself is the loop point,
+ * which is frame 0 — see `timeAtFraction`.
+ */
+const lastInstant = (duration: number): number => {
+  const under = duration * (1 - Number.EPSILON);
+  // Subnormal durations round straight back to `duration`; there is no interior
+  // instant to offer then, and 0 is the only safe answer.
+  return under < duration ? under : 0;
+};
+
+/**
+ * The clip time a slider fraction points at.
+ *
+ * Dragging fully right lands just short of `duration`, not on it. Landing on
+ * `duration` wraps to 0, and that breaks two things. The end of a one-shot clip
+ * — an attack, a death, a jump — becomes unreachable by scrubbing, so the user
+ * dragging right to see the finish is shown the opening pose. And because the
+ * slider is a controlled input that reads back through `fractionAtTime`, the
+ * thumb snaps to the far LEFT while the pointer still holds the far right;
+ * every further pointermove re-fires the round trip and pins it there. The End
+ * key does it in one keystroke.
+ *
+ * Only this input direction clamps. `fractionAtTime` still wraps, so a clip
+ * that reaches its end while PLAYING parks the thumb at 0 — which is where the
+ * next loop genuinely starts.
  */
 export const timeAtFraction = (fraction: number, duration: number): number => {
   if (!hasDuration(duration) || !Number.isFinite(fraction)) return 0;
-  return wrapTime(Math.min(Math.max(fraction, 0), 1) * duration, duration);
+  const requested = Math.min(Math.max(fraction, 0), 1) * duration;
+  return wrapTime(Math.min(requested, lastInstant(duration)), duration);
 };
 
 /**

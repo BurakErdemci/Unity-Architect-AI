@@ -63,17 +63,33 @@ describe('timeAtFraction', () => {
     expect(timeAtFraction(0.5, 4)).toBe(2)
   })
 
-  it('treats a drag to the far right as the loop point, not one frame past it', () => {
-    expect(timeAtFraction(1, 4)).toBe(0)
+  it('reaches the end of the clip on a drag to the far right', () => {
+    // Not `duration` itself — that is the loop point and wraps to 0, which
+    // would hide the last pose of a one-shot clip behind its first.
+    const end = timeAtFraction(1, 4)
+    expect(end).toBeLessThan(4)
+    expect(end).toBeCloseTo(4, 10)
+  })
+
+  it('leaves the thumb at the far right after a drag there, rather than snapping it left', () => {
+    // The slider is a controlled input: it re-reads its own seek through
+    // fractionAtTime. A round trip that does not come back to 1 pins the thumb
+    // at 0 while the pointer is still holding the right-hand end.
+    for (const duration of [0.4, 4, 123.456]) {
+      const back = fractionAtTime(timeAtFraction(1, duration), duration)
+      expect(back).toBeCloseTo(1, 10)
+      expect(Math.round(back * 1000)).toBe(1000)
+    }
   })
 
   it('clamps a fraction outside 0..1', () => {
     expect(timeAtFraction(-3, 4)).toBe(0)
-    expect(timeAtFraction(9, 4)).toBe(0)
+    expect(timeAtFraction(9, 4)).toBeLessThan(4)
+    expect(timeAtFraction(9, 4)).toBeCloseTo(4, 10)
   })
 
-  it('round-trips against fractionAtTime everywhere but the loop point', () => {
-    for (const f of [0, 0.1, 0.25, 0.5, 0.75, 0.9]) {
+  it('round-trips against fractionAtTime, both ends included', () => {
+    for (const f of [0, 0.1, 0.25, 0.5, 0.75, 0.9, 1]) {
       expect(fractionAtTime(timeAtFraction(f, 6), 6)).toBeCloseTo(f, 10)
     }
   })
