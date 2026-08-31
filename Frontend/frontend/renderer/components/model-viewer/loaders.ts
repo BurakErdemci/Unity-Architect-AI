@@ -12,6 +12,20 @@ export const FALLBACK_MATERIAL_COLOR = 0x9aa0a6;
 const isMesh = (o: THREE.Object3D): o is THREE.Mesh =>
   (o as THREE.Mesh).isMesh === true;
 
+/**
+ * Anything holding GPU buffers, not just meshes. FBXLoader emits a `Line` per
+ * NURBS curve and `Points` are reachable too; both carry geometry and material
+ * that an `isMesh` guard walks straight past. Structural, not by type list — a
+ * renderable class we have not met yet still gets freed.
+ */
+type Renderable = THREE.Object3D & {
+  geometry?: THREE.BufferGeometry;
+  material?: THREE.Material | THREE.Material[];
+};
+
+const isRenderable = (o: THREE.Object3D): o is Renderable =>
+  (o as Renderable).geometry !== undefined || (o as Renderable).material !== undefined;
+
 const asArray = (m: THREE.Material | THREE.Material[] | null | undefined): THREE.Material[] =>
   m == null ? [] : Array.isArray(m) ? m : [m];
 
@@ -86,6 +100,23 @@ export const parseModel = (ext: string, buffer: ArrayBuffer): ParsedModel => {
 };
 
 /**
+ * The clip to play, or null when the file gives us nothing to run.
+ *
+ * A zero-duration clip is not merely pointless, it is poison: AnimationAction
+ * computes `Math.floor(time / duration)` for its loop wrap, which is NaN at
+ * duration 0, and the NaN reaches the interpolants and then the bone matrices.
+ * The model silently disappears while the loop keeps spinning and no error
+ * state ever fires. Files with a single keyframe produce exactly this.
+ *
+ * Multi-clip files play the first clip; choosing between them is UI this viewer
+ * deliberately does not have.
+ */
+export const playableClip = (clips: THREE.AnimationClip[]): THREE.AnimationClip | null => {
+  const first = clips[0];
+  return first && first.duration > 0 ? first : null;
+};
+
+/**
  * Release every GPU-backed resource under `object`. The usage pattern this
  * exists for is clicking through a folder of 200 models: without it each one
  * leaves its buffers and textures live for the rest of the session.
@@ -95,7 +126,13 @@ export const disposeObject = (object: THREE.Object3D): void => {
   const textures = new Set<THREE.Texture>();
 
   object.traverse(child => {
-    if (!isMesh(child)) return;
+    // A SkinnedMesh owns a Skeleton, and three allocates a bone DataTexture on
+    // it at first render. Nothing else frees that texture, so browsing rigged
+    // FBX files — the whole point of this panel — leaks one per file.
+    const skinned = child as THREE.SkinnedMesh;
+    if (skinned.isSkinnedMesh) skinned.skeleton?.dispose();
+
+    if (!isRenderable(child)) return;
     child.geometry?.dispose();
     for (const material of asArray(child.material)) materials.add(material);
   });

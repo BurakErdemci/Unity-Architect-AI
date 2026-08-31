@@ -9,7 +9,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import * as THREE from 'three'
-import { parseModel, disposeObject, FALLBACK_MATERIAL_COLOR } from '../renderer/components/model-viewer/loaders'
+import { parseModel, disposeObject, playableClip, FALLBACK_MATERIAL_COLOR } from '../renderer/components/model-viewer/loaders'
 
 const fixture = (name: string): ArrayBuffer => {
   const buf = readFileSync(resolve(__dirname, 'fixtures', name))
@@ -106,5 +106,101 @@ describe('disposeObject', () => {
     disposeObject(object)
     expect(geometrySpy).toHaveBeenCalled()
     expect(materialSpy).toHaveBeenCalled()
+  })
+})
+
+describe('playableClip', () => {
+  const track = () => new THREE.VectorKeyframeTrack('.position', [0, 1], [0, 0, 0, 5, 0, 0])
+
+  it('is null when the file has no animation', () => {
+    expect(playableClip([])).toBeNull()
+  })
+
+  it('picks the first clip of a multi-clip file', () => {
+    const first = new THREE.AnimationClip('a', 1, [track()])
+    const second = new THREE.AnimationClip('b', 1, [track()])
+    expect(playableClip([first, second])).toBe(first)
+  })
+
+  it('refuses a zero-duration clip', () => {
+    expect(playableClip([new THREE.AnimationClip('single-key', 0, [track()])])).toBeNull()
+  })
+
+  it('a zero-duration clip really does break the mixer — this is why', () => {
+    // The guard above is not tidiness. AnimationAction wraps the loop with
+    // floor(time / duration): at duration 0 that is Infinity, `pending`
+    // becomes Infinity - Infinity = NaN, the "have to stop" branch never
+    // fires, and the action's time is NaN from the first update onward and
+    // stays there. Nothing throws and no error state exists to catch it.
+    //
+    // MEASURED, three 0.185.1: the NaN does NOT reach the object's transform
+    // here — the interpolant clamps, so the pose freezes on the clip's last
+    // keyframe instead. The action is still permanently invalid and a rAF loop
+    // would burn frames forever on a clip with nothing to play.
+    const object = new THREE.Object3D()
+    const mixer = new THREE.AnimationMixer(object)
+    const action = mixer
+      .clipAction(new THREE.AnimationClip('poison', 0, [track()]))
+      .setLoop(THREE.LoopRepeat, Infinity)
+    action.play()
+    mixer.update(0.016)
+    expect(Number.isNaN(action.time)).toBe(true)
+    mixer.update(0.016)
+    expect(Number.isNaN(action.time)).toBe(true)
+  })
+
+  it('the same clip with a real duration leaves the object finite', () => {
+    const object = new THREE.Object3D()
+    const mixer = new THREE.AnimationMixer(object)
+    const clip = new THREE.AnimationClip('fine', 1, [track()])
+    const action = mixer.clipAction(playableClip([clip])!).setLoop(THREE.LoopRepeat, Infinity)
+    action.play()
+    mixer.update(0.5)
+    expect(Number.isFinite(action.time)).toBe(true)
+    expect(Number.isFinite(object.position.x)).toBe(true)
+  })
+})
+
+describe('disposeObject beyond meshes', () => {
+  it('frees a Line — FBXLoader emits one per NURBS curve', () => {
+    const geometry = new THREE.BufferGeometry()
+    const material = new THREE.LineBasicMaterial()
+    const root = new THREE.Group()
+    root.add(new THREE.Line(geometry, material))
+    const spies = [geometry, material].map(r => vi.spyOn(r, 'dispose'))
+    disposeObject(root)
+    for (const spy of spies) expect(spy).toHaveBeenCalledTimes(1)
+  })
+
+  it('frees Points as well', () => {
+    const geometry = new THREE.BufferGeometry()
+    const material = new THREE.PointsMaterial()
+    const root = new THREE.Group()
+    root.add(new THREE.Points(geometry, material))
+    const spies = [geometry, material].map(r => vi.spyOn(r, 'dispose'))
+    disposeObject(root)
+    for (const spy of spies) expect(spy).toHaveBeenCalledTimes(1)
+  })
+
+  it('frees the skeleton of a rigged mesh', () => {
+    // Skeleton.dispose releases the bone DataTexture three allocates at render
+    // time; nothing else does. A rigged FBX per file is the core scenario.
+    const bone = new THREE.Bone()
+    const skeleton = new THREE.Skeleton([bone])
+    const mesh = new THREE.SkinnedMesh(new THREE.BufferGeometry(), new THREE.MeshStandardMaterial())
+    mesh.add(bone)
+    mesh.bind(skeleton)
+    const root = new THREE.Group()
+    root.add(mesh)
+
+    const spy = vi.spyOn(skeleton, 'dispose')
+    disposeObject(root)
+    expect(spy).toHaveBeenCalledTimes(1)
+  })
+
+  it('walks past a plain Group without touching it', () => {
+    const root = new THREE.Group()
+    root.add(new THREE.Group())
+    expect(() => disposeObject(root)).not.toThrow()
   })
 })

@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { Loader2 } from 'lucide-react';
 import { useLang } from '../../lib/i18n';
 import { extensionOf } from './extensions';
-import { disposeObject, parseModel, type ParsedModel } from './loaders';
+import { disposeObject, parseModel, playableClip, type ParsedModel } from './loaders';
 
 export interface ModelPreviewPanelProps {
   file: { path: string; name: string };
@@ -237,11 +237,10 @@ export const ModelPreviewPanel: React.FC<ModelPreviewPanelProps> = ({ file, work
       stage.content.add(parsed.object);
       frameObject(stage.camera, stage.grid, parsed.object);
 
-      if (parsed.clips.length > 0) {
-        // Multi-clip files play the first clip; picking between them is UI this
-        // panel deliberately does not have.
+      const clip = playableClip(parsed.clips);
+      if (clip) {
         const mixer = new THREE.AnimationMixer(parsed.object);
-        mixer.clipAction(parsed.clips[0]).setLoop(THREE.LoopRepeat, Infinity).play();
+        mixer.clipAction(clip).setLoop(THREE.LoopRepeat, Infinity).play();
         stage.mixer = mixer;
         const clock = new THREE.Clock();
         const tick = () => {
