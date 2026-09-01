@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, it, expect } from 'vitest'
 import {
   MODEL_FILE_EXTENSIONS,
   MODEL_MAX_BYTES,
+  TEXT_MAX_BYTES,
   isAllowedWorkspaceReadFile,
   okumaKarariVer,
   readModelFileFromWorkspace,
@@ -190,10 +191,10 @@ describe('metin yolu regresyonu', () => {
     expect(isAllowedWorkspaceReadFile(p, ws)).toBe(true)
   })
 
-  // Yalnız model sabiti çiviliyor. Metin tavanı `background.ts` içinde satır içi
-  // bir sayı (8 MiB) — dışa aktarılmadığı için buradan iddia edilemez, o yüzden
-  // testin adı da iki tavanı birden koruduğunu söylemiyor.
-  it('model tavanı 64 MiB sabitinde kaldı', () => {
+  // Both caps are named constants now, so both can be pinned from here; the
+  // text cap used to be an inline literal in `background.ts` and could not be.
+  it('model tavanı 64 MiB, metin tavanı 8 MiB sabitinde kaldı', () => {
     expect(MODEL_MAX_BYTES).toBe(64 * 1024 * 1024)
+    expect(TEXT_MAX_BYTES).toBe(8 * 1024 * 1024)
   })
 })

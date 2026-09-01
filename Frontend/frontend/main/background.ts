@@ -10,8 +10,10 @@ import { spawn, ChildProcess } from 'child_process'
 import axios from 'axios'
 import { autoUpdater } from 'electron-updater'
 import {
+  TEXT_MAX_BYTES,
   isAllowedWorkspacePath,
   okumaKarariVer,
+  readExactly,
   taniticiKapsamdaMi,
   isAllowedWorkspaceWriteFile,
   readModelFileFromWorkspace,
@@ -436,8 +438,8 @@ handleSecure('read-file', async (_event, filePath: string, workspacePath?: strin
       fd = fs.openSync(okunacak, 'r')
       const st = fs.fstatSync(fd)
       if (!st.isFile()) return { error: 'unsupported' }
-      // Dev Unity sahne/prefab YAML'ları 100MB'ı bulabilir — Monaco'yu dondurur.
-      if (st.size > 8 * 1024 * 1024) {
+      // Gerekçesi sabitin tanımında (`TEXT_MAX_BYTES`, file-security.ts).
+      if (st.size > TEXT_MAX_BYTES) {
         return { error: 'too-large' }
       }
       // Sabit bağ kapıda da reddediliyor; burada tekrar bakmak, açış ile kapı
@@ -449,7 +451,14 @@ handleSecure('read-file', async (_event, filePath: string, workspacePath?: strin
         return { error: 'unsupported' }
       }
 
-      const content = fs.readFileSync(fd, 'utf-8')
+      // Read bounded by the size the cap was checked against — the SAME shape
+      // the model path uses, and for the same reason: `readFileSync(fd)` reads
+      // until EOF, so a file appended to between `fstatSync` and the read
+      // returned more than `TEXT_MAX_BYTES`. Measured: a 1-byte file grown by
+      // 9 MiB in that window came back whole.
+      const bytes = readExactly(fd, st.size)
+      if (!bytes) return { error: 'unsupported' }
+      const content = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('utf-8')
       // `fullPath` döndürülüyor: kapsama kanıtlandıktan sonra o ad da aynı
       // inode'u gösteriyor, ve dosya ağacı da bu adı kullanıyor — çözülmüş yolu
       // döndürmek workspace'in kendisi bir junction olduğunda ağaçla editörün

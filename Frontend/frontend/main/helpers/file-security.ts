@@ -86,6 +86,39 @@ export const MODEL_FILE_EXTENSIONS = [
 export const MODEL_MAX_BYTES = 64 * 1024 * 1024
 
 /**
+ * The text channel's size cap.
+ *
+ * A large Unity scene or prefab YAML runs to 100 MiB and freezes Monaco, which
+ * is what the ceiling is for. It lives here, exported, next to the model cap:
+ * the same number was previously an inline literal in the `read-file` handler,
+ * so the two caps could not be asserted or changed together.
+ */
+export const TEXT_MAX_BYTES = 8 * 1024 * 1024
+
+/**
+ * Read EXACTLY `size` bytes from an already-open descriptor, or null.
+ *
+ * Not `readFileSync(fd)`: that reads until EOF, so a file that grows between
+ * `fstatSync` and the read hands back more bytes than the cap was checked
+ * against. Bounding the loop by the size the cap was checked against closes
+ * that window in one direction, and a file that SHRANK ends short of `size`,
+ * which is reported as a failure rather than as a truncated read.
+ *
+ * Reading into an ArrayBuffer of our own also keeps Buffer's shared pool out of
+ * the payload that crosses IPC.
+ */
+export function readExactly(fd: number, size: number): Uint8Array | null {
+  const view = new Uint8Array(new ArrayBuffer(size))
+  let read = 0
+  while (read < size) {
+    const n = fs.readSync(fd, view, read, size - read, read)
+    if (n <= 0) break
+    read += n
+  }
+  return read === size ? view : null
+}
+
+/**
  * Yazma/okuma izni sadece workspace içindeki Assets/Scripts/*.cs dosyalarına verilir.
  * Path traversal, symlink ve dışarı çıkış girişimlerini engeller.
  */
@@ -355,22 +388,11 @@ export function readModelFileFromWorkspace(
       return { error: 'denied' }
     }
 
-    // Read EXACTLY the size the cap was checked against, not "until EOF":
-    // `readFileSync(fd)` would follow a file that grew after `fstatSync` and so
-    // hand back more bytes than `MODEL_MAX_BYTES` allows. Reading into an
-    // ArrayBuffer of our own also keeps Buffer's shared pool out of the payload.
-    const data = new ArrayBuffer(st.size)
-    const view = new Uint8Array(data)
-    let okunan = 0
-    while (okunan < st.size) {
-      const n = fs.readSync(fd, view, okunan, st.size - okunan, okunan)
-      if (n <= 0) break
-      okunan += n
-    }
-    if (okunan !== st.size) return { error: 'denied' }
+    const view = readExactly(fd, st.size)
+    if (!view) return { error: 'denied' }
     // `fullPath` is returned rather than the resolved path, for the same reason
     // the text handler does it: the file tree addresses files by this name.
-    return { path: fullPath, name: path.basename(fullPath), data }
+    return { path: fullPath, name: path.basename(fullPath), data: view.buffer as ArrayBuffer }
   } catch {
     return { error: 'denied' }
   } finally {
