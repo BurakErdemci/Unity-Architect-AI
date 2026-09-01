@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import * as THREE from 'three';
 // The `.js` suffix is required by three's exports map under this tsconfig.
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
@@ -432,7 +433,14 @@ export const ModelPreviewPanel: React.FC<ModelPreviewPanelProps> = ({ file, work
       // this call is what makes the `lost` state a recoverable one rather than
       // a description of something already permanent.
       event.preventDefault();
-      setViewportFault('lost');
+      // flushSync, not a plain setState: this listener is outside React, so the
+      // commit would otherwise be scheduled and land after the current task.
+      // The canvas is ALREADY blank the instant the context goes — the driver
+      // took it, not us — so a deferred commit leaves the user looking at an
+      // unexplained black rectangle for however long the flush is postponed,
+      // which is the whole failure this state exists to end. Committing here
+      // makes the quiet "reconnecting" line part of the same task as the loss.
+      flushSync(() => setViewportFault('lost'));
       stopRestoreTimer();
       restoreTimer = setTimeout(() => {
         restoreTimer = null;
@@ -446,8 +454,10 @@ export const ModelPreviewPanel: React.FC<ModelPreviewPanelProps> = ({ file, work
       stopRestoreTimer();
       // Clears `gone` as well as `lost`: a context that comes back late is
       // still back, and the panel would otherwise keep telling the user to
-      // reopen a preview that already works.
-      setViewportFault(null);
+      // reopen a preview that already works. Flushed for the same reason the
+      // loss is: the viewport draws again from this moment, and a message that
+      // outlives the condition it describes is its own defect.
+      flushSync(() => setViewportFault(null));
       resize();
     };
     renderer.domElement.addEventListener('webglcontextlost', onContextLost);

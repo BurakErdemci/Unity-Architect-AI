@@ -85,6 +85,17 @@ describe('a preview whose canvas loses its WebGL context', () => {
     expect(screen.getByText(LOST)).toBeTruthy()
   })
 
+  it('says something in the same task as the loss, with no flush of its own', async () => {
+    // Deliberately NOT wrapped in act(): act() flushes React's queue, so a
+    // handler that only schedules its state change still looks instant there.
+    // The canvas is blank from the moment the driver takes the context, so what
+    // has to be measured is that the notice is on screen without anyone having
+    // pumped React first.
+    const { canvas } = await mounted()
+    canvas.dispatchEvent(new Event('webglcontextlost', { cancelable: true }))
+    expect(screen.getByText(LOST)).toBeTruthy()
+  })
+
   it('asks the browser to bring the context back', async () => {
     // Cancelling the event is the whole difference between a loss that may be
     // restored and one the browser will never retry, so the "may come back"
