@@ -102,6 +102,9 @@ interface Stage extends ClearTarget {
 const CHANNEL_ERROR_KEYS: Record<string, TKey> = {
   'too-large': 'preview.tooLarge',
   unsupported: 'preview.unsupportedFormat',
+  // The read gate shedding load, not a verdict on the file: the one refusal
+  // here that is worth retrying, so it says so instead of reading as broken.
+  busy: 'preview.busy',
 };
 
 /**
