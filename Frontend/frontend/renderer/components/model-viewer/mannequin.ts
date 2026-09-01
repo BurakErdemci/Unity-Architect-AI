@@ -73,14 +73,17 @@ export const MANNEQUIN_PROPORTIONS = {
   radii: {
     head: 0.025,
     neck: 0.025,
-    spine: 0.055,
+    // Tuned by eye against a Mixamo goalkeeper clip (1 Sep 2026): thicker
+    // forearms/shins so extremities don't read as sticks, slimmer spine so
+    // short torso bones don't degrade into a chain of balls.
+    spine: 0.048,
     shoulder: 0.03,
-    upperArm: 0.032,
-    forearm: 0.028,
-    hand: 0.014,
+    upperArm: 0.038,
+    forearm: 0.034,
+    hand: 0.016,
     finger: 0.006,
-    upperLeg: 0.045,
-    lowerLeg: 0.035,
+    upperLeg: 0.05,
+    lowerLeg: 0.042,
     foot: 0.018,
     toe: 0.01,
     other: 0.02,
