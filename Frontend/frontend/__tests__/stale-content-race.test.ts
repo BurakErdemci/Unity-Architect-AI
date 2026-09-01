@@ -303,4 +303,93 @@ describe('stale-content-race', () => {
       expect(result.current.openedFilePath).toBeNull()
     })
   })
+
+  // The INVERSE start ordering. Above, the read is out first and a path
+  // operation overtakes it. Here the operation is out first and the read begins
+  // while it is still in flight — a user who starts a delete and then opens the
+  // same file from another entry point before the IPC answers.
+  //
+  // Starting later is not a reason to win. The operation was already going to
+  // make that path untrue, so the read must not commit it, and which reads are
+  // affected is a question about the PATH, not about who most recently claimed
+  // the content area.
+  describe('a path operation already in flight outranks a read begun during it', () => {
+    const yol = '/workspace/A.cs'
+    let silme: ReturnType<typeof ertelenmis<any>>
+    let okuma: ReturnType<typeof ertelenmis<any>>
+
+    beforeEach(() => {
+      silme = ertelenmis<any>()
+      okuma = ertelenmis<any>()
+      invoke.mockImplementation((channel: string) => {
+        if (channel === 'path-exists') return Promise.resolve(true)
+        if (channel === 'read-directory') return Promise.resolve([])
+        if (channel === 'git-status') return Promise.resolve({ isRepo: false, files: {}, dirs: {} })
+        if (channel === 'delete-file') return silme.sozu
+        if (channel === 'read-file') return okuma.sozu
+        throw new Error(`unexpected IPC channel: ${channel}`)
+      })
+    })
+
+    // Both calls are left in flight deliberately, so the test decides which
+    // answer arrives first rather than the hook's own awaits deciding it.
+    const ikisiniBaslat = async (okunanYol = yol) => {
+      const { result } = mount()
+      await act(async () => { await result.current.selectWorkspace('/workspace') })
+      const siliniyor = result.current.deleteFile(yol)
+      await Promise.resolve()
+      const aciliyor = result.current.openFile(okunanYol)
+      await Promise.resolve()
+      return { result, siliniyor, aciliyor }
+    }
+
+    it('the deleted path does not reopen when the delete answers first', async () => {
+      const { result, siliniyor, aciliyor } = await ikisiniBaslat()
+
+      await act(async () => { silme.coz({ success: true }); await siliniyor })
+      await act(async () => { okuma.coz({ path: yol, content: 'class A {}' }); await aciliyor })
+
+      expect(okunanYollar()).toEqual([yol])
+      expect(result.current.openedFilePath).toBeNull()
+    })
+
+    // The same overlap resolved the other way round: the read lands first and
+    // fills the editor, then the delete succeeds and has to take the file back
+    // off screen.
+    it('the deleted path does not stay open when the read answers first', async () => {
+      const { result, siliniyor, aciliyor } = await ikisiniBaslat()
+
+      await act(async () => { okuma.coz({ path: yol, content: 'class A {}' }); await aciliyor })
+      await act(async () => { silme.coz({ success: true }); await siliniyor })
+
+      expect(okunanYollar()).toEqual([yol])
+      expect(result.current.openedFilePath).toBeNull()
+    })
+
+    // The neighbouring case, and the reason the operation cannot simply drop
+    // whatever read it finds: deleting one file says nothing about a read of
+    // another, and that read is one the user is legitimately waiting on.
+    it('a read of another file begun during the delete still commits', async () => {
+      const baskaYol = '/workspace/B.cs'
+      const { result, siliniyor, aciliyor } = await ikisiniBaslat(baskaYol)
+
+      await act(async () => { silme.coz({ success: true }); await siliniyor })
+      await act(async () => { okuma.coz({ path: baskaYol, content: 'class B {}' }); await aciliyor })
+
+      expect(result.current.openedFilePath).toBe(baskaYol)
+      expect(result.current.code).toBe('class B {}')
+    })
+
+    // A refused delete leaves the file on disk, so the read it overlapped is
+    // describing something that is still there.
+    it('a failed delete leaves the read begun during it alone', async () => {
+      const { result, siliniyor, aciliyor } = await ikisiniBaslat()
+
+      await act(async () => { silme.coz({ success: false, error: 'locked' }); await siliniyor })
+      await act(async () => { okuma.coz({ path: yol, content: 'class A {}' }); await aciliyor })
+
+      expect(result.current.openedFilePath).toBe(yol)
+      expect(result.current.code).toBe('class A {}')
+    })
+  })
 })

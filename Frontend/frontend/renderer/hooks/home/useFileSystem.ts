@@ -123,6 +123,14 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
   // because both are written here.
   const [previewFile, setPreviewFile] = useState<{ path: string; name: string } | null>(null);
 
+  // The editor path as it is RIGHT NOW, for the async continuations that must
+  // not answer from the render they were created in. Assigned during render
+  // rather than from an effect on purpose: an IPC reply is a promise
+  // continuation, and passive effects are not guaranteed to have flushed by the
+  // time one runs, so an effect-written ref could still hold the previous path.
+  const openedFilePathRef = useRef(openedFilePath);
+  openedFilePathRef.current = openedFilePath;
+
   const workspaceRequest = useLatestRequest();
   const contentRequest = useLatestRequest();
 
@@ -175,8 +183,16 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
       if (!samePath(prev.path, oldPath) || !newPath) return null;
       return { path: newPath, name: newPath.split(/[\\/]/).pop() || newPath };
     });
-    if (openedFilePath && yolEtkilendi(openedFilePath, oldPath)) {
-      if (samePath(openedFilePath, oldPath) && newPath) {
+    // Read through the ref, not the closure. A read that began while this
+    // operation was in flight can COMMIT before the operation's answer arrives,
+    // and it does so after this callback was created, so the captured
+    // `openedFilePath` would still say the editor was empty and the file the
+    // operation removed would stay on screen. `previewFile` above is safe for
+    // the same reason it is written through an updater: both need the value as
+    // it is now, not as it was when the operation started.
+    const acikYol = openedFilePathRef.current;
+    if (acikYol && yolEtkilendi(acikYol, oldPath)) {
+      if (samePath(acikYol, oldPath) && newPath) {
         setOpenedFilePath(newPath);
       } else {
         setOpenedFilePath(null);
@@ -184,7 +200,25 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
         setOriginalCode('');
       }
     }
-  }, [openedFilePath, yolEtkilendi, samePath, contentRequest]);
+  }, [yolEtkilendi, samePath, contentRequest]);
+
+  // What a path operation must still be true for when its IPC answers.
+  //
+  // NOT who owns the content area. Gating on that made an operation already IN
+  // FLIGHT lose to a read that merely STARTED later: opening the very file a
+  // delete was about to remove took ownership, so the successful delete skipped
+  // `applyContentPathChange` altogether and the late read reopened a file that
+  // was gone. An operation is not a claim on the content area, and being
+  // overtaken there is not a reason to leave the area naming a path the
+  // operation just made untrue.
+  //
+  // What CAN make an operation's path meaningless is the workspace changing
+  // under it — the same relative path then names a different, still-present
+  // file — so that is what these operations observe, and only that. Which
+  // content a successful operation invalidates is decided by the path itself
+  // inside `applyContentPathChange`, which is why a read of another file still
+  // commits while this one is deleted.
+  const pathOperationScope = useCallback(() => workspaceRequest.observe(), [workspaceRequest]);
 
   // VSCode tarzı git rozetleri: mutlak yol → durum (modified/added/untracked/deleted)
   const [gitStatus, setGitStatus] = useState<{ isRepo: boolean; files: Record<string, string>; dirs: Record<string, string> }>({ isRepo: false, files: {}, dirs: {} });
@@ -502,33 +536,32 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
   const handleTreeDelete = useCallback(async (entry: FileEntry) => {
     setTreeContextMenu(null);
     // The confirmation dialog is open for as long as the user takes to answer,
-    // so this action owns the content area only if nothing newer took it while
-    // the question was on screen.
-    const halaGecerli = contentRequest.observe();
+    // so the workspace can change entirely while the question is on screen.
+    const halaGecerli = pathOperationScope();
     if (!(await confirmDialog(cevir('file.deleteConfirm', { ad: entry.name })))) return;
     const res = await ipc.invoke('delete-entry', entry.path, workspacePath);
     // This entry point can also delete a FOLDER, so descendants go with it —
     // which `applyContentPathChange` handles as part of "the path is gone".
     if (res?.success && halaGecerli()) applyContentPathChange(entry.path, null);
     refreshFileTree();
-  }, [refreshFileTree, workspacePath, applyContentPathChange, contentRequest]);
+  }, [refreshFileTree, workspacePath, applyContentPathChange, pathOperationScope]);
 
   const submitRename = useCallback(async () => {
     if (!renamingPath || !renameValue.trim()) { setRenamingPath(null); return; }
     const oldPath = renamingPath;
-    const halaGecerli = contentRequest.observe();
+    const halaGecerli = pathOperationScope();
     const res = await ipc.invoke('rename-entry', oldPath, renameValue.trim(), workspacePath);
     setRenamingPath(null);
     if (!res?.success) return;
     // The main handler renames to `path.join(dirname(old), newName)` and returns
     // exactly that path, so the reported `newPath` is followable.
     const newPath: string | null = typeof res.newPath === 'string' ? res.newPath : null;
-    // A rename that lands after the content area changed hands describes a file
-    // the area no longer shows; following it would move the NEW occupant onto an
-    // old workspace's path.
+    // A rename that lands after the workspace changed describes a file in a
+    // project the content area has left; following it would move the new
+    // workspace's occupant onto an old workspace's path.
     if (halaGecerli()) applyContentPathChange(oldPath, newPath);
     refreshFileTree();
-  }, [refreshFileTree, renameValue, renamingPath, workspacePath, applyContentPathChange, contentRequest]);
+  }, [refreshFileTree, renameValue, renamingPath, workspacePath, applyContentPathChange, pathOperationScope]);
 
   const submitTreeCreate = useCallback(async () => {
     if (!treeCreating || !treeCreateValue.trim()) { setTreeCreating(null); return; }
@@ -559,18 +592,18 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
 
   const deleteFile = useCallback(async (relativePath: string) => {
     if (!ipc || !workspacePath) return;
-    const halaGecerli = contentRequest.observe();
+    const halaGecerli = pathOperationScope();
     const res = await ipc.invoke('delete-file', relativePath, workspacePath);
     if (res.success) {
       showToast(cevir('file.deleted'), 'success');
       refreshFileTree();
-      // Only the content area this delete started in: after a workspace switch
-      // the same relative path can name a different, still-present file.
+      // Only the workspace this delete started in: after a workspace switch the
+      // same relative path can name a different, still-present file.
       if (halaGecerli()) applyContentPathChange(relativePath, null);
     } else {
       showToast(cevir('file.deleteError', { hata: res.error }), 'error');
     }
-  }, [ipc, workspacePath, showToast, refreshFileTree, applyContentPathChange, contentRequest]);
+  }, [ipc, workspacePath, showToast, refreshFileTree, applyContentPathChange, pathOperationScope]);
 
   const handleExportToUnity = useCallback(async (codeString: string) => {
     if (!workspacePath) return;
@@ -625,7 +658,7 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
     // The drop is answered asynchronously, so a workspace switch can land in
     // between; the moved path then belongs to a workspace the content area has
     // already left.
-    const halaGecerli = contentRequest.observe();
+    const halaGecerli = pathOperationScope();
     const res = await ipc?.invoke('move-entry', sourcePath, targetEntry.path, workspacePath);
     setTreeDragSource(null);
     if (!res?.success) return;
@@ -635,7 +668,7 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
       applyContentPathChange(sourcePath, typeof res.newPath === 'string' ? res.newPath : null);
     }
     refreshFileTree();
-  }, [refreshFileTree, treeDragSource, workspacePath, applyContentPathChange, contentRequest]);
+  }, [refreshFileTree, treeDragSource, workspacePath, applyContentPathChange, pathOperationScope]);
 
   const handleTreeContextMenu = useCallback((e: React.MouseEvent, entry: FileEntry) => {
     e.preventDefault();
