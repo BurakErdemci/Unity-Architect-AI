@@ -655,10 +655,27 @@ export const ModelPreviewPanel: React.FC<ModelPreviewPanelProps> = ({ file, work
     stageRef.current?.playback?.setSpeed(next);
   }, []);
 
+  /**
+   * A viewport fault outranks the spinner unless it is `unavailable`.
+   *
+   * `unavailable` is a startup condition: it was already true before the read
+   * began, the read may yet produce a more specific verdict about the file
+   * itself, and stacking it on the spinner would talk over that verdict — the
+   * reason the `!loading` guard was written in the first place.
+   *
+   * `lost` and `gone` are the opposite case. They are events that arrive WHILE
+   * the read is in flight, and they destroy the canvas the load is heading
+   * for, so the load can only finish into a dead viewport. Holding them until
+   * the read settles leaves the user watching a spinner over a surface that is
+   * already blank, with nothing on screen saying why.
+   */
+  const showFault = viewportFault !== null && !errorKey
+    && (!loading || viewportFault !== 'unavailable');
+
   return (
     <div className="flex-1 min-h-0 w-full relative bg-[#0B0D12]">
       <div ref={hostRef} className="absolute inset-0" />
-      {loading && (
+      {loading && !showFault && (
         <div className="absolute inset-0 flex items-center justify-center gap-2 text-[11px] font-semibold text-slate-400 pointer-events-none">
           <Loader2 size={14} className="animate-spin" />
           {t('preview.loading')}
@@ -673,11 +690,11 @@ export const ModelPreviewPanel: React.FC<ModelPreviewPanelProps> = ({ file, work
         </div>
       )}
       {/*
-        Behind both of the above: what is wrong with the file is more specific
-        than what is wrong with the GPU, and a still-running read has not yet
-        earned either verdict.
+        Behind the file's own message: what is wrong with the file is more
+        specific than what is wrong with the GPU. See `showFault` for how this
+        composes with a read that is still running.
       */}
-      {viewportFault && !errorKey && !loading && (
+      {showFault && viewportFault && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-8 text-center">
           <span className="text-[12px] font-semibold text-slate-300">{t(VIEWPORT_FAULT_KEYS[viewportFault])}</span>
         </div>
