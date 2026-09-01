@@ -14,6 +14,9 @@ vi.mock('axios', () => ({
   __esModule: true,
   default: { get: vi.fn().mockResolvedValue({ data: {} }), post: vi.fn().mockResolvedValue({ data: {} }) },
 }))
+vi.mock('../renderer/components/ui/ConfirmDialog', () => ({
+  confirmDialog: vi.fn().mockResolvedValue(true),
+}))
 
 const invoke = vi.hoisted(() => {
   const fn = vi.fn()
@@ -165,5 +168,139 @@ describe('stale-content-race', () => {
 
     expect(result.current.openedFilePath).toBe('/workspace/Assets/Player.cs')
     expect(result.current.code).toBe('class Player {}')
+  })
+
+  // The other direction of the same race. Above, a newer content choice must
+  // survive an older read; here a filesystem operation removes or relocates the
+  // very path a read is still out for. Nothing has been committed yet, so there
+  // is no stale state for the content helper to correct — the read arrives into
+  // an empty content area afterwards and fills it with a path that is gone.
+  describe('a successful path change supersedes a read of that path', () => {
+    const eskiYol = '/workspace/Assets/old.cs'
+    let okuma: ReturnType<typeof ertelenmis<any>>
+
+    const yarisIpc = (channel: string) => {
+      if (channel === 'path-exists') return Promise.resolve(true)
+      if (channel === 'read-directory') return Promise.resolve([])
+      if (channel === 'git-status') return Promise.resolve({ isRepo: false, files: {}, dirs: {} })
+      if (channel === 'read-file') return okuma.sozu
+      if (channel === 'delete-file' || channel === 'delete-entry') return Promise.resolve({ success: true })
+      if (channel === 'rename-entry') return Promise.resolve({ success: true, newPath: '/workspace/Assets/new.cs' })
+      if (channel === 'move-entry') return Promise.resolve({ success: true, newPath: '/workspace/Moved/old.cs' })
+      throw new Error(`unexpected IPC channel: ${channel}`)
+    }
+
+    const girdi = (yol: string) => ({ name: yol.split('/').pop() as string, path: yol, isDirectory: false, extension: '.cs' })
+    const klasor = (yol: string) => ({ name: yol.split('/').pop() as string, path: yol, isDirectory: true, extension: '' })
+    const surukle = async (result: any, kaynak: any, hedef: any) => {
+      act(() => {
+        result.current.handleTreeDragStart(
+          { stopPropagation() {}, dataTransfer: { effectAllowed: '', setData() {} } }, kaynak,
+        )
+      })
+      await act(async () => {
+        await result.current.handleTreeDrop({ preventDefault() {}, stopPropagation() {} }, hedef)
+      })
+    }
+
+    // Start a read of `eskiYol` and hand back the call that finishes it. The
+    // pending read is returned wrapped in a function on purpose: an async helper
+    // that RETURNED it would await it, and it is meant to stay in flight.
+    const okumayaBasla = async (result: any) => {
+      const aciliyor = result.current.openFile(eskiYol)
+      await Promise.resolve()
+      return async () => {
+        await act(async () => {
+          okuma.coz({ path: eskiYol, content: 'class Old {}' })
+          await aciliyor
+        })
+      }
+    }
+
+    beforeEach(() => {
+      okuma = ertelenmis<any>()
+      invoke.mockImplementation(yarisIpc)
+    })
+
+    const hazirla = async () => {
+      const { result } = mount()
+      await act(async () => { await result.current.selectWorkspace('/workspace') })
+      return result
+    }
+
+    it('a direct delete stops the read from reopening the deleted path', async () => {
+      const result = await hazirla()
+      const okumayiBitir = await okumayaBasla(result)
+
+      await act(async () => { await result.current.deleteFile(eskiYol) })
+      await okumayiBitir()
+
+      expect(okunanYollar()).toEqual([eskiYol])
+      expect(result.current.openedFilePath).toBeNull()
+    })
+
+    it('a tree delete stops the read from reopening the deleted path', async () => {
+      const result = await hazirla()
+      const okumayiBitir = await okumayaBasla(result)
+
+      await act(async () => { await result.current.handleTreeDelete(girdi(eskiYol)) })
+      await okumayiBitir()
+
+      expect(okunanYollar()).toEqual([eskiYol])
+      expect(result.current.openedFilePath).toBeNull()
+    })
+
+    it('a rename stops the read from reopening the stale source path', async () => {
+      const result = await hazirla()
+      const okumayiBitir = await okumayaBasla(result)
+
+      act(() => {
+        result.current.setRenamingPath(eskiYol)
+        result.current.setRenameValue('new.cs')
+      })
+      await act(async () => { await result.current.submitRename() })
+      await okumayiBitir()
+
+      expect(okunanYollar()).toEqual([eskiYol])
+      expect(result.current.openedFilePath).not.toBe(eskiYol)
+    })
+
+    it('a tree move stops the read from reopening the stale source path', async () => {
+      const result = await hazirla()
+      const okumayiBitir = await okumayaBasla(result)
+
+      await surukle(result, girdi(eskiYol), klasor('/workspace/Moved'))
+      await okumayiBitir()
+
+      expect(okunanYollar()).toEqual([eskiYol])
+      expect(result.current.openedFilePath).not.toBe(eskiYol)
+    })
+
+    // The mirror defect, and the reason the read is not simply cancelled on
+    // every path change: deleting one file says nothing about a read of another
+    // one, and dropping that read would empty a content area the user is
+    // legitimately waiting on.
+    it('a delete of a different file leaves the pending read alone', async () => {
+      const result = await hazirla()
+      const okumayiBitir = await okumayaBasla(result)
+
+      await act(async () => { await result.current.deleteFile('/workspace/Assets/other.cs') })
+      await okumayiBitir()
+
+      expect(result.current.openedFilePath).toBe(eskiYol)
+      expect(result.current.code).toBe('class Old {}')
+    })
+
+    // A folder deletion takes the pending read's file with it even though the
+    // read names no path the operation mentions.
+    it('deleting an ancestor folder stops the read for a file beneath it', async () => {
+      const result = await hazirla()
+      const okumayiBitir = await okumayaBasla(result)
+
+      await act(async () => { await result.current.handleTreeDelete(klasor('/workspace/Assets')) })
+      await okumayiBitir()
+
+      expect(result.current.openedFilePath).toBeNull()
+    })
   })
 })
