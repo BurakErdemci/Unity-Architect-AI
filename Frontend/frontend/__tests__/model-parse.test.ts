@@ -9,7 +9,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import * as THREE from 'three'
-import { parseModel, disposeObject, playableClip, FALLBACK_MATERIAL_COLOR } from '../renderer/components/model-viewer/loaders'
+import { parseModel, disposeObject, playableClip, ModelParseError, FALLBACK_MATERIAL_COLOR } from '../renderer/components/model-viewer/loaders'
 
 const fixture = (name: string): ArrayBuffer => {
   const buf = readFileSync(resolve(__dirname, 'fixtures', name))
@@ -58,9 +58,18 @@ describe('parseModel', () => {
 
   it('surfaces the parser failure for a file that is not an FBX', async () => {
     const junk = new TextEncoder().encode('this is a text file, not a model').buffer as ArrayBuffer
-    // The message is what the panel prints under its generic error line, so it
-    // has to be a real one-liner and not an empty throw.
-    await expect(parseModel('.fbx', junk)).rejects.toThrow(/FBXLoader/)
+    const err = await parseModel('.fbx', junk).catch(e => e)
+    // The contract is the SHAPE of the failure, not three's wording. Naming
+    // `FBXLoader` here meant a vendor rename — which changes nothing a user can
+    // see — turned this green test red (AUDIT `third-party-error-wording`).
+    //
+    // Two things the panel depends on: it is an ordinary Error, so the panel
+    // takes its generic branch rather than the dedicated `ModelParseError` one;
+    // and it carries a first line to print under that generic message, which an
+    // empty throw or a re-thrown non-Error would not.
+    expect(err).toBeInstanceOf(Error)
+    expect(err).not.toBeInstanceOf(ModelParseError)
+    expect(String((err as Error).message).split(/\r?\n/)[0].trim().length).toBeGreaterThan(0)
   })
 })
 

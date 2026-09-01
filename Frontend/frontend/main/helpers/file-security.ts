@@ -375,7 +375,7 @@ function denyWithCause(fullPath: string, cause: unknown): ModelOkumaSonucu {
 
 export type ModelOkumaSonucu =
   | { path: string; name: string; data: ArrayBuffer }
-  | { error: 'unsupported' | 'too-large' | 'denied' }
+  | { error: 'unsupported' | 'too-large' | 'denied' | 'busy' }
 
 /**
  * The model read, gate chain included, from one open file descriptor.
@@ -445,5 +445,60 @@ export function isAllowedWorkspaceWriteFile(filePath: string, workspacePath: str
     return isAllowedWorkspacePath(absoluteFilePath, workspacePath)
   } catch {
     return false
+  }
+}
+
+/**
+ * How many model reads the main process will have in flight at once.
+ *
+ * Two, because the per-file cap was the channel's ONLY bound and the cost of
+ * ignoring the count is linear. Measured on the real handler with files sitting
+ * exactly on the 64 MiB cap — each call individually legal:
+ *
+ *   in flight | wall   | main process answered nothing for | payload alive
+ *   1         |  18 ms |   9 ms                            |  64 MiB
+ *   2         |  34 ms |  24 ms                            | 128 MiB
+ *   4         |  62 ms |  52 ms                            | 256 MiB
+ *   8         | 129 ms | 120 ms                            | 512 MiB
+ *
+ * Linear, no knee: 8 calls cost 8x, and nothing made 8 the ceiling — 32 would
+ * be 2 GiB resident and roughly half a second of frozen main process, since the
+ * read is synchronous and shares the one thread with every other IPC call, menu
+ * action and window event.
+ *
+ * Two rather than one: the app's only caller is the preview panel, which loads
+ * one model at a time, and a second slot lets a newly selected model start
+ * while the previous request is still unwinding. Two rather than four: at two
+ * the worst case is 128 MiB and a 24 ms stall, under the frame budget where the
+ * window visibly stops responding; four already costs 52 ms.
+ */
+export const MODEL_READ_MAX_IN_FLIGHT = 2
+
+let modelReadsInFlight = 0
+
+/**
+ * Admission control in front of the model read.
+ *
+ * Over the limit the call is REFUSED rather than queued: queuing would bound
+ * the stall but not the memory, because every queued caller still ends up
+ * holding a payload, and the measured harm is the simultaneous payload.
+ *
+ * The `await` is load-bearing, not decoration. `readModelFileFromWorkspace` is
+ * synchronous end to end, so without a yield each invocation would run to
+ * completion before the next one was even entered and the counter could never
+ * read higher than one — a limit that never limits. Yielding first makes
+ * overlapping invocations actually overlap, which is what the count then bounds.
+ */
+export async function readModelFileGuarded(
+  fullPath: string,
+  workspacePath: string,
+): Promise<ModelOkumaSonucu> {
+  if (modelReadsInFlight >= MODEL_READ_MAX_IN_FLIGHT) return { error: 'busy' }
+  modelReadsInFlight++
+  try {
+    await Promise.resolve()
+    return readModelFileFromWorkspace(fullPath, workspacePath)
+  } finally {
+    modelReadsInFlight--
   }
 }

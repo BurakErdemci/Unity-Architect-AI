@@ -16,7 +16,7 @@ import {
   readExactly,
   taniticiKapsamdaMi,
   isAllowedWorkspaceWriteFile,
-  readModelFileFromWorkspace,
+  readModelFileGuarded,
 } from './helpers/file-security'
 import {
   confirmLegacyRoot,
@@ -480,7 +480,9 @@ handleSecure('read-model-file', async (_event, filePath: string, workspacePath?:
     if (!workspacePath) return null;
     const _ws = untrustedWorkspace(workspacePath); if (_ws) return null;
     const fullPath = path.isAbsolute(filePath) ? filePath : path.join(workspacePath, filePath);
-    return readModelFileFromWorkspace(fullPath, workspacePath)
+    // Bounded in number as well as in per-file size; the count and the reason
+    // for it are at `MODEL_READ_MAX_IN_FLIGHT`.
+    return await readModelFileGuarded(fullPath, workspacePath)
   } catch { return null }
 })
 
