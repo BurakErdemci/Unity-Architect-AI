@@ -10,6 +10,23 @@ import { routeForFile } from '../../components/model-viewer/extensions';
 
 const ipc = typeof window !== 'undefined' ? (window as any).ipc : null;
 
+// A result that arrives late must not overwrite state a NEWER user action
+// already owns. Two independent domains here need that check — which workspace
+// is selected, and who owns the shared content area — so they share this
+// mechanism but deliberately not one counter: a single counter would make
+// opening a file cancel a pending workspace selection, which is not a race,
+// just two unrelated things happening at once.
+const useLatestRequest = () => {
+  const seq = useRef(0);
+  return useRef({
+    // Become the owner; the returned predicate reports whether still the owner.
+    claim: () => { const mine = ++seq.current; return () => seq.current === mine; },
+    // Become the owner without an async continuation of one's own — used by the
+    // synchronous actions (close, switch, preview) that supersede pending work.
+    invalidate: () => { seq.current += 1; },
+  }).current;
+};
+
 export const useFileSystem = (API: string, user: UserData | null, showToast: (msg: string, type: any) => void) => {
   const [workspacePath, setWorkspacePath] = useState<string | null>(null);
   const [lastWorkspacePath, setLastWorkspacePath] = useState<string | null>(null);
@@ -26,12 +43,16 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
   // because both are written here.
   const [previewFile, setPreviewFile] = useState<{ path: string; name: string } | null>(null);
 
+  const workspaceRequest = useLatestRequest();
+  const contentRequest = useLatestRequest();
+
   const openPreview = useCallback((filePath: string) => {
+    contentRequest.invalidate();
     setOpenedFilePath(null);
     setCode('');
     setOriginalCode('');
     setPreviewFile({ path: filePath, name: filePath.split(/[\\/]/).pop() || filePath });
-  }, []);
+  }, [contentRequest]);
 
   const closePreview = useCallback(() => setPreviewFile(null), []);
 
@@ -116,18 +137,16 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
     } catch (err) { console.error("Last workspace hatası:", err); }
   }, [API, user]);
 
-  // The workspace the user last ASKED for. Every step of `selectWorkspace`
-  // awaits something (existence check, directory read, host→backend mapping),
-  // so two selections overlap freely: auto-restore starts one while the user
-  // picks another, and a slow first mapping made the slower selection the LAST
-  // writer — the database left on A while the UI showed B, with no error on
-  // either side. Keying each awaited result to the path it was computed for is
-  // the same guard `useMCPApproval` uses for its mapped workspace.
-  const selectionRef = useRef<string | null>(null);
-
+  // Every step of `selectWorkspace` awaits something (existence check,
+  // directory read, host→backend mapping), so two selections overlap freely:
+  // auto-restore starts one while the user picks another, and a slow first
+  // mapping made the slower selection the LAST writer — the database left on A
+  // while the UI showed B, with no error on either side. `closeWorkspace` is
+  // the third overlapping actor, which is why ownership is a counter rather
+  // than the requested path: a close has no path to compare against, and an
+  // in-flight selection used to commit after it and silently reopen.
   const selectWorkspace = useCallback(async (path: string) => {
-    selectionRef.current = path;
-    const gecerliMi = () => selectionRef.current === path;
+    const gecerliMi = workspaceRequest.claim();
     // Klasör hâlâ var mı? (silinmiş/taşınmış workspace'i otomatik yüklemeyi engelle)
     if (ipc) {
       const exists = await ipc.invoke('path-exists', path);
@@ -168,7 +187,7 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
         } catch (err) { console.error("Workspace kaydetme hatası:", err); }
       }
     }
-  }, [API, user]);
+  }, [API, user, workspaceRequest, contentRequest]);
 
   const refreshFileTree = useCallback(async () => {
     if (!ipc || !workspacePath) return;
@@ -203,6 +222,12 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
   }, []);
 
   const closeWorkspace = useCallback(() => {
+    // Closing is a decision ABOUT the workspace, so it has to outrank whatever
+    // is still in flight for it: without this, a pending existence check or
+    // directory read commits afterwards and reopens the workspace the user
+    // just closed, with nothing on screen explaining why.
+    workspaceRequest.invalidate();
+    contentRequest.invalidate();
     setWorkspacePath(null);
     setRootFolderPath(null);
     setFileTree([]);
@@ -211,7 +236,7 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
     setOpenedFilePath(null);
     setCode('');
     setPreviewFile(null);
-  }, []);
+  }, [workspaceRequest, contentRequest]);
 
   const openFile = useCallback(async (filePath: string) => {
     // The file tree routes by extension before it calls anything; this is the
@@ -222,7 +247,14 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
     // about the path alone, so it precedes the channel check.
     if (routeForFile(filePath) !== 'text') { openPreview(filePath); return; }
     if (!ipc) return;
+    const gecerliMi = contentRequest.claim();
     const result = await ipc.invoke('read-file', filePath, workspacePath);
+    // A slow read landing after the user picked something else would undo that
+    // choice: it writes the editor and clears `previewFile`, so a model the
+    // user selected meanwhile disappears in favour of the older text file. The
+    // toasts below belong to the abandoned request too — a warning about a file
+    // nobody is waiting for is noise attached to the wrong screen.
+    if (!gecerliMi()) return;
     if (result?.error === 'unsupported') {
       showToast(cevir('file.unsupported'), 'warning');
       return;
@@ -251,7 +283,7 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
     // TAHMİN ETMİYOR — ne bilmediğimizi söylüyor ve yolu gösteriyor ki
     // kullanıcı kendisi karar verebilsin.
     showToast(cevir('file.openFailed', { yol: filePath }), 'warning');
-  }, [workspacePath, showToast, openPreview]);
+  }, [workspacePath, showToast, openPreview, contentRequest]);
 
   const toggleDir = useCallback(async (dirPath: string) => {
     const next = new Set(expandedDirs);
