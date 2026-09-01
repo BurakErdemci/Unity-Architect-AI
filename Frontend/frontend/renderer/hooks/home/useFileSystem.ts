@@ -10,10 +10,34 @@ import { routeForFile } from '../../components/model-viewer/extensions';
 
 const ipc = typeof window !== 'undefined' ? (window as any).ipc : null;
 
+// One file reaches this hook under several legitimate spellings: the tree hands
+// out absolute host paths, an approved agent operation names the file relative
+// to the workspace, and Windows accepts either separator for the same entry.
+// Comparing the raw strings made those spellings look like unrelated files, so
+// a successful delete could leave the content area on a file that is gone.
+//
+// The case rule is decided by the SPELLING, not by the process this runs in:
+// the renderer has no `process.platform`, and a drive-lettered or UNC path
+// names a Windows filesystem no matter where the comparison happens, while a
+// POSIX path must keep its case significant. That is the whole platform test.
+const windowsSpelled = (p: string) => /^[A-Za-z]:[\\/]/.test(p) || p.startsWith('\\\\');
+
+const absoluteYol = (p: string) =>
+  p.startsWith('/') || p.startsWith('\\') || /^[A-Za-z]:[\\/]/.test(p);
+
+// COMPARISON ONLY. Nothing derived from this is stored or displayed: the paths
+// the user sees keep the casing and separators the main process reported.
+const canonicalPath = (p: string, workspacePath: string | null) => {
+  const mutlak = absoluteYol(p) || !workspacePath ? p : `${workspacePath}/${p}`;
+  const duz = mutlak.replace(/\\/g, '/').replace(/\/{2,}/g, '/').replace(/\/+$/, '');
+  return windowsSpelled(mutlak) ? duz.toLowerCase() : duz;
+};
+
 // Deleting or renaming a FOLDER takes every path under it with it, so the
-// content area has to react to an ancestor as well as to the exact file.
-const yolEtkilendi = (p: string, hedef: string) =>
-  p === hedef || p.startsWith(hedef + '/') || p.startsWith(hedef + '\\');
+// content area has to react to an ancestor as well as to the exact file. The
+// separator is required, so `/a/Assets` covers `/a/Assets/hero.fbx` but never
+// the sibling `/a/AssetsOld/hero.fbx`.
+const containsPath = (p: string, hedef: string) => p === hedef || p.startsWith(hedef + '/');
 
 // A result that arrives late must not overwrite state a NEWER user action
 // already owns. Two independent domains here need that check — which workspace
@@ -67,6 +91,18 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
 
   const closePreview = useCallback(() => setPreviewFile(null), []);
 
+  // Both comparators resolve their arguments against the CURRENT workspace, so
+  // a relative operation path and an absolute shown path meet in one form.
+  const yolEtkilendi = useCallback(
+    (p: string, hedef: string) =>
+      containsPath(canonicalPath(p, workspacePath), canonicalPath(hedef, workspacePath)),
+    [workspacePath],
+  );
+  const samePath = useCallback(
+    (p: string, hedef: string) => canonicalPath(p, workspacePath) === canonicalPath(hedef, workspacePath),
+    [workspacePath],
+  );
+
   // ONE place where a filesystem path change reaches the content area. Five
   // earlier fixes each closed one path — direct delete, tree delete, rename,
   // workspace switch, missing replacement workspace — and each time a later
@@ -85,11 +121,11 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
   const applyContentPathChange = useCallback((oldPath: string, newPath: string | null) => {
     setPreviewFile(prev => {
       if (!prev || !yolEtkilendi(prev.path, oldPath)) return prev;
-      if (prev.path !== oldPath || !newPath) return null;
+      if (!samePath(prev.path, oldPath) || !newPath) return null;
       return { path: newPath, name: newPath.split(/[\\/]/).pop() || newPath };
     });
     if (openedFilePath && yolEtkilendi(openedFilePath, oldPath)) {
-      if (openedFilePath === oldPath && newPath) {
+      if (samePath(openedFilePath, oldPath) && newPath) {
         setOpenedFilePath(newPath);
       } else {
         setOpenedFilePath(null);
@@ -97,7 +133,7 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
         setOriginalCode('');
       }
     }
-  }, [openedFilePath]);
+  }, [openedFilePath, yolEtkilendi, samePath]);
 
   // VSCode tarzı git rozetleri: mutlak yol → durum (modified/added/untracked/deleted)
   const [gitStatus, setGitStatus] = useState<{ isRepo: boolean; files: Record<string, string>; dirs: Record<string, string> }>({ isRepo: false, files: {}, dirs: {} });
