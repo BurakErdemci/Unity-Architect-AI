@@ -47,9 +47,22 @@ const containsPath = (p: string, hedef: string) => p === hedef || p.startsWith(h
 // just two unrelated things happening at once.
 const useLatestRequest = () => {
   const seq = useRef(0);
+  // What the current owner is waiting for, when the owner can name it. It lets
+  // a caller cancel the in-flight request SELECTIVELY instead of cancelling
+  // every pending request whenever anything changes.
+  const konu = useRef<string | null>(null);
   return useRef({
     // Become the owner; the returned predicate reports whether still the owner.
-    claim: () => { const mine = ++seq.current; return () => seq.current === mine; },
+    claim: (bekleyen: string | null = null) => {
+      const mine = ++seq.current;
+      konu.current = bekleyen;
+      return () => seq.current === mine;
+    },
+    // The path the owner is waiting for, or null when it has none to name.
+    subject: () => konu.current,
+    // The owner announcing that its request is no longer in flight. Only the
+    // current owner calls it, so it cannot erase a newer claim's subject.
+    settle: () => { konu.current = null; },
     // Watch the CURRENT owner without becoming it. Background readers — tree
     // refresh, directory expansion, git status, last-workspace restore — must be
     // droppable by a newer action, but claiming would make each of them cancel a
@@ -58,7 +71,7 @@ const useLatestRequest = () => {
     observe: () => { const seen = seq.current; return () => seq.current === seen; },
     // Become the owner without an async continuation of one's own — used by the
     // synchronous actions (close, switch, preview) that supersede pending work.
-    invalidate: () => { seq.current += 1; },
+    invalidate: () => { seq.current += 1; konu.current = null; },
   }).current;
 };
 
@@ -119,6 +132,12 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
   // folder) is cleared: no handler reports the new path of each descendant, so
   // there is nothing truthful to follow it to.
   const applyContentPathChange = useCallback((oldPath: string, newPath: string | null) => {
+    // A read of this very path may still be in flight; without this it lands
+    // afterwards and reopens the path the operation just invalidated. Only a
+    // read of an AFFECTED path is dropped — cancelling every pending read on
+    // any path change would throw away a legitimate open of another file.
+    const bekleyen = contentRequest.subject();
+    if (bekleyen && yolEtkilendi(bekleyen, oldPath)) contentRequest.invalidate();
     setPreviewFile(prev => {
       if (!prev || !yolEtkilendi(prev.path, oldPath)) return prev;
       if (!samePath(prev.path, oldPath) || !newPath) return null;
@@ -133,7 +152,7 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
         setOriginalCode('');
       }
     }
-  }, [openedFilePath, yolEtkilendi, samePath]);
+  }, [openedFilePath, yolEtkilendi, samePath, contentRequest]);
 
   // VSCode tarzı git rozetleri: mutlak yol → durum (modified/added/untracked/deleted)
   const [gitStatus, setGitStatus] = useState<{ isRepo: boolean; files: Record<string, string>; dirs: Record<string, string> }>({ isRepo: false, files: {}, dirs: {} });
@@ -388,7 +407,9 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
     // about the path alone, so it precedes the channel check.
     if (routeForFile(filePath) !== 'text') { openPreview(filePath); return; }
     if (!ipc) return;
-    const gecerliMi = contentRequest.claim();
+    // Claiming WITH the path: a path-changing operation that lands while this
+    // read is out needs to know whether the read is for the path it changed.
+    const gecerliMi = contentRequest.claim(filePath);
     const result = await ipc.invoke('read-file', filePath, workspacePath);
     // A slow read landing after the user picked something else would undo that
     // choice: it writes the editor and clears `previewFile`, so a model the
@@ -396,6 +417,7 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
     // toasts below belong to the abandoned request too — a warning about a file
     // nobody is waiting for is noise attached to the wrong screen.
     if (!gecerliMi()) return;
+    contentRequest.settle();
     if (result?.error === 'unsupported') {
       showToast(cevir('file.unsupported'), 'warning');
       return;
