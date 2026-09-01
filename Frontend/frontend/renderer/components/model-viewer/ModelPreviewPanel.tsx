@@ -601,7 +601,23 @@ export const ModelPreviewPanel: React.FC<ModelPreviewPanelProps> = ({ file, work
       const stage = stageRef.current;
       if (!stage) { disposeObject(parsed.object); setLoading(false); return; }
 
-      const clipDuration = mountParsedModel(stage, parsed, bounds);
+      // Inside the error handling, not after it: this call allocates per bone
+      // and per clip, and a throw out here used to be an unhandled rejection
+      // that left `setLoading(false)` unreached — a spinner with nothing behind
+      // it and no way out but closing the preview.
+      let clipDuration: number;
+      try {
+        clipDuration = mountParsedModel(stage, parsed, bounds);
+      } catch (err) {
+        // `clearContent` only reaches what already hangs on the stage, and the
+        // throw may have come before the model got there.
+        const reachable = parsed.object.parent === stage.content;
+        clearContent(stage);
+        if (!reachable) disposeObject(parsed.object);
+        stage.render();
+        fail('preview.loadError', String(err instanceof Error ? err.message : err).split(/\r?\n/)[0]);
+        return;
+      }
       if (clipDuration > 0) {
         setDuration(clipDuration);
         setPlaying(true);
