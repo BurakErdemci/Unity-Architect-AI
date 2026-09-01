@@ -7,7 +7,7 @@
  * readable in the diff; `triangle.glb` is 476 bytes of binary, generated from
  * the same JSON as `triangle.gltf` with the buffer moved into a BIN chunk.
  */
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeAll } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import * as THREE from 'three'
@@ -121,25 +121,56 @@ describe('parseModel dispatch', () => {
  * would be red, because every test above names its formats one at a time.
  */
 describe('every listed extension reaches a handler', () => {
-  const GENERIC = /Unsupported model format/
-
   // Not a valid file of any format on purpose: what is measured is WHICH code
   // answers, not that it succeeds. A real handler answers with its own parser's
   // complaint, or — for the tolerant ones — an empty but successful parse.
   const junk = () => bytes('not a model')
 
+  /**
+   * An extension no loader can ever exist for. It is the CONTROL: whatever the
+   * dispatch answers it with IS the unsupported outcome, measured rather than
+   * spelled out.
+   *
+   * This used to be the literal sentence the default case throws (AUDIT
+   * `source-text-assertion`). Rewording that sentence changes nothing a user or
+   * a caller can observe, and it turned two green tests red — so the wording was
+   * pinned by tests that were not about wording. Comparing against a live
+   * control keeps the property ("did this extension reach a loader") and lets
+   * the sentence change freely.
+   */
+  const CONTROL = '.__no_loader_can_exist_for_this__'
+
+  /**
+   * How `parseModel` answered `ext`, with the extension itself spliced out —
+   * that substring is the only part of an unsupported answer that legitimately
+   * differs between two unsupported extensions. `null` means it resolved, which
+   * only a real handler does.
+   */
+  const answer = async (ext: string): Promise<string | null> => {
+    const outcome = await parseModel(ext, junk()).then(() => null, (e: unknown) => e)
+    if (outcome === null) return null
+    const message = String((outcome as Error)?.message ?? outcome)
+    return message.split(ext).join('<ext>')
+  }
+
+  let unsupported = ''
+  beforeAll(async () => { unsupported = (await answer(CONTROL)) ?? '' })
+
+  it('the control extension really does fall to the default case', async () => {
+    // Without this the comparisons below would all pass against an empty string.
+    expect(unsupported.length).toBeGreaterThan(0)
+  })
+
   for (const ext of MODEL_EXTENSIONS) {
     it(`${ext} is dispatched to a loader, not to the default case`, async () => {
-      const outcome = await parseModel(ext, junk()).then(() => null, (e: unknown) => e)
-      if (outcome === null) return
-      expect(String((outcome as Error)?.message ?? outcome)).not.toMatch(GENERIC)
+      expect(await answer(ext)).not.toBe(unsupported)
     })
   }
 
   it('an extension with no handler DOES fall to the default case', async () => {
     // The counterweight: without it the loop above would pass just as happily
     // against a `parseModel` that resolved for everything.
-    await expect(parseModel('.blend', junk())).rejects.toThrow(GENERIC)
+    expect(await answer('.blend')).toBe(unsupported)
   })
 
   it('the list under test is not empty', () => {

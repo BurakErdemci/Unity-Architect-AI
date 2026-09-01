@@ -25,6 +25,7 @@ import {
   registerTrustedRoot,
 } from './helpers/ipc-trust'
 import { applyContentSecurityPolicy } from './helpers/csp'
+import { assertAllowedInvokeChannel } from './helpers/ipc-whitelist'
 import * as pty from 'node-pty'
 import {
   DOCKER_WORKSPACE_MOUNT,
@@ -102,6 +103,22 @@ const handleSecure = (
   channel: string,
   listener: (event: Electron.IpcMainInvokeEvent, ...args: any[]) => any,
 ) => {
+  // The permitted-channel list is enforced HERE, not only in the preload.
+  //
+  // Measured (external audit): with the list replaced by one that rejected
+  // every channel, all 27 handlers still registered and `read-model-file` still
+  // returned file bytes — the receiving layer consulted the list zero times, so
+  // whether a channel was on it made no difference to what the main process
+  // would serve. Anything reaching `ipcMain` without going through this app's
+  // preload (a context-isolation regression, a second preload, a devtools
+  // surface) was unfiltered, and the list's own test suite read like an
+  // enforcement proof it was not.
+  //
+  // Refusing at REGISTRATION rather than at invoke: an unlisted channel then
+  // has no handler at all, and the declaration and the enforcement cannot drift
+  // apart quietly — adding a handler without a list entry fails at startup,
+  // which every test that loads this module already exercises.
+  assertAllowedInvokeChannel(channel)
   ipcMain.handle(channel, (event, ...args) => {
     if (!isOwnFrame(event)) {
       console.error(`[ipc-trust] '${channel}' reddedildi — gönderen:`, event.senderFrame?.url ?? '(bilinmiyor)')
