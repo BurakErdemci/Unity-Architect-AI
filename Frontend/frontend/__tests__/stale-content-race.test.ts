@@ -31,6 +31,14 @@ const ertelenmis = <T,>() => {
   return { sozu, coz }
 }
 
+// Which paths were actually read. Each race case below ends in a state that
+// `openPreview` or the newer `openFile` establishes on its own, so without
+// checking that the SUPERSEDED read really was issued a green run cannot tell
+// "the late result was refused" from "no late result ever existed" — and an
+// `openFile` that stopped reading altogether would keep every assertion happy.
+const okunanYollar = () =>
+  invoke.mock.calls.filter(([kanal]: any[]) => kanal === 'read-file').map(([, yol]: any[]) => yol)
+
 describe('stale-content-race', () => {
   beforeEach(() => { invoke.mockReset() })
 
@@ -52,6 +60,7 @@ describe('stale-content-race', () => {
       await aciliyor
     })
 
+    expect(okunanYollar()).toEqual(['/workspace/Assets/old.cs'])
     expect(result.current.previewFile?.path).toBe('/workspace/Assets/hero.fbx')
     expect(result.current.openedFilePath).toBeNull()
     expect(result.current.code).toBe('')
@@ -76,6 +85,7 @@ describe('stale-content-race', () => {
       await eskiAciliyor
     })
 
+    expect(okunanYollar()).toEqual(['/workspace/Assets/old.cs', '/workspace/Assets/new.cs'])
     expect(result.current.openedFilePath).toBe('/workspace/Assets/new.cs')
     expect(result.current.code).toBe('class New {}')
   })
@@ -99,8 +109,49 @@ describe('stale-content-race', () => {
       await aciliyor
     })
 
+    expect(okunanYollar()).toEqual(['/workspace/Assets/old.cs'])
     expect(bildirimler).toEqual([])
     expect(result.current.previewFile?.path).toBe('/workspace/Assets/hero.fbx')
+  })
+
+  // The file dialog is the slowest await in the hook and is dismissed by the OS,
+  // not by this component: whatever the user does in the content area meanwhile
+  // is newer than the picker's answer.
+  it('does not let a late file-picker result replace a newer preview', async () => {
+    const secici = ertelenmis<any>()
+    invoke.mockImplementation((channel: string) => {
+      if (channel === 'open-file-dialog') return secici.sozu
+      throw new Error(`unexpected IPC channel: ${channel}`)
+    })
+
+    const { result } = mount()
+    const seciliyor = result.current.openFilePicker()
+    await Promise.resolve()
+
+    act(() => { result.current.openPreview('/workspace/Assets/new.fbx') })
+
+    await act(async () => {
+      secici.coz({ path: '/workspace/old.cs', content: 'class Old {}' })
+      await seciliyor
+    })
+
+    expect(result.current.previewFile?.path).toBe('/workspace/Assets/new.fbx')
+    expect(result.current.openedFilePath).toBeNull()
+    expect(result.current.code).toBe('')
+  })
+
+  it('a picked file nothing superseded still reaches the editor', async () => {
+    invoke.mockImplementation(async (channel: string) => {
+      if (channel === 'open-file-dialog') return { path: '/workspace/Player.cs', content: 'class Player {}' }
+      throw new Error(`unexpected IPC channel: ${channel}`)
+    })
+
+    const { result } = mount()
+    await act(async () => { await result.current.openFilePicker() })
+
+    expect(result.current.openedFilePath).toBe('/workspace/Player.cs')
+    expect(result.current.code).toBe('class Player {}')
+    expect(result.current.previewFile).toBeNull()
   })
 
   it('a read nothing superseded still opens the file', async () => {
