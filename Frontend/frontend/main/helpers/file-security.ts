@@ -352,6 +352,27 @@ export function taniticiKapsamdaMi(
   }
 }
 
+/**
+ * An OPERATIONAL model-read failure: generic to the renderer, named in the log.
+ *
+ * The renderer keeps seeing `denied` on purpose — the caller must not learn from
+ * an error code whether a path exists, is a directory, or is merely unreadable.
+ * But collapsing every cause into that one value left the main process with no
+ * trace at all, so a disk, permission or descriptor failure was indistinguishable
+ * from a policy refusal. `console.error` is where this process already logs a
+ * rejected IPC call, and it is mirrored to the on-disk log a packaged build has
+ * instead of a console.
+ *
+ * Policy refusals above this point are decisions, not failures, and stay silent.
+ */
+function denyWithCause(fullPath: string, cause: unknown): ModelOkumaSonucu {
+  const reason = cause instanceof Error
+    ? `${(cause as NodeJS.ErrnoException).code ?? cause.name}: ${cause.message}`
+    : String(cause)
+  console.error(`[model-read] '${fullPath}' could not be read — ${reason}`)
+  return { error: 'denied' }
+}
+
 export type ModelOkumaSonucu =
   | { path: string; name: string; data: ArrayBuffer }
   | { error: 'unsupported' | 'too-large' | 'denied' }
@@ -389,12 +410,14 @@ export function readModelFileFromWorkspace(
     }
 
     const view = readExactly(fd, st.size)
-    if (!view) return { error: 'denied' }
+    if (!view) {
+      return denyWithCause(fullPath, `short read: fewer than ${st.size} bytes available`)
+    }
     // `fullPath` is returned rather than the resolved path, for the same reason
     // the text handler does it: the file tree addresses files by this name.
     return { path: fullPath, name: path.basename(fullPath), data: view.buffer as ArrayBuffer }
-  } catch {
-    return { error: 'denied' }
+  } catch (err) {
+    return denyWithCause(fullPath, err)
   } finally {
     if (fd !== null) { try { fs.closeSync(fd) } catch { /* close failure does not invalidate the read */ } }
   }

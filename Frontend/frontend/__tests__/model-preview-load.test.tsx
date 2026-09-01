@@ -1,20 +1,67 @@
 /**
- * The panel's load path under jsdom. There is no WebGL here, so what is
- * measured is everything around the draw: which channel call goes out, and
- * which of the three states the user is left looking at.
+ * The panel's load path under jsdom: which channel call goes out, which of the
+ * states the user is left looking at, and — for the files that succeed — what
+ * actually reached the scene.
  *
  * Wording is pulled from the i18n table rather than typed in, so a copy edit
  * does not turn into a red test.
+ *
+ * `WebGLRenderer` is replaced by a canvas-owning stand-in, as in
+ * webgl-context-loss-unhandled.test.tsx. Without it `new WebGLRenderer()`
+ * throws under jsdom, `stageRef` stays null and every success case exits at
+ * `if (!stage)` — which left the happy paths asserting nothing but the ABSENCE
+ * of an error label, a condition a fabricated parse result satisfies just as
+ * well as a real one (AUDIT `no-op-test`). The stand-in keeps the scene the
+ * panel builds, so the assertions below can name what is in it.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { cevir, translations } from '../renderer/lib/i18n'
-import { ModelPreviewPanel } from '../renderer/components/model-viewer/ModelPreviewPanel'
+// Type-only: the value side of `three` is mocked below, and nothing here needs
+// a constructor from it.
+import type * as THREE from 'three'
+
+const stage = vi.hoisted(() => ({ scene: null as unknown }))
+
+vi.mock('three', async importOriginal => {
+  const actual = await importOriginal<typeof import('three')>()
+  class FakeWebGLRenderer {
+    domElement = document.createElement('canvas')
+    setPixelRatio() {}
+    setSize() {}
+    // The scene object is captured, not copied: the panel mounts into the same
+    // instance for the panel's whole lifetime, so holding the reference is what
+    // lets a test read the graph as it stands after the load settles.
+    render(scene: unknown) { stage.scene = scene }
+    forceContextLoss() {}
+    dispose() {}
+  }
+  return { ...actual, WebGLRenderer: FakeWebGLRenderer }
+})
+
+const { cevir, translations } = await import('../renderer/lib/i18n')
+const { ModelPreviewPanel } = await import('../renderer/components/model-viewer/ModelPreviewPanel')
+const { parseModel } = await import('../renderer/components/model-viewer/loaders')
 
 const invoke = vi.fn()
 ;(globalThis as any).window.ipc = { invoke }
+
+/** Everything drawable the panel put on its stage, by the file's own naming. */
+const onStage = (): THREE.Object3D[] => {
+  const found: THREE.Object3D[] = []
+  ;(stage.scene as THREE.Scene | null)?.traverse(o => found.push(o))
+  return found
+}
+
+const meshesOnStage = (): THREE.Mesh[] =>
+  onStage().filter((o): o is THREE.Mesh => (o as THREE.Mesh).isMesh === true)
+
+const bonesOnStage = (): THREE.Bone[] =>
+  onStage().filter((o): o is THREE.Bone => (o as THREE.Bone).isBone === true)
+
+const vertexCount = (mesh: THREE.Mesh): number =>
+  mesh.geometry.getAttribute('position')?.count ?? 0
 
 // The copy puts the bytes in jsdom's realm, where an `instanceof ArrayBuffer`
 // inside three actually holds; see model-format-dispatch.test.ts for the
@@ -40,7 +87,7 @@ const draw = (name = 'hero.fbx', workspacePath: string | null = 'C:\\proj') =>
 const LOAD_ERROR = cevir('preview.loadError')
 
 describe('ModelPreviewPanel load', () => {
-  beforeEach(() => { invoke.mockReset() })
+  beforeEach(() => { invoke.mockReset(); stage.scene = null })
 
   it('asks the model channel for the clicked file, scoped to the workspace', async () => {
     invoke.mockResolvedValue({ path: 'x', name: 'hero.fbx', data: fbxBytes() })
@@ -58,11 +105,23 @@ describe('ModelPreviewPanel load', () => {
     await waitFor(() => expect(screen.queryByText(cevir('preview.loading'))).toBeNull())
   })
 
-  it('leaves no error visible once a real FBX parses', async () => {
+  it('leaves no error visible once a real FBX parses — and puts the file on the stage', async () => {
+    // The absence of an error label is not evidence that anything loaded: the
+    // panel shows no label at all while a load is still under way, and shows
+    // none either for a result that parsed to something nobody asked for. What
+    // is named here is the fixture's own geometry and its own clip, so a parse
+    // result the file did not produce cannot satisfy it.
     invoke.mockResolvedValue({ path: 'x', name: 'hero.fbx', data: fbxBytes() })
     draw()
     await waitFor(() => expect(screen.queryByText(cevir('preview.loading'))).toBeNull())
     expect(screen.queryByText(LOAD_ERROR)).toBeNull()
+
+    const triangle = meshesOnStage().find(m => m.name === 'Triangle')
+    expect(triangle).toBeTruthy()
+    expect(vertexCount(triangle!)).toBe(3)
+    // animated-triangle.fbx carries a one-second clip, and the transport bar is
+    // the panel's only visible answer to a file that has one.
+    expect(screen.getByLabelText(cevir('preview.timeline'))).toBeTruthy()
   })
 
   it('falls back to the generic message for a containment refusal', async () => {
@@ -110,10 +169,21 @@ describe('ModelPreviewPanel load', () => {
   })
 
   it('prints the parser one-liner under the generic message', async () => {
-    invoke.mockResolvedValue({ path: 'x', name: 'hero.fbx', data: new TextEncoder().encode('plain text').buffer })
+    // The diagnostic is ASKED FOR rather than spelled out: naming three's own
+    // wording here made a vendor rename — a change with no user-visible effect
+    // — able to turn this green test red (AUDIT `third-party-error-wording`).
+    // What the panel owes the user is that whatever the parser said survives to
+    // the screen, so the expectation is measured from the same parser.
+    const junk = () => new TextEncoder().encode('plain text').buffer as ArrayBuffer
+    const failure = await parseModel('.fbx', junk()).catch((e: unknown) => e)
+    const detail = String(failure instanceof Error ? failure.message : failure).split(/\r?\n/)[0]
+    expect(detail.length).toBeGreaterThan(0)
+    expect(detail).not.toBe(LOAD_ERROR)
+
+    invoke.mockResolvedValue({ path: 'x', name: 'hero.fbx', data: junk() })
     draw()
     await waitFor(() => expect(screen.getByText(LOAD_ERROR)).toBeTruthy())
-    expect(screen.getByText(/FBXLoader/)).toBeTruthy()
+    expect(screen.getByText(detail)).toBeTruthy()
   })
 
   it('renders a .glb through the panel with no error left behind', async () => {
@@ -121,6 +191,9 @@ describe('ModelPreviewPanel load', () => {
     draw('hero.glb')
     await waitFor(() => expect(screen.queryByText(cevir('preview.loading'))).toBeNull())
     expect(screen.queryByText(LOAD_ERROR)).toBeNull()
+    // triangle.glb is one triangle and nothing else; a stage holding anything
+    // other than that did not render this file.
+    expect(meshesOnStage().map(vertexCount)).toEqual([3])
   })
 
   it('tells the user to export as .glb when the .gltf is only half the file', async () => {
@@ -146,6 +219,11 @@ describe('ModelPreviewPanel load', () => {
     await waitFor(() => expect(screen.queryByText(cevir('preview.loading'))).toBeNull())
     expect(screen.queryByText(cevir('preview.emptyModel'))).toBeNull()
     expect(screen.queryByText(LOAD_ERROR)).toBeNull()
+    // The rig itself reached the stage, and the mannequin volumes stood in for
+    // the geometry the file does not have — the two things that make this file
+    // viewable at all, neither of which the absence of a label can show.
+    expect(bonesOnStage().length).toBeGreaterThan(1)
+    expect(meshesOnStage().length).toBeGreaterThan(0)
   })
 
   it('re-reads when the previewed file changes', async () => {
