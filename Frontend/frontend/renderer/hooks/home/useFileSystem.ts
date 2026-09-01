@@ -21,6 +21,12 @@ const useLatestRequest = () => {
   return useRef({
     // Become the owner; the returned predicate reports whether still the owner.
     claim: () => { const mine = ++seq.current; return () => seq.current === mine; },
+    // Watch the CURRENT owner without becoming it. Background readers — tree
+    // refresh, directory expansion, git status, last-workspace restore — must be
+    // droppable by a newer action, but claiming would make each of them cancel a
+    // selection that is already in flight, which is the opposite defect: a
+    // refresh is not a decision about which workspace is open.
+    observe: () => { const seen = seq.current; return () => seq.current === seen; },
     // Become the owner without an async continuation of one's own — used by the
     // synchronous actions (close, switch, preview) that supersede pending work.
     invalidate: () => { seq.current += 1; },
@@ -61,11 +67,16 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
   const refreshGitStatus = useCallback(async (ws?: string | null) => {
     const target = ws ?? workspacePath;
     if (!ipc || !target) return;
+    // The badges describe ONE workspace. A status computed for the workspace the
+    // user just left repaints the new tree with the old repo's file states, and
+    // nothing on screen says the colours belong to another project.
+    const halaGecerli = workspaceRequest.observe();
     try {
       const res = await ipc.invoke('git-status', target);
+      if (!halaGecerli()) return;
       setGitStatus(res || { isRepo: false, files: {}, dirs: {} });
     } catch { /* best-effort */ }
-  }, [workspacePath]);
+  }, [workspacePath, workspaceRequest]);
 
   // Periyodik tazeleme (20 sn) — dışarıda (IDE/terminal) yapılan değişiklikler de yansısın
   useEffect(() => {
@@ -82,17 +93,24 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
 
   const saveFile = useCallback(async () => {
     if (!ipc || !openedFilePath || !workspacePath) return false;
+    const halaGecerli = contentRequest.observe();
     const res = await ipc.invoke('write-file', openedFilePath, code, workspacePath);
     if (res?.success) {
-      setOriginalCode(code);
-      setIsDirty(false);
+      // The write itself succeeded and is still reported as such, but the
+      // baseline it establishes belongs to the file that was open when the save
+      // started: applying it to a file opened since would mark that other file's
+      // unsaved text as already on disk.
+      if (halaGecerli()) {
+        setOriginalCode(code);
+        setIsDirty(false);
+      }
       showToast(cevir('file.saved'), 'success');
       return true;
     } else {
       showToast(cevir('file.saveError', { hata: res?.error || cevir('common.unknown') }), 'error');
       return false;
     }
-  }, [code, openedFilePath, workspacePath, showToast]);
+  }, [code, openedFilePath, workspacePath, showToast, contentRequest]);
 
   const [treeContextMenu, setTreeContextMenu] = useState<{ x: number; y: number; entry: FileEntry } | null>(null);
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
@@ -125,6 +143,11 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
 
   const fetchLastWorkspace = useCallback(async (userId: number) => {
     if (!API || !user?.sessionToken) return;
+    // Two awaits (the API call and the host mapping) stand between asking for the
+    // remembered workspace and offering it. `lastWorkspacePath` is what the UI
+    // offers to reopen, so restoring it after the user closed the workspace hands
+    // back the thing they just dismissed.
+    const halaGecerli = workspaceRequest.observe();
     try {
       const res = await axios.get(`${API}/last-workspace/${userId}`, {
         headers: { 'X-Session-Token': user.sessionToken }
@@ -132,10 +155,11 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
       const stored = res.data?.path;
       if (stored) {
         const host = await hostWorkspacePath(stored);
+        if (!halaGecerli()) return;
         if (host) setLastWorkspacePath(host);
       }
     } catch (err) { console.error("Last workspace hatası:", err); }
-  }, [API, user]);
+  }, [API, user, workspaceRequest]);
 
   // Every step of `selectWorkspace` awaits something (existence check,
   // directory read, host→backend mapping), so two selections overlap freely:
@@ -201,7 +225,13 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
 
   const refreshFileTree = useCallback(async () => {
     if (!ipc || !workspacePath) return;
+    // One read per expanded directory, so a refresh of a large tree stays in
+    // flight long enough for a workspace switch to land inside it. Its entries
+    // name files under the OLD root, so committing them shows the previous
+    // project's files under the new project's name.
+    const halaGecerli = workspaceRequest.observe();
     const entries = await ipc.invoke('read-directory', workspacePath, workspacePath);
+    if (!halaGecerli()) return;
     setFileTree(entries || []);
     const newDirContents = { ...dirContents };
     for (const dir of expandedDirs) {
@@ -210,26 +240,40 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
         newDirContents[dir] = dirEntries || [];
       } catch { }
     }
+    if (!halaGecerli()) return;
     setDirContents(newDirContents);
     refreshGitStatus(workspacePath);
-  }, [dirContents, expandedDirs, workspacePath, refreshGitStatus]);
+  }, [dirContents, expandedDirs, workspacePath, refreshGitStatus, workspaceRequest]);
 
   const openFolder = useCallback(async () => {
     if (!ipc) return;
+    const halaGecerli = workspaceRequest.observe();
     const folderPath = await ipc.invoke('open-folder-dialog');
+    // A dialog is dismissed by the OS, not by this hook, so its result can land
+    // after an auto-restore or a close has already decided which workspace is
+    // open. Watching rather than claiming: choosing a folder is only a decision
+    // once the choice comes back.
+    if (!halaGecerli()) return;
     if (folderPath) await selectWorkspace(folderPath);
-  }, [selectWorkspace]);
+  }, [selectWorkspace, workspaceRequest]);
 
   const openFilePicker = useCallback(async () => {
     if (!ipc) return;
+    // Same ownership as `openFile`: this fills the shared content area, so it
+    // claims that area up front. The dialog round trip is the slowest await in
+    // the hook, and its result unconditionally clears `previewFile` — a model
+    // opened while the dialog was up would vanish in favour of the older text
+    // file the picker eventually returns.
+    const gecerliMi = contentRequest.claim();
     const result = await ipc.invoke('open-file-dialog');
+    if (!gecerliMi()) return;
     if (result) {
       setCode(result.content);
       setOriginalCode(result.content);
       setOpenedFilePath(result.path);
       setPreviewFile(null);
     }
-  }, []);
+  }, [contentRequest]);
 
   const closeWorkspace = useCallback(() => {
     // Closing is a decision ABOUT the workspace, so it has to outrank whatever
@@ -302,12 +346,17 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
     } else {
       next.add(dirPath);
       if (!dirContents[dirPath]) {
+        // `next` was derived from the expansion set of the workspace this call
+        // started in, so committing it after a switch both caches a directory of
+        // the old project and reopens a folder the new tree does not have.
+        const halaGecerli = workspaceRequest.observe();
         const entries = await ipc.invoke('read-directory', dirPath, workspacePath);
+        if (!halaGecerli()) return;
         setDirContents(prev => ({ ...prev, [dirPath]: entries || [] }));
       }
     }
     setExpandedDirs(next);
-  }, [dirContents, expandedDirs, workspacePath]);
+  }, [dirContents, expandedDirs, workspacePath, workspaceRequest]);
 
   const handleTreeDelete = useCallback(async (entry: FileEntry) => {
     setTreeContextMenu(null);
@@ -319,6 +368,7 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
   const submitRename = useCallback(async () => {
     if (!renamingPath || !renameValue.trim()) { setRenamingPath(null); return; }
     const oldPath = renamingPath;
+    const halaGecerli = contentRequest.observe();
     const res = await ipc.invoke('rename-entry', oldPath, renameValue.trim(), workspacePath);
     setRenamingPath(null);
     if (!res?.success) return;
@@ -332,22 +382,27 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
     // file sitting UNDER a renamed folder, whose own new path is not reported.
     const newPath: string | null = typeof res.newPath === 'string' ? res.newPath : null;
     const etkilendi = (p: string) => p === oldPath || p.startsWith(oldPath + '/') || p.startsWith(oldPath + '\\');
-    setPreviewFile(prev => {
-      if (!prev || !etkilendi(prev.path)) return prev;
-      if (prev.path !== oldPath || !newPath) return null;
-      return { path: newPath, name: newPath.split(/[\\/]/).pop() || newPath };
-    });
-    if (openedFilePath && etkilendi(openedFilePath)) {
-      if (openedFilePath === oldPath && newPath) {
-        setOpenedFilePath(newPath);
-      } else {
-        setOpenedFilePath(null);
-        setCode('');
-        setOriginalCode('');
+    // A rename that lands after the content area changed hands describes a file
+    // the area no longer shows; following it would move the NEW occupant onto an
+    // old workspace's path.
+    if (halaGecerli()) {
+      setPreviewFile(prev => {
+        if (!prev || !etkilendi(prev.path)) return prev;
+        if (prev.path !== oldPath || !newPath) return null;
+        return { path: newPath, name: newPath.split(/[\\/]/).pop() || newPath };
+      });
+      if (openedFilePath && etkilendi(openedFilePath)) {
+        if (openedFilePath === oldPath && newPath) {
+          setOpenedFilePath(newPath);
+        } else {
+          setOpenedFilePath(null);
+          setCode('');
+          setOriginalCode('');
+        }
       }
     }
     refreshFileTree();
-  }, [refreshFileTree, renameValue, renamingPath, workspacePath, openedFilePath]);
+  }, [refreshFileTree, renameValue, renamingPath, workspacePath, openedFilePath, contentRequest]);
 
   const submitTreeCreate = useCallback(async () => {
     if (!treeCreating || !treeCreateValue.trim()) { setTreeCreating(null); return; }
@@ -378,22 +433,27 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
 
   const deleteFile = useCallback(async (relativePath: string) => {
     if (!ipc || !workspacePath) return;
+    const halaGecerli = contentRequest.observe();
     const res = await ipc.invoke('delete-file', relativePath, workspacePath);
     if (res.success) {
       showToast(cevir('file.deleted'), 'success');
       refreshFileTree();
-      if (openedFilePath === relativePath) {
-        setOpenedFilePath(null);
-        setCode('');
+      // Only the content area this delete started in: after a workspace switch
+      // the same relative path can name a different, still-present file.
+      if (halaGecerli()) {
+        if (openedFilePath === relativePath) {
+          setOpenedFilePath(null);
+          setCode('');
+        }
+        // The editor half of this was already here; the preview half was not, so
+        // deleting the model on screen left it mounted under a path that no
+        // longer exists and any later reload asked IPC for the deleted file.
+        setPreviewFile(prev => (prev?.path === relativePath ? null : prev));
       }
-      // The editor half of this was already here; the preview half was not, so
-      // deleting the model on screen left it mounted under a path that no
-      // longer exists and any later reload asked IPC for the deleted file.
-      setPreviewFile(prev => (prev?.path === relativePath ? null : prev));
     } else {
       showToast(cevir('file.deleteError', { hata: res.error }), 'error');
     }
-  }, [ipc, workspacePath, showToast, refreshFileTree, openedFilePath]);
+  }, [ipc, workspacePath, showToast, refreshFileTree, openedFilePath, contentRequest]);
 
   const handleExportToUnity = useCallback(async (codeString: string) => {
     if (!workspacePath) return;
