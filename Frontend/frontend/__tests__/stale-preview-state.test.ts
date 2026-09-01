@@ -718,6 +718,13 @@ describe('stale-preview-state', () => {
   // relocate an entry, and demands that any call which successfully removed or
   // moved the SHOWN file stopped the content area from naming it. The only way
   // to make it green is to route the new operation through the content helper.
+  //
+  // What it covers, said plainly: every callable is driven twice per argument
+  // shape, once to arm whatever state it sets and once under measurement, so an
+  // operation staged across a setter and a later commit is caught as well as a
+  // direct one. What it still does not cover: sequences that need two DIFFERENT
+  // arguments — arming with one value and committing against another — and
+  // operations reachable only through arguments unlike the four shapes below.
   it('makes every operation that removes the shown file stop showing it', async () => {
     const gosterilen = '/workspace/Assets/hero.fbx'
     // Channels whose success means the shown path is gone or somewhere else.
@@ -751,15 +758,30 @@ describe('stale-preview-state', () => {
     const isimler = Object.keys(result.current).filter(k => typeof (result.current as any)[k] === 'function')
     const kacaklar: string[] = []
 
-    for (const isim of isimler) {
-      for (const argumanlar of sekiller) {
+    const cagir = async (isim: string, argumanlar: any[]) => {
+      await act(async () => {
+        try { await (result.current as any)[isim](...argumanlar) } catch { /* wrong shape for this callable */ }
+      })
+    }
+
+    for (const argumanlar of sekiller) {
+      // Priming pass, no assertions. Calling each callable once in return order
+      // only ever exercises operations that need no prior state: an operation
+      // spread over a state setter and a later commit no-ops when the commit's
+      // turn comes, the setter arms it afterwards, and the commit is never
+      // revisited. That is not hypothetical — `submitRename` is returned before
+      // `setRenamingPath`, so a single ordered sweep reached the real rename
+      // with nothing to rename and measured nothing. Running the whole surface
+      // once first arms that state, so what the sweep below covers no longer
+      // depends on the order the hook happens to return its callables in.
+      for (const isim of isimler) await cagir(isim, argumanlar)
+
+      for (const isim of isimler) {
         await act(async () => { await result.current.selectWorkspace('/workspace') })
         act(() => { result.current.openPreview(gosterilen) })
         const oncekiCagriSayisi = invoke.mock.calls.length
 
-        await act(async () => {
-          try { await (result.current as any)[isim](...argumanlar) } catch { /* wrong shape for this callable */ }
-        })
+        await cagir(isim, argumanlar)
 
         const tasidi = invoke.mock.calls
           .slice(oncekiCagriSayisi)
