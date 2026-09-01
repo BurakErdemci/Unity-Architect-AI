@@ -193,6 +193,22 @@ const reseatControls = (controls: OrbitRig, framing: Framing): void => {
   controls.enableDamping = true;
 };
 
+/**
+ * Run a stage or renderer call whose own failure must not outrank what the
+ * caller is already doing. Every recovery and teardown path in this file draws
+ * and frees through the very renderer that may have just broken, so an
+ * unguarded call there costs the user the thing the path exists to deliver:
+ * the error report that ends the spinner, or the later teardown steps that are
+ * what actually release the GL context.
+ */
+const bestEffort = (op: () => void): void => {
+  try {
+    op();
+  } catch {
+    /* The caller's own outcome is the one that matters. */
+  }
+};
+
 /** Return the stage to "no file loaded": stop the clock, free the GPU side. */
 export const clearContent = (stage: ClearTarget): void => {
   if (stage.frame !== null) { cancelAnimationFrame(stage.frame); stage.frame = null; }
@@ -460,13 +476,25 @@ export const ModelPreviewPanel: React.FC<ModelPreviewPanelProps> = ({ file, work
 
     const onContextRestored = () => {
       stopRestoreTimer();
+      try {
+        // Before the message clears, not after: this repaint is the first draw
+        // through the new context, so it is where a restore that only
+        // half-worked declares itself.
+        resize();
+      } catch {
+        // The event fired but the viewport still cannot draw. Clearing the
+        // notice would promise the user a recovery they cannot see, and the
+        // escalation timer is already stopped, so the terminal state is named
+        // here rather than waited for.
+        flushSync(() => setViewportFault('gone'));
+        return;
+      }
       // Clears `gone` as well as `lost`: a context that comes back late is
       // still back, and the panel would otherwise keep telling the user to
       // reopen a preview that already works. Flushed for the same reason the
       // loss is: the viewport draws again from this moment, and a message that
       // outlives the condition it describes is its own defect.
       flushSync(() => setViewportFault(null));
-      resize();
     };
     renderer.domElement.addEventListener('webglcontextlost', onContextLost);
     renderer.domElement.addEventListener('webglcontextrestored', onContextRestored);
@@ -497,11 +525,16 @@ export const ModelPreviewPanel: React.FC<ModelPreviewPanelProps> = ({ file, work
       renderer.domElement.removeEventListener('webglcontextlost', onContextLost);
       renderer.domElement.removeEventListener('webglcontextrestored', onContextRestored);
       controls.removeEventListener('change', stage.wake);
-      clearContent(stage);
-      controls.dispose();
-      grid.geometry.dispose();
-      (Array.isArray(grid.material) ? grid.material : [grid.material]).forEach(m => m.dispose());
-      scene.clear();
+      // Each free below is independent of the last on purpose. They run in
+      // dependency order, so a straight-line list makes the FIRST throw skip
+      // every later step — including the context release two lines down, which
+      // is the one step whose omission is cumulative.
+      bestEffort(() => clearContent(stage));
+      bestEffort(() => controls.dispose());
+      bestEffort(() => grid.geometry.dispose());
+      bestEffort(() =>
+        (Array.isArray(grid.material) ? grid.material : [grid.material]).forEach(m => m.dispose()));
+      bestEffort(() => scene.clear());
       // `dispose()` frees three's own caches and NOT the GL context (three
       // 0.185.1, WebGLRenderer.js:1074-1097): only the WEBGL_lose_context
       // extension releases it. This panel unmounts on every preview close and
@@ -509,9 +542,9 @@ export const ModelPreviewPanel: React.FC<ModelPreviewPanelProps> = ({ file, work
       // contexts pile up against the browser's ~16 cap and older viewers get
       // killed off. It has to precede dispose(), which tears down the state
       // the extension lookup needs.
-      renderer.forceContextLoss();
-      renderer.dispose();
-      renderer.domElement.remove();
+      bestEffort(() => renderer.forceContextLoss());
+      bestEffort(() => renderer.dispose());
+      bestEffort(() => renderer.domElement.remove());
       stageRef.current = null;
     };
   }, []);
@@ -537,8 +570,11 @@ export const ModelPreviewPanel: React.FC<ModelPreviewPanelProps> = ({ file, work
       cancelled = true;
       const stage = stageRef.current;
       if (!stage) return;
-      clearContent(stage);
-      stage.render();
+      // Same reason as the mount recovery below: this is a React effect
+      // cleanup, and a throw from a renderer that is already broken would
+      // abort the rest of the unmount rather than report anything.
+      bestEffort(() => clearContent(stage));
+      bestEffort(stage.render);
     };
 
     // .blend and .3ds reach this panel so the click has an answer, but there is
@@ -615,9 +651,13 @@ export const ModelPreviewPanel: React.FC<ModelPreviewPanelProps> = ({ file, work
         // `clearContent` only reaches what already hangs on the stage, and the
         // throw may have come before the model got there.
         const reachable = parsed.object.parent === stage.content;
-        clearContent(stage);
-        if (!reachable) disposeObject(parsed.object);
-        stage.render();
+        // Best-effort, because the renderer is a candidate for what threw in
+        // the first place: an unguarded recovery that rethrows escapes this
+        // async body as an unhandled rejection, `fail` never runs, and the
+        // panel spins forever on a load it already knows has failed.
+        bestEffort(() => clearContent(stage));
+        if (!reachable) bestEffort(() => disposeObject(parsed.object));
+        bestEffort(stage.render);
         fail('preview.loadError', String(err instanceof Error ? err.message : err).split(/\r?\n/)[0]);
         return;
       }
