@@ -80,7 +80,6 @@ const draw = (name = 'hero.fbx', workspacePath: string | null = 'C:\\proj') =>
     <ModelPreviewPanel
       file={{ path: `C:\\proj\\Assets\\${name}`, name }}
       workspacePath={workspacePath}
-      onClose={() => {}}
     />,
   )
 
@@ -234,7 +233,6 @@ describe('ModelPreviewPanel load', () => {
       <ModelPreviewPanel
         file={{ path: 'C:\\proj\\Assets\\second.fbx', name: 'second.fbx' }}
         workspacePath={'C:\\proj'}
-        onClose={() => {}}
       />,
     )
     await waitFor(() => expect(invoke).toHaveBeenLastCalledWith('read-model-file', 'C:\\proj\\Assets\\second.fbx', 'C:\\proj'))
@@ -271,7 +269,6 @@ describe('a format only Blender can read', () => {
       <ModelPreviewPanel
         file={{ path: 'C:\\proj\\Assets\\hero.fbx', name: 'hero.fbx' }}
         workspacePath={'C:\\proj'}
-        onClose={() => {}}
       />,
     )
     await waitFor(() => expect(invoke).toHaveBeenCalledTimes(1))

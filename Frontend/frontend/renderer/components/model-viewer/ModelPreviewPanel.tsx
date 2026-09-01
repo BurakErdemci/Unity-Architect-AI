@@ -20,10 +20,15 @@ import { createPlayback, type Playback } from './playback';
 import { PlaybackControls } from './PlaybackControls';
 import { DEFAULT_SPEED, timeAtFraction, type Speed } from './timeline';
 
+/**
+ * No `onClose`: the panel has no close affordance of its own. Closing a preview
+ * is the content tab's job (`home.tsx`, the X beside the file name), and it
+ * always was — the prop was required, handed a real callback, and never read,
+ * so the contract promised a control the panel does not have.
+ */
 export interface ModelPreviewPanelProps {
   file: { path: string; name: string };
   workspacePath: string | null;
-  onClose: () => void;
 }
 
 // Matches the content area background in home.tsx, so the canvas edges are

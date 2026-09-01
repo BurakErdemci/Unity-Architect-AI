@@ -34,7 +34,6 @@ const draw = (name: string) =>
     <ModelPreviewPanel
       file={{ path: `C:\\proj\\Assets\\${name}`, name }}
       workspacePath={'C:\\proj'}
-      onClose={() => {}}
     />,
   )
 

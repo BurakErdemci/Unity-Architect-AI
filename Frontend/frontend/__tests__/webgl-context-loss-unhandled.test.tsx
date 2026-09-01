@@ -54,7 +54,6 @@ const mounted = async () => {
     <ModelPreviewPanel
       file={{ path: 'C:\\proj\\Assets\\triangle.glb', name: 'triangle.glb' }}
       workspacePath={'C:\\proj'}
-      onClose={() => {}}
     />,
   )
   await waitFor(() => expect(screen.queryByText(cevir('preview.loading'))).toBeNull())

@@ -640,7 +640,7 @@ export default function Home() {
 
         <div className="flex-1 overflow-hidden relative flex flex-col bg-[#0B0D12]">
           {pane === 'preview' && fs.previewFile ? (
-            <ModelPreviewPanel file={fs.previewFile} workspacePath={fs.workspacePath} onClose={fs.closePreview} />
+            <ModelPreviewPanel file={fs.previewFile} workspacePath={fs.workspacePath} />
           ) : pane === 'editor' ? (
             <EditorPanel
               code={fs.code} setCode={fs.setCode} openedFilePath={fs.openedFilePath} isEditorFocused={isEditorFocused} setIsEditorFocused={setIsEditorFocused}
