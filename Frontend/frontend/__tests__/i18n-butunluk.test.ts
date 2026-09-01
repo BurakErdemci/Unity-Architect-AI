@@ -26,7 +26,9 @@
  * koyuyor.
  */
 import { describe, it, expect } from 'vitest'
-import { translations, tr, en } from '../renderer/lib/i18n'
+import {
+  translations, tr, en, ceviriUygula, cevir, aktifDilAyarla, type Lang, type TKey,
+} from '../renderer/lib/i18n'
 
 const alanlar = (deger: string) =>
   new Set((deger.match(/\{([a-zA-Z][a-zA-Z0-9_]*)\}/g) || []).sort())
@@ -36,10 +38,34 @@ const EN = translations.en
 
 describe('i18n bütünlüğü', () => {
   it('sunulan sözlükler, yazılan tabloların ta kendisi', () => {
-    // `ceviriUygula` her metni `translations` üzerinden okuyor. O harita
-    // tablolardan başka bir şeye — kopyaya, yamalı bir yayılıma, sarmalayıcıya —
-    // bakıyorsa aşağıdaki iddiaların hepsi uygulamanın kullanmadığı bir nesneyi
-    // ölçüyor demektir. Kimlik kontrolü ikisini tek şey olmaya zorluyor.
+    // Denetim bulgusu `regression-test-sensitivity`: burası eskiden yalnızca
+    // `translations.tr === tr` diyordu. O kimlik, testin KENDİ içeri aldığı iki
+    // ada bakıyor; metni ekrana asıl veren `ceviriUygula`/`cevir` yoluna hiç
+    // dokunmuyordu. Yani çeviri fonksiyonu tabloların bir KOPYASINDAN okumaya
+    // başlasa — `{...tr}` gibi tek bir yayılım yeter — bu kapı yemyeşil kalır,
+    // oysa cümlesi tam olarak bunun olmadığını vaat ediyor.
+    //
+    // Ölçüm artık davranışsal: yazılan tabloya çalışma anında bir anahtar
+    // eklenip aynı anahtar servis yolundan geri isteniyor. Kopyadan okuyan bir
+    // uygulama bu eklemeyi göremez, çünkü kopya eklemeden önce alınmıştır.
+    const sonda = `__olcum.${Math.random().toString(36).slice(2)}`
+    const yollar: Array<[Lang, Record<string, string>]> =
+      [['tr', tr as Record<string, string>], ['en', en as Record<string, string>]]
+    try {
+      for (const [dil, tablo] of yollar) {
+        tablo[sonda] = `sonda-${dil}`
+        aktifDilAyarla(dil)
+        expect(ceviriUygula(dil, sonda)).toBe(`sonda-${dil}`)
+        expect(cevir(sonda as TKey)).toBe(`sonda-${dil}`)
+      }
+    } finally {
+      for (const [, tablo] of yollar) delete tablo[sonda]
+      aktifDilAyarla('tr')
+    }
+
+    // Kimlik iddiası da kalıyor: yukarıdaki sonda `translations` haritasının
+    // doğru tabloya baktığını gösterir, bu satırlar da aşağıdaki anahtar/şablon
+    // karşılaştırmalarının o tabloların üzerinde koştuğunu.
     expect(TR).toBe(tr)
     expect(EN).toBe(en)
   })
