@@ -2,17 +2,26 @@ import fs from 'fs'
 import path from 'path'
 
 /**
- * Symlink-safe path çözücü.
- * Yol mevcutsa fs.realpathSync ile gerçek yolu çözer.
- * Yol henüz mevcut değilse, en yakın mevcut parent dizini realpath ile çözüp
- * kalan path segmentlerini onun üzerine ekler. Böylece symlink klasör altına
- * yeni dosya yazma girişimleri de doğru şekilde yakalanır.
+ * Symlink-safe path resolver.
+ * An existing path is canonicalised; a path that does not exist yet is resolved
+ * down to its nearest existing ancestor, with the missing segments appended, so
+ * that writing a NEW file under a symlinked directory is caught as well.
+ *
+ * ⚠️ `realpathSync.native`, not `realpathSync`. The JS implementation resolves
+ * links but leaves an NTFS 8.3 short name as it found it — measured on this
+ * repo's Windows: `<ws>\HARVES~1.GLB` came back as itself, while the native call
+ * returned `<ws>\harvested-credentials.glbx`. Every caller here decides on the
+ * resolved string and then opens it, so the two spellings have to collapse into
+ * one before the decision. It cut both ways: the extension whitelist judged the
+ * alias (`.GLB`) while `openSync` opened the real `.glbx`, and a workspace named
+ * through its OWN short path was refused because it no longer matched itself.
+ * The two calls throw the same errors, so the surrounding fallbacks are unchanged.
  */
 function safeResolve(filePath: string): string {
   try {
     const absolutePath = path.resolve(filePath)
     if (fs.existsSync(absolutePath)) {
-      return fs.realpathSync(absolutePath)
+      return fs.realpathSync.native(absolutePath)
     }
 
     let currentPath = absolutePath
@@ -27,10 +36,10 @@ function safeResolve(filePath: string): string {
       currentPath = parentPath
     }
 
-    const resolvedExistingPath = fs.realpathSync(currentPath)
+    const resolvedExistingPath = fs.realpathSync.native(currentPath)
     return path.join(resolvedExistingPath, ...missingSegments)
   } catch {
-    // realpathSync başarısız olursa fallback
+    // realpath failed — fall through to the plain resolve below
   }
   return path.resolve(filePath)
 }
