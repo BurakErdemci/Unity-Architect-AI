@@ -318,10 +318,36 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
 
   const submitRename = useCallback(async () => {
     if (!renamingPath || !renameValue.trim()) { setRenamingPath(null); return; }
-    const res = await ipc.invoke('rename-entry', renamingPath, renameValue.trim(), workspacePath);
+    const oldPath = renamingPath;
+    const res = await ipc.invoke('rename-entry', oldPath, renameValue.trim(), workspacePath);
     setRenamingPath(null);
-    if (res?.success) refreshFileTree();
-  }, [refreshFileTree, renameValue, renamingPath, workspacePath]);
+    if (!res?.success) return;
+    // FOLLOW the rename rather than clear it: the main handler renames to
+    // `path.join(dirname(old), newName)` and returns exactly that path, so the
+    // reported `newPath` is the same string the file readers will be handed
+    // back — following is reliable here, and losing the open model on a rename
+    // would be a worse answer than keeping it. Two cases cannot be followed and
+    // are cleared instead, because a path that no longer names a file is worse
+    // than an empty content area: a handler that reports no `newPath`, and a
+    // file sitting UNDER a renamed folder, whose own new path is not reported.
+    const newPath: string | null = typeof res.newPath === 'string' ? res.newPath : null;
+    const etkilendi = (p: string) => p === oldPath || p.startsWith(oldPath + '/') || p.startsWith(oldPath + '\\');
+    setPreviewFile(prev => {
+      if (!prev || !etkilendi(prev.path)) return prev;
+      if (prev.path !== oldPath || !newPath) return null;
+      return { path: newPath, name: newPath.split(/[\\/]/).pop() || newPath };
+    });
+    if (openedFilePath && etkilendi(openedFilePath)) {
+      if (openedFilePath === oldPath && newPath) {
+        setOpenedFilePath(newPath);
+      } else {
+        setOpenedFilePath(null);
+        setCode('');
+        setOriginalCode('');
+      }
+    }
+    refreshFileTree();
+  }, [refreshFileTree, renameValue, renamingPath, workspacePath, openedFilePath]);
 
   const submitTreeCreate = useCallback(async () => {
     if (!treeCreating || !treeCreateValue.trim()) { setTreeCreating(null); return; }
