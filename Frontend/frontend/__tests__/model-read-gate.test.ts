@@ -12,7 +12,7 @@ import {
 } from '../main/helpers/file-security'
 
 let ws = ''
-let disari = ''
+let outside = ''
 
 /**
  * Can this filesystem make a hardlink at all?
@@ -22,12 +22,12 @@ let disari = ''
  * `linkSync` threw, which reported a green test that asserted nothing — on a
  * container volume or FAT/exFAT that is a silently disabled security check.
  */
-const sabitBagDestekli = ((): boolean => {
+const hardlinksSupported = ((): boolean => {
   const probe = fs.mkdtempSync(path.join(os.tmpdir(), 'model-gate-link-probe-'))
   try {
-    const kaynak = path.join(probe, 'a')
-    fs.writeFileSync(kaynak, 'x')
-    fs.linkSync(kaynak, path.join(probe, 'b'))
+    const source = path.join(probe, 'a')
+    fs.writeFileSync(source, 'x')
+    fs.linkSync(source, path.join(probe, 'b'))
     return true
   } catch {
     return false
@@ -38,72 +38,72 @@ const sabitBagDestekli = ((): boolean => {
 
 beforeEach(() => {
   ws = fs.mkdtempSync(path.join(os.tmpdir(), 'model-gate-ws-'))
-  disari = fs.mkdtempSync(path.join(os.tmpdir(), 'model-gate-out-'))
+  outside = fs.mkdtempSync(path.join(os.tmpdir(), 'model-gate-out-'))
 })
 
 afterEach(() => {
-  for (const dir of [ws, disari]) {
+  for (const dir of [ws, outside]) {
     if (dir) { try { fs.rmSync(dir, { recursive: true, force: true }) } catch { /* best effort */ } }
   }
   ws = ''
-  disari = ''
+  outside = ''
 })
 
-function yaz(dir: string, ad: string, icerik: Buffer | string): string {
-  const p = path.join(dir, ad)
-  fs.writeFileSync(p, icerik)
+function write(dir: string, name: string, content: Buffer | string): string {
+  const p = path.join(dir, name)
+  fs.writeFileSync(p, content)
   return p
 }
 
-describe('model okuma kapısı — kabul', () => {
+describe('model read gate — accepts', () => {
   for (const ext of MODEL_FILE_EXTENSIONS) {
-    it(`workspace içindeki ${ext} dosyasını okur`, () => {
+    it(`reads a ${ext} file inside the workspace`, () => {
       const bytes = Buffer.from([0x67, 0x6c, 0x54, 0x46, 0x02, 0x00, 0x00, 0x00])
-      const p = yaz(ws, `mesh${ext}`, bytes)
+      const p = write(ws, `mesh${ext}`, bytes)
 
-      const sonuc = readModelFileFromWorkspace(p, ws)
+      const result = readModelFileFromWorkspace(p, ws)
 
-      expect('error' in sonuc).toBe(false)
-      if ('error' in sonuc) return
-      expect(sonuc.name).toBe(`mesh${ext}`)
-      expect(sonuc.path).toBe(p)
-      // `toBeInstanceOf(ArrayBuffer)` kullanılmıyor: jsdom ortamında global
-      // ArrayBuffer Node realm'ininkinden farklı bir sınıf, o yüzden gerçek bir
-      // ArrayBuffer bile o kontrolden kalıyor. Tür etiketi realm'den bağımsız.
-      expect(Object.prototype.toString.call(sonuc.data)).toBe('[object ArrayBuffer]')
-      expect(sonuc.data.byteLength).toBe(bytes.length)
-      expect(Buffer.from(new Uint8Array(sonuc.data)).equals(bytes)).toBe(true)
+      expect('error' in result).toBe(false)
+      if ('error' in result) return
+      expect(result.name).toBe(`mesh${ext}`)
+      expect(result.path).toBe(p)
+      // `toBeInstanceOf(ArrayBuffer)` is avoided: under jsdom the global
+      // ArrayBuffer is a different class from Node's, so a real ArrayBuffer
+      // fails that check. The type tag is realm-independent.
+      expect(Object.prototype.toString.call(result.data)).toBe('[object ArrayBuffer]')
+      expect(result.data.byteLength).toBe(bytes.length)
+      expect(Buffer.from(new Uint8Array(result.data)).equals(bytes)).toBe(true)
     })
   }
 
-  it('büyük harfli uzantıyı kabul eder', () => {
-    const p = yaz(ws, 'Mesh.GLB', Buffer.from([1, 2, 3]))
+  it('accepts an uppercase extension', () => {
+    const p = write(ws, 'Mesh.GLB', Buffer.from([1, 2, 3]))
     expect(readModelFileFromWorkspace(p, ws)).not.toHaveProperty('error')
   })
 
-  it('alt klasördeki modeli okur', () => {
+  it('reads a model in a subdirectory', () => {
     fs.mkdirSync(path.join(ws, 'Assets', 'Models'), { recursive: true })
-    const p = yaz(path.join(ws, 'Assets', 'Models'), 'char.fbx', Buffer.from([9, 9]))
+    const p = write(path.join(ws, 'Assets', 'Models'), 'char.fbx', Buffer.from([9, 9]))
     expect(readModelFileFromWorkspace(p, ws)).not.toHaveProperty('error')
   })
 
-  // Sıfır bayt kapının üç sorusunun (kapsama, uzantı, boyut) hepsini geçiyor,
-  // yani kanal onu OKUYOR. Davranış burada çivileniyor çünkü "boş dosya" bir
-  // ayrıştırıcı sorunu: panel zaten ayrıştırma hatasını gösterecek sözü taşıyor,
-  // ve kapıya bir boşluk reddi eklenecekse bu bilinçli bir değişiklik olmalı,
-  // sessiz bir kayma değil.
-  it('sıfır baytlık dosyayı reddetmez — boşluk kapının değil ayrıştırıcının işi', () => {
-    const p = yaz(ws, 'empty.glb', Buffer.alloc(0))
+  // Zero bytes passes all three of the gate's questions (containment, extension,
+  // size), so the channel DOES read it. The behaviour is pinned here because
+  // "empty file" is a parser problem: the panel already promises to show a parse
+  // error, and adding an emptiness refusal to the gate has to be a deliberate
+  // change rather than a silent drift.
+  it('does not refuse a zero-byte file — emptiness is the parser\'s business, not the gate\'s', () => {
+    const p = write(ws, 'empty.glb', Buffer.alloc(0))
 
-    const sonuc = readModelFileFromWorkspace(p, ws)
+    const result = readModelFileFromWorkspace(p, ws)
 
-    expect('error' in sonuc).toBe(false)
-    if ('error' in sonuc) return
-    expect(sonuc.data.byteLength).toBe(0)
+    expect('error' in result).toBe(false)
+    if ('error' in result) return
+    expect(result.data.byteLength).toBe(0)
   })
 
-  it('tavan sınırındaki dosyayı reddetmez', () => {
-    const p = yaz(ws, 'edge.stl', Buffer.alloc(0))
+  it('does not refuse a file exactly on the cap', () => {
+    const p = write(ws, 'edge.stl', Buffer.alloc(0))
     const fd = fs.openSync(p, 'r+')
     try { fs.ftruncateSync(fd, MODEL_MAX_BYTES) } finally { fs.closeSync(fd) }
 
@@ -111,57 +111,57 @@ describe('model okuma kapısı — kabul', () => {
   })
 })
 
-describe('model okuma kapısı — uzantı beyaz listesi', () => {
-  // Bir model kanalının workspace İÇİNDEN bile sır dosyası döndürebilmesi
-  // sızıntı yüzeyidir; kanal ne reddettiğini değil ne kabul ettiğini sayıyor.
-  for (const ad of ['.env', 'key.pem', 'secrets.json', 'Player.cs', 'notes.md', 'app.exe']) {
-    it(`workspace içinde olsa da reddeder: ${ad}`, () => {
-      const p = yaz(ws, ad, 'SECRET=1')
+describe('model read gate — extension whitelist', () => {
+  // A model channel that can hand back a secret file even from INSIDE the
+  // workspace is a leak surface; the channel names what it accepts rather than
+  // what it refuses.
+  for (const name of ['.env', 'key.pem', 'secrets.json', 'Player.cs', 'notes.md', 'app.exe']) {
+    it(`refuses it even inside the workspace: ${name}`, () => {
+      const p = write(ws, name, 'SECRET=1')
       expect(readModelFileFromWorkspace(p, ws)).toEqual({ error: 'unsupported' })
     })
   }
 
-  it('uzantısız dosyayı reddeder', () => {
-    const p = yaz(ws, 'model', Buffer.from([1]))
+  it('refuses a file with no extension', () => {
+    const p = write(ws, 'model', Buffer.from([1]))
     expect(readModelFileFromWorkspace(p, ws)).toEqual({ error: 'unsupported' })
   })
 })
 
-describe('model okuma kapısı — kapsama', () => {
-  it('workspace dışındaki modeli reddeder', () => {
-    const p = yaz(disari, 'outside.glb', Buffer.from([1, 2]))
+describe('model read gate — containment', () => {
+  it('refuses a model outside the workspace', () => {
+    const p = write(outside, 'outside.glb', Buffer.from([1, 2]))
     expect(readModelFileFromWorkspace(p, ws)).toEqual({ error: 'denied' })
   })
 
-  it('.. ile dışarı çıkışı reddeder', () => {
-    const p = yaz(disari, 'outside.obj', Buffer.from([1, 2]))
-    const traversal = path.join(ws, '..', path.basename(disari), 'outside.obj')
+  it('refuses traversal out with ..', () => {
+    write(outside, 'outside.obj', Buffer.from([1, 2]))
+    const traversal = path.join(ws, '..', path.basename(outside), 'outside.obj')
     expect(readModelFileFromWorkspace(traversal, ws)).toEqual({ error: 'denied' })
   })
 
-  it('dizini reddeder', () => {
+  it('refuses a directory', () => {
     const d = path.join(ws, 'fake.glb')
     fs.mkdirSync(d)
-    const sonuc = readModelFileFromWorkspace(d, ws)
-    expect(sonuc).toHaveProperty('error')
+    expect(readModelFileFromWorkspace(d, ws)).toHaveProperty('error')
   })
 
-  it.skipIf(!sabitBagDestekli)('workspace dışına giden sabit bağı reddeder', () => {
-    const hedef = yaz(disari, 'secret.glb', Buffer.from([7, 7, 7]))
-    const bag = path.join(ws, 'linked.glb')
-    fs.linkSync(hedef, bag)
-    expect(readModelFileFromWorkspace(bag, ws)).toEqual({ error: 'denied' })
+  it.skipIf(!hardlinksSupported)('refuses a hardlink pointing outside the workspace', () => {
+    const target = write(outside, 'secret.glb', Buffer.from([7, 7, 7]))
+    const link = path.join(ws, 'linked.glb')
+    fs.linkSync(target, link)
+    expect(readModelFileFromWorkspace(link, ws)).toEqual({ error: 'denied' })
   })
 
-  it('boş workspace ile reddeder', () => {
-    const p = yaz(ws, 'a.glb', Buffer.from([1]))
+  it('refuses an empty workspace path', () => {
+    const p = write(ws, 'a.glb', Buffer.from([1]))
     expect(readModelFileFromWorkspace(p, '')).toHaveProperty('error')
   })
 })
 
-describe('model okuma kapısı — boyut tavanı', () => {
-  it(`${MODEL_MAX_BYTES} baytı aşan dosyayı too-large ile reddeder`, () => {
-    const p = yaz(ws, 'huge.fbx', Buffer.alloc(0))
+describe('model read gate — size cap', () => {
+  it(`refuses a file over ${MODEL_MAX_BYTES} bytes with too-large`, () => {
+    const p = write(ws, 'huge.fbx', Buffer.alloc(0))
     const fd = fs.openSync(p, 'r+')
     try {
       fs.ftruncateSync(fd, MODEL_MAX_BYTES + 1)
@@ -174,26 +174,26 @@ describe('model okuma kapısı — boyut tavanı', () => {
   })
 })
 
-describe('metin yolu regresyonu', () => {
-  it('metin kapısı model uzantısını kabul etmiyor', () => {
-    const p = yaz(ws, 'mesh.glb', Buffer.from([1]))
+describe('text path regression', () => {
+  it('the text gate does not accept a model extension', () => {
+    const p = write(ws, 'mesh.glb', Buffer.from([1]))
     expect(isAllowedWorkspaceReadFile(p, ws)).toBe(false)
   })
 
-  it('model kapısı metin uzantısını kabul etmiyor', () => {
-    const p = yaz(ws, 'Player.cs', 'class A {}')
+  it('the model gate does not accept a text extension', () => {
+    const p = write(ws, 'Player.cs', 'class A {}')
     expect(okumaKarariVer(p, ws, 'model').izinli).toBe(false)
   })
 
-  it('varsayılan tür metin — .cs hâlâ geçiyor', () => {
-    const p = yaz(ws, 'Player.cs', 'class A {}')
+  it('the default kind is text — .cs still passes', () => {
+    const p = write(ws, 'Player.cs', 'class A {}')
     expect(okumaKarariVer(p, ws).izinli).toBe(true)
     expect(isAllowedWorkspaceReadFile(p, ws)).toBe(true)
   })
 
   // Both caps are named constants now, so both can be pinned from here; the
   // text cap used to be an inline literal in `background.ts` and could not be.
-  it('model tavanı 64 MiB, metin tavanı 8 MiB sabitinde kaldı', () => {
+  it('the model cap stays at 64 MiB and the text cap at 8 MiB', () => {
     expect(MODEL_MAX_BYTES).toBe(64 * 1024 * 1024)
     expect(TEXT_MAX_BYTES).toBe(8 * 1024 * 1024)
   })

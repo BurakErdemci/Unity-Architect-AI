@@ -365,7 +365,7 @@ export function taniticiKapsamdaMi(
  *
  * Policy refusals above this point are decisions, not failures, and stay silent.
  */
-function denyWithCause(fullPath: string, cause: unknown): ModelOkumaSonucu {
+function denyWithCause(fullPath: string, cause: unknown): ModelReadResult {
   const reason = cause instanceof Error
     ? `${(cause as NodeJS.ErrnoException).code ?? cause.name}: ${cause.message}`
     : String(cause)
@@ -373,7 +373,7 @@ function denyWithCause(fullPath: string, cause: unknown): ModelOkumaSonucu {
   return { error: 'denied' }
 }
 
-export type ModelOkumaSonucu =
+export type ModelReadResult =
   | { path: string; name: string; data: ArrayBuffer }
   | { error: 'unsupported' | 'too-large' | 'denied' | 'busy' }
 
@@ -392,7 +392,7 @@ export type ModelOkumaSonucu =
 export function readModelFileFromWorkspace(
   fullPath: string,
   workspacePath: string,
-): ModelOkumaSonucu {
+): ModelReadResult {
   const karar = okumaKarariVer(fullPath, workspacePath, 'model')
   if (!karar.izinli) return { error: karar.sebep ?? 'denied' }
 
@@ -492,7 +492,7 @@ let modelReadsInFlight = 0
 export async function readModelFileGuarded(
   fullPath: string,
   workspacePath: string,
-): Promise<ModelOkumaSonucu> {
+): Promise<ModelReadResult> {
   if (modelReadsInFlight >= MODEL_READ_MAX_IN_FLIGHT) return { error: 'busy' }
   modelReadsInFlight++
   try {
