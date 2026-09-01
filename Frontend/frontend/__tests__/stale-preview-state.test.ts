@@ -575,6 +575,116 @@ describe('stale-preview-state', () => {
       expect(result.current.previewFile?.path).toBe('/a/hero.fbx')
     })
 
+    // `.` and `..` are directions, not entries: the filesystem resolves them
+    // away before it touches anything, so a delete spelled with them removes the
+    // very file the preview is showing under its plain spelling.
+    describe('dot segments', () => {
+      it('clears a preview when the delete path climbs back to it through ..', async () => {
+        invoke.mockImplementation(kimlikIpc())
+
+        const { result } = mount()
+        await act(async () => { await result.current.selectWorkspace('/a') })
+        act(() => { result.current.openPreview('/a/hero.fbx') })
+
+        await act(async () => { await result.current.handleTreeDelete(girdi('/a/Assets/../hero.fbx')) })
+
+        expect(result.current.previewFile).toBeNull()
+      })
+
+      it('clears a preview spelled with .. when the plain path is deleted', async () => {
+        invoke.mockImplementation(kimlikIpc())
+
+        const { result } = mount()
+        await act(async () => { await result.current.selectWorkspace('/a') })
+        act(() => { result.current.openPreview('/a/Assets/../hero.fbx') })
+
+        await act(async () => { await result.current.handleTreeDelete(girdi('/a/hero.fbx')) })
+
+        expect(result.current.previewFile).toBeNull()
+      })
+
+      it('resolves a single dot to the same file', async () => {
+        invoke.mockImplementation(kimlikIpc())
+
+        const { result } = mount()
+        await act(async () => { await result.current.selectWorkspace('/a') })
+        act(() => { result.current.openPreview('/a/Assets/hero.fbx') })
+
+        await act(async () => { await result.current.handleTreeDelete(girdi('/a/./Assets/./hero.fbx')) })
+
+        expect(result.current.previewFile).toBeNull()
+      })
+
+      // The resolved form still has to answer the ancestor question, so a `..`
+      // spelling of a folder must take the files under it and nothing beside it.
+      it('takes files under a folder the delete path reaches through ..', async () => {
+        invoke.mockImplementation(kimlikIpc())
+
+        const { result } = mount()
+        await act(async () => { await result.current.selectWorkspace('/a') })
+        act(() => { result.current.openPreview('/a/Assets/hero.fbx') })
+
+        await act(async () => { await result.current.handleTreeDelete(girdi('/a/Other/../Assets', true)) })
+
+        expect(result.current.previewFile).toBeNull()
+      })
+
+      it('does not let dot resolution reach a sibling folder', async () => {
+        invoke.mockImplementation(kimlikIpc())
+
+        const { result } = mount()
+        await act(async () => { await result.current.selectWorkspace('/a') })
+        act(() => { result.current.openPreview('/a/AssetsOld/hero.fbx') })
+
+        await act(async () => { await result.current.handleTreeDelete(girdi('/a/Other/../Assets', true)) })
+
+        expect(result.current.previewFile?.path).toBe('/a/AssetsOld/hero.fbx')
+      })
+
+      // A relative operation path is joined onto the workspace first, so its
+      // `..` climbs within the workspace exactly as the filesystem would.
+      it('resolves .. in a workspace-relative delete path', async () => {
+        invoke.mockImplementation(kimlikIpc())
+
+        const { result } = mount()
+        await act(async () => { await result.current.selectWorkspace('C:\\Workspace') })
+        act(() => { result.current.openPreview('C:\\Workspace\\Assets\\hero.fbx') })
+
+        await act(async () => { await result.current.deleteFile('Assets/Models/../hero.fbx') })
+
+        expect(result.current.previewFile).toBeNull()
+      })
+
+      // `..` at the root is absorbed rather than escaping, because that is what
+      // the filesystem resolves: `/..` is `/`. Treating the climb as a distinct
+      // path would leave the content area on a file the delete really removed.
+      it('absorbs a climb above the root instead of escaping it', async () => {
+        invoke.mockImplementation(kimlikIpc())
+
+        const { result } = mount()
+        await act(async () => { await result.current.selectWorkspace('/a') })
+        act(() => { result.current.openPreview('/hero.fbx') })
+
+        await act(async () => { await result.current.handleTreeDelete(girdi('/a/../../hero.fbx')) })
+
+        expect(result.current.previewFile).toBeNull()
+      })
+
+      // Resolution is for comparison only, like the rest of the canonical form:
+      // the path the user sees stays the one the main process reported.
+      it('keeps showing the dotted spelling the caller supplied', async () => {
+        invoke.mockImplementation(kimlikIpc())
+
+        const { result } = mount()
+        await act(async () => { await result.current.selectWorkspace('/a') })
+        act(() => { result.current.openPreview('/a/Assets/../hero.fbx') })
+
+        await act(async () => { await result.current.handleTreeDelete(girdi('/a/other.fbx')) })
+
+        expect(result.current.previewFile?.path).toBe('/a/Assets/../hero.fbx')
+      })
+    })
+
     // The canonical form is for COMPARISON. What the content area shows is the
     // path the main process reported, casing and separators intact, because that
     // string is what the user recognises and what the file readers accept back.

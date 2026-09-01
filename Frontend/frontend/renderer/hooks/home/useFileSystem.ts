@@ -25,12 +25,44 @@ const windowsSpelled = (p: string) => /^[A-Za-z]:[\\/]/.test(p) || p.startsWith(
 const absoluteYol = (p: string) =>
   p.startsWith('/') || p.startsWith('\\') || /^[A-Za-z]:[\\/]/.test(p);
 
+// `.` and `..` name no entry of their own, so `/a/Assets/../hero.fbx` and
+// `/a/hero.fbx` are ONE file: a delete of either spelling makes the other
+// untrue. Resolution is pure string work on the already-separator-normalized
+// form — the renderer has no filesystem to ask, and a comparator that performed
+// I/O would be the wrong shape regardless of where it ran.
+//
+// A `..` that climbs past the ROOT of an absolute path is absorbed, because that
+// is what the filesystem itself resolves: `/..` is `/` and `C:\..` is `C:\`, so
+// `/a/../../hero.fbx` and `/hero.fbx` really are the same entry. A `..` still
+// leading a RELATIVE path is kept instead — with no base to climb from, dropping
+// it would equate `../hero.fbx` with `hero.fbx`, which name files in different
+// directories. A relative path only survives this far when no workspace is
+// selected; otherwise it was already joined onto one above.
+const resolveDotSegments = (duz: string, mutlakMi: boolean) => {
+  if (!/(^|\/)\.\.?(\/|$)/.test(duz)) return duz;
+  // An absolute path's first segment is its root token — `''` for `/a/b`, `C:`
+  // for `C:/a/b` — and is never popped: it is what the climb stops at.
+  const kokAdedi = mutlakMi ? 1 : 0;
+  const yigin: string[] = [];
+  for (const parca of duz.split('/')) {
+    if (parca === '.') continue;
+    if (parca === '..') {
+      if (yigin.length > kokAdedi && yigin[yigin.length - 1] !== '..') yigin.pop();
+      else if (!mutlakMi) yigin.push('..');
+      continue;
+    }
+    yigin.push(parca);
+  }
+  return yigin.join('/');
+};
+
 // COMPARISON ONLY. Nothing derived from this is stored or displayed: the paths
 // the user sees keep the casing and separators the main process reported.
 const canonicalPath = (p: string, workspacePath: string | null) => {
   const mutlak = absoluteYol(p) || !workspacePath ? p : `${workspacePath}/${p}`;
   const duz = mutlak.replace(/\\/g, '/').replace(/\/{2,}/g, '/').replace(/\/+$/, '');
-  return windowsSpelled(mutlak) ? duz.toLowerCase() : duz;
+  const cozulmus = resolveDotSegments(duz, absoluteYol(mutlak));
+  return windowsSpelled(mutlak) ? cozulmus.toLowerCase() : cozulmus;
 };
 
 // Deleting or renaming a FOLDER takes every path under it with it, so the
