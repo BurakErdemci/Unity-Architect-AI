@@ -600,14 +600,75 @@ describe('stale-preview-state', () => {
     })
   })
 
-  // Six operations that invalidate a content path were found across three audit
-  // rounds, each round finding one the previous had not enumerated. They now
-  // share one function inside the hook, but nothing stops a SEVENTH operation
-  // from being added that forgets to call it. This inventory is the tripwire:
-  // adding or removing anything the hook hands out fails here, and clearing the
-  // failure means deciding, in writing, whether the new operation can change or
-  // remove a path the editor or the preview may be showing — and if it can,
-  // routing it through the same function and adding its cases above.
+  // The real gate. The inventory below notices that a new operation EXISTS; it
+  // cannot tell a path-invalidating one from a harmless setter, so a future
+  // author can clear it by adding a name to the list and moving on — measured,
+  // that is exactly what happens. This one cannot be cleared that way: it drives
+  // every callable the hook hands out, watches the IPC channels that remove or
+  // relocate an entry, and demands that any call which successfully removed or
+  // moved the SHOWN file stopped the content area from naming it. The only way
+  // to make it green is to route the new operation through the content helper.
+  it('makes every operation that removes the shown file stop showing it', async () => {
+    const gosterilen = '/workspace/Assets/hero.fbx'
+    // Channels whose success means the shown path is gone or somewhere else.
+    const tasiyanKanallar = ['delete-file', 'delete-entry', 'rename-entry', 'move-entry']
+
+    // Argument shapes the hook's callables actually take. A call that does not
+    // fit its target throws or no-ops, which issues no IPC and is skipped.
+    const sekiller: any[][] = [
+      [gosterilen],
+      [agacGirdisi(gosterilen)],
+      [{ preventDefault() {}, stopPropagation() {}, dataTransfer: { effectAllowed: '', setData() {} } }, agacGirdisi(gosterilen)],
+      [gosterilen, '/workspace/Moved/hero.fbx'],
+    ]
+
+    invoke.mockImplementation((channel: string, yol: unknown) => {
+      if (tasiyanKanallar.includes(channel)) {
+        // An argument shape that does not fit the callable can reach IPC with no
+        // path at all. The main process would not remove that either, so the
+        // mock refuses it and the call is simply not one of the successes below.
+        if (typeof yol !== 'string') return Promise.resolve({ success: false, error: 'no path' })
+        return Promise.resolve({ success: true, newPath: '/workspace/Moved/hero.fbx' })
+      }
+      if (channel === 'path-exists' || channel === 'file-exists') return Promise.resolve(true)
+      if (channel === 'read-directory') return Promise.resolve([])
+      if (channel === 'git-status') return Promise.resolve({ isRepo: false, files: {}, dirs: {} })
+      if (channel === 'read-file') return Promise.resolve({ path: gosterilen, content: '' })
+      return Promise.resolve(null)
+    })
+
+    const { result } = mount()
+    const isimler = Object.keys(result.current).filter(k => typeof (result.current as any)[k] === 'function')
+    const kacaklar: string[] = []
+
+    for (const isim of isimler) {
+      for (const argumanlar of sekiller) {
+        await act(async () => { await result.current.selectWorkspace('/workspace') })
+        act(() => { result.current.openPreview(gosterilen) })
+        const oncekiCagriSayisi = invoke.mock.calls.length
+
+        await act(async () => {
+          try { await (result.current as any)[isim](...argumanlar) } catch { /* wrong shape for this callable */ }
+        })
+
+        const tasidi = invoke.mock.calls
+          .slice(oncekiCagriSayisi)
+          .some(([kanal, yol]: any[]) => tasiyanKanallar.includes(kanal) && yol === gosterilen)
+        if (tasidi && result.current.previewFile?.path === gosterilen) kacaklar.push(isim)
+      }
+    }
+
+    expect(kacaklar).toEqual([])
+    // A gate that exercised nothing would also report no escapes.
+    expect(isimler.length).toBeGreaterThan(20)
+  })
+
+  // A notice, NOT the gate — the test above is the gate. This one records the
+  // public surface so a change to it shows up in a diff and has to be
+  // acknowledged. It was measured to be clearable by adding the new name to the
+  // list, which is why it is no longer the thing standing between a seventh
+  // path operation and a stale content area; it is kept because the list is
+  // cheap and a surface change is worth seeing.
   it('inventories the hook surface, so a seventh path operation cannot arrive unnoticed', () => {
     const { result } = mount()
     expect(Object.keys(result.current).sort()).toEqual([
