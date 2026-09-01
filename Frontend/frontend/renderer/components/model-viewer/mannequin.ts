@@ -155,6 +155,9 @@ const cylinderLength = (boneLength: number, radius: number): number =>
   Math.max(boneLength - 2 * radius, 1e-6);
 
 const mark = (mesh: THREE.Mesh, boneName: string): THREE.Mesh => {
+  // The prefix is load-bearing: animation tracks bind to nodes BY NAME
+  // (three's PropertyBinding), so a volume named exactly like its bone would
+  // capture the bone's tracks and the rig would silently stop animating.
   mesh.name = `mannequin:${boneName}`;
   mesh.userData[MANNEQUIN_MARKER] = true;
   // Bone-driven volumes move far from where their bounding sphere was computed;
