@@ -159,6 +159,16 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
         return;
       }
     }
+    // The content area belongs to the workspace being left: a preview or an
+    // editor buffer carried into the new workspace names a file the new one
+    // does not contain, and every later reload of it asks IPC for a path
+    // outside the now-selected workspace. Invalidating the content request too
+    // stops a read still in flight for the old workspace from refilling it.
+    contentRequest.invalidate();
+    setPreviewFile(null);
+    setOpenedFilePath(null);
+    setCode('');
+    setOriginalCode('');
     setWorkspacePath(path);
     setRootFolderPath(path);
     if (ipc) {
@@ -350,6 +360,10 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
         setOpenedFilePath(null);
         setCode('');
       }
+      // The editor half of this was already here; the preview half was not, so
+      // deleting the model on screen left it mounted under a path that no
+      // longer exists and any later reload asked IPC for the deleted file.
+      setPreviewFile(prev => (prev?.path === relativePath ? null : prev));
     } else {
       showToast(cevir('file.deleteError', { hata: res.error }), 'error');
     }
