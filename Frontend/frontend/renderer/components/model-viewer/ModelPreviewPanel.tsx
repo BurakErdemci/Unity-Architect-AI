@@ -14,6 +14,7 @@ import {
   playableClip,
   type ParsedModel,
 } from './loaders';
+import { buildMannequin, type MannequinHandle } from './mannequin';
 import { createPlayback, type Playback } from './playback';
 import { PlaybackControls } from './PlaybackControls';
 import { DEFAULT_SPEED, timeAtFraction, type Speed } from './timeline';
@@ -64,13 +65,25 @@ export interface MountTarget {
   playing: boolean;
   /** Start the rAF loop if it is not already running. */
   wake: () => void;
+  /**
+   * The volumes drawn for a file that has bones and no geometry, or null when
+   * the file needed none. Held here because they hang off the MODEL's bones
+   * rather than off `content`, so removing `content`'s children does not reach
+   * them — the handle is the only route to freeing them.
+   */
+  mannequin: MannequinHandle | null;
 }
 
-interface Stage extends MountTarget {
+/** The slice of the stage that returning to "no file loaded" reads. */
+export interface ClearTarget extends MountTarget {
+  /** rAF handle of the running loop; null when it is parked. */
+  frame: number | null;
+}
+
+interface Stage extends ClearTarget {
   renderer: THREE.WebGLRenderer;
   scene: THREE.Scene;
   controls: OrbitControls;
-  frame: number | null;
 }
 
 /**
@@ -148,11 +161,18 @@ const reseatControls = (controls: OrbitRig, framing: Framing): void => {
 };
 
 /** Return the stage to "no file loaded": stop the clock, free the GPU side. */
-const clearContent = (stage: Stage): void => {
+export const clearContent = (stage: ClearTarget): void => {
   if (stage.frame !== null) { cancelAnimationFrame(stage.frame); stage.frame = null; }
   stage.playback?.dispose();
   stage.playback = null;
   stage.playing = false;
+  // Before the traversal below, not after: the mannequin's meshes are children
+  // of the model's own bones, so `disposeObject` would otherwise walk into them
+  // and dispose geometries this handle also owns — a second dispose() on the
+  // same buffers. The handle is the single owner; detaching them here is what
+  // keeps the traversal from ever seeing them.
+  stage.mannequin?.dispose();
+  stage.mannequin = null;
   for (const child of [...stage.content.children]) {
     stage.content.remove(child);
     disposeObject(child);
@@ -182,10 +202,10 @@ export const viewableBounds = (
 ): ViewableBounds | null => {
   if (!box.isEmpty()) return { box, skeleton: false };
   const bones = boneBounds(parsed.object);
-  // Bones alone are not enough: SkeletonHelper only draws a bone-to-bone
-  // segment (see hasDrawableSkeleton), so a single bone or a flat rig with no
-  // such pair would take this branch and render nothing — the exact blank
-  // panel the empty-model message exists to avoid.
+  // Bones alone are not enough: a volume is built per bone-to-bone segment
+  // (see hasDrawableSkeleton), so a single bone or a flat rig with no such
+  // pair would take this branch and render nothing — the exact blank panel the
+  // empty-model message exists to avoid.
   return bones && hasDrawableSkeleton(parsed.object) ? { box: bones, skeleton: true } : null;
 };
 
@@ -204,17 +224,10 @@ export const mountParsedModel = (
   bounds: ViewableBounds,
 ): number => {
   stage.content.add(parsed.object);
-  if (bounds.skeleton) {
-    const helper = new THREE.SkeletonHelper(parsed.object);
-    // The helper rewrites its line vertices from the bones' world matrices in
-    // its own updateMatrixWorld, which the renderer calls while walking the
-    // graph in child order — so it must be added AFTER the rig it reads, and
-    // every render (playing or a paused seek) then draws the current pose.
-    // Its bounding sphere is computed once from those vertices and never
-    // invalidated again, so a clip that travels would cull itself away.
-    helper.frustumCulled = false;
-    stage.content.add(helper);
-  }
+  // Only for the bones-without-geometry case: a file that brought its own
+  // meshes is already its own silhouette, and capsules over it would be an
+  // overlay nobody asked for.
+  if (bounds.skeleton) stage.mannequin = buildMannequin(parsed.object);
   reseatControls(stage.controls, frameObject(stage.camera, stage.grid, bounds.box));
 
   const clip = playableClip(parsed.clips);
@@ -296,6 +309,7 @@ export const ModelPreviewPanel: React.FC<ModelPreviewPanelProps> = ({ file, work
       playback: null,
       playing: false,
       frame: null,
+      mannequin: null,
       wake: () => {},
     };
     stageRef.current = stage;
