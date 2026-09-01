@@ -67,6 +67,38 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
 
   const closePreview = useCallback(() => setPreviewFile(null), []);
 
+  // ONE place where a filesystem path change reaches the content area. Five
+  // earlier fixes each closed one path — direct delete, tree delete, rename,
+  // workspace switch, missing replacement workspace — and each time a later
+  // audit found another operation nobody had enumerated (the tree move was the
+  // sixth). The rule is therefore not repeated per call site any more: an
+  // operation that renames, moves or removes a path calls this, and an
+  // operation that does not is the odd one out.
+  //
+  // `newPath === null` means the path is gone. A string means the main-process
+  // handler reported exactly where the entry went, which is the same string the
+  // file readers accept back, so the content area follows it rather than
+  // emptying — losing the open model on a move would be the worse answer.
+  // A path merely UNDER the changed entry (a file inside a renamed or moved
+  // folder) is cleared: no handler reports the new path of each descendant, so
+  // there is nothing truthful to follow it to.
+  const applyContentPathChange = useCallback((oldPath: string, newPath: string | null) => {
+    setPreviewFile(prev => {
+      if (!prev || !yolEtkilendi(prev.path, oldPath)) return prev;
+      if (prev.path !== oldPath || !newPath) return null;
+      return { path: newPath, name: newPath.split(/[\\/]/).pop() || newPath };
+    });
+    if (openedFilePath && yolEtkilendi(openedFilePath, oldPath)) {
+      if (openedFilePath === oldPath && newPath) {
+        setOpenedFilePath(newPath);
+      } else {
+        setOpenedFilePath(null);
+        setCode('');
+        setOriginalCode('');
+      }
+    }
+  }, [openedFilePath]);
+
   // VSCode tarzı git rozetleri: mutlak yol → durum (modified/added/untracked/deleted)
   const [gitStatus, setGitStatus] = useState<{ isRepo: boolean; files: Record<string, string>; dirs: Record<string, string> }>({ isRepo: false, files: {}, dirs: {} });
   const refreshGitStatus = useCallback(async (ws?: string | null) => {
@@ -385,20 +417,11 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
     const halaGecerli = contentRequest.observe();
     if (!(await confirmDialog(cevir('file.deleteConfirm', { ad: entry.name })))) return;
     const res = await ipc.invoke('delete-entry', entry.path, workspacePath);
-    // The direct `deleteFile` path already did this; the context menu did not,
-    // so deleting the previewed model from the tree left the panel mounted on a
-    // path that no longer resolves. This entry point can also delete a FOLDER,
-    // which is why it matches descendants and not just the exact path.
-    if (res?.success && halaGecerli()) {
-      setPreviewFile(prev => (prev && yolEtkilendi(prev.path, entry.path) ? null : prev));
-      if (openedFilePath && yolEtkilendi(openedFilePath, entry.path)) {
-        setOpenedFilePath(null);
-        setCode('');
-        setOriginalCode('');
-      }
-    }
+    // This entry point can also delete a FOLDER, so descendants go with it —
+    // which `applyContentPathChange` handles as part of "the path is gone".
+    if (res?.success && halaGecerli()) applyContentPathChange(entry.path, null);
     refreshFileTree();
-  }, [refreshFileTree, workspacePath, openedFilePath, contentRequest]);
+  }, [refreshFileTree, workspacePath, applyContentPathChange, contentRequest]);
 
   const submitRename = useCallback(async () => {
     if (!renamingPath || !renameValue.trim()) { setRenamingPath(null); return; }
@@ -407,37 +430,15 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
     const res = await ipc.invoke('rename-entry', oldPath, renameValue.trim(), workspacePath);
     setRenamingPath(null);
     if (!res?.success) return;
-    // FOLLOW the rename rather than clear it: the main handler renames to
-    // `path.join(dirname(old), newName)` and returns exactly that path, so the
-    // reported `newPath` is the same string the file readers will be handed
-    // back — following is reliable here, and losing the open model on a rename
-    // would be a worse answer than keeping it. Two cases cannot be followed and
-    // are cleared instead, because a path that no longer names a file is worse
-    // than an empty content area: a handler that reports no `newPath`, and a
-    // file sitting UNDER a renamed folder, whose own new path is not reported.
+    // The main handler renames to `path.join(dirname(old), newName)` and returns
+    // exactly that path, so the reported `newPath` is followable.
     const newPath: string | null = typeof res.newPath === 'string' ? res.newPath : null;
-    const etkilendi = (p: string) => yolEtkilendi(p, oldPath);
     // A rename that lands after the content area changed hands describes a file
     // the area no longer shows; following it would move the NEW occupant onto an
     // old workspace's path.
-    if (halaGecerli()) {
-      setPreviewFile(prev => {
-        if (!prev || !etkilendi(prev.path)) return prev;
-        if (prev.path !== oldPath || !newPath) return null;
-        return { path: newPath, name: newPath.split(/[\\/]/).pop() || newPath };
-      });
-      if (openedFilePath && etkilendi(openedFilePath)) {
-        if (openedFilePath === oldPath && newPath) {
-          setOpenedFilePath(newPath);
-        } else {
-          setOpenedFilePath(null);
-          setCode('');
-          setOriginalCode('');
-        }
-      }
-    }
+    if (halaGecerli()) applyContentPathChange(oldPath, newPath);
     refreshFileTree();
-  }, [refreshFileTree, renameValue, renamingPath, workspacePath, openedFilePath, contentRequest]);
+  }, [refreshFileTree, renameValue, renamingPath, workspacePath, applyContentPathChange, contentRequest]);
 
   const submitTreeCreate = useCallback(async () => {
     if (!treeCreating || !treeCreateValue.trim()) { setTreeCreating(null); return; }
@@ -475,20 +476,11 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
       refreshFileTree();
       // Only the content area this delete started in: after a workspace switch
       // the same relative path can name a different, still-present file.
-      if (halaGecerli()) {
-        if (openedFilePath === relativePath) {
-          setOpenedFilePath(null);
-          setCode('');
-        }
-        // The editor half of this was already here; the preview half was not, so
-        // deleting the model on screen left it mounted under a path that no
-        // longer exists and any later reload asked IPC for the deleted file.
-        setPreviewFile(prev => (prev?.path === relativePath ? null : prev));
-      }
+      if (halaGecerli()) applyContentPathChange(relativePath, null);
     } else {
       showToast(cevir('file.deleteError', { hata: res.error }), 'error');
     }
-  }, [ipc, workspacePath, showToast, refreshFileTree, openedFilePath, contentRequest]);
+  }, [ipc, workspacePath, showToast, refreshFileTree, applyContentPathChange, contentRequest]);
 
   const handleExportToUnity = useCallback(async (codeString: string) => {
     if (!workspacePath) return;
@@ -537,12 +529,23 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
     setTreeDragTarget(null);
     if (!treeDragSource || !targetEntry.isDirectory) return;
     if (targetEntry.path === treeDragSource.path || targetEntry.path.startsWith(treeDragSource.path + '/')) return;
-    const sourceParent = treeDragSource.path.substring(0, treeDragSource.path.lastIndexOf('/'));
+    const sourcePath = treeDragSource.path;
+    const sourceParent = sourcePath.substring(0, sourcePath.lastIndexOf('/'));
     if (sourceParent === targetEntry.path) { setTreeDragSource(null); return; }
-    const res = await ipc?.invoke('move-entry', treeDragSource.path, targetEntry.path, workspacePath);
+    // The drop is answered asynchronously, so a workspace switch can land in
+    // between; the moved path then belongs to a workspace the content area has
+    // already left.
+    const halaGecerli = contentRequest.observe();
+    const res = await ipc?.invoke('move-entry', sourcePath, targetEntry.path, workspacePath);
     setTreeDragSource(null);
-    if (res?.success) refreshFileTree();
-  }, [refreshFileTree, treeDragSource, workspacePath]);
+    if (!res?.success) return;
+    // `move-entry` reports the destination the same way `rename-entry` does, so
+    // the content area follows the file it was showing into its new directory.
+    if (halaGecerli()) {
+      applyContentPathChange(sourcePath, typeof res.newPath === 'string' ? res.newPath : null);
+    }
+    refreshFileTree();
+  }, [refreshFileTree, treeDragSource, workspacePath, applyContentPathChange, contentRequest]);
 
   const handleTreeContextMenu = useCallback((e: React.MouseEvent, entry: FileEntry) => {
     e.preventDefault();

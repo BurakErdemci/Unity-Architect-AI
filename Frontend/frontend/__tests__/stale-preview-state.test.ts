@@ -43,6 +43,27 @@ const agacGirdisi = (yol: string) => ({
   extension: `.${yol.split('.').pop()}`,
 })
 
+const dirEntry = (yol: string) => ({
+  name: yol.split('/').pop() as string,
+  path: yol,
+  isDirectory: true,
+  extension: '',
+})
+
+// The drag is two production callbacks, not one: the drop reads the source the
+// drag start recorded, so both have to run for the move to be the real one.
+const dragOnto = async (result: any, source: any, targetDir: any) => {
+  act(() => {
+    result.current.handleTreeDragStart(
+      { stopPropagation() {}, dataTransfer: { effectAllowed: '', setData() {} } },
+      source,
+    )
+  })
+  await act(async () => {
+    await result.current.handleTreeDrop({ preventDefault() {}, stopPropagation() {} }, targetDir)
+  })
+}
+
 describe('stale-preview-state', () => {
   beforeEach(() => { invoke.mockReset() })
 
@@ -328,5 +349,123 @@ describe('stale-preview-state', () => {
     expect(result.current.workspacePath).toBeNull()
     expect(result.current.previewFile).toBeNull()
     expect(result.current.fileTree).toEqual([])
+  })
+
+  // Dragging an entry onto another directory is the SIXTH way to invalidate the
+  // path the content area is showing, and the first five fixes all missed it:
+  // the drop refreshed the tree and left the preview on the source path.
+  describe('tree move', () => {
+    const moveIpc = (res: any) => (channel: string) => {
+      if (channel === 'path-exists') return Promise.resolve(true)
+      if (channel === 'read-directory') return Promise.resolve([])
+      if (channel === 'git-status') return Promise.resolve({ isRepo: false, files: {}, dirs: {} })
+      if (channel === 'move-entry') return Promise.resolve(res)
+      throw new Error(`unexpected IPC channel: ${channel}`)
+    }
+
+    // `move-entry` reports the destination the same way `rename-entry` does, so
+    // there is a truthful path to follow and following beats emptying the pane.
+    it('follows the previewed file into the directory the move reports', async () => {
+      invoke.mockImplementation(moveIpc({ success: true, newPath: '/workspace/Moved/hero.fbx' }))
+
+      const { result } = mount()
+      await act(async () => { await result.current.selectWorkspace('/workspace') })
+      act(() => { result.current.openPreview('/workspace/Assets/hero.fbx') })
+
+      await dragOnto(result, agacGirdisi('/workspace/Assets/hero.fbx'), dirEntry('/workspace/Moved'))
+
+      expect(result.current.previewFile).toEqual({ path: '/workspace/Moved/hero.fbx', name: 'hero.fbx' })
+    })
+
+    it('follows the open editor file into the directory the move reports', async () => {
+      invoke.mockImplementation(moveIpc({ success: true, newPath: '/workspace/Moved/Player.cs' }))
+
+      const { result } = mount()
+      await act(async () => { await result.current.selectWorkspace('/workspace') })
+      act(() => { result.current.setOpenedFilePath('/workspace/Assets/Player.cs') })
+
+      await dragOnto(result, agacGirdisi('/workspace/Assets/Player.cs'), dirEntry('/workspace/Moved'))
+
+      expect(result.current.openedFilePath).toBe('/workspace/Moved/Player.cs')
+    })
+
+    it('clears the preview when the move reports no new path', async () => {
+      invoke.mockImplementation(moveIpc({ success: true }))
+
+      const { result } = mount()
+      await act(async () => { await result.current.selectWorkspace('/workspace') })
+      act(() => { result.current.openPreview('/workspace/Assets/hero.fbx') })
+
+      await dragOnto(result, agacGirdisi('/workspace/Assets/hero.fbx'), dirEntry('/workspace/Moved'))
+
+      expect(result.current.previewFile).toBeNull()
+    })
+
+    // A moved FOLDER takes its children with it, and their individual new paths
+    // are not reported, so the only truthful answer is an empty content area.
+    it('clears a preview sitting under a moved folder', async () => {
+      invoke.mockImplementation(moveIpc({ success: true, newPath: '/workspace/Moved/Assets' }))
+
+      const { result } = mount()
+      await act(async () => { await result.current.selectWorkspace('/workspace') })
+      act(() => { result.current.openPreview('/workspace/Assets/hero.fbx') })
+
+      await dragOnto(result, dirEntry('/workspace/Assets'), dirEntry('/workspace/Moved'))
+
+      expect(result.current.previewFile).toBeNull()
+    })
+
+    it('leaves an unrelated preview alone when another entry is moved', async () => {
+      invoke.mockImplementation(moveIpc({ success: true, newPath: '/workspace/Moved/other.fbx' }))
+
+      const { result } = mount()
+      await act(async () => { await result.current.selectWorkspace('/workspace') })
+      act(() => { result.current.openPreview('/workspace/Assets/hero.fbx') })
+
+      await dragOnto(result, agacGirdisi('/workspace/Assets/other.fbx'), dirEntry('/workspace/Moved'))
+
+      expect(result.current.previewFile?.path).toBe('/workspace/Assets/hero.fbx')
+    })
+
+    // A refused move leaves the file where it was, so moving the content area
+    // off it would hide a model that is still there.
+    it('keeps the preview when the move reports failure', async () => {
+      invoke.mockImplementation(moveIpc({ success: false, error: 'target exists' }))
+
+      const { result } = mount()
+      await act(async () => { await result.current.selectWorkspace('/workspace') })
+      act(() => { result.current.openPreview('/workspace/Assets/hero.fbx') })
+
+      await dragOnto(result, agacGirdisi('/workspace/Assets/hero.fbx'), dirEntry('/workspace/Moved'))
+
+      expect(result.current.previewFile?.path).toBe('/workspace/Assets/hero.fbx')
+    })
+  })
+
+  // Six operations that invalidate a content path were found across three audit
+  // rounds, each round finding one the previous had not enumerated. They now
+  // share one function inside the hook, but nothing stops a SEVENTH operation
+  // from being added that forgets to call it. This inventory is the tripwire:
+  // adding or removing anything the hook hands out fails here, and clearing the
+  // failure means deciding, in writing, whether the new operation can change or
+  // remove a path the editor or the preview may be showing — and if it can,
+  // routing it through the same function and adding its cases above.
+  it('inventories the hook surface, so a seventh path operation cannot arrive unnoticed', () => {
+    const { result } = mount()
+    expect(Object.keys(result.current).sort()).toEqual([
+      'changeExportDir', 'closePreview', 'closeWorkspace', 'code', 'deleteFile', 'dirContents',
+      'expandedDirs', 'exportFileName', 'exportModal', 'exportMultipleFiles', 'exportSingleFile',
+      'fetchLastWorkspace', 'fileTree', 'gitStatus', 'handleExportToUnity', 'handleTreeContextMenu',
+      'handleTreeDelete', 'handleTreeDragLeave', 'handleTreeDragOver', 'handleTreeDragStart',
+      'handleTreeDrop', 'isDirty', 'lastWorkspacePath', 'openFile', 'openFilePicker', 'openFolder',
+      'openPreview', 'openedFilePath', 'pendingDelete', 'pendingGenFiles', 'previewFile',
+      'refreshFileTree', 'refreshGitStatus', 'renameValue', 'renamingPath', 'rootFolderPath',
+      'saveFile', 'selectWorkspace', 'setCode', 'setExportFileName', 'setExportModal',
+      'setOpenedFilePath', 'setPendingDelete', 'setPendingGenFiles', 'setRenameValue',
+      'setRenamingPath', 'setTreeContextMenu', 'setTreeCreateValue', 'setTreeCreating',
+      'startRename', 'startTreeCreate', 'submitRename', 'submitTreeCreate', 'suggestFilePath',
+      'toggleDir', 'treeContextMenu', 'treeCreateValue', 'treeCreating', 'treeDragSource',
+      'treeDragTarget', 'workspacePath',
+    ].sort())
   })
 })
