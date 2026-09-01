@@ -93,9 +93,24 @@ export const MANNEQUIN_PROPORTIONS = {
 
 const MATERIAL_COLOR = 0xd8d8d8;
 
-/** Marks a mesh this module owns, so scene teardown can tell it apart from model geometry. */
+/**
+ * Marks a mesh this module owns.
+ *
+ * NOT what teardown runs on, and the comment here used to claim it was: the
+ * panel frees these volumes through `MannequinHandle.dispose()`, and the handle
+ * is deliberately their single owner — `clearContent` disposes it BEFORE the
+ * scene traversal precisely so no second code path ever has to recognise them.
+ * Giving teardown a marker test as well would put two owners on the same
+ * geometries, which is the double-dispose the current ordering exists to avoid.
+ *
+ * So what the mark is for is IDENTIFICATION, by anything holding a scene graph
+ * and asking which of these meshes came out of the file and which this module
+ * drew: today that is the mount and mannequin suites. It survives as an export
+ * on those terms rather than as a teardown hook.
+ */
 export const MANNEQUIN_MARKER = 'gamachineMannequin';
 
+/** True for a mesh `buildMannequin` created. See `MANNEQUIN_MARKER`. */
 export const isMannequinMesh = (object: THREE.Object3D): boolean =>
   object.userData?.[MANNEQUIN_MARKER] === true;
 
