@@ -542,6 +542,11 @@ export const ModelPreviewPanel: React.FC<ModelPreviewPanelProps> = ({ file, work
         return;
       }
 
+      // three's loaders parse synchronously, so nothing here can interrupt a
+      // parse already under way; this only avoids STARTING one for a file the
+      // user navigated away from while the channel read was in flight.
+      if (cancelled) return;
+
       let parsed: ParsedModel;
       try {
         parsed = await parseModel(extensionOf(file.name), result.data);
