@@ -32,7 +32,8 @@ export type BoneRole =
  * table silently reclassifies whole limbs.
  */
 const ROLE_KEYWORDS: readonly (readonly [BoneRole, readonly string[]])[] = [
-  ['spine', ['spine', 'chest', 'hips', 'pelvis', 'torso']],
+  // 'hip' not 'hips': generic rigs name the bone `Hip` as often as `Hips`.
+  ['spine', ['spine', 'chest', 'hip', 'pelvis', 'torso']],
   ['shoulder', ['shoulder', 'clavicle']],
   ['forearm', ['forearm', 'lowerarm', 'lower_arm']],
   ['upperArm', ['upperarm', 'upper_arm', 'arm']],
@@ -108,12 +109,13 @@ const isBone = (object: THREE.Object3D | null): object is THREE.Bone =>
 const UP = new THREE.Vector3(0, 1, 0);
 
 /**
- * The scale every radius is a fraction of. Height is the honest measure of a
- * humanoid rig; a rig lying flat (Y extent ~0, e.g. an unposed T-pose exported
- * Z-up) has none, so the bone box's diagonal stands in, and a rig whose bones
- * all share one point falls back to the whole object's diagonal before 1.
+ * Skeleton height in WORLD units — the scale every radius is a fraction of.
+ * Height is the honest measure of a humanoid rig; a rig lying flat (Y extent
+ * ~0, e.g. an unposed T-pose exported Z-up) has none, so the bone box's
+ * diagonal stands in, and a rig whose bones all share one point falls back to
+ * the whole object's diagonal before 1.
  */
-const rigScale = (root: THREE.Object3D, bones: THREE.Box3): number => {
+const rigHeight = (root: THREE.Object3D, bones: THREE.Box3): number => {
   const size = bones.getSize(new THREE.Vector3());
   if (size.y > 1e-6) return size.y;
   const diagonal = size.length();
@@ -121,6 +123,36 @@ const rigScale = (root: THREE.Object3D, bones: THREE.Box3): number => {
   const overall = new THREE.Box3().setFromObject(root).getSize(new THREE.Vector3()).length();
   return overall > 1e-6 ? overall : 1;
 };
+
+/**
+ * Divisor that carries a world-space length into `object`'s local space.
+ *
+ * Radii come from a WORLD measurement (`boneBounds` reads `matrixWorld`) but
+ * every mesh here is a child of a bone, so its numbers are read in that bone's
+ * LOCAL space — the same space `bone.position`, and therefore the capsule
+ * length, already lives in. Mixing the two silently distorts the figure by the
+ * accumulated ancestor scale: a Blender-exported FBX with a 0.01 unit
+ * conversion on its root (or on `mixamorig:Hips`, which is just as common)
+ * renders 100x too thin.
+ *
+ * Non-uniform scale has no single right answer for a radius; the geometric
+ * mean is the uniform scale with the same volume factor.
+ */
+const localFromWorld = (object: THREE.Object3D, out: THREE.Vector3): number => {
+  object.getWorldScale(out);
+  const volume = Math.abs(out.x * out.y * out.z);
+  return volume > 1e-12 ? Math.cbrt(volume) : 1;
+};
+
+/**
+ * three's CapsuleGeometry `length` is the CYLINDER MID-SECTION only: total
+ * extent is `length + 2 * radius`. Passing the bone length verbatim overshoots
+ * the joint at both ends by a radius — measured 66% over on a spine segment —
+ * which pushes the foot through the floor plane. A bone shorter than its own
+ * diameter collapses to a ball rather than a negative length.
+ */
+const cylinderLength = (boneLength: number, radius: number): number =>
+  Math.max(boneLength - 2 * radius, 1e-6);
 
 const mark = (mesh: THREE.Mesh, boneName: string): THREE.Mesh => {
   mesh.name = `mannequin:${boneName}`;
@@ -167,21 +199,26 @@ export const buildMannequin = (root: THREE.Object3D): MannequinHandle | null => 
   // and two skulls is worse than none.
   const head = bones.find(bone => classifyBone(bone.name) === 'head');
 
-  const scale = rigScale(root, bounds);
+  const height = rigHeight(root, bounds);
   const material = new THREE.MeshStandardMaterial({
     color: MATERIAL_COLOR,
     roughness: 0.85,
     metalness: 0.0,
   });
   const meshes: THREE.Mesh[] = [];
+  const worldScale = new THREE.Vector3();
 
   for (const bone of segments) {
     const offset = bone.position;
     const length = offset.length();
+    const scale = height / localFromWorld(bone.parent!, worldScale);
     const radius = MANNEQUIN_PROPORTIONS.radii[classifyBone(bone.name)] * scale;
     // Low segment counts on purpose: a humanoid rig is ~65 bones, and this is a
     // silhouette, not a sculpt.
-    const mesh = new THREE.Mesh(new THREE.CapsuleGeometry(radius, length, 4, 8), material);
+    const mesh = new THREE.Mesh(
+      new THREE.CapsuleGeometry(radius, cylinderLength(length, radius), 4, 8),
+      material,
+    );
     mesh.position.copy(offset).multiplyScalar(0.5);
     if (length > 1e-9) {
       mesh.quaternion.setFromUnitVectors(UP, offset.clone().divideScalar(length));
@@ -194,6 +231,8 @@ export const buildMannequin = (root: THREE.Object3D): MannequinHandle | null => 
     const { x, y, z } = MANNEQUIN_PROPORTIONS.headEllipsoid;
     const skull = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 8), material);
     const direction = headDirection(head);
+    // The skull is a child of the head bone, so it needs that bone's local space.
+    const scale = height / localFromWorld(head, worldScale);
     skull.scale.set(x * scale, y * scale, z * scale);
     skull.quaternion.setFromUnitVectors(UP, direction);
     skull.position.copy(direction).multiplyScalar((y * scale) / 2);

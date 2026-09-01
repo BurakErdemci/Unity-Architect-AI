@@ -11,6 +11,7 @@ import {
   buildMannequin,
   classifyBone,
   isMannequinMesh,
+  MANNEQUIN_MARKER,
   MANNEQUIN_PROPORTIONS,
   type BoneRole,
 } from '../renderer/components/model-viewer/mannequin'
@@ -198,6 +199,47 @@ describe('buildMannequin', () => {
     const axis = new THREE.Vector3(0, 1, 0).applyQuaternion(forearm.quaternion)
     expect(axis.distanceTo(offset.clone().normalize())).toBeLessThan(1e-6)
     expect(radiusOf(forearm)).toBeGreaterThan(0)
+
+    // The capsule must be exactly as long as the bone, caps included. three's
+    // `length` argument is the cylinder mid-section only, so the total extent
+    // is `length + 2 * radius` and a verbatim bone length overshoots both joints.
+    forearm.geometry.computeBoundingBox()
+    const box = forearm.geometry.boundingBox!
+    expect(box.max.y - box.min.y).toBeCloseTo(offset.length(), 5)
+  })
+
+  it('collapses a bone shorter than its own diameter to a ball, not a negative length', () => {
+    const root = new THREE.Group()
+    const hips = bone('Hips', 0, 1, 0, 1)
+    // Spine radius is 0.055 of height; this segment is far shorter than 2r.
+    const spine = bone('Spine', 0, 0.001, 0, 1)
+    const chest = bone('Chest', 0, 0.9, 0, 1)
+    root.add(hips)
+    hips.add(spine)
+    spine.add(chest)
+
+    const handle = buildMannequin(root)!
+    const stub = byBone(handle, 'Spine')
+    stub.geometry.computeBoundingBox()
+    const extent = stub.geometry.boundingBox!
+    expect(Number.isFinite(extent.max.y - extent.min.y)).toBe(true)
+    expect(extent.max.y - extent.min.y).toBeCloseTo(2 * radiusOf(stub), 4)
+  })
+
+  it('places a zero-length bone`s capsule at the joint without producing NaN', () => {
+    const root = new THREE.Group()
+    const hips = bone('Hips', 0, 1, 0, 1)
+    const twin = bone('Spine', 0, 0, 0, 1)
+    const chest = bone('Chest', 0, 0.9, 0, 1)
+    root.add(hips)
+    hips.add(twin)
+    twin.add(chest)
+
+    const handle = buildMannequin(root)!
+    const mesh = byBone(handle, 'Spine')
+    expect(mesh.position.lengthSq()).toBe(0)
+    expect(Number.isNaN(mesh.quaternion.x + mesh.quaternion.w)).toBe(false)
+    expect(radiusOf(mesh)).toBeGreaterThan(0)
   })
 
   it('marks every mesh and disables frustum culling on it', () => {
@@ -206,8 +248,15 @@ describe('buildMannequin', () => {
     expect(handle.meshes.length).toBeGreaterThan(0)
     for (const mesh of handle.meshes) {
       expect(isMannequinMesh(mesh)).toBe(true)
+      expect(mesh.userData[MANNEQUIN_MARKER]).toBe(true)
       expect(mesh.frustumCulled).toBe(false)
     }
+  })
+
+  it('does not claim a model-owned mesh as its own', () => {
+    const modelMesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial())
+    expect(isMannequinMesh(modelMesh)).toBe(false)
+    expect(isMannequinMesh(new THREE.Bone())).toBe(false)
   })
 
   it('shares one material across every mesh', () => {
@@ -243,6 +292,41 @@ describe('buildMannequin', () => {
       5,
     )
     expect(spheres(large.meshes)[0].scale.y).toBeCloseTo(spheres(small.meshes)[0].scale.y * 2, 5)
+  })
+
+  /**
+   * Bone offsets — and therefore capsule LENGTHS — are local to the parent
+   * bone, while the height a radius is a fraction of is measured in world
+   * space. A unit conversion carried on an ancestor node is the case where
+   * those two spaces diverge, and it is common: Blender-exported FBX puts 0.01
+   * on the root, Mixamo puts it on `Hips`. Same rig, same local offsets, so
+   * every capsule must come out identical to the unscaled build.
+   */
+  it('keeps proportions when the root node carries a unit conversion scale', () => {
+    const plain = buildMannequin(mixamoRig().root)!
+    const { root } = mixamoRig()
+    root.scale.setScalar(0.01)
+    root.updateMatrixWorld(true)
+    const converted = buildMannequin(root)!
+
+    for (const mesh of capsules(converted.meshes)) {
+      const twin = plain.meshes.find(m => m.name === mesh.name)!
+      expect(radiusOf(mesh)).toBeCloseTo(radiusOf(twin), 9)
+    }
+    expect(spheres(converted.meshes)[0].scale.y).toBeCloseTo(spheres(plain.meshes)[0].scale.y, 9)
+  })
+
+  it('keeps proportions when the unit conversion sits on the root BONE', () => {
+    const plain = buildMannequin(mixamoRig().root)!
+    const { root } = mixamoRig()
+    root.getObjectByName('mixamorig:Hips')!.scale.setScalar(0.01)
+    root.updateMatrixWorld(true)
+    const converted = buildMannequin(root)!
+
+    for (const mesh of capsules(converted.meshes)) {
+      const twin = plain.meshes.find(m => m.name === mesh.name)!
+      expect(radiusOf(mesh)).toBeCloseTo(radiusOf(twin), 9)
+    }
   })
 
   it('returns null for a single bone', () => {
