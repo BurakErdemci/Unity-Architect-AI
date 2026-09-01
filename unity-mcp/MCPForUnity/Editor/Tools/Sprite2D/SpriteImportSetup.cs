@@ -5,7 +5,9 @@ using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
 using MCPForUnity.Editor.Helpers;
-#pragma warning disable CS0618 // TextureImporter.spritesheet — Unity 6'da obsolete ama ISpriteEditorDataProvider alternatifsiz karmaşık; Unity 7'ye kadar kabul edilebilir
+// TextureImporter.spritesheet is obsolete as of Unity 6, but the replacement
+// (ISpriteEditorDataProvider) needs the 2D Sprite package for the same result.
+#pragma warning disable CS0618
 
 namespace MCPForUnity.Editor.Tools.Sprite2D
 {
@@ -20,6 +22,9 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                 return new ErrorResponse("'path' is required.");
 
             path = AssetPathUtility.SanitizeAssetPath(path);
+            // Null means refused, not missing - "no importer" would name the wrong problem.
+            if (path == null)
+                return new ErrorResponse("'path' must stay under Assets/ and cannot contain '..'.");
             var importer = AssetImporter.GetAtPath(path) as TextureImporter;
             if (importer == null)
                 return new ErrorResponse($"No TextureImporter found at '{path}'. Is it a texture/sprite?");
@@ -28,7 +33,28 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
             int w = texture != null ? texture.width  : 0;
             int h = texture != null ? texture.height : 0;
 
-            var existingSlices = importer.spritesheet.Select(s => new
+            // Paged because this reads what is already on the asset: the 4096 ceiling
+            // slice_sheet applies when WRITING never bounded a sheet sliced by hand.
+            // Changing either number means changing the page_size description in
+            // Server/src/services/tools/manage_sprite.py - that copy is the published promise.
+            const int DefaultSlicePageSize = 512;
+            const int MaxSlicePageSize = 4096;
+
+            if (!SpriteParams.TryReadWholeNumber(@params, "page_size", DefaultSlicePageSize, out int pageSize, out string paramError))
+                return new ErrorResponse(paramError);
+            if (pageSize < 1 || pageSize > MaxSlicePageSize)
+                return new ErrorResponse($"'page_size' must be between 1 and {MaxSlicePageSize}; got {pageSize}.");
+
+            int totalSlices = importer.spritesheet.Length;
+            if (!SpriteParams.TryReadWholeNumber(@params, "cursor", 0, out int cursor, out paramError))
+                return new ErrorResponse(paramError);
+            // Skip yields everything for a negative count rather than throwing, so a negative
+            // cursor would return page one as a success. Landing exactly on totalSlices is
+            // legal: it is the end, and cursor 0 on an unsliced sheet is that same case.
+            if (cursor < 0 || cursor > totalSlices)
+                return new ErrorResponse($"'cursor' must be between 0 and {totalSlices}; got {cursor}.");
+
+            var existingSlices = importer.spritesheet.Skip(cursor).Take(pageSize).Select(s => new
             {
                 name   = s.name,
                 x      = (int)s.rect.x,
@@ -37,23 +63,72 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                 height = (int)s.rect.height,
             }).ToArray();
 
-            // Texture'ı base64 olarak yükle (vision analizi için)
+            int nextIndex = cursor + existingSlices.Length;
+            int? nextCursor = nextIndex < totalSlices ? nextIndex : (int?)null;
+
+            // Base64 payload so a vision-capable caller can read the grid off the image.
+            // Bounded by size rather than paged: an image split across cursors is not an image
+            // any client can reassemble. 4 MB is a budget, not a protocol boundary. The bound
+            // is on the ENCODED length - base64 emits 4 chars per 3 bytes, and bounding the
+            // source instead let a measured 3.67 MB sheet through as a 4.89 MB payload.
+            const int MaxInlinePayloadBytes = 4 * 1024 * 1024;
             string imageBase64 = null;
-            try
+            string imageOmittedReason = null;
+            if (cursor > 0)
             {
-                string fullPath = Path.Combine(
-                    Application.dataPath.Replace("/Assets", ""),
-                    path
-                );
-                if (File.Exists(fullPath))
+                // First page only: repeating it would multiply what paging exists to cap.
+                imageOmittedReason =
+                    "The image is returned only on the first page. Request this path with " +
+                    "cursor 0 (or omit cursor) if the image itself is needed.";
+            }
+            else
+            {
+                try
                 {
-                    byte[] bytes = File.ReadAllBytes(fullPath);
-                    string ext = Path.GetExtension(path).ToLowerInvariant();
-                    string mime = (ext == ".jpg" || ext == ".jpeg") ? "image/jpeg" : "image/png";
-                    imageBase64 = $"data:{mime};base64," + Convert.ToBase64String(bytes);
+                    // Not dataPath.Replace("/Assets", ""): Replace removes EVERY occurrence, so
+                    // a project under /work/AssetsLab lost the wrong segment and missed the file.
+                    string projectRoot = Directory.GetParent(Application.dataPath)?.FullName;
+                    string fullPath = projectRoot != null ? Path.Combine(projectRoot, path) : null;
+                    if (fullPath == null)
+                    {
+                        imageOmittedReason = "The project root could not be resolved from Application.dataPath.";
+                    }
+                    else if (!File.Exists(fullPath))
+                    {
+                        // Asset path over the bridge, absolute path to the log only: the caller
+                        // gains nothing from it and it discloses the machine's directory layout.
+                        McpLog.Warn($"[Sprite2D] get_info found no file on disk at '{fullPath}'.");
+                        imageOmittedReason = $"No file on disk for '{path}'.";
+                    }
+                    else
+                    {
+                        string ext = Path.GetExtension(path).ToLowerInvariant();
+                        string mime = (ext == ".jpg" || ext == ".jpeg") ? "image/jpeg" : "image/png";
+                        string prefix = $"data:{mime};base64,";
+                        long size = new FileInfo(fullPath).Length;
+                        long encoded = 4L * ((size + 2) / 3) + prefix.Length;
+                        if (encoded > MaxInlinePayloadBytes)
+                        {
+                            imageOmittedReason =
+                                $"The {size}-byte source encodes to {encoded} base64 bytes, above the " +
+                                $"{MaxInlinePayloadBytes}-byte inline limit. Read the file directly if the " +
+                                "image itself is needed.";
+                        }
+                        else
+                        {
+                            imageBase64 = prefix + Convert.ToBase64String(File.ReadAllBytes(fullPath));
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // A swallowed failure and a deliberate omission are different answers.
+                    // Type over the bridge, not message: messages carry the path that threw.
+                    McpLog.Warn($"[Sprite2D] get_info could not read '{path}': {ex}");
+                    imageOmittedReason =
+                        $"The image could not be read ({ex.GetType().Name}); the Unity console has the detail.";
                 }
             }
-            catch { /* base64 opsiyonel — hata olursa null bırak */ }
 
             var result = new
             {
@@ -64,12 +139,23 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                 sprite_mode   = importer.spriteImportMode.ToString(),
                 pixels_per_unit = importer.spritePixelsPerUnit,
                 filter_mode   = importer.filterMode.ToString(),
-                slice_count   = existingSlices.Length,
+                slice_count   = totalSlices,
                 slices        = existingSlices,
+                next_cursor   = nextCursor,
                 image_base64  = imageBase64,
+                image_omitted_reason = imageOmittedReason,
             };
 
             return result;
+        }
+
+        /// <summary>Undoes the conversion above when the request is refused after it.</summary>
+        private static void RestoreTextureType(TextureImporter importer, TextureImporterType previous)
+        {
+            if (importer.textureType == previous) return;
+            importer.textureType = previous;
+            EditorUtility.SetDirty(importer);
+            importer.SaveAndReimport();
         }
 
         // ── SliceSheet ───────────────────────────────────────────────────────
@@ -81,47 +167,129 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                 return new ErrorResponse("'path' is required.");
 
             path = AssetPathUtility.SanitizeAssetPath(path);
+            if (path == null)
+                return new ErrorResponse("'path' must stay under Assets/ and cannot contain '..'.");
             var importer = AssetImporter.GetAtPath(path) as TextureImporter;
             if (importer == null)
                 return new ErrorResponse($"No TextureImporter found at '{path}'.");
 
-            var texture = AssetDatabase.LoadAssetAtPath<Texture2D>(path);
-            if (texture == null)
-                return new ErrorResponse($"Could not load texture at '{path}'.");
-
-            int texW = texture.width;
-            int texH = texture.height;
-
-            // cols/rows veya frame_width/frame_height'ten grid hesapla
-            int cols = @params["cols"]?.ToObject<int>() ?? 0;
-            int rows = @params["rows"]?.ToObject<int>() ?? 1;
-            int frameW = @params["frame_width"]?.ToObject<int>() ?? 0;
-            int frameH = @params["frame_height"]?.ToObject<int>() ?? 0;
+            // Checked before the conversion below: a refused request used to leave the texture
+            // already turned into a Sprite. Sequential rather than chained with ||, because a
+            // short-circuited call leaves its out parameter unassigned.
+            int rows = 1, frameW = 0, frameH = 0;
+            bool gridOk = SpriteParams.TryReadWholeNumber(@params, "cols", 0, out int cols, out string gridError);
+            if (gridOk) gridOk = SpriteParams.TryReadWholeNumber(@params, "rows", 1, out rows, out gridError);
+            if (gridOk) gridOk = SpriteParams.TryReadWholeNumber(@params, "frame_width", 0, out frameW, out gridError);
+            if (gridOk) gridOk = SpriteParams.TryReadWholeNumber(@params, "frame_height", 0, out frameH, out gridError);
+            if (!gridOk)
+            {
+                diagnostics.AddError("SLICE_BAD_PARAM", gridError, null, new string[0]);
+                return new { success = false, message = gridError, diagnostics = diagnostics.Build() };
+            }
 
             if (cols <= 0 && frameW <= 0)
                 return new ErrorResponse("Either 'cols' or 'frame_width' is required.");
+
+            // An explicit rows=0 would reach the texH / rows division below and throw.
+            if (rows <= 0 && frameH <= 0)
+                return new ErrorResponse("'rows' must be 1 or more; pass 'frame_height' instead if the row count is unknown.");
+
+            // Measure only once imported as a sprite sheet: a Default-type import rescales a
+            // non-power-of-two sheet (96px to 128px) and the trailing frames then land outside
+            // the real texture, where Unity drops them silently - measured on 6000.4.4f1, a
+            // 96x16 sheet asked for 6 columns gave 4 sprites of 21px. Later refusals restore
+            // the previous type: a refused request must not leave a converted texture behind.
+            var previousType = importer.textureType;
+            if (importer.textureType != TextureImporterType.Sprite)
+            {
+                importer.textureType = TextureImporterType.Sprite;
+                EditorUtility.SetDirty(importer);
+                importer.SaveAndReimport();
+            }
+
+            var texture = AssetDatabase.LoadAssetAtPath<Texture2D>(path);
+            if (texture == null)
+            {
+                RestoreTextureType(importer, previousType);
+                return new ErrorResponse($"Could not load texture at '{path}'.");
+            }
+
+            int texW = texture.width;
+            int texH = texture.height;
 
             if (frameW <= 0) frameW = texW / cols;
             if (frameH <= 0) frameH = texH / rows;
             if (cols  <= 0) cols   = texW / frameW;
             if (rows  <= 0) rows   = texH / frameH;
 
-            int totalFrames = cols * rows;
+            // Three ways to fail, only the first obvious. An oversized frame yields a non-zero
+            // grid whose rects land outside the texture (measured: frame_height=4096 on a 16px
+            // sheet, dropped silently, success). Integer division can drive a derived frame size
+            // to zero (measured: 64 zero-width sprites, success). The product is long because
+            // two large caller values wrap in 32-bit arithmetic and slip under the comparison.
+            if (frameW <= 0 || frameH <= 0
+                || (long)cols * frameW > texW || (long)rows * frameH > texH)
+            {
+                diagnostics.AddError(
+                    "SLICE_OUT_OF_BOUNDS",
+                    "The grid does not fit inside the texture, so some frames would fall outside it.",
+                    new { cols, rows, frame_width = frameW, frame_height = frameH, texture_width = texW, texture_height = texH },
+                    new[] { "Reduce frame_width/frame_height, or cols/rows", "Confirm the texture dimensions with get_info" }
+                );
+                RestoreTextureType(importer, previousType);
+                return new { success = false, diagnostics = diagnostics.Build() };
+            }
+
+            // Fitting is not covering: the guard above only refuses a grid that is too BIG.
+            // Measured on 6000.4.4f1 - a 100x16 sheet at 6 columns covered 96 of 100 pixels,
+            // success, no diagnostic. Warns rather than refuses because a remainder is often
+            // deliberate (a trailing margin, a separator, an intentional sub-region); silence
+            // was the defect, not the behaviour.
+            int uncoveredW = texW - cols * frameW;
+            int uncoveredH = texH - rows * frameH;
+            if (uncoveredW > 0 || uncoveredH > 0)
+            {
+                diagnostics.AddWarning(
+                    "SLICE_GRID_REMAINDER",
+                    $"The grid covers {cols * frameW}x{rows * frameH} of a {texW}x{texH} texture, leaving {uncoveredW}px on the right and {uncoveredH}px at the bottom unused.",
+                    new { cols, rows, frame_width = frameW, frame_height = frameH, texture_width = texW, texture_height = texH, uncovered_width = uncoveredW, uncovered_height = uncoveredH },
+                    new[] { "Deliberate if the sheet has a margin or a separator", "Otherwise check cols/rows against the texture size with get_info" }
+                );
+            }
+
+
+            // Every frame is allocated and reimported in one call, so this is a precaution
+            // rather than a reproduction; far above any real sheet, it catches a cols/rows typo.
+            const int MaxFrames = 4096;
+            long totalFrames = (long)cols * rows;
+            if (totalFrames > MaxFrames)
+            {
+                diagnostics.AddError(
+                    "SLICE_TOO_MANY_FRAMES",
+                    $"The grid works out to {totalFrames} frames, above the {MaxFrames}-frame limit.",
+                    new { cols, rows, frame_width = frameW, frame_height = frameH, total_frames = totalFrames, max_frames = MaxFrames },
+                    new[] { "Increase frame_width/frame_height", "Slice the sheet in smaller pieces" }
+                );
+                RestoreTextureType(importer, previousType);
+                return new { success = false, diagnostics = diagnostics.Build() };
+            }
+
             if (totalFrames == 0)
             {
                 diagnostics.AddError(
                     "SLICE_EMPTY",
-                    "Grid hesabı 0 frame üretiyor — cols/rows veya frame boyutları yanlış.",
+                    "The grid works out to 0 frames - cols/rows or the frame size is wrong.",
                     new { cols, rows, frame_width = frameW, frame_height = frameH, texture_width = texW, texture_height = texH },
-                    new[] { "cols ve rows değerlerini kontrol et", "Texture boyutlarını doğrula (get_info ile)" }
+                    new[] { "Check the cols and rows values", "Confirm the texture dimensions with get_info" }
                 );
+                RestoreTextureType(importer, previousType);
                 return new { success = false, diagnostics = diagnostics.Build() };
             }
 
             string baseName = @params["base_name"]?.ToString()
                 ?? Path.GetFileNameWithoutExtension(path);
 
-            var metas = new SpriteMetaData[totalFrames];
+            var metas = new SpriteMetaData[(int)totalFrames];
             for (int r = 0; r < rows; r++)
             {
                 for (int c = 0; c < cols; c++)
@@ -137,10 +305,12 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                 }
             }
 
-            importer.textureType      = TextureImporterType.Sprite;
             importer.spriteImportMode = SpriteImportMode.Multiple;
             importer.spritesheet      = metas;
             importer.filterMode       = FilterMode.Point; // pixel-perfect default
+            // Assigning spritesheet on an already-Multiple importer does not mark it dirty, so
+            // SaveAndReimport would restore the old grid - measured, a second slice did nothing.
+            EditorUtility.SetDirty(importer);
             importer.SaveAndReimport();
 
             return new

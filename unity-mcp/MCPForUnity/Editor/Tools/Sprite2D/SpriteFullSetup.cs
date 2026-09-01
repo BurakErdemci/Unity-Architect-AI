@@ -1,5 +1,5 @@
-using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
@@ -11,18 +11,18 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
     {
         /// <summary>
         /// params:
-        ///   path             - sprite texture path (zorunlu)
-        ///   cols             - grid columns (zorunlu — AI vision ile tespit eder)
+        ///   path             - sprite texture path (required)
+        ///   cols             - grid columns (required)
         ///   rows             - grid rows (default 1)
-        ///   frame_width      - alternatif: explicit frame boyutu
-        ///   frame_height     - alternatif: explicit frame boyutu
-        ///   clips            - [{name, start_frame, end_frame, fps, loop}]
-        ///                      belirtilmezse tüm frame'ler tek clip = animation_name
-        ///   animation_name   - clips belirtilmemişse kullanılır (default: dosya adı)
-        ///   controller_path  - default: sprite ile aynı klasör
+        ///   frame_width      - alternative to cols: explicit frame size
+        ///   frame_height     - alternative to rows: explicit frame size
+        ///   clips            - [{name, start_frame, end_frame, fps, loop}];
+        ///                      omitted means every frame becomes one clip named animation_name
+        ///   animation_name   - used when clips is omitted (default: the file name)
+        ///   controller_path  - default: the sprite's own folder
         ///   overwrite        - bool (default false)
-        ///   add_to_scene     - hedef GameObject'e Animator ekle
-        ///   scene_target     - GameObject adı
+        ///   add_to_scene     - add an Animator to a target GameObject
+        ///   scene_target     - GameObject name
         /// </summary>
         public static object Run(JObject @params)
         {
@@ -31,7 +31,11 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                 return new ErrorResponse("'path' is required.");
 
             path = AssetPathUtility.SanitizeAssetPath(path);
-            if (!AssetDatabase.AssetPathExists(path))
+            if (path == null)
+                return new ErrorResponse("'path' must stay under Assets/ and cannot contain '..'.");
+            // Not AssetDatabase.AssetPathExists: it landed in 2023.1 and package.json declares
+            // 2021.3. GetMainAssetTypeAtPath spans the range, which is why ManageAsset.cs uses it.
+            if (AssetDatabase.GetMainAssetTypeAtPath(path) == null)
                 return new ErrorResponse($"Sprite not found: '{path}'");
 
             var diagnostics = new SpriteDiagnosticBuilder();
@@ -52,7 +56,6 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
             var clipsToken = @params["clips"] as JArray;
             if (clipsToken == null || clipsToken.Count == 0)
             {
-                // Tüm frame'ler tek clip
                 string animName = @params["animation_name"]?.ToString()
                     ?? Path.GetFileNameWithoutExtension(path);
                 int totalFrames = GetSliceCount(path);
@@ -65,11 +68,14 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                 });
             }
 
+            bool overwrite = @params["overwrite"]?.ToObject<bool>() ?? false;
+
             var clipsParams = new JObject
             {
                 ["path"]       = path,
                 ["clips"]      = clipsToken,
                 ["output_dir"] = outputDir,
+                ["overwrite"]  = overwrite,
             };
             var clipResult = SpriteClipBuilder.SetupClips(clipsParams, diagnostics);
             if (clipResult is ErrorResponse)
@@ -81,13 +87,36 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
 
             string controllerPath = @params["controller_path"]?.ToString()
                 ?? $"{outputDir}/{Path.GetFileNameWithoutExtension(path)}_Controller.controller";
-            bool overwrite = @params["overwrite"]?.ToObject<bool>() ?? false;
 
-            // Clip path'lerini doğrudan clipsToken'dan türet (anonymous object parse'ına gerek yok)
-            var clipPaths = SpriteClipBuilder.GetClipPaths(clipsToken, outputDir);
+            // The builder suffixes its own local copy, so keeping the raw string here made the
+            // scene step load '<dir>/S7' instead of '<dir>/S7.controller' and attach nothing.
+            controllerPath = AssetPathUtility.SanitizeAssetPath(controllerPath);
+            if (controllerPath == null)
+                return new { success = false, step = "setup_controller",
+                    error = "'controller_path' must stay under Assets/ and cannot contain '..'.",
+                    diagnostics = diagnostics.Build() };
+            if (!controllerPath.EndsWith(".controller"))
+                controllerPath += ".controller";
+
+            // Only the clips SetupClips really wrote: rebuilding the list from the request
+            // counted refused clips and fed the controller stale assets.
             var createdClips = new JArray();
-            foreach (var (cname, cpath) in clipPaths)
-                createdClips.Add(new JObject { ["name"] = cname, ["path"] = cpath });
+            var clipObj = AsJObject(clipResult);
+            if (clipObj == null)
+            {
+                diagnostics.AddError("CLIP_RESULT_UNREADABLE",
+                    "The clip step result could not be read back, so the created clips are unknown.",
+                    null, new[] { "Run setup_clips on its own to see which clips were created." });
+            }
+            else
+            {
+                foreach (var c in clipObj["clips"] as JArray ?? new JArray())
+                {
+                    string cpath = c["path"]?.ToString();
+                    if (!string.IsNullOrEmpty(cpath))
+                        createdClips.Add(new JObject { ["name"] = c["name"]?.ToString(), ["path"] = cpath });
+                }
+            }
 
             var ctrlParams = new JObject
             {
@@ -97,71 +126,99 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
             };
             var ctrlResult = SpriteControllerBuilder.Build(ctrlParams, diagnostics);
 
-            // ErrorResponse dönebilir (örn: "No valid clips loaded") — açık kontrol
+            // The builder returns ErrorResponse rather than throwing, so this is explicit.
             if (ctrlResult is ErrorResponse)
                 return new { success = false, step = "setup_controller",
                     error = ((ErrorResponse)ctrlResult).Error, diagnostics = diagnostics.Build() };
+            // An existing-controller refusal is an error diagnostic, not an ErrorResponse;
+            // without this the scene step attached the OLD controller.
+            if (diagnostics.HasErrors)
+                return new { success = false, step = "setup_controller", diagnostics = diagnostics.Build() };
 
             // ── Step 4: Add to scene ───────────────────────────────────────────
 
             bool addToScene  = @params["add_to_scene"]?.ToObject<bool>() ?? false;
             string sceneTarget = @params["scene_target"]?.ToString();
 
-            if (addToScene && !string.IsNullOrEmpty(sceneTarget))
+            // An attachment asked for but not made is not a success, so both misses are errors.
+            if (addToScene && string.IsNullOrEmpty(sceneTarget))
+            {
+                diagnostics.AddError("SCENE_TARGET_MISSING",
+                    "'add_to_scene' is true but 'scene_target' is empty.",
+                    null,
+                    new[] { "Pass 'scene_target' with the GameObject name.", "Set add_to_scene=false." });
+            }
+            else if (addToScene)
             {
                 var go = UnityEngine.GameObject.Find(sceneTarget);
                 if (go != null)
                 {
                     var controller = AssetDatabase.LoadAssetAtPath<UnityEditor.Animations.AnimatorController>(
-                        AssetPathUtility.SanitizeAssetPath(controllerPath));
+                        controllerPath);
                     if (controller != null)
                     {
-                        var animator = go.GetComponent<UnityEngine.Animator>()
-                            ?? go.AddComponent<UnityEngine.Animator>();
+                        // `??` compares references and never sees Unity's overloaded ==, so
+                        // AddComponent was skipped and the next line threw. Measured: this path
+                        // never once worked.
+                        var animator = go.GetComponent<UnityEngine.Animator>();
+                        if (animator == null)
+                        {
+                            UnityEditor.Undo.RecordObject(go, "Add Animator Component");
+                            animator = UnityEditor.Undo.AddComponent<UnityEngine.Animator>(go);
+                        }
+                        // Recorded and dirtied like the sibling controller_assign path.
+                        UnityEditor.Undo.RecordObject(animator, "Assign AnimatorController");
                         animator.runtimeAnimatorController = controller;
+                        EditorUtility.SetDirty(go);
+
                         diagnostics.AddInfo("SCENE_ANIMATOR_SET",
                             $"Animator set on '{sceneTarget}'.", new { target = sceneTarget });
+                    }
+                    else
+                    {
+                        diagnostics.AddError("SCENE_CONTROLLER_NOT_LOADED",
+                            $"The controller at '{controllerPath}' could not be loaded, so '{sceneTarget}' was left unchanged.",
+                            new { path = controllerPath },
+                            new[] { "Check the controller_path in the response." });
                     }
                 }
                 else
                 {
-                    diagnostics.AddWarning("SCENE_TARGET_NOT_FOUND",
+                    diagnostics.AddError("SCENE_TARGET_NOT_FOUND",
                         $"GameObject '{sceneTarget}' not found in scene.",
                         null,
                         new[] { "Check GameObject name or open the correct scene first." });
                 }
             }
 
-            // ctrlResult'tan complexity ve state_count'u çıkar (anonymous object → JObject üzerinden)
-            string complexity = null;
-            int stateCount = 0;
-            try
-            {
-                var ctrlJson = JsonConvert.SerializeObject(ctrlResult);
-                var ctrlObj  = JObject.Parse(ctrlJson);
-                complexity  = ctrlObj["complexity"]?.ToString();
-                stateCount  = ctrlObj["state_count"]?.ToObject<int>() ?? 0;
-            }
-            catch { /* non-critical */ }
+            var ctrlObj = AsJObject(ctrlResult);
+            if (ctrlObj == null)
+                diagnostics.AddWarning("CONTROLLER_RESULT_UNREADABLE",
+                    "The controller step result could not be read back; complexity and state_count are unknown.",
+                    null, new string[0]);
 
             return new
             {
                 success               = !diagnostics.HasErrors,
                 sprite_path           = path,
                 controller_path       = controllerPath,
-                controller_complexity = complexity,
-                state_count           = stateCount,
-                clip_count            = clipPaths.Count,
+                controller_complexity = ctrlObj?["complexity"]?.ToString(),
+                state_count           = ctrlObj?["state_count"]?.ToObject<int>() ?? 0,
+                clip_count            = createdClips.Count,
                 diagnostics           = diagnostics.Build(),
             };
         }
 
+        /// <summary>Reads a builder's anonymous result back as JSON; null when it cannot be parsed.</summary>
+        private static JObject AsJObject(object result)
+        {
+            try { return JObject.Parse(JsonConvert.SerializeObject(result)); }
+            catch { return null; }
+        }
+
         private static int GetSliceCount(string path)
         {
-            var sprites = AssetDatabase.LoadAllAssetsAtPath(path);
-            int count = 0;
-            foreach (var a in sprites)
-                if (a is UnityEngine.Sprite) count++;
+            int count = AssetDatabase.LoadAllAssetsAtPath(path).OfType<UnityEngine.Sprite>().Count();
             return count > 0 ? count : 1;
         }
     }

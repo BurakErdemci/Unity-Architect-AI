@@ -13,8 +13,8 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
     {
         /// <summary>
         /// params:
-        ///   clips            - [{name, path}] — .anim asset path'leri
-        ///   controller_path  - çıktı .controller path (zorunlu)
+        ///   clips            - [{name, path}] where path is an .anim asset path
+        ///   controller_path  - output .controller path (required)
         ///   overwrite        - bool (default false)
         /// </summary>
         public static object Build(JObject @params, SpriteDiagnosticBuilder diagnostics)
@@ -28,11 +28,41 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                 return new ErrorResponse("'controller_path' is required.");
 
             controllerPath = AssetPathUtility.SanitizeAssetPath(controllerPath);
+            if (controllerPath == null)
+                return new ErrorResponse("'controller_path' must stay under Assets/ and cannot contain '..'.");
             if (!controllerPath.EndsWith(".controller"))
                 controllerPath += ".controller";
 
             bool overwrite = @params["overwrite"]?.ToObject<bool>() ?? false;
 
+            var entries = new List<(SpriteAnimEntry entry, AnimationClip clip)>();
+            foreach (JToken clipToken in clipsToken)
+            {
+                // Measured: a non-object clips entry threw InvalidCastException on a typed cast.
+                if (!(clipToken is JObject cd))
+                {
+                    diagnostics.AddWarning("CLIP_NOT_AN_OBJECT", "A clips entry is not an object - skipped.", null, new[] { "Each clip must be an object with a 'name'." });
+                    continue;
+                }
+
+                string clipName = cd["name"]?.ToString() ?? "";
+                string clipPath = cd["path"]?.ToString() ?? "";
+                string safeClipPath = AssetPathUtility.SanitizeAssetPath(clipPath);
+                if (safeClipPath == null)
+                { diagnostics.AddWarning("CLIP_BAD_PATH", $"Clip '{clipName}': path '{clipPath}' must stay under Assets/ and cannot contain '..' - skipped.", null, new string[0]); continue; }
+                var clip = AssetDatabase.LoadAssetAtPath<AnimationClip>(safeClipPath);
+                if (clip == null)
+                { diagnostics.AddWarning("CLIP_NOT_FOUND", $"Clip '{clipName}' not found at '{clipPath}' — skipped.", null, new string[0]); continue; }
+                entries.Add((SpriteNamingDetector.Detect(clipName), clip));
+            }
+
+            if (entries.Count == 0)
+                // ErrorResponse, not a diagnostics-carrying object: SpriteFullSetup stops on
+                // `is ErrorResponse`, and a warning-only failure would slip past HasErrors.
+                return new ErrorResponse("No valid clips loaded.", new { diagnostics = diagnostics.Build() });
+
+            // Removed only once the replacement is known to be buildable: deleting first left
+            // a failed rebuild with no controller at all.
             if (AssetDatabase.LoadAssetAtPath<AnimatorController>(controllerPath) != null)
             {
                 if (!overwrite)
@@ -50,29 +80,13 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
 
             string dir = Path.GetDirectoryName(controllerPath)?.Replace('\\', '/');
             if (!string.IsNullOrEmpty(dir) && !AssetDatabase.IsValidFolder(dir))
-                CreateFolders(dir);
-
-            // Clip tanımlarını yükle
-            var entries = new List<(SpriteAnimEntry entry, AnimationClip clip)>();
-            foreach (JObject cd in clipsToken)
-            {
-                string clipName = cd["name"]?.ToString() ?? "";
-                string clipPath = cd["path"]?.ToString() ?? "";
-                var clip = AssetDatabase.LoadAssetAtPath<AnimationClip>(
-                    AssetPathUtility.SanitizeAssetPath(clipPath));
-                if (clip == null)
-                { diagnostics.AddWarning("CLIP_NOT_FOUND", $"Clip '{clipName}' not found at '{clipPath}' — skipped.", null, new string[0]); continue; }
-                entries.Add((SpriteNamingDetector.Detect(clipName), clip));
-            }
-
-            if (entries.Count == 0)
-                return new ErrorResponse("No valid clips loaded.");
+                SpriteClipBuilder.CreateFolders(dir);
 
             var complexity = SpriteNamingDetector.DecideComplexity(entries.Select(e => e.entry));
             var controller = AnimatorController.CreateAnimatorControllerAtPath(controllerPath);
             var rootSM     = controller.layers[0].stateMachine;
 
-            // ── Parametreler ──────────────────────────────────────────────────
+            // ── Parameters ──────────────────────────────────────────────────
 
             if (complexity == ControllerComplexity.BlendTree1D || complexity == ControllerComplexity.Full)
                 controller.AddParameter("Speed", AnimatorControllerParameterType.Float);
@@ -105,7 +119,6 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
             {
                 if (locomotionPairs.Count == 1)
                 {
-                    // Tek locomotion → basit state
                     var locoState = rootSM.AddState(locomotionPairs[0].entry.ClipName);
                     locoState.motion = locomotionPairs[0].clip;
                     if (rootSM.defaultState == null) rootSM.defaultState = locoState;
@@ -121,7 +134,6 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                 }
                 else
                 {
-                    // Birden fazla locomotion → 1D blend tree
                     var blendState = rootSM.AddState("Locomotion");
                     var blendTree  = new BlendTree { name = "LocomotionTree", blendType = BlendTreeType.Simple1D, blendParameter = "Speed" };
                     AssetDatabase.AddObjectToAsset(blendTree, controllerPath);
@@ -158,7 +170,6 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
 
                 string trigger = pair.entry.TriggerName ?? pair.entry.ClipName;
 
-                // Her mevcut state'den bu state'e geçiş
                 foreach (var existingState in rootSM.states.Select(s => s.state))
                 {
                     if (existingState == state) continue;
@@ -167,7 +178,7 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                     tr.hasExitTime = false;
                 }
 
-                // Bu state bittikten sonra idle'a dön (loop=false ise)
+                // A one-shot state has to hand control back, so it exits to idle on its own.
                 if (idleState != null && !pair.entry.Loop)
                 {
                     var exitTr = state.AddTransition(idleState);
@@ -177,7 +188,7 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                 }
             }
 
-            // ── Generic / tek animasyon ───────────────────────────────────────
+            // ── Generic / single animation ───────────────────────────────────────
 
             foreach (var pair in entries.Where(e => e.entry.Category == SpriteAnimCategory.Generic))
             {
@@ -199,16 +210,6 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                 state_count     = rootSM.states.Length,
                 diagnostics     = diagnostics.Build(),
             };
-        }
-
-        private static void CreateFolders(string path)
-        {
-            string parent = Path.GetDirectoryName(path)?.Replace('\\', '/') ?? "Assets";
-            if (!AssetDatabase.IsValidFolder(parent))
-                CreateFolders(parent);
-            string folderName = Path.GetFileName(path);
-            if (!string.IsNullOrEmpty(folderName))
-                AssetDatabase.CreateFolder(parent, folderName);
         }
     }
 }
