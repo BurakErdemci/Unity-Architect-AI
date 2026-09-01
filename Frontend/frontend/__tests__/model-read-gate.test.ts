@@ -14,28 +14,6 @@ import {
 let ws = ''
 let outside = ''
 
-/**
- * Can this filesystem make a hardlink at all?
- *
- * Hardlinks are the subject of one of the gate's own rules, so their absence
- * has to be VISIBLE. The earlier shape returned early from inside `it()` when
- * `linkSync` threw, which reported a green test that asserted nothing — on a
- * container volume or FAT/exFAT that is a silently disabled security check.
- */
-const hardlinksSupported = ((): boolean => {
-  const probe = fs.mkdtempSync(path.join(os.tmpdir(), 'model-gate-link-probe-'))
-  try {
-    const source = path.join(probe, 'a')
-    fs.writeFileSync(source, 'x')
-    fs.linkSync(source, path.join(probe, 'b'))
-    return true
-  } catch {
-    return false
-  } finally {
-    try { fs.rmSync(probe, { recursive: true, force: true }) } catch { /* best effort */ }
-  }
-})()
-
 beforeEach(() => {
   ws = fs.mkdtempSync(path.join(os.tmpdir(), 'model-gate-ws-'))
   outside = fs.mkdtempSync(path.join(os.tmpdir(), 'model-gate-out-'))
@@ -146,10 +124,31 @@ describe('model read gate — containment', () => {
     expect(readModelFileFromWorkspace(d, ws)).toHaveProperty('error')
   })
 
-  it.skipIf(!hardlinksSupported)('refuses a hardlink pointing outside the workspace', () => {
+  it('refuses a hardlink pointing outside the workspace', () => {
     const target = write(outside, 'secret.glb', Buffer.from([7, 7, 7]))
     const link = path.join(ws, 'linked.glb')
-    fs.linkSync(target, link)
+    try {
+      fs.linkSync(target, link)
+    } catch (err) {
+      // NO SKIP (audit finding `silently-skipped-security-test`). This is a
+      // security assertion: a link whose real bytes live outside the workspace
+      // must be refused. The earlier shape wrapped this whole `it()` in
+      // `it.skipIf(!hardlinksSupported)`, so on any filesystem that cannot make
+      // a hardlink (a container volume, FAT/exFAT, some cross-device temp
+      // setups) the rule silently stopped being tested and the suite still
+      // reported green.
+      //
+      // A hardlink and a symlink exercise the same rule here — the gate's
+      // `nlink > 1` check and its containment check are two independent traps
+      // for the same "real bytes are outside" fact, and a symlink to the target
+      // trips the containment trap instead. So on ENOTSUP/EPERM/EXDEV we fall
+      // back to a symlink rather than skip the assertion. If that also fails,
+      // the test THROWS: an inability to test this rule at all must be loud,
+      // never a silent pass.
+      const code = (err as NodeJS.ErrnoException)?.code
+      if (code !== 'EPERM' && code !== 'ENOTSUP' && code !== 'EXDEV') throw err
+      fs.symlinkSync(target, link, 'file')
+    }
     expect(readModelFileFromWorkspace(link, ws)).toEqual({ error: 'denied' })
   })
 
