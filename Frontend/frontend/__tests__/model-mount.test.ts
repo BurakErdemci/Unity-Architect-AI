@@ -14,8 +14,8 @@ import { resolve } from 'node:path'
 import * as THREE from 'three'
 
 import { clearContent, mountParsedModel, viewableBounds, type ClearTarget } from '../renderer/components/model-viewer/ModelPreviewPanel'
-import { parseModel, playableClip, type ParsedModel } from '../renderer/components/model-viewer/loaders'
-import { isMannequinMesh } from '../renderer/components/model-viewer/mannequin'
+import { hasDrawableSkeleton, parseModel, playableClip, type ParsedModel } from '../renderer/components/model-viewer/loaders'
+import { buildMannequin, isMannequinMesh } from '../renderer/components/model-viewer/mannequin'
 
 const fakeStage = () => {
   const stage: ClearTarget = {
@@ -342,14 +342,18 @@ describe('a file that has both geometry and bones', () => {
 
     const stage = fakeStage()
     // A handle left over from whatever was on the stage before. Mounting owns
-    // the slot on both branches, so this must not survive into the new file.
-    stage.mannequin = { meshes: [], dispose: vi.fn() }
+    // the slot on both branches, so this must not survive into the new file —
+    // and dropping it without freeing it would leak its buffers, so overwriting
+    // is not enough.
+    const stale = { meshes: [], dispose: vi.fn() }
+    stage.mannequin = stale
     const bounds = boundsOf(parsed)
     expect(bounds.skeleton).toBe(false)
     mountParsedModel(stage, parsed, bounds)
 
     expect(mannequinMeshesIn(stage)).toHaveLength(0)
     expect(stage.mannequin).toBeNull()
+    expect(stale.dispose).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -388,4 +392,79 @@ describe('a rig with no bone-to-bone segment to draw', () => {
     const parsed: ParsedModel = { object: root, clips: [] }
     expect(viewableBounds(parsed, boxOf(parsed))).toBeNull()
   })
+})
+
+/**
+ * The contract 92ce789 was about, asserted directly instead of being left to
+ * two sets of fixtures in two files that happen to agree.
+ *
+ * The panel decides whether a file gets the skeleton branch with
+ * `hasDrawableSkeleton`; `buildMannequin` independently decides whether it has
+ * anything to build. If those two ever disagree in the direction "gate says
+ * yes, builder says nothing", the panel frames an empty viewport and calls it a
+ * successful load — a blank panel indistinguishable from a load that hung,
+ * which is the exact bug 92ce789 fixed. Both sides answer "is there a bone
+ * whose parent is a bone", but they are separate traversals in separate
+ * modules, so nothing except this stops one from drifting.
+ */
+describe('the drawable-rig gate and the mannequin builder', () => {
+  const chain = (): THREE.Bone => {
+    const hips = new THREE.Bone()
+    hips.name = 'Hips'
+    const spine = new THREE.Bone()
+    spine.name = 'Spine'
+    spine.position.set(0, 10, 0)
+    hips.add(spine)
+    return hips
+  }
+
+  const flatBones = (root: THREE.Object3D): THREE.Object3D => {
+    for (let i = 0; i < 3; i++) {
+      const bone = new THREE.Bone()
+      bone.position.set(i + 1, 0, 0)
+      root.add(bone)
+    }
+    return root
+  }
+
+  /**
+   * `drawable`: there is a bone-to-bone segment, so both sides must say yes.
+   * `skeleton`: whether the PANEL routes the file to that branch, which is a
+   * strictly narrower question — a file with geometry is framed by its meshes
+   * and never consults its bones at all.
+   */
+  const rigs: { name: string; build: () => THREE.Object3D; drawable: boolean; skeleton: boolean }[] = [
+    { name: 'a bone chain', build: () => new THREE.Group().add(chain()), drawable: true, skeleton: true },
+    { name: 'a chain plus stray bones hanging off the group', build: () => flatBones(new THREE.Group().add(chain())), drawable: true, skeleton: true },
+    { name: 'a single bone as the root', build: () => { const b = new THREE.Bone(); b.position.set(1, 2, 3); return b }, drawable: false, skeleton: false },
+    { name: 'a flat rig, every bone parented to a group', build: () => flatBones(new THREE.Group()), drawable: false, skeleton: false },
+    { name: 'no bones at all', build: () => new THREE.Group(), drawable: false, skeleton: false },
+    { name: 'geometry alongside a bone chain', build: () => new THREE.Group().add(chain(), cube()), drawable: true, skeleton: false },
+  ]
+
+  for (const rig of rigs) {
+    it(`agrees on ${rig.name}`, () => {
+      const gate = rig.build()
+      gate.updateMatrixWorld(true)
+      expect(hasDrawableSkeleton(gate)).toBe(rig.drawable)
+
+      // A fresh instance: building attaches meshes to the bones, so the two
+      // sides must not be asked about the same mutated graph.
+      const built = rig.build()
+      built.updateMatrixWorld(true)
+      const handle = buildMannequin(built)
+      expect(handle !== null).toBe(rig.drawable)
+      // A non-null handle is never an empty one, or the branch would draw
+      // nothing while reporting success.
+      if (handle) expect(handle.meshes.length).toBeGreaterThan(0)
+      handle?.dispose()
+
+      const parsed: ParsedModel = { object: gate, clips: [] }
+      const bounds = viewableBounds(parsed, boxOf(parsed))
+      expect(bounds?.skeleton === true).toBe(rig.skeleton)
+      // The property that keeps the panel off a blank viewport: whenever it
+      // commits to the skeleton branch, there is something to show.
+      if (bounds?.skeleton) expect(buildMannequin(rig.build())).not.toBeNull()
+    })
+  }
 })

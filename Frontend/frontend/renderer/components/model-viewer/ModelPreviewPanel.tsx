@@ -223,11 +223,20 @@ export const mountParsedModel = (
   parsed: ParsedModel,
   bounds: ViewableBounds,
 ): number => {
-  stage.content.add(parsed.object);
-  // Only for the bones-without-geometry case: a file that brought its own
-  // meshes is already its own silhouette, and capsules over it would be an
-  // overlay nobody asked for. Assigned on BOTH branches so that mounting always
-  // overwrites the handle rather than leaving the previous file's behind.
+  // Volumes only for the bones-without-geometry case: a file that brought its
+  // own meshes is already its own silhouette, and capsules over it would be an
+  // overlay nobody asked for.
+  //
+  // Freed and reassigned on BOTH branches. Overwriting is not freeing, and a
+  // caller that mounts twice without clearing in between would otherwise drop
+  // the previous handle's geometries on the floor — an unwritten precondition
+  // on an exported seam. The panel does clear first, so this never fires in
+  // production; it is what keeps the seam honest for everyone else.
+  //
+  // Built BEFORE the rig joins the scene so that the gate `bounds.skeleton`
+  // was decided on and the graph this reads are the same shape: a root that is
+  // itself a bone parented to a bone would lose that segment to the reparenting
+  // below, leaving a true gate with no figure to show for it.
   //
   // Known limitation: each volume is baked once at build time from its bone's
   // offset and hangs off the PARENT bone, so ancestor rotation and root motion
@@ -235,7 +244,9 @@ export const mountParsedModel = (
   // away from a capsule which stays put at its old length. Humanoid clips are
   // rotation plus hips translation, so this is rare in practice — and it is the
   // architecture the feature was specified with.
+  stage.mannequin?.dispose();
   stage.mannequin = bounds.skeleton ? buildMannequin(parsed.object) : null;
+  stage.content.add(parsed.object);
   reseatControls(stage.controls, frameObject(stage.camera, stage.grid, bounds.box));
 
   const clip = playableClip(parsed.clips);
