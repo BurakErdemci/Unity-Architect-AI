@@ -15,7 +15,7 @@ import {
   playableClip,
   type ParsedModel,
 } from './loaders';
-import { buildMannequin, type MannequinHandle } from './mannequin';
+import { buildMannequin, exceedsMannequinBudget, type MannequinHandle } from './mannequin';
 import { createPlayback, type Playback } from './playback';
 import { PlaybackControls } from './PlaybackControls';
 import { DEFAULT_SPEED, timeAtFraction, type Speed } from './timeline';
@@ -585,6 +585,16 @@ export const ModelPreviewPanel: React.FC<ModelPreviewPanelProps> = ({ file, work
       if (!bounds) {
         disposeObject(parsed.object);
         fail('preview.emptyModel');
+        return;
+      }
+
+      // A rig with more joints than the mannequin will draw. The figure IS the
+      // file's only visible content on this branch, so refusing to build it and
+      // mounting anyway would leave the same blank rectangle `preview.emptyModel`
+      // exists to avoid — the user is told the rig is too heavy instead.
+      if (bounds.skeleton && exceedsMannequinBudget(parsed.object)) {
+        disposeObject(parsed.object);
+        fail('preview.rigTooHeavy');
         return;
       }
 

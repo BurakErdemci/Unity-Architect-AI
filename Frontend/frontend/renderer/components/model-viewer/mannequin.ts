@@ -124,6 +124,36 @@ export interface MannequinHandle {
 const isBone = (object: THREE.Object3D | null): object is THREE.Bone =>
   (object as THREE.Bone | null)?.isBone === true;
 
+/**
+ * How many bone-to-bone segments this module will draw volumes for.
+ *
+ * The build is synchronous and allocates one CapsuleGeometry per segment, so
+ * the joint count — not the file size — is what the main thread pays. Measured
+ * end to end (parse + bounds + mount) on a bone-only .glb, 1 Sep 2026:
+ * 65 joints (a real Mixamo humanoid, 2 KB) 5 ms; 1 000 joints (31 KB) 104 ms;
+ * 20 000 joints (682 KB) 1 171 ms; 60 000 joints (2 MB) 3 531 ms. A hostile
+ * file costs ~32 bytes per joint, so the window freezes at a file size nobody
+ * would look at twice, and the main process's 64 MiB read cap — which admits
+ * ~1.9 M joints — bounds nothing here.
+ *
+ * 400 is roughly six times a real humanoid, which covers a generous rig with
+ * fingers, twist bones and props, and holds the build under ~40 ms.
+ */
+export const MAX_MANNEQUIN_JOINTS = 400;
+
+/** Bone-to-bone segments in `root` — one capsule each, so this is the cost. */
+export const mannequinJointCount = (root: THREE.Object3D): number => {
+  let count = 0;
+  root.traverse(child => {
+    if (isBone(child) && isBone(child.parent)) count += 1;
+  });
+  return count;
+};
+
+/** True for a rig `buildMannequin` refuses. See `MAX_MANNEQUIN_JOINTS`. */
+export const exceedsMannequinBudget = (root: THREE.Object3D): boolean =>
+  mannequinJointCount(root) > MAX_MANNEQUIN_JOINTS;
+
 const UP = new THREE.Vector3(0, 1, 0);
 
 /**
@@ -201,7 +231,8 @@ const headDirection = (head: THREE.Bone): THREE.Vector3 => {
  * Build capsule volumes on `root`'s bones and return a handle owning them, or
  * null when the rig has no bone-parented bone — the same gate
  * `hasDrawableSkeleton` applies, because a segment is exactly what a capsule
- * needs to span.
+ * needs to span — or more than `MAX_MANNEQUIN_JOINTS` of them, which is a rig
+ * that would freeze the window while it was drawn.
  *
  * Each capsule is attached AS A CHILD OF THE PARENT BONE, so the animation
  * mixer moving the skeleton moves the mannequin for free.
@@ -215,7 +246,7 @@ export const buildMannequin = (root: THREE.Object3D): MannequinHandle | null => 
     if (isBone(child)) bones.push(child);
   });
   const segments = bones.filter(bone => isBone(bone.parent));
-  if (segments.length === 0) return null;
+  if (segments.length === 0 || segments.length > MAX_MANNEQUIN_JOINTS) return null;
   // The first head-role bone only: Mixamo names both `Head` and `HeadTop_End`,
   // and two skulls is worse than none.
   const head = bones.find(bone => classifyBone(bone.name) === 'head');
