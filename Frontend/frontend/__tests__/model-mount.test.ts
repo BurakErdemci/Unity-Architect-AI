@@ -287,3 +287,31 @@ describe('a file with neither geometry nor bones', () => {
     expect(viewableBounds(parsed, boxOf(parsed))).toBeNull()
   })
 })
+
+/**
+ * THREE.SkeletonHelper (measured, three 0.185.1, SkeletonHelper.js:44) draws a
+ * segment only for a bone whose parent is also a bone. Neither shape below has
+ * one, so a helper built from them would have zero position vertices — an
+ * object that mounts but renders nothing, which is indistinguishable on
+ * screen from a load that never finished. `viewableBounds` has to treat that
+ * the same as "nothing to show" rather than route it into the skeleton path.
+ */
+describe('a rig with no bone-to-bone segment for SkeletonHelper to draw', () => {
+  it('a single bone is called empty, not framed by a helper that draws nothing', () => {
+    const bone = new THREE.Bone()
+    bone.position.set(1, 2, 3)
+    const parsed: ParsedModel = { object: bone, clips: [] }
+    expect(viewableBounds(parsed, boxOf(parsed))).toBeNull()
+  })
+
+  it('a flat rig — every bone parented to a Group, not to another bone — is called empty too', () => {
+    const root = new THREE.Group()
+    for (let i = 0; i < 5; i++) {
+      const bone = new THREE.Bone()
+      bone.position.set(i, 0, 0)
+      root.add(bone)
+    }
+    const parsed: ParsedModel = { object: root, clips: [] }
+    expect(viewableBounds(parsed, boxOf(parsed))).toBeNull()
+  })
+})

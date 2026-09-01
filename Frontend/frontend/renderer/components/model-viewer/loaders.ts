@@ -328,6 +328,24 @@ export const boneBounds = (object: THREE.Object3D): THREE.Box3 | null => {
 };
 
 /**
+ * True when `object` has at least one bone whose parent is also a bone.
+ * THREE.SkeletonHelper (measured, three 0.185.1, `SkeletonHelper.js:44`) emits
+ * a line segment only for that pair, so a single bone or a flat rig where
+ * every bone hangs directly off a Group produces a helper with zero position
+ * vertices — geometry that exists but draws nothing. `boneBounds` alone
+ * cannot tell those two shapes apart from a real chain, so the caller needs
+ * this on top before it commits to the skeleton-overlay path.
+ */
+export const hasDrawableSkeleton = (object: THREE.Object3D): boolean => {
+  let found = false;
+  object.traverse(child => {
+    if (found || (child as THREE.Bone).isBone !== true) return;
+    if ((child.parent as THREE.Bone | null)?.isBone === true) found = true;
+  });
+  return found;
+};
+
+/**
  * Release every GPU-backed resource under `object`. The usage pattern this
  * exists for is clicking through a folder of 200 models: without it each one
  * leaves its buffers and textures live for the rest of the session.

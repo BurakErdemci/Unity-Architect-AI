@@ -8,6 +8,7 @@ import { extensionOf, routeForFile } from './extensions';
 import {
   boneBounds,
   disposeObject,
+  hasDrawableSkeleton,
   ModelParseError,
   parseModel,
   playableClip,
@@ -181,7 +182,11 @@ export const viewableBounds = (
 ): ViewableBounds | null => {
   if (!box.isEmpty()) return { box, skeleton: false };
   const bones = boneBounds(parsed.object);
-  return bones ? { box: bones, skeleton: true } : null;
+  // Bones alone are not enough: SkeletonHelper only draws a bone-to-bone
+  // segment (see hasDrawableSkeleton), so a single bone or a flat rig with no
+  // such pair would take this branch and render nothing — the exact blank
+  // panel the empty-model message exists to avoid.
+  return bones && hasDrawableSkeleton(parsed.object) ? { box: bones, skeleton: true } : null;
 };
 
 /**
