@@ -71,7 +71,7 @@ describe('isAllowedUnityScriptPath — path traversal koruması', () => {
     expect(isAllowedUnityScriptPath('/other-project/Assets/Scripts/Hack.cs', WS)).toBe(false)
   })
 
-  it('symlink klasör altına yeni dosya yazmayı reddeder', (ctx) => {
+  it('symlink klasör altına yeni dosya yazmayı reddeder', () => {
     const workspace = path.join(tempRoot, 'workspace')
     const scriptsDir = path.join(workspace, 'Assets', 'Scripts')
     const outsideDir = path.join(tempRoot, 'outside')
@@ -81,11 +81,20 @@ describe('isAllowedUnityScriptPath — path traversal koruması', () => {
     fs.mkdirSync(outsideDir, { recursive: true })
     try {
       fs.symlinkSync(outsideDir, linkDir, 'dir')
-    } catch (err: any) {
-      // Windows'ta symlink oluşturmak Developer Mode/yönetici ister (EPERM).
-      // Ortam desteklemiyorsa testi atla — davranış testi değil, ortam kısıtı.
-      if (err?.code === 'EPERM') return ctx.skip()
-      throw err
+    } catch (err) {
+      // ATLAMA YOK (denetim bulgusu `silently-skipped-security-test`). Burası
+      // bir güvenlik iddiası: workspace'ten DIŞARI çıkan bir bağın altına yazma
+      // reddedilmeli. Eskiden EPERM gelince `ctx.skip()` çağrılıyordu, yani
+      // Developer Mode kapalı her Windows makinesinde — bu kaçışı kurmanın en
+      // kolay olduğu yerde — iddia hiç koşmadan yeşil rapor ediliyordu.
+      //
+      // Windows'ta 'dir' türü symlink yönetici/Developer Mode ister ama JUNCTION
+      // istemez, ve junction da tam olarak aynı şekilde dışarı çıkar. POSIX'te
+      // 'junction' yok sayılıp sıradan symlink kurulur, yani ikinci deneme her
+      // yerde geçerli. İkisi de kurulamıyorsa test KIRILIR: ölçemediğimiz bir
+      // güvenlik özelliğini geçmiş saymak, hiç ölçmemekten kötü.
+      if ((err as NodeJS.ErrnoException)?.code !== 'EPERM') throw err
+      fs.symlinkSync(outsideDir, linkDir, 'junction')
     }
 
     const targetFile = path.join(linkDir, 'Exploit.cs')
