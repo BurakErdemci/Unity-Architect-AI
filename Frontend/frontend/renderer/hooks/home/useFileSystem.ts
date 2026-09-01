@@ -10,6 +10,11 @@ import { routeForFile } from '../../components/model-viewer/extensions';
 
 const ipc = typeof window !== 'undefined' ? (window as any).ipc : null;
 
+// Deleting or renaming a FOLDER takes every path under it with it, so the
+// content area has to react to an ancestor as well as to the exact file.
+const yolEtkilendi = (p: string, hedef: string) =>
+  p === hedef || p.startsWith(hedef + '/') || p.startsWith(hedef + '\\');
+
 // A result that arrives late must not overwrite state a NEWER user action
 // already owns. Two independent domains here need that check — which workspace
 // is selected, and who owns the shared content area — so they share this
@@ -180,6 +185,20 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
         // Geçersiz yolu temizle ki bir daha otomatik yüklenmeye çalışılmasın
         setLastWorkspacePath(null);
         setWorkspacePath(null);
+        // This branch used to return here, leaving the PREVIOUS workspace's tree
+        // and content area on screen under no workspace at all: the preview
+        // stayed mounted on a path nothing could reload, and a still-pending read
+        // for that workspace was free to refill the editor afterwards. Failing to
+        // open a replacement has to leave the same empty state as closing.
+        contentRequest.invalidate();
+        setRootFolderPath(null);
+        setFileTree([]);
+        setExpandedDirs(new Set());
+        setDirContents({});
+        setPreviewFile(null);
+        setOpenedFilePath(null);
+        setCode('');
+        setOriginalCode('');
         return;
       }
     }
@@ -360,10 +379,26 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
 
   const handleTreeDelete = useCallback(async (entry: FileEntry) => {
     setTreeContextMenu(null);
+    // The confirmation dialog is open for as long as the user takes to answer,
+    // so this action owns the content area only if nothing newer took it while
+    // the question was on screen.
+    const halaGecerli = contentRequest.observe();
     if (!(await confirmDialog(cevir('file.deleteConfirm', { ad: entry.name })))) return;
-    await ipc.invoke('delete-entry', entry.path, workspacePath);
+    const res = await ipc.invoke('delete-entry', entry.path, workspacePath);
+    // The direct `deleteFile` path already did this; the context menu did not,
+    // so deleting the previewed model from the tree left the panel mounted on a
+    // path that no longer resolves. This entry point can also delete a FOLDER,
+    // which is why it matches descendants and not just the exact path.
+    if (res?.success && halaGecerli()) {
+      setPreviewFile(prev => (prev && yolEtkilendi(prev.path, entry.path) ? null : prev));
+      if (openedFilePath && yolEtkilendi(openedFilePath, entry.path)) {
+        setOpenedFilePath(null);
+        setCode('');
+        setOriginalCode('');
+      }
+    }
     refreshFileTree();
-  }, [refreshFileTree, workspacePath]);
+  }, [refreshFileTree, workspacePath, openedFilePath, contentRequest]);
 
   const submitRename = useCallback(async () => {
     if (!renamingPath || !renameValue.trim()) { setRenamingPath(null); return; }
@@ -381,7 +416,7 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
     // than an empty content area: a handler that reports no `newPath`, and a
     // file sitting UNDER a renamed folder, whose own new path is not reported.
     const newPath: string | null = typeof res.newPath === 'string' ? res.newPath : null;
-    const etkilendi = (p: string) => p === oldPath || p.startsWith(oldPath + '/') || p.startsWith(oldPath + '\\');
+    const etkilendi = (p: string) => yolEtkilendi(p, oldPath);
     // A rename that lands after the content area changed hands describes a file
     // the area no longer shows; following it would move the NEW occupant onto an
     // old workspace's path.
