@@ -98,6 +98,30 @@ const CHANNEL_ERROR_KEYS: Record<string, TKey> = {
   unsupported: 'preview.unsupportedFormat',
 };
 
+/**
+ * Why the viewport cannot draw, as a fact about the MACHINE rather than about
+ * the file. Kept separate from `errorKey` because the load effect resets that
+ * on every file change, and a GPU that cannot draw outlives any one file.
+ *
+ * `lost` and `gone` are the same event seen at two ages: a driver reset that
+ * comes back within the grace window, versus one that does not. They are worth
+ * distinguishing because only the second one has an action the user can take.
+ */
+type ViewportFault = 'unavailable' | 'lost' | 'gone';
+
+const VIEWPORT_FAULT_KEYS: Record<ViewportFault, TKey> = {
+  unavailable: 'preview.noWebgl',
+  lost: 'preview.contextLost',
+  gone: 'preview.contextGone',
+};
+
+/**
+ * How long a lost context is described as coming back before the panel gives
+ * up on it. A driver reset restores in well under a second when it restores at
+ * all, so this is generous rather than tuned.
+ */
+export const CONTEXT_RESTORE_GRACE_MS = 8000;
+
 interface Framing {
   center: THREE.Vector3;
   /** Camera-to-centre distance the framing chose; the zoom limits derive from it. */
@@ -273,6 +297,7 @@ export const ModelPreviewPanel: React.FC<ModelPreviewPanelProps> = ({ file, work
   // which only a genuine parse failure has.
   const [errorKey, setErrorKey] = useState<TKey | null>(null);
   const [errorDetail, setErrorDetail] = useState<string | null>(null);
+  const [viewportFault, setViewportFault] = useState<ViewportFault | null>(null);
   // 0 = the file has no playable clip, which is what hides the transport bar.
   const [duration, setDuration] = useState(0);
   const [time, setTime] = useState(0);
@@ -290,8 +315,11 @@ export const ModelPreviewPanel: React.FC<ModelPreviewPanelProps> = ({ file, work
     try {
       renderer = new THREE.WebGLRenderer({ antialias: true });
     } catch {
-      // No WebGL context (jsdom, blocked GPU): the panel stays an empty dark
-      // area rather than taking the whole renderer down.
+      // No WebGL context (jsdom, blocked GPU). The load path can still read and
+      // parse the file and then find no stage to mount it on, so without this
+      // the panel would clear its loading state onto an empty dark rectangle
+      // that is indistinguishable from a load which never finished.
+      setViewportFault('unavailable');
       return;
     }
 
@@ -392,7 +420,37 @@ export const ModelPreviewPanel: React.FC<ModelPreviewPanelProps> = ({ file, work
     // repaints: the rAF loop parks itself whenever the clip is paused and the
     // camera is still, so after a loss/restore the panel stays black until the
     // user happens to drag it. Resizing redraws at the current size.
-    const onContextRestored = () => resize();
+    let restoreTimer: ReturnType<typeof setTimeout> | null = null;
+    const stopRestoreTimer = () => {
+      if (restoreTimer === null) return;
+      clearTimeout(restoreTimer);
+      restoreTimer = null;
+    };
+
+    const onContextLost = (event: Event) => {
+      // Without preventDefault the browser does not even attempt a restore, so
+      // this call is what makes the `lost` state a recoverable one rather than
+      // a description of something already permanent.
+      event.preventDefault();
+      setViewportFault('lost');
+      stopRestoreTimer();
+      restoreTimer = setTimeout(() => {
+        restoreTimer = null;
+        // Only escalate the loss this timer was started for: a restore, or a
+        // second loss, has already written whatever is true now.
+        setViewportFault(current => (current === 'lost' ? 'gone' : current));
+      }, CONTEXT_RESTORE_GRACE_MS);
+    };
+
+    const onContextRestored = () => {
+      stopRestoreTimer();
+      // Clears `gone` as well as `lost`: a context that comes back late is
+      // still back, and the panel would otherwise keep telling the user to
+      // reopen a preview that already works.
+      setViewportFault(null);
+      resize();
+    };
+    renderer.domElement.addEventListener('webglcontextlost', onContextLost);
     renderer.domElement.addEventListener('webglcontextrestored', onContextRestored);
 
     // ResizeObserver, not a window listener: the panel also changes width when
@@ -417,6 +475,8 @@ export const ModelPreviewPanel: React.FC<ModelPreviewPanelProps> = ({ file, work
     return () => {
       observer?.disconnect();
       dprQuery?.removeEventListener('change', onRatioChange);
+      stopRestoreTimer();
+      renderer.domElement.removeEventListener('webglcontextlost', onContextLost);
       renderer.domElement.removeEventListener('webglcontextrestored', onContextRestored);
       controls.removeEventListener('change', stage.wake);
       clearContent(stage);
@@ -561,6 +621,16 @@ export const ModelPreviewPanel: React.FC<ModelPreviewPanelProps> = ({ file, work
           {errorDetail && (
             <span className="text-[10px] font-mono text-slate-500 break-all max-w-full">{errorDetail}</span>
           )}
+        </div>
+      )}
+      {/*
+        Behind both of the above: what is wrong with the file is more specific
+        than what is wrong with the GPU, and a still-running read has not yet
+        earned either verdict.
+      */}
+      {viewportFault && !errorKey && !loading && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-8 text-center">
+          <span className="text-[12px] font-semibold text-slate-300">{t(VIEWPORT_FAULT_KEYS[viewportFault])}</span>
         </div>
       )}
       {duration > 0 && !errorKey && (
