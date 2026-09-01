@@ -2,7 +2,13 @@ import { createContext, useContext } from 'react';
 
 export type Lang = 'tr' | 'en';
 
-const tr = {
+/**
+ * Exported for the parity gate in `__tests__/i18n-butunluk.test.ts`, which has
+ * to be able to compare the table AS DECLARED against the one `translations`
+ * actually serves. It read this file as text before, so a table patched on its
+ * way into `translations` was invisible to it.
+ */
+export const tr = {
   // Sidebar
   'sidebar.chats': 'Sohbetler',
   'sidebar.files': 'Dosyalar',
@@ -479,7 +485,8 @@ const tr = {
   'preview.speed': 'Oynatma hızı',
 } as const;
 
-const en: Record<keyof typeof tr, string> = {
+/** Exported for the same reason `tr` is. */
+export const en: Record<keyof typeof tr, string> = {
   // Sidebar
   'sidebar.chats': 'Chats',
   'sidebar.files': 'Files',
