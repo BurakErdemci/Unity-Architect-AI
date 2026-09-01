@@ -226,8 +226,16 @@ export const mountParsedModel = (
   stage.content.add(parsed.object);
   // Only for the bones-without-geometry case: a file that brought its own
   // meshes is already its own silhouette, and capsules over it would be an
-  // overlay nobody asked for.
-  if (bounds.skeleton) stage.mannequin = buildMannequin(parsed.object);
+  // overlay nobody asked for. Assigned on BOTH branches so that mounting always
+  // overwrites the handle rather than leaving the previous file's behind.
+  //
+  // Known limitation: each volume is baked once at build time from its bone's
+  // offset and hangs off the PARENT bone, so ancestor rotation and root motion
+  // carry it, but a clip that keys a bone's own TRANSLATION drags that joint
+  // away from a capsule which stays put at its old length. Humanoid clips are
+  // rotation plus hips translation, so this is rare in practice — and it is the
+  // architecture the feature was specified with.
+  stage.mannequin = bounds.skeleton ? buildMannequin(parsed.object) : null;
   reseatControls(stage.controls, frameObject(stage.camera, stage.grid, bounds.box));
 
   const clip = playableClip(parsed.clips);

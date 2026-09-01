@@ -341,6 +341,9 @@ describe('a file that has both geometry and bones', () => {
     const parsed: ParsedModel = { object: root, clips: [] }
 
     const stage = fakeStage()
+    // A handle left over from whatever was on the stage before. Mounting owns
+    // the slot on both branches, so this must not survive into the new file.
+    stage.mannequin = { meshes: [], dispose: vi.fn() }
     const bounds = boundsOf(parsed)
     expect(bounds.skeleton).toBe(false)
     mountParsedModel(stage, parsed, bounds)
