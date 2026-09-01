@@ -442,6 +442,164 @@ describe('stale-preview-state', () => {
     })
   })
 
+  // One file arrives here under several legitimate spellings: the tree hands out
+  // absolute host paths, an approved agent operation names the file relative to
+  // the workspace, and Windows accepts either separator and either case. Raw
+  // string comparison read those as unrelated files, so a delete that really
+  // removed the shown file left the content area sitting on it.
+  describe('path identity', () => {
+    // The tree entries here carry backslashes, so the name is split on both
+    // separators rather than the forward slash the other helpers assume.
+    const girdi = (yol: string, isDirectory = false) => ({
+      name: yol.split(/[\\/]/).pop() as string,
+      path: yol,
+      isDirectory,
+      extension: isDirectory ? '' : '.fbx',
+    })
+
+    const kimlikIpc = (extra: Record<string, any> = {}) => (channel: string) => {
+      if (channel === 'path-exists') return Promise.resolve(true)
+      if (channel === 'read-directory') return Promise.resolve([])
+      if (channel === 'git-status') return Promise.resolve({ isRepo: false, files: {}, dirs: {} })
+      if (channel === 'delete-file' || channel === 'delete-entry') return Promise.resolve({ success: true })
+      if (channel in extra) return Promise.resolve(extra[channel])
+      throw new Error(`unexpected IPC channel: ${channel}`)
+    }
+
+    // An approved agent deletion names the file relative to the workspace while
+    // the preview holds the absolute path the tree gave it.
+    it('clears an absolute preview after a relative path is deleted', async () => {
+      invoke.mockImplementation(kimlikIpc())
+
+      const { result } = mount()
+      await act(async () => { await result.current.selectWorkspace('C:\\Workspace') })
+      act(() => { result.current.openPreview('C:\\Workspace\\Assets\\hero.fbx') })
+
+      await act(async () => { await result.current.deleteFile('Assets/hero.fbx') })
+
+      expect(result.current.previewFile).toBeNull()
+    })
+
+    it('clears the editor after a relative path is deleted', async () => {
+      invoke.mockImplementation(kimlikIpc())
+
+      const { result } = mount()
+      await act(async () => { await result.current.selectWorkspace('C:\\Workspace') })
+      act(() => { result.current.setOpenedFilePath('C:\\Workspace\\Assets\\Player.cs') })
+
+      await act(async () => { await result.current.deleteFile('Assets/Player.cs') })
+
+      expect(result.current.openedFilePath).toBeNull()
+    })
+
+    // A drive-lettered path names a filesystem that does not distinguish case,
+    // so these two spellings are the same file.
+    it('matches a Windows path that differs only in case', async () => {
+      invoke.mockImplementation(kimlikIpc())
+
+      const { result } = mount()
+      await act(async () => { await result.current.selectWorkspace('C:\\Workspace') })
+      act(() => { result.current.openPreview('C:\\Workspace\\Assets\\hero.fbx') })
+
+      await act(async () => { await result.current.handleTreeDelete(girdi('c:\\workspace\\assets\\hero.fbx')) })
+
+      expect(result.current.previewFile).toBeNull()
+    })
+
+    it('matches a forward-slash ancestor against a backslash preview', async () => {
+      invoke.mockImplementation(kimlikIpc())
+
+      const { result } = mount()
+      await act(async () => { await result.current.selectWorkspace('C:\\Workspace') })
+      act(() => { result.current.openPreview('C:\\Workspace\\Assets\\hero.fbx') })
+
+      await act(async () => { await result.current.handleTreeDelete(girdi('C:/Workspace/Assets', true)) })
+
+      expect(result.current.previewFile).toBeNull()
+    })
+
+    // Normalizing must not widen the ancestor test into a plain prefix test:
+    // these two names share a prefix but no path boundary, so they are different
+    // files and the content area must not react.
+    it('does not treat a shared prefix as the same file', async () => {
+      invoke.mockImplementation(kimlikIpc())
+
+      const { result } = mount()
+      await act(async () => { await result.current.selectWorkspace('/a') })
+      act(() => { result.current.openPreview('/a/hero.fbx.bak') })
+
+      await act(async () => { await result.current.handleTreeDelete(agacGirdisi('/a/hero.fbx')) })
+
+      expect(result.current.previewFile?.path).toBe('/a/hero.fbx.bak')
+    })
+
+    it('does not treat a shared prefix as an ancestor folder', async () => {
+      invoke.mockImplementation(kimlikIpc())
+
+      const { result } = mount()
+      await act(async () => { await result.current.selectWorkspace('/a') })
+      act(() => { result.current.openPreview('/a/AssetsOld/hero.fbx') })
+
+      await act(async () => { await result.current.handleTreeDelete(dirEntry('/a/Assets')) })
+
+      expect(result.current.previewFile?.path).toBe('/a/AssetsOld/hero.fbx')
+    })
+
+    // A POSIX path names a case-sensitive filesystem, so folding case there
+    // would clear a preview whose file is still on disk.
+    it('keeps case significant on a POSIX path', async () => {
+      invoke.mockImplementation(kimlikIpc())
+
+      const { result } = mount()
+      await act(async () => { await result.current.selectWorkspace('/a') })
+      act(() => { result.current.openPreview('/a/Assets/Hero.fbx') })
+
+      await act(async () => { await result.current.handleTreeDelete(agacGirdisi('/a/assets/hero.fbx')) })
+
+      expect(result.current.previewFile?.path).toBe('/a/Assets/Hero.fbx')
+    })
+
+    it('leaves the shown path alone when a rename reports the same path', async () => {
+      invoke.mockImplementation(kimlikIpc({ 'rename-entry': { success: true, newPath: '/a/hero.fbx' } }))
+
+      const { result } = mount()
+      await act(async () => { await result.current.selectWorkspace('/a') })
+      act(() => {
+        result.current.openPreview('/a/hero.fbx')
+        result.current.setRenamingPath('/a/hero.fbx')
+        result.current.setRenameValue('hero.fbx')
+      })
+
+      await act(async () => { await result.current.submitRename() })
+
+      expect(result.current.previewFile?.path).toBe('/a/hero.fbx')
+    })
+
+    // The canonical form is for COMPARISON. What the content area shows is the
+    // path the main process reported, casing and separators intact, because that
+    // string is what the user recognises and what the file readers accept back.
+    it('stores the reported spelling rather than the canonical one', async () => {
+      invoke.mockImplementation(kimlikIpc({
+        'rename-entry': { success: true, newPath: 'C:\\Workspace\\Assets\\HeroModel.fbx' },
+      }))
+
+      const { result } = mount()
+      await act(async () => { await result.current.selectWorkspace('C:\\Workspace') })
+      act(() => {
+        result.current.openPreview('C:\\Workspace\\Assets\\hero.fbx')
+        result.current.setRenamingPath('c:/workspace/assets/hero.fbx')
+        result.current.setRenameValue('HeroModel.fbx')
+      })
+
+      await act(async () => { await result.current.submitRename() })
+
+      expect(result.current.previewFile).toEqual({
+        path: 'C:\\Workspace\\Assets\\HeroModel.fbx',
+        name: 'HeroModel.fbx',
+      })
+    })
+  })
+
   // Six operations that invalidate a content path were found across three audit
   // rounds, each round finding one the previous had not enumerated. They now
   // share one function inside the hook, but nothing stops a SEVENTH operation
