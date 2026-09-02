@@ -1688,6 +1688,9 @@ namespace MCPForUnityTests.Editor.Tools
             yield return Case("value has two components", new JObject { ["time"] = 0f, ["value"] = new JArray { 1f, 2f } });
             // An unknown easing was ignored in silence, so the clip did not ease and said nothing.
             yield return Case("easing is unknown", new JObject { ["time"] = 0f, ["value"] = new JArray { 0f, 0f, 0f }, ["easing"] = "bouncy" });
+            // A missing or null time was read as 0, so every such entry piled up on the first frame.
+            yield return Case("time is missing", new JObject { ["value"] = new JArray { 0f, 0f, 0f } });
+            yield return Case("time is null", new JObject { ["time"] = JValue.CreateNull(), ["value"] = new JArray { 0f, 0f, 0f } });
             yield return Case("entry is a number", new JValue(7));
             yield return Case("entry is a string", new JValue("not_an_object"));
         }
@@ -1706,6 +1709,41 @@ namespace MCPForUnityTests.Editor.Tools
                     "the keyframes are checked before the output folder is created");
                 Assert.AreEqual(0, go.GetComponents<Animator>().Length);
                 Assert.AreEqual(0, go.GetComponents<CanvasGroup>().Length);
+            }
+            finally { Object.DestroyImmediate(go); }
+        }
+
+        [Test]
+        public void AddKeyframeAnim_AlphaOnPlainObject_AddsTheCanvasGroupOnlyAfterTheWrites()
+        {
+            // The alpha curve drives a CanvasGroup; it used to be added while the curves
+            // were built, before any asset write, so a refused request left it behind.
+            var go = new GameObject("SpriteTest_KF_Alpha");
+            try
+            {
+                JObject Request(JArray keyframes) => new JObject
+                {
+                    ["action"] = "add_keyframe_anim",
+                    ["target"] = "SpriteTest_KF_Alpha",
+                    ["clip_name"] = "fade",
+                    ["output_dir"] = KfDir,
+                    ["property"] = "alpha",
+                    ["keyframes"] = keyframes,
+                };
+
+                var refused = Run(Request(new JArray { new JObject { ["value"] = 1f } }));
+                Assert.IsFalse(refused.Value<bool>("success"));
+                Assert.AreEqual(0, go.GetComponents<CanvasGroup>().Length, "a refused request adds no component");
+                Assert.IsFalse(AssetDatabase.IsValidFolder(KfDir), "and creates no folder");
+
+                var result = Run(Request(new JArray
+                {
+                    new JObject { ["time"] = 0f, ["value"] = 1f },
+                    new JObject { ["time"] = 1f, ["value"] = 0f },
+                }));
+                Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+                Assert.AreEqual(1, go.GetComponents<CanvasGroup>().Length, "the component the curve drives exists after the writes");
+                Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<AnimationClip>($"{KfDir}/fade.anim"));
             }
             finally { Object.DestroyImmediate(go); }
         }

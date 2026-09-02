@@ -96,7 +96,7 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                 SpriteClipBuilder.CreateFolders(outputDir);
 
             var clip = new AnimationClip { name = clipName };
-            BuildCurves(clip, property, keys, go);
+            bool needsCanvasGroup = BuildCurves(clip, property, keys, go);
 
             var settings = AnimationUtility.GetAnimationClipSettings(clip);
             settings.loopTime = loop;
@@ -128,6 +128,15 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
             var state = sm.AddState(clipName);
             state.motion = clip;
             if (sm.defaultState == null) sm.defaultState = state;
+
+            // Components come last, after every asset write, for the reason full_setup
+            // adds its SpriteRenderer last: a component is the one side effect a refused
+            // write cannot take back.
+            if (needsCanvasGroup && go.GetComponent<CanvasGroup>() == null)
+            {
+                Undo.RecordObject(go, "Add CanvasGroup Component");
+                Undo.AddComponent<CanvasGroup>(go);
+            }
 
             // `??` compares references and never sees Unity's overloaded ==, so the explicit
             // null check is what keeps AddComponent from being skipped.
@@ -178,10 +187,15 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                     return false;
                 }
 
-                float time = 0f;
+                // Absent is not zero: an entry without a time used to land at t=0 in
+                // silence, so a list of them collapsed into one frame and said nothing.
                 JToken timeToken = kf["time"];
-                if (timeToken != null && timeToken.Type != JTokenType.Null &&
-                    !SpriteParams.TryReadFiniteNumber(timeToken, $"'keyframes[{i}].time'", out time, out error))
+                if (timeToken == null || timeToken.Type == JTokenType.Null)
+                {
+                    error = $"'keyframes[{i}].time' is required.";
+                    return false;
+                }
+                if (!SpriteParams.TryReadFiniteNumber(timeToken, $"'keyframes[{i}].time'", out float time, out error))
                     return false;
                 if (time < 0f)
                 {
@@ -280,7 +294,8 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
 
         // ── Curves ───────────────────────────────────────────────────────────
 
-        private static void BuildCurves(AnimationClip clip, string property, List<ParsedKeyframe> keys, GameObject go)
+        /// <returns>true when the curves drive a CanvasGroup the target does not have yet.</returns>
+        private static bool BuildCurves(AnimationClip clip, string property, List<ParsedKeyframe> keys, GameObject go)
         {
             switch (property)
             {
@@ -306,15 +321,17 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                         SetFloatCurve(clip, typeof(UnityEngine.UI.Image), "m_Color.a", keys);
                         break;
                     }
-                    if (go.GetComponent<CanvasGroup>() == null) go.AddComponent<CanvasGroup>();
+                    // The binding needs only the type; the component itself is added by the
+                    // caller after the asset writes, so a refused write leaves no component.
                     SetFloatCurve(clip, typeof(CanvasGroup), "m_Alpha", keys);
-                    break;
+                    return true;
 
                 case "color":
                     SetVector3Curves(clip, DetectColorComponent(go),
                         "m_Color.r", "m_Color.g", "m_Color.b", keys);
                     break;
             }
+            return false;
         }
 
         private static void SetVector3Curves(AnimationClip clip, Type componentType,
