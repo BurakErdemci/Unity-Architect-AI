@@ -10,7 +10,7 @@
 [![React](https://img.shields.io/badge/React-18-61DAFB?style=for-the-badge&logo=react&logoColor=black)](https://react.dev)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://typescriptlang.org)
 [![Unity MCP](https://img.shields.io/badge/Unity_MCP-Gömülü-7B2FBE?style=for-the-badge&logo=unity&logoColor=white)](./unity-mcp)
-[![License](https://img.shields.io/badge/Lisans-MIT%20%2B%20Commons%20Clause-green?style=for-the-badge)](LICENSE)
+[![License](https://img.shields.io/badge/Lisans-MIT-green?style=for-the-badge)](LICENSE)
 
 *Claude Code, Codex, Antigravity (agy), bulut API'leri ve canlı Unity Editor kontrolü — hepsi aynı sohbet penceresinde, aynı onay sisteminin arkasında, aynı projeyi tanıyarak çalışır.*
 
