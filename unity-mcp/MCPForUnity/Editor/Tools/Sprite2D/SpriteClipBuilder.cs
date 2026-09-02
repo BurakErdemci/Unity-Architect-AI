@@ -93,11 +93,11 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                 if (string.IsNullOrEmpty(clipName))
                 { diagnostics.AddWarning("CLIP_NO_NAME", "Clip name is missing — skipped.", "Add a 'name' field to each clip definition."); continue; }
 
-                // Measured: "nested/walk" either threw from CreateAsset or, where the folder
-                // existed, wrote the clip outside output_dir.
-                if (clipName.Contains("/") || clipName.Contains("\\"))
+                // Both name refusals live in SpriteParams so add_keyframe_anim, which composes
+                // the same path out of the same untrusted segment, refuses the same names.
+                if (!SpriteParams.TryReadClipName(clipName, outputDir, ".anim", out string clipPath, out string nameReason, out string[] nameFixes))
                 {
-                    diagnostics.AddWarning("CLIP_BAD_NAME", $"Clip '{clipName}': the name cannot contain a path separator - skipped.", "Remove '..' and path separators from the clip name.");
+                    diagnostics.AddWarning("CLIP_BAD_NAME", $"Clip '{clipName}': {nameReason} - skipped.", nameFixes);
                     continue;
                 }
 
@@ -152,13 +152,6 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
 
                 // Refusals come before the allocation: a `new AnimationClip` that never becomes
                 // an asset leaks.
-                string clipPath = AssetPathUtility.SanitizeAssetPath($"{outputDir}/{clipName}.anim");
-                if (clipPath == null || !AssetPathUtility.IsValidAssetPath(clipPath))
-                {
-                    diagnostics.AddWarning("CLIP_BAD_NAME", $"Clip '{clipName}': the name cannot be used as a file name - skipped.", "Remove '..', path separators and characters like : * ? \" < > | from the clip name.");
-                    continue;
-                }
-
                 var existing = AssetDatabase.LoadAssetAtPath<AnimationClip>(clipPath);
                 if (existing != null && !overwrite)
                 {

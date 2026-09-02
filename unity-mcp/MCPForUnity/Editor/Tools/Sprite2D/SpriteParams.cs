@@ -38,6 +38,84 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
         }
 
         /// <summary>
+        /// Validates a clip name that is about to be composed into an asset path, and hands
+        /// back the composed path. The name is the only untrusted segment of that path: a
+        /// separator escapes the output folder, and a character like ':' is legal in an asset
+        /// path while being illegal in a file name. Shared so the two actions that compose
+        /// such a path refuse the same names for the same reasons.
+        /// </summary>
+        internal static bool TryReadClipName(string clipName, string outputDir, string suffix,
+                                             out string assetPath, out string reason, out string[] fixes)
+        {
+            // Measured: "nested/walk" either threw from CreateAsset or, where the folder
+            // existed, wrote the clip outside output_dir.
+            if (clipName.Contains("/") || clipName.Contains("\\"))
+            {
+                assetPath = null;
+                reason = "the name cannot contain a path separator";
+                fixes = new[] { "Remove '..' and path separators from the clip name." };
+                return false;
+            }
+
+            assetPath = AssetPathUtility.SanitizeAssetPath($"{outputDir}/{clipName}{suffix}");
+            if (assetPath == null || !AssetPathUtility.IsValidAssetPath(assetPath))
+            {
+                assetPath = null;
+                reason = "the name cannot be used as a file name";
+                fixes = new[] { "Remove '..', path separators and characters like : * ? \" < > | from the clip name." };
+                return false;
+            }
+
+            reason = null;
+            fixes = null;
+            return true;
+        }
+
+        /// <summary>
+        /// Reads one number out of a position that has no field name to give
+        /// ValidateNumericField - an array element, or a field whose label the caller wants to
+        /// spell itself. Same finiteness and range rules as TryReadFiniteFloat.
+        /// </summary>
+        internal static bool TryReadFiniteNumber(JToken token, string label, out float value, out string error)
+        {
+            value = 0f;
+            error = null;
+
+            if (!ParamCoercion.IsNumericToken(token))
+            {
+                string got = token == null ? "nothing" : token.Type.ToString().ToLowerInvariant();
+                error = $"{label} must be a number, got {got}.";
+                return false;
+            }
+
+            double raw;
+            try
+            {
+                raw = token.Value<double>();
+            }
+            catch (Exception)
+            {
+                error = $"{label} is out of range for a number.";
+                return false;
+            }
+
+            if (double.IsNaN(raw) || double.IsInfinity(raw))
+            {
+                error = $"{label} must be a finite number.";
+                return false;
+            }
+            // Read as double first: the cast would silently make an infinity of this.
+            if (raw > float.MaxValue || raw < -float.MaxValue)
+            {
+                error = $"{label} is out of range for a 32-bit float.";
+                return false;
+            }
+
+            value = (float)raw;
+            return true;
+        }
+
+        /// <summary>
         /// Reads an optional whole number. Returns false with a caller-facing reason when
         /// the value is present but is not a whole number an int can hold.
         /// </summary>
