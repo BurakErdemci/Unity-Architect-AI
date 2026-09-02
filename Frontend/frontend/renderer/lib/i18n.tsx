@@ -485,6 +485,12 @@ export const tr = {
   'preview.pause': 'Duraklat',
   'preview.timeline': 'Zaman çizgisi',
   'preview.speed': 'Oynatma hızı',
+  'preview.imageLoading': 'Görsel yükleniyor…',
+  'preview.imageBlockedFormat': 'Bu görsel biçimini tarayıcı çözemiyor. Unity içinde ya da bir görsel düzenleyicide açın.',
+  'preview.imageTooLarge': 'Bu görsel 32 MiB önizleme sınırından büyük.',
+  'preview.fitToView': 'Ekrana sığdır',
+  'preview.actualSize': 'Gerçek boyut',
+  'preview.imageDimensions': '{width} x {height} piksel',
 } as const;
 
 /** Exported for the same reason `tr` is. */
@@ -947,6 +953,12 @@ export const en: Record<keyof typeof tr, string> = {
   'preview.pause': 'Pause',
   'preview.timeline': 'Timeline',
   'preview.speed': 'Playback speed',
+  'preview.imageLoading': 'Loading image…',
+  'preview.imageBlockedFormat': 'The browser cannot decode this image format. Open it in Unity or an image editor.',
+  'preview.imageTooLarge': 'This image is larger than the 32 MiB preview limit.',
+  'preview.fitToView': 'Fit to view',
+  'preview.actualSize': 'Actual size',
+  'preview.imageDimensions': '{width} x {height} pixels',
 };
 
 export const translations: Record<Lang, Record<string, string>> = { tr, en };

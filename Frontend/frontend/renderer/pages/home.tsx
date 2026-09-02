@@ -12,6 +12,7 @@ import { LangContext, aktifDilAyarla, ceviriUygula, osDilindenDil, type Lang, ty
 import { sohbetKilitliMi } from '../lib/providerGate';
 import { getUnsavedEditorContext } from '../lib/editor-context';
 import { contentPane } from '../lib/contentPane';
+import { routeForFile } from '../components/model-viewer/extensions';
 
 import { Sidebar } from '../components/home/Sidebar';
 import { EditorPanel, hostOpenTarget, workspaceRelativePath } from '../components/home/EditorPanel';
@@ -39,6 +40,9 @@ import { McpApprovalCards } from '../components/home/McpApprovalCards';
 // Lazy island: keeps three.js out of the eager bundle, which nothing else in
 // this app needs, and off the server render (it touches WebGL on mount).
 const ModelPreviewPanel = dynamic(() => import('../components/model-viewer/ModelPreviewPanel'), { ssr: false });
+// Second lazy island: the image panel shares the preview slot but needs none
+// of three.js, so keeping them apart keeps a texture click off that bundle.
+const ImagePreviewPanel = dynamic(() => import('../components/image-viewer/ImagePreviewPanel'), { ssr: false });
 
 const ipc = typeof window !== 'undefined' ? (window as any).ipc : null;
 const globalStyles = `
@@ -518,6 +522,8 @@ export default function Home() {
   }
 
   const pane = contentPane(fs.previewFile, diffFile, fs.openedFilePath);
+  // Which preview panel the open file belongs to; the two share one slot.
+  const previewRoute = fs.previewFile ? routeForFile(fs.previewFile.path) : null;
 
   return (
     <LangContext.Provider value={langCtxValue}>
@@ -640,7 +646,11 @@ export default function Home() {
 
         <div className="flex-1 overflow-hidden relative flex flex-col bg-[#0B0D12]">
           {pane === 'preview' && fs.previewFile ? (
-            <ModelPreviewPanel file={fs.previewFile} workspacePath={fs.workspacePath} />
+            previewRoute === 'image' || previewRoute === 'blocked-image' ? (
+              <ImagePreviewPanel file={fs.previewFile} workspacePath={fs.workspacePath} />
+            ) : (
+              <ModelPreviewPanel file={fs.previewFile} workspacePath={fs.workspacePath} />
+            )
           ) : pane === 'editor' ? (
             <EditorPanel
               code={fs.code} setCode={fs.setCode} openedFilePath={fs.openedFilePath} isEditorFocused={isEditorFocused} setIsEditorFocused={setIsEditorFocused}

@@ -120,10 +120,10 @@ export const FileTree: React.FC<FileTreeProps> = (props) => {
               draggable onDragStart={(e) => handleTreeDragStart(e, entry)}
               onClick={() => {
                 if (entry.isDirectory) { toggleDir(entry.path); return; }
-                // Blocked model formats also go to the preview panel: it is the
+                // Blocked formats also go to the preview panel: it is the
                 // surface that can explain why they cannot be shown.
                 const route = routeForFile(entry.path);
-                if (route === 'model' || route === 'blocked-model') openPreview(entry.path);
+                if (route !== 'text') openPreview(entry.path);
                 else openFile(entry.path);
               }}
               onContextMenu={(e) => handleTreeContextMenu(e, entry)}
