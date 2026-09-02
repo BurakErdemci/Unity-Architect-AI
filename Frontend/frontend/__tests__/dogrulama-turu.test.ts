@@ -11,7 +11,7 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
 import { ayniBelgeMi } from '../main/helpers/create-window'
 import {
@@ -94,7 +94,7 @@ describe('SINIFI KAPATAN kontrol: açılmış tanıtıcı gerçekten kapsamda m�
     const p = path.join(ws, 'gercek', 'note.txt')
     const fd = fs.openSync(p, 'r')
     try {
-      expect(taniticiKapsamdaMi(fs.fstatSync(fd), p, ws)).toBe(true)
+      expect(taniticiKapsamdaMi(fs.fstatSync(fd, { bigint: true }), p, ws)).toBe(true)
     } finally { fs.closeSync(fd) }
   })
 
@@ -110,7 +110,7 @@ describe('SINIFI KAPATAN kontrol: açılmış tanıtıcı gerçekten kapsamda m�
     const p = path.join(pivot, 'note.txt')
     const fd = fs.openSync(p, 'r')
     try {
-      const st = fs.fstatSync(fd)
+      const st = fs.fstatSync(fd, { bigint: true })
       expect(taniticiKapsamdaMi(st, p, ws)).toBe(true) // takastan ÖNCE
       fs.rmSync(pivot, { recursive: true, force: true })
       if (!dizinBagi(disari, pivot)) return
@@ -125,7 +125,16 @@ describe('SINIFI KAPATAN kontrol: açılmış tanıtıcı gerçekten kapsamda m�
     const icerideki = path.join(ws, 'gercek', 'note.txt')
     const fd = fs.openSync(path.join(disari, 'note.txt'), 'r')
     try {
-      expect(taniticiKapsamdaMi(fs.fstatSync(fd), icerideki, ws)).toBe(false)
+      const disaridakiSt = fs.fstatSync(fd, { bigint: true })
+      // ÖNKOŞUL: iki dosyanın TAM (64 bit) tanıtıcıları farklı olmalı. Eşit
+      // çıkarsa ortam çakışan kimlik dağıtmış demektir — o zaman aşağıdaki red
+      // iddiası hiçbir şey ölçmez, çünkü kimlik kontrolü zaten ısıramaz.
+      // Bilerek atlanmıyor, gürültüyle düşüyor.
+      expect(
+        fs.statSync(icerideki, { bigint: true }).ino,
+        'ortam iki AYRI dosyaya aynı inode verdi; alttaki red iddiası ölçüsüz kalır',
+      ).not.toBe(disaridakiSt.ino)
+      expect(taniticiKapsamdaMi(disaridakiSt, icerideki, ws)).toBe(false)
     } finally { fs.closeSync(fd) }
   })
 
@@ -140,16 +149,39 @@ describe('SINIFI KAPATAN kontrol: açılmış tanıtıcı gerçekten kapsamda m�
     const fd = fs.openSync(p, 'r')
     try {
       // Kimlik EŞLEŞİYOR (aynı dosya) — reddi sağlayan yalnız kapsama.
-      const st = fs.fstatSync(fd)
-      expect(fs.statSync(p).ino).toBe(st.ino)
+      const st = fs.fstatSync(fd, { bigint: true })
+      expect(fs.statSync(p, { bigint: true }).ino).toBe(st.ino)
       expect(taniticiKapsamdaMi(st, p, ws)).toBe(false)
+    } finally { fs.closeSync(fd) }
+  })
+
+  it('2^53 ÜSTÜNDE 1 fark eden tanıtıcılar AYRI sayılıyor', () => {
+    // Kimlik karşılaştırması TAM olmalı. `fs.Stats.ino` bir JS sayısı, yani
+    // double: 2^53 üstünde komşu tamsayılar aynı değere yuvarlanıyor —
+    // `Number(2**60) === Number(2**60 + 1)` bigint tarafında DOĞRU. Double'a dayanan
+    // eski karşılaştırma bu iki AYRI dosyayı aynı sayar, yani kapı yanlış
+    // KABUL verirdi. NTFS dosya referans numarası 64 bit olduğu için bu
+    // büyüklük gerçek: bu diskte 400 dosyanın 201'i 2^53 üstünde ino aldı.
+    // `BigInt(2) ** BigInt(60)`, not `2n ** 60n`: tsconfig targets ES2017.
+    const IKI_USSU_60 = BigInt(2) ** BigInt(60)
+    const p = path.join(ws, 'gercek', 'note.txt')
+    const fd = fs.openSync(p, 'r')
+    try {
+      const st = fs.fstatSync(fd, { bigint: true })
+      const komsu = { ...st, ino: IKI_USSU_60 + BigInt(1), dev: st.dev } as unknown as fs.BigIntStats
+      const casus = vi.spyOn(fs, 'statSync').mockReturnValue(
+        { ...st, ino: IKI_USSU_60, dev: st.dev } as unknown as fs.BigIntStats,
+      )
+      try {
+        expect(taniticiKapsamdaMi(komsu, p, ws)).toBe(false)
+      } finally { casus.mockRestore() }
     } finally { fs.closeSync(fd) }
   })
 
   it('var olmayan yolda FIRLATMIYOR, reddediyor', () => {
     const fd = fs.openSync(path.join(ws, 'gercek', 'note.txt'), 'r')
     try {
-      expect(taniticiKapsamdaMi(fs.fstatSync(fd), path.join(ws, 'yok.txt'), ws)).toBe(false)
+      expect(taniticiKapsamdaMi(fs.fstatSync(fd, { bigint: true }), path.join(ws, 'yok.txt'), ws)).toBe(false)
     } finally { fs.closeSync(fd) }
   })
 })

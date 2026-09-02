@@ -331,10 +331,22 @@ export function isAllowedWorkspaceReadFile(filePath: string, workspacePath: stri
  * test koşumunda yüklenmiyor, dolayısıyla orada kalan her kontrol sınanamaz
  * oluyor. Aynı ders bu depoda aynı denetim turunda iki kez ödendi.
  *
- * @param acilanStat açılmış tanıtıcının `fstatSync` sonucu — yolun değil.
+ * ⚠️ EXACT 64-bit ids, not doubles. A plain `fs.Stats.ino` is a JS number, and a
+ * double carries only 53 bits of integer precision; an NTFS file reference
+ * number is 64 bits (48-bit MFT index + 16-bit sequence). Measured on this
+ * volume: 201 of 400 freshly created files had an `ino` above 2^53 (~1.1e17,
+ * where doubles are spaced 16 apart), so two DIFFERENT files whose ids differ by
+ * less than that spacing compare equal — a false accept on a security gate. No
+ * collision was observed firing (0 in 700 tries), so this is hardening, not a
+ * live bug. `{ bigint: true }` is the only way Node hands back the exact value,
+ * hence the `BigIntStats` parameter type: a caller with a plain `Stats` cannot
+ * supply an exact id, so the type refuses it rather than silently rounding.
+ *
+ * @param acilanStat açılmış tanıtıcının `fstatSync(fd, { bigint: true })`
+ *   sonucu — yolun değil.
  */
 export function taniticiKapsamdaMi(
-  acilanStat: fs.Stats,
+  acilanStat: fs.BigIntStats,
   acilanYol: string,
   workspacePath: string,
 ): boolean {
@@ -345,7 +357,7 @@ export function taniticiKapsamdaMi(
     // hiçbir mutantı yakalamıyordu — yani davranışa katkısı yok, yalnız
     // "burada bir şey yapılıyor" izlenimi veriyordu.
     if (!isAllowedWorkspacePath(acilanYol, workspacePath)) return false
-    const kimlik = fs.statSync(acilanYol)
+    const kimlik = fs.statSync(acilanYol, { bigint: true })
     return kimlik.ino === acilanStat.ino && kimlik.dev === acilanStat.dev
   } catch {
     return false
@@ -399,17 +411,23 @@ export function readModelFileFromWorkspace(
   let fd: number | null = null
   try {
     fd = fs.openSync(karar.cozulmusYol, 'r')
-    const st = fs.fstatSync(fd)
+    // `{ bigint: true }` so the identity check below compares exact 64-bit ids;
+    // the reason is in `taniticiKapsamdaMi`.
+    const st = fs.fstatSync(fd, { bigint: true })
     if (!st.isFile()) return { error: 'denied' }
-    if (st.size > MODEL_MAX_BYTES) return { error: 'too-large' }
+    // The cap is enforced BEFORE any Number() conversion: a size above 2^53
+    // would round on the way through a double, so converting first could turn
+    // an over-cap file into an under-cap one.
+    if (st.size > BigInt(MODEL_MAX_BYTES)) return { error: 'too-large' }
     // Rechecked on the fd: catches a second name created between the gate and
     // the open.
-    if (st.nlink > 1) return { error: 'denied' }
+    // `BigInt(1)`, not `1n`: tsconfig targets ES2017 (see background.ts).
+    if (st.nlink > BigInt(1)) return { error: 'denied' }
     if (!taniticiKapsamdaMi(st, karar.cozulmusYol, workspacePath)) {
       return { error: 'denied' }
     }
 
-    const view = readExactly(fd, st.size)
+    const view = readExactly(fd, Number(st.size))
     if (!view) {
       return denyWithCause(fullPath, `short read: fewer than ${st.size} bytes available`)
     }

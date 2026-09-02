@@ -453,15 +453,22 @@ handleSecure('read-file', async (_event, filePath: string, workspacePath?: strin
     let fd: number | null = null
     try {
       fd = fs.openSync(okunacak, 'r')
-      const st = fs.fstatSync(fd)
+      // `{ bigint: true }` so the descriptor identity check below compares exact
+      // 64-bit ids; the reason is in `taniticiKapsamdaMi`.
+      const st = fs.fstatSync(fd, { bigint: true })
       if (!st.isFile()) return { error: 'unsupported' }
       // Gerekçesi sabitin tanımında (`TEXT_MAX_BYTES`, file-security.ts).
-      if (st.size > TEXT_MAX_BYTES) {
+      // The cap is enforced BEFORE any Number() conversion: a size above 2^53
+      // would round on the way through a double, so converting first could turn
+      // an over-cap file into an under-cap one.
+      if (st.size > BigInt(TEXT_MAX_BYTES)) {
         return { error: 'too-large' }
       }
       // Sabit bağ kapıda da reddediliyor; burada tekrar bakmak, açış ile kapı
       // arasında yaratılmış bir ikinci adı da yakalıyor.
-      if (st.nlink > 1) return { error: 'unsupported' }
+      // `BigInt(1)`, not `1n`: tsconfig targets ES2017, where TS rejects the
+      // literal form.
+      if (st.nlink > BigInt(1)) return { error: 'unsupported' }
 
       // Sınıfı kapatan kontrol; gerekçesi fonksiyonun başında.
       if (!taniticiKapsamdaMi(st, okunacak, workspacePath)) {
@@ -473,7 +480,7 @@ handleSecure('read-file', async (_event, filePath: string, workspacePath?: strin
       // until EOF, so a file appended to between `fstatSync` and the read
       // returned more than `TEXT_MAX_BYTES`. Measured: a 1-byte file grown by
       // 9 MiB in that window came back whole.
-      const bytes = readExactly(fd, st.size)
+      const bytes = readExactly(fd, Number(st.size))
       if (!bytes) return { error: 'unsupported' }
       const content = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('utf-8')
       // `fullPath` döndürülüyor: kapsama kanıtlandıktan sonra o ad da aynı
