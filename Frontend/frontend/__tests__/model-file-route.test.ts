@@ -24,7 +24,9 @@ describe('routeForFile', () => {
   it('routes anything else to the text editor', () => {
     expect(routeForFile('Assets/Scripts/Player.cs')).toBe('text')
     expect(routeForFile('README.md')).toBe('text')
-    expect(routeForFile('Assets/Textures/skin.png')).toBe('text')
+    // .png moved to the image panel (see image-file-route.test.ts); a binary
+    // with no panel of its own is what still falls through to text.
+    expect(routeForFile('Assets/Plugins/native.dll')).toBe('text')
   })
 
   it('is case-insensitive — Unity assets ship .FBX as often as .fbx', () => {

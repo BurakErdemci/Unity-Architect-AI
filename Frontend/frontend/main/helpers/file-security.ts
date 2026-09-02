@@ -86,6 +86,28 @@ export const MODEL_FILE_EXTENSIONS = [
 export const MODEL_MAX_BYTES = 64 * 1024 * 1024
 
 /**
+ * Extension whitelist for the image read channel.
+ *
+ * Same reasoning as the model whitelist: a channel that can hand back arbitrary
+ * bytes from inside the workspace is an exfiltration surface, so it names what
+ * it accepts. Only formats a Chromium <img> can decode are here — the renderer
+ * keeps a mirror (`IMAGE_EXTENSIONS`) and a test asserts the two stay set-equal.
+ */
+export const IMAGE_FILE_EXTENSIONS = [
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg',
+]
+
+/**
+ * The image channel's own size cap, half the model cap.
+ *
+ * Like the model bytes, these are *copied* into the renderer heap on the way
+ * through IPC, so the cap bounds both Electron processes at once. 32 MiB clears
+ * any realistic Unity texture source (an 8192x8192 32-bit PNG compresses well
+ * under it) while keeping the worst-case copy half of what a model costs.
+ */
+export const IMAGE_MAX_BYTES = 32 * 1024 * 1024
+
+/**
  * The text channel's size cap.
  *
  * A large Unity scene or prefab YAML runs to 100 MiB and freezes Monaco, which
@@ -213,7 +235,7 @@ export function alternatifVeriAkisiMi(
  * Which kind of read the gate is deciding on.
  * The gates are identical; only the extension whitelist differs.
  */
-export type OkumaTuru = 'metin' | 'model'
+export type OkumaTuru = 'metin' | 'model' | 'image'
 
 /**
  * Why the gate refused. `unsupported` is the extension whitelist alone; the
@@ -293,7 +315,11 @@ export function okumaKarariVer(
 
     // Only the whitelist differs between the two read kinds; every gate above
     // this line is shared, so the two decisions cannot drift apart.
-    const beyazListe = tur === 'model' ? MODEL_FILE_EXTENSIONS : TEXT_FILE_EXTENSIONS
+    const beyazListe = tur === 'model'
+      ? MODEL_FILE_EXTENSIONS
+      : tur === 'image'
+        ? IMAGE_FILE_EXTENSIONS
+        : TEXT_FILE_EXTENSIONS
     if (!beyazListe.includes(path.extname(cozulmus).toLowerCase())) {
       return reddet(cozulmus, 'unsupported')
     }
@@ -365,7 +391,7 @@ export function taniticiKapsamdaMi(
 }
 
 /**
- * An OPERATIONAL model-read failure: generic to the renderer, named in the log.
+ * An OPERATIONAL binary-read failure: generic to the renderer, named in the log.
  *
  * The renderer keeps seeing `denied` on purpose — the caller must not learn from
  * an error code whether a path exists, is a directory, or is merely unreadable.
@@ -377,20 +403,34 @@ export function taniticiKapsamdaMi(
  *
  * Policy refusals above this point are decisions, not failures, and stay silent.
  */
-function denyWithCause(fullPath: string, cause: unknown): ModelReadResult {
+function denyWithCause(etiket: string, fullPath: string, cause: unknown): BinaryReadResult {
   const reason = cause instanceof Error
     ? `${(cause as NodeJS.ErrnoException).code ?? cause.name}: ${cause.message}`
     : String(cause)
-  console.error(`[model-read] '${fullPath}' could not be read — ${reason}`)
+  console.error(`[${etiket}] '${fullPath}' could not be read — ${reason}`)
   return { error: 'denied' }
 }
 
-export type ModelReadResult =
+export type BinaryReadResult =
   | { path: string; name: string; data: ArrayBuffer }
   | { error: 'unsupported' | 'too-large' | 'denied' | 'busy' }
 
+/** Kept as the model channel's own name; the shape is shared with images. */
+export type ModelReadResult = BinaryReadResult
+
+/** Per-channel numbers, so the shared read below stays one function. */
+const IKILI_KANALLAR = {
+  model: { tavan: MODEL_MAX_BYTES, etiket: 'model-read' },
+  image: { tavan: IMAGE_MAX_BYTES, etiket: 'image-read' },
+} as const
+
 /**
- * The model read, gate chain included, from one open file descriptor.
+ * The binary read, gate chain included, from one open file descriptor.
+ *
+ * ⚠️ ONE function for every binary channel, parameterised by kind. Two copies of
+ * a read gate is this repo's named defect class — the earlier model-only copy
+ * would have had to be duplicated verbatim for images, and the copies drift
+ * silently because nothing fails when only one of them is hardened.
  *
  * ⚠️ Deliberately NOT inlined in `background.ts`: the main process is not loaded
  * under the test runner, so anything left there cannot be exercised — a lesson
@@ -401,11 +441,13 @@ export type ModelReadResult =
  * the read itself) is asked of that descriptor. Reopening by path after a check
  * would reintroduce the measured check/use race.
  */
-export function readModelFileFromWorkspace(
+export function readBinaryFileFromWorkspace(
   fullPath: string,
   workspacePath: string,
-): ModelReadResult {
-  const karar = okumaKarariVer(fullPath, workspacePath, 'model')
+  tur: 'model' | 'image',
+): BinaryReadResult {
+  const { tavan, etiket } = IKILI_KANALLAR[tur]
+  const karar = okumaKarariVer(fullPath, workspacePath, tur)
   if (!karar.izinli) return { error: karar.sebep ?? 'denied' }
 
   let fd: number | null = null
@@ -418,7 +460,7 @@ export function readModelFileFromWorkspace(
     // The cap is enforced BEFORE any Number() conversion: a size above 2^53
     // would round on the way through a double, so converting first could turn
     // an over-cap file into an under-cap one.
-    if (st.size > BigInt(MODEL_MAX_BYTES)) return { error: 'too-large' }
+    if (st.size > BigInt(tavan)) return { error: 'too-large' }
     // Rechecked on the fd: catches a second name created between the gate and
     // the open.
     // `BigInt(1)`, not `1n`: tsconfig targets ES2017 (see background.ts).
@@ -429,16 +471,30 @@ export function readModelFileFromWorkspace(
 
     const view = readExactly(fd, Number(st.size))
     if (!view) {
-      return denyWithCause(fullPath, `short read: fewer than ${st.size} bytes available`)
+      return denyWithCause(etiket, fullPath, `short read: fewer than ${st.size} bytes available`)
     }
     // `fullPath` is returned rather than the resolved path, for the same reason
     // the text handler does it: the file tree addresses files by this name.
     return { path: fullPath, name: path.basename(fullPath), data: view.buffer as ArrayBuffer }
   } catch (err) {
-    return denyWithCause(fullPath, err)
+    return denyWithCause(etiket, fullPath, err)
   } finally {
     if (fd !== null) { try { fs.closeSync(fd) } catch { /* close failure does not invalidate the read */ } }
   }
+}
+
+export function readModelFileFromWorkspace(
+  fullPath: string,
+  workspacePath: string,
+): ModelReadResult {
+  return readBinaryFileFromWorkspace(fullPath, workspacePath, 'model')
+}
+
+export function readImageFileFromWorkspace(
+  fullPath: string,
+  workspacePath: string,
+): BinaryReadResult {
+  return readBinaryFileFromWorkspace(fullPath, workspacePath, 'image')
 }
 
 /**
@@ -492,31 +548,51 @@ export function isAllowedWorkspaceWriteFile(filePath: string, workspacePath: str
  */
 export const MODEL_READ_MAX_IN_FLIGHT = 2
 
-let modelReadsInFlight = 0
+let binaryReadsInFlight = 0
 
 /**
- * Admission control in front of the model read.
+ * Admission control in front of every binary read.
  *
  * Over the limit the call is REFUSED rather than queued: queuing would bound
  * the stall but not the memory, because every queued caller still ends up
  * holding a payload, and the measured harm is the simultaneous payload.
  *
- * The `await` is load-bearing, not decoration. `readModelFileFromWorkspace` is
+ * ONE counter for models and images together, not one each. The bound exists to
+ * cap the bytes resident in the main process at a moment in time, and that total
+ * does not care which channel carried them — two independent limits of two would
+ * allow four payloads at once, which is the state the measurement above rejected.
+ *
+ * The `await` is load-bearing, not decoration. `readBinaryFileFromWorkspace` is
  * synchronous end to end, so without a yield each invocation would run to
  * completion before the next one was even entered and the counter could never
  * read higher than one — a limit that never limits. Yielding first makes
  * overlapping invocations actually overlap, which is what the count then bounds.
  */
-export async function readModelFileGuarded(
+async function readBinaryGuarded(
+  fullPath: string,
+  workspacePath: string,
+  tur: 'model' | 'image',
+): Promise<BinaryReadResult> {
+  if (binaryReadsInFlight >= MODEL_READ_MAX_IN_FLIGHT) return { error: 'busy' }
+  binaryReadsInFlight++
+  try {
+    await Promise.resolve()
+    return readBinaryFileFromWorkspace(fullPath, workspacePath, tur)
+  } finally {
+    binaryReadsInFlight--
+  }
+}
+
+export function readModelFileGuarded(
   fullPath: string,
   workspacePath: string,
 ): Promise<ModelReadResult> {
-  if (modelReadsInFlight >= MODEL_READ_MAX_IN_FLIGHT) return { error: 'busy' }
-  modelReadsInFlight++
-  try {
-    await Promise.resolve()
-    return readModelFileFromWorkspace(fullPath, workspacePath)
-  } finally {
-    modelReadsInFlight--
-  }
+  return readBinaryGuarded(fullPath, workspacePath, 'model')
+}
+
+export function readImageFileGuarded(
+  fullPath: string,
+  workspacePath: string,
+): Promise<BinaryReadResult> {
+  return readBinaryGuarded(fullPath, workspacePath, 'image')
 }

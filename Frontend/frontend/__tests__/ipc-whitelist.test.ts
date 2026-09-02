@@ -66,8 +66,18 @@ describe('IPC Whitelist — Set doğruluğu', () => {
   // kapılarını (kapsama, ADS, sabit bağ, fd/inode doğrulaması) paylaşıyor ve
   // üstüne kendi uzantı beyaz listesi (MODEL_FILE_EXTENSIONS) ile kendi boyut
   // tavanı (MODEL_MAX_BYTES) var — yani yüzey model dosyalarıyla sınırlı.
-  it('tam olarak 27 kanal içerir', () => {
-    expect(ALLOWED_INVOKE_CHANNELS.size).toBe(27)
+  //
+  // 27 → 28, 2 Eyl 2026: görsel önizleme için 'read-image-file' eklendi. O da
+  // dosya sistemine dokunuyor ama YENİ bir kapı açmıyor: model kanalının kapı
+  // zincirini, uçuştaki okuma bütçesini ve karar fonksiyonunu aynen paylaşıyor;
+  // yalnız beyaz listesi (IMAGE_FILE_EXTENSIONS) ve tavanı (IMAGE_MAX_BYTES)
+  // kendine ait, yani yüzey tarayıcının çözebildiği görsel biçimleriyle sınırlı.
+  it('tam olarak 28 kanal içerir', () => {
+    expect(ALLOWED_INVOKE_CHANNELS.size).toBe(28)
+  })
+
+  it("read-image-file kanalı whitelist'te", () => {
+    expect(ALLOWED_INVOKE_CHANNELS.has('read-image-file')).toBe(true)
   })
 
   it('read-model-file kanalı whitelist\'te', () => {

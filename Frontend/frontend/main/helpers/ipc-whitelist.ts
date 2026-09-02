@@ -6,6 +6,7 @@ export const ALLOWED_INVOKE_CHANNELS = new Set([
   'read-directory',
   'read-file',
   'read-model-file',
+  'read-image-file',
   'git-status',
   'write-file',
   'file-exists',

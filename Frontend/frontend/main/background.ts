@@ -17,6 +17,7 @@ import {
   taniticiKapsamdaMi,
   isAllowedWorkspaceWriteFile,
   readModelFileGuarded,
+  readImageFileGuarded,
 } from './helpers/file-security'
 import {
   confirmLegacyRoot,
@@ -106,7 +107,7 @@ const handleSecure = (
   // The permitted-channel list is enforced HERE, not only in the preload.
   //
   // Measured (external audit): with the list replaced by one that rejected
-  // every channel, all 27 handlers still registered and `read-model-file` still
+  // every channel, all 27 handlers of the day still registered and `read-model-file` still
   // returned file bytes — the receiving layer consulted the list zero times, so
   // whether a channel was on it made no difference to what the main process
   // would serve. Anything reaching `ipcMain` without going through this app's
@@ -507,6 +508,19 @@ handleSecure('read-model-file', async (_event, filePath: string, workspacePath?:
     // Bounded in number as well as in per-file size; the count and the reason
     // for it are at `MODEL_READ_MAX_IN_FLIGHT`.
     return await readModelFileGuarded(fullPath, workspacePath)
+  } catch { return null }
+})
+
+// Image preview channel. Same gate chain, same in-flight budget as the model
+// read; only the extension whitelist (IMAGE_FILE_EXTENSIONS) and the size cap
+// (IMAGE_MAX_BYTES) differ, and both are parameters of the shared decision path
+// in `file-security`. Every "why" is written once, there.
+handleSecure('read-image-file', async (_event, filePath: string, workspacePath?: string) => {
+  try {
+    if (!workspacePath) return null;
+    const _ws = untrustedWorkspace(workspacePath); if (_ws) return null;
+    const fullPath = path.isAbsolute(filePath) ? filePath : path.join(workspacePath, filePath);
+    return await readImageFileGuarded(fullPath, workspacePath)
   } catch { return null }
 })
 
