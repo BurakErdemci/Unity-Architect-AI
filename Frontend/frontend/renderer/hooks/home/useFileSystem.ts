@@ -181,6 +181,10 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
     setPreviewFile(prev => {
       if (!prev || !yolEtkilendi(prev.path, oldPath)) return prev;
       if (!samePath(prev.path, oldPath) || !newPath) return null;
+      // The new name decides the route again: a preview renamed to a text
+      // extension has no panel to show it, and following it kept the content
+      // area in preview mode over a text path (found by a verification probe).
+      if (routeForFile(newPath) === 'text') return null;
       return { path: newPath, name: newPath.split(/[\\/]/).pop() || newPath };
     });
     // Read through the ref, not the closure. A read that began while this
@@ -192,7 +196,10 @@ export const useFileSystem = (API: string, user: UserData | null, showToast: (ms
     // it is now, not as it was when the operation started.
     const acikYol = openedFilePathRef.current;
     if (acikYol && yolEtkilendi(acikYol, oldPath)) {
-      if (samePath(acikYol, oldPath) && newPath) {
+      // Same rule in the other direction: an editor buffer renamed to a binary
+      // extension would otherwise keep showing text for a path the readers now
+      // route to a preview channel.
+      if (samePath(acikYol, oldPath) && newPath && routeForFile(newPath) === 'text') {
         setOpenedFilePath(newPath);
       } else {
         setOpenedFilePath(null);
