@@ -38,6 +38,9 @@ describe('routeForFile — images', () => {
   it('treats a dotfile as text, not as an image', () => {
     expect(routeForFile('.png')).toBe('text')
     expect(routeForFile('project/.svg')).toBe('text')
+    // The separator class once lost its backslash (bd9c19d): this spelling
+    // routed as 'image' while the slash spelling routed as 'text'.
+    expect(routeForFile('C:\\proj\\Assets\\.png')).toBe('text')
   })
 
   it('only the basename decides — a directory with a dot is not an image', () => {

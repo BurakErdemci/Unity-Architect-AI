@@ -20,7 +20,7 @@ export const BLOCKED_IMAGE_EXTENSIONS: readonly string[] = ['.tga', '.psd', '.ex
 export const extensionOf = (path: string): string => {
   // Only the basename can carry the extension — a directory may contain a dot
   // ("Assets/v1.2/Readme"), and on Windows the separator is '\'.
-  const name = path.split(/[\/]/).pop() ?? '';
+  const name = path.split(/[\\/]/).pop() ?? '';
   const dot = name.lastIndexOf('.');
   // dot === 0 is a dotfile (".gitignore"), not an extension.
   return dot <= 0 ? '' : name.slice(dot).toLowerCase();
