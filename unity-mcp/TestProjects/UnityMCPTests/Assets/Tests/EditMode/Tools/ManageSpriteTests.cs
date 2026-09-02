@@ -1524,5 +1524,217 @@ namespace MCPForUnityTests.Editor.Tools
                     "an omitted image must say why");
         }
 
+        // =====================================================================
+        // add_keyframe_anim
+        //
+        // The action composes output_dir and clip_name into an asset path, adds
+        // components to a scene object and writes two assets, so every case here
+        // asserts the refusal AND that none of that happened.
+        // =====================================================================
+
+        private const string KfDir = TempRoot + "/Keyframes";
+
+        private static JArray TwoKeyframes() => new JArray
+        {
+            new JObject { ["time"] = 0f, ["value"] = new JArray { 0f, 0f, 0f } },
+            new JObject { ["time"] = 1f, ["value"] = new JArray { 1f, 2f, 3f } },
+        };
+
+        private static JObject KeyframeAnim(string target, string clipName, string outputDir,
+                                            JArray keyframes = null, bool? overwrite = null)
+        {
+            var p = new JObject
+            {
+                ["action"] = "add_keyframe_anim",
+                ["target"] = target,
+                ["clip_name"] = clipName,
+                ["output_dir"] = outputDir,
+                ["property"] = "position",
+                ["keyframes"] = keyframes ?? TwoKeyframes(),
+            };
+            if (overwrite.HasValue) p["overwrite"] = overwrite.Value;
+            return Run(p);
+        }
+
+        [TestCase("../outside")]
+        [TestCase("Assets/../outside")]
+        public void AddKeyframeAnim_OutputDirWithTraversal_IsRefusedBeforeCreatingFolders(string outputDir)
+        {
+            var go = new GameObject("SpriteTest_KF_Dir");
+            try
+            {
+                var result = KeyframeAnim("SpriteTest_KF_Dir", "spin", outputDir);
+
+                string stray = Path.Combine(
+                    Directory.GetParent(Application.dataPath).FullName, "outside");
+                bool leaked = Directory.Exists(stray);
+                if (leaked) Directory.Delete(stray, true);
+
+                Assert.IsFalse(result.Value<bool>("success"));
+                Assert.That(ErrorText(result), Does.Contain("output_dir"));
+                Assert.IsFalse(leaked, "nothing may be created outside Assets/");
+                Assert.AreEqual(0, go.GetComponents<Animator>().Length,
+                    "a refused path must not reach the scene object");
+            }
+            finally { Object.DestroyImmediate(go); }
+        }
+
+        [TestCase("../x")]
+        [TestCase("a/b")]
+        [TestCase("a:b")]
+        public void AddKeyframeAnim_ClipNameWithSeparator_IsRefused(string clipName)
+        {
+            var go = new GameObject("SpriteTest_KF_Name");
+            try
+            {
+                var result = KeyframeAnim("SpriteTest_KF_Name", clipName, KfDir);
+
+                Assert.IsFalse(result.Value<bool>("success"));
+                Assert.That(result["diagnostics"].ToString(), Does.Contain("CLIP_BAD_NAME"));
+                Assert.IsFalse(AssetDatabase.IsValidFolder(KfDir),
+                    "the name is checked before the output folder is created");
+                Assert.AreEqual(0, go.GetComponents<Animator>().Length);
+            }
+            finally { Object.DestroyImmediate(go); }
+        }
+
+        [Test]
+        public void AddKeyframeAnim_ExistingClipWithoutOverwrite_IsRefused()
+        {
+            EnsureFolder(KfDir);
+            var sentinel = new AnimationClip { frameRate = 99f };
+            AssetDatabase.CreateAsset(sentinel, $"{KfDir}/spin.anim");
+
+            var go = new GameObject("SpriteTest_KF_Exists");
+            try
+            {
+                var result = KeyframeAnim("SpriteTest_KF_Exists", "spin", KfDir);
+
+                Assert.IsFalse(result.Value<bool>("success"));
+                Assert.That(result["diagnostics"].ToString(), Does.Contain("CLIP_EXISTS"));
+                var after = AssetDatabase.LoadAssetAtPath<AnimationClip>($"{KfDir}/spin.anim");
+                Assert.AreEqual(99f, after.frameRate,
+                    "an unauthorised overwrite must leave the caller's clip untouched");
+                Assert.AreEqual(0, go.GetComponents<Animator>().Length);
+            }
+            finally { Object.DestroyImmediate(go); }
+        }
+
+        [Test]
+        public void AddKeyframeAnim_ExistingClipWithOverwrite_Replaces()
+        {
+            EnsureFolder(KfDir);
+            var sentinel = new AnimationClip { frameRate = 99f };
+            AssetDatabase.CreateAsset(sentinel, $"{KfDir}/spin.anim");
+
+            var go = new GameObject("SpriteTest_KF_Overwrite");
+            try
+            {
+                var result = KeyframeAnim("SpriteTest_KF_Overwrite", "spin", KfDir, overwrite: true);
+
+                Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+                var after = AssetDatabase.LoadAssetAtPath<AnimationClip>($"{KfDir}/spin.anim");
+                Assert.AreNotEqual(99f, after.frameRate,
+                    "an authorised overwrite must write a new clip, not keep the old one");
+                Assert.Greater(AnimationUtility.GetCurveBindings(after).Length, 0);
+            }
+            finally { Object.DestroyImmediate(go); }
+        }
+
+        [Test]
+        public void AddKeyframeAnim_DuplicateTargetNames_AreRefusedBeforeTouchingEither()
+        {
+            var first = new GameObject("SpriteTest_KF_Dup");
+            var second = new GameObject("SpriteTest_KF_Dup");
+            try
+            {
+                var result = KeyframeAnim("SpriteTest_KF_Dup", "spin", KfDir);
+
+                Assert.IsFalse(result.Value<bool>("success"));
+                Assert.That(result["diagnostics"].ToString(), Does.Contain("SCENE_TARGET_AMBIGUOUS"));
+                Assert.AreEqual(0, first.GetComponents<Animator>().Length + second.GetComponents<Animator>().Length,
+                    "with two candidates the tool must not guess which one the caller meant");
+                Assert.IsNull(AssetDatabase.LoadAssetAtPath<AnimationClip>($"{KfDir}/spin.anim"));
+            }
+            finally { Object.DestroyImmediate(first); Object.DestroyImmediate(second); }
+        }
+
+        [Test]
+        public void AddKeyframeAnim_InactiveTarget_IsFound()
+        {
+            var go = new GameObject("SpriteTest_KF_Inactive");
+            go.SetActive(false);
+            try
+            {
+                var result = KeyframeAnim("SpriteTest_KF_Inactive", "spin", KfDir);
+
+                Assert.IsTrue(result.Value<bool>("success"),
+                    "an inactive object is still the object the caller named; result was " +
+                    result.ToString(Newtonsoft.Json.Formatting.None));
+                Assert.AreEqual(1, go.GetComponents<Animator>().Length);
+            }
+            finally { Object.DestroyImmediate(go); }
+        }
+
+        private static IEnumerable<TestCaseData> MalformedKeyframes()
+        {
+            TestCaseData Case(string label, JToken kf) =>
+                new TestCaseData(kf).SetName($"malformed keyframe: {label}");
+
+            // ToObject<float> threw on each of these, which the dispatcher reported as INTERNAL.
+            yield return Case("time is a string", new JObject { ["time"] = "soon", ["value"] = new JArray { 0f, 0f, 0f } });
+            yield return Case("time is negative", new JObject { ["time"] = -1f, ["value"] = new JArray { 0f, 0f, 0f } });
+            yield return Case("value is not finite", new JObject { ["time"] = 0f, ["value"] = new JArray { double.NaN, 0f, 0f } });
+            yield return Case("value has two components", new JObject { ["time"] = 0f, ["value"] = new JArray { 1f, 2f } });
+            // An unknown easing was ignored in silence, so the clip did not ease and said nothing.
+            yield return Case("easing is unknown", new JObject { ["time"] = 0f, ["value"] = new JArray { 0f, 0f, 0f }, ["easing"] = "bouncy" });
+            yield return Case("entry is a number", new JValue(7));
+            yield return Case("entry is a string", new JValue("not_an_object"));
+        }
+
+        [TestCaseSource(nameof(MalformedKeyframes))]
+        public void AddKeyframeAnim_MalformedKeyframe_IsRefusedBeforeSideEffects(JToken keyframe)
+        {
+            var go = new GameObject("SpriteTest_KF_Bad");
+            try
+            {
+                var result = KeyframeAnim("SpriteTest_KF_Bad", "spin", KfDir, new JArray { keyframe });
+
+                Assert.IsFalse(result.Value<bool>("success"));
+                Assert.That(result["diagnostics"].ToString(), Does.Contain("BAD_PARAM"));
+                Assert.IsFalse(AssetDatabase.IsValidFolder(KfDir),
+                    "the keyframes are checked before the output folder is created");
+                Assert.AreEqual(0, go.GetComponents<Animator>().Length);
+                Assert.AreEqual(0, go.GetComponents<CanvasGroup>().Length);
+            }
+            finally { Object.DestroyImmediate(go); }
+        }
+
+        [Test]
+        public void AddKeyframeAnim_HappyPath_WritesClipControllerAndAnimator()
+        {
+            var go = new GameObject("SpriteTest_KF_Ok");
+            try
+            {
+                var result = KeyframeAnim("SpriteTest_KF_Ok", "spin", KfDir);
+
+                Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+
+                var clip = AssetDatabase.LoadAssetAtPath<AnimationClip>($"{KfDir}/spin.anim");
+                Assert.IsNotNull(clip, "the clip should end up on disk");
+                Assert.Greater(AnimationUtility.GetCurveBindings(clip).Length, 0);
+
+                var controller = AssetDatabase.LoadAssetAtPath<AnimatorController>(
+                    $"{KfDir}/SpriteTest_KF_Ok_Controller.controller");
+                Assert.IsNotNull(controller, "the controller should end up on disk");
+                Assert.That(controller.layers[0].stateMachine.states.Select(s => s.state.name),
+                    Contains.Item("spin"));
+
+                Assert.AreEqual(1, go.GetComponents<Animator>().Length);
+                Assert.IsTrue(go.GetComponent<Animator>().runtimeAnimatorController == controller);
+            }
+            finally { Object.DestroyImmediate(go); }
+        }
+
     }
 }
