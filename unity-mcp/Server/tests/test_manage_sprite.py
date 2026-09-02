@@ -6,182 +6,124 @@ builders is covered by the EditMode tests in TestProjects, because it only means
 anything against a real AssetDatabase.
 """
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+import inspect
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
-from services.tools.manage_sprite import VALID_ACTIONS
+import pytest
+
+from services.tools.manage_sprite import VALID_ACTIONS, manage_sprite
 
 
-class TestActionList:
-    def test_actions_are_the_documented_six(self):
-        assert set(VALID_ACTIONS) == {
-            "get_info", "slice_sheet", "setup_clips",
-            "setup_controller", "full_setup", "add_keyframe_anim",
-        }
+@pytest.fixture
+def mock_unity(monkeypatch):
+    captured = {}
 
-    def test_no_duplicate_actions(self):
-        assert len(VALID_ACTIONS) == len(set(VALID_ACTIONS))
+    async def fake_send(send_fn, unity_instance, tool_name, params):
+        captured["params"] = params
+        captured["calls"] = captured.get("calls", 0) + 1
+        return {"success": True}
+
+    monkeypatch.setattr(
+        "services.tools.manage_sprite.get_unity_instance_from_context",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr("services.tools.manage_sprite.send_with_unity_instance", fake_send)
+    return captured
+
+
+def call(**kwargs):
+    return asyncio.run(manage_sprite(SimpleNamespace(), **kwargs))
+
+
+def test_actions_are_the_documented_six():
+    assert set(VALID_ACTIONS) == {
+        "get_info", "slice_sheet", "setup_clips",
+        "setup_controller", "full_setup", "add_keyframe_anim",
+    }
 
 
 class TestManageSpriteValidation:
     """Every case here must fail before a Unity round-trip is attempted."""
 
-    def _run(self, coro):
-        return asyncio.run(coro)
-
-    def _ctx(self):
-        ctx = MagicMock()
-        ctx.get_state = AsyncMock(return_value=None)
-        return ctx
-
-    def _call(self, **kwargs):
-        from services.tools.manage_sprite import manage_sprite
-        return self._run(manage_sprite(self._ctx(), **kwargs))
-
     def test_unknown_action_returns_error(self):
-        result = self._call(action="nonexistent")
+        result = call(action="nonexistent")
         assert result["success"] is False
         # The message has to name the alternatives, or the caller has nowhere to go.
         assert "get_info" in result["message"]
 
-    def test_get_info_requires_path(self):
-        result = self._call(action="get_info", path=None)
+    @pytest.mark.parametrize("action", ["get_info", "slice_sheet", "setup_clips", "full_setup"])
+    def test_path_is_required(self, action):
+        result = call(action=action, path=None)
         assert result["success"] is False
         assert "path" in result["message"]
 
-    def test_slice_sheet_requires_path(self):
-        result = self._call(action="slice_sheet", path=None)
-        assert result["success"] is False
-        assert "path" in result["message"]
-
-    def test_slice_sheet_requires_cols_or_frame_width(self):
-        result = self._call(action="slice_sheet", path="Assets/hero.png")
-        assert result["success"] is False
-        assert "cols" in result["message"]
-
-    def test_slice_sheet_accepts_frame_width_instead_of_cols(self):
-        # frame_width is the documented alternative to cols; rejecting it would make
-        # the error message above a lie.
-        with patch("services.tools.manage_sprite.get_unity_instance_from_context",
-                   new=AsyncMock(return_value=None)), \
-             patch("services.tools.manage_sprite.send_with_unity_instance",
-                   new=AsyncMock(return_value={"success": True})) as sent:
-            result = self._call(action="slice_sheet", path="Assets/hero.png", frame_width=32)
-
-        assert result["success"] is True
-        assert sent.await_count == 1
-
-    def test_setup_clips_requires_path(self):
-        result = self._call(action="setup_clips", path=None)
-        assert result["success"] is False
-        assert "path" in result["message"]
-
-    def test_clip_name_with_a_separator_is_refused(self):
-        result = self._call(action="setup_clips", path="Assets/hero.png",
-                            clips=[{"name": "nested/walk"}])
-        assert result["success"] is False
-        assert "separator" in result["message"]
-
-    def test_non_string_clip_name_is_refused_not_raised(self):
-        # clips is typed list[dict[str, Any]], so a JSON number reaches the name check.
-        result = self._call(action="setup_clips", path="Assets/hero.png", clips=[{"name": 7}])
-        assert result["success"] is False
-        assert "must be a string" in result["message"]
-
-    def test_add_keyframe_anim_requires_target(self):
-        result = self._call(action="add_keyframe_anim", target=None, property="position",
-                            keyframes=[{"time": 0, "value": [0, 0, 0]}])
-        assert result["success"] is False
-        assert "target" in result["message"].lower()
-
-    def test_add_keyframe_anim_requires_property(self):
-        result = self._call(action="add_keyframe_anim", target="MyObject", property=None,
-                            keyframes=[{"time": 0, "value": [0, 0, 0]}])
-        assert result["success"] is False
-        assert "property" in result["message"].lower()
-
-    def test_add_keyframe_anim_requires_keyframes(self):
-        result = self._call(action="add_keyframe_anim", target="MyObject", property="position",
-                            keyframes=None)
-        assert result["success"] is False
-        assert "keyframes" in result["message"].lower()
-
-    def test_setup_controller_requires_controller_path(self):
-        result = self._call(action="setup_controller", clips=[{"name": "walk", "path": "a.anim"}])
-        assert result["success"] is False
-        assert "controller_path" in result["message"]
-
-    def test_full_setup_requires_path(self):
-        result = self._call(action="full_setup", path=None)
-        assert result["success"] is False
-        assert "path" in result["message"]
-
-    def test_full_setup_requires_cols_or_frame_width(self):
-        result = self._call(action="full_setup", path="Assets/hero.png")
+    @pytest.mark.parametrize("action", ["slice_sheet", "full_setup"])
+    def test_cols_or_frame_width_is_required(self, action):
+        result = call(action=action, path="Assets/hero.png")
         assert result["success"] is False
         # Asserting on success alone would pass for the wrong reason: with the check
         # removed the call reaches an absent Unity and fails there instead.
         assert "cols" in result["message"]
 
+    def test_slice_sheet_accepts_frame_width_instead_of_cols(self, mock_unity):
+        # frame_width is the documented alternative to cols; rejecting it would make
+        # the error message above a lie.
+        result = call(action="slice_sheet", path="Assets/hero.png", frame_width=32)
+        assert result["success"] is True
+        assert mock_unity["calls"] == 1
+
+    def test_explicit_zero_cols_is_forwarded_not_reported_missing(self, mock_unity):
+        # `not cols` read an explicit 0 as an omitted parameter and told the caller to
+        # supply what they had supplied; the C# side is the one that names a bad value.
+        call(action="slice_sheet", path="Assets/hero.png", cols=0)
+        assert mock_unity["calls"] == 1
+        assert mock_unity["params"]["cols"] == 0
+
+    def test_setup_controller_requires_controller_path(self):
+        result = call(action="setup_controller", clips=[{"name": "walk", "path": "a.anim"}])
+        assert result["success"] is False
+        assert "controller_path" in result["message"]
+
+    @pytest.mark.parametrize("missing", ["target", "property", "keyframes"])
+    def test_add_keyframe_anim_names_the_missing_argument(self, missing):
+        args = {"target": "Hero", "property": "position",
+                "keyframes": [{"time": 0, "value": [0, 0, 0]}]}
+        args[missing] = None
+        result = call(action="add_keyframe_anim", **args)
+        assert result["success"] is False
+        assert missing in result["message"]
+
 
 class TestParameterForwarding:
-    def _ctx(self):
-        ctx = MagicMock()
-        ctx.get_state = AsyncMock(return_value=None)
-        return ctx
-
-    def test_only_supplied_parameters_are_forwarded(self):
+    def test_only_supplied_parameters_are_forwarded(self, mock_unity):
         """Unset optional arguments must not reach Unity as nulls.
 
         C# reads a forwarded null and a missing key the same way, so this is about
         keeping the wire readable rather than about a broken call.
         """
-        from services.tools.manage_sprite import manage_sprite
+        call(action="slice_sheet", path="Assets/hero.png", cols=4)
+        assert mock_unity["params"] == {"action": "slice_sheet", "path": "Assets/hero.png", "cols": 4}
 
-        with patch("services.tools.manage_sprite.get_unity_instance_from_context",
-                   new=AsyncMock(return_value=None)), \
-             patch("services.tools.manage_sprite.send_with_unity_instance",
-                   new=AsyncMock(return_value={"success": True})) as sent:
-            asyncio.run(manage_sprite(self._ctx(), action="slice_sheet",
-                                      path="Assets/hero.png", cols=4))
-
-        params = sent.await_args.args[3]
-        assert params == {"action": "slice_sheet", "path": "Assets/hero.png", "cols": 4}
-
-    def test_paging_arguments_reach_unity_only_when_asked_for(self):
+    def test_paging_arguments_reach_unity_only_when_asked_for(self, mock_unity):
         """page_size and cursor are get_info's, and absent means "use the default"."""
-        from services.tools.manage_sprite import manage_sprite
+        call(action="get_info", path="Assets/atlas.png")
+        plain = mock_unity["params"]
 
-        with patch("services.tools.manage_sprite.get_unity_instance_from_context",
-                   new=AsyncMock(return_value=None)), \
-             patch("services.tools.manage_sprite.send_with_unity_instance",
-                   new=AsyncMock(return_value={"success": True})) as sent:
-            asyncio.run(manage_sprite(self._ctx(), action="get_info",
-                                      path="Assets/atlas.png"))
-            plain = sent.await_args.args[3]
-
-            asyncio.run(manage_sprite(self._ctx(), action="get_info",
-                                      path="Assets/atlas.png",
-                                      page_size=100, cursor=200))
-            paged = sent.await_args.args[3]
+        call(action="get_info", path="Assets/atlas.png", page_size=100, cursor=200)
+        paged = mock_unity["params"]
 
         assert plain == {"action": "get_info", "path": "Assets/atlas.png"}
         assert paged["page_size"] == 100
         assert paged["cursor"] == 200
 
-    def test_every_optional_argument_has_a_forwarding_branch(self):
+    def test_every_optional_argument_has_a_forwarding_branch(self, mock_unity):
         """A parameter accepted at the surface but dropped before the bridge is silent.
 
-        The forwarder rebuilds the request one `if` per parameter, so a missing branch
-        accepts the value and ignores it with no error anywhere.
-
         Limitation: this drives every parameter through one action, so it assumes the
-        forwarder stays action-agnostic. Scoping any branch to its own action means
+        forwarder stays action-agnostic. Scoping any entry to its own action means
         scoping this test with it.
         """
-        import inspect
-
-        from services.tools.manage_sprite import manage_sprite
-
         fn = getattr(manage_sprite, "fn", manage_sprite)
         # A value each parameter's annotation accepts. Booleans must be True: the
         # forwarder deliberately omits a False flag, so False would look like a
@@ -205,14 +147,9 @@ class TestParameterForwarding:
             "narrowing the guard"
         )
 
-        with patch("services.tools.manage_sprite.get_unity_instance_from_context",
-                   new=AsyncMock(return_value=None)), \
-             patch("services.tools.manage_sprite.send_with_unity_instance",
-                   new=AsyncMock(return_value={"success": True})) as sent:
-            asyncio.run(manage_sprite(self._ctx(), action="full_setup",
-                                      **{k: sample[k] for k in optional}))
+        call(action="full_setup", **{k: sample[k] for k in optional})
 
-        forwarded = sent.await_args.args[3]
+        forwarded = mock_unity["params"]
         dropped = [n for n in optional if n not in forwarded]
         assert not dropped, f"accepted at the surface but never sent to Unity: {dropped}"
         # The value too, not only the key. An audit reproduced a branch that kept the key

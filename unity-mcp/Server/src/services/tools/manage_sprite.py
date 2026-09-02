@@ -3,7 +3,7 @@
 Automates: sprite sheet slicing, AnimationClip creation from sliced frames,
 and AnimatorController generation.
 """
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, get_args
 
 from fastmcp import Context
 from mcp.types import ToolAnnotations
@@ -13,14 +13,11 @@ from services.tools import get_unity_instance_from_context
 from transport.unity_transport import send_with_unity_instance
 from transport.legacy.unity_connection import async_send_command_with_retry
 
-VALID_ACTIONS = [
-    "get_info",
-    "slice_sheet",
-    "setup_clips",
-    "setup_controller",
-    "full_setup",
-    "add_keyframe_anim",
+SpriteAction = Literal[
+    "get_info", "slice_sheet", "setup_clips", "setup_controller", "full_setup", "add_keyframe_anim",
 ]
+
+VALID_ACTIONS: list[str] = list(get_args(SpriteAction))
 
 
 @mcp_for_unity_tool(
@@ -44,11 +41,7 @@ VALID_ACTIONS = [
 )
 async def manage_sprite(
     ctx: Context,
-    action: Annotated[
-        Literal["get_info", "slice_sheet", "setup_clips", "setup_controller", "full_setup",
-                "add_keyframe_anim"],
-        "Action to perform.",
-    ],
+    action: Annotated[SpriteAction, "Action to perform."],
     path: Annotated[
         str | None,
         "Sprite texture asset path (e.g. 'Assets/Sprites/hero_walk.png'). Required for get_info, slice_sheet, setup_clips, full_setup.",
@@ -100,6 +93,21 @@ async def manage_sprite(
         str | None,
         "Existing GameObject name to attach Animator to.",
     ] = None,
+    # The numbers below are documentation, not enforcement: SpriteParams and
+    # SpriteImportSetup.GetInfo are what actually refuse an out-of-range page_size, and
+    # this text is what the generated reference publishes to callers. Two copies, so
+    # changing the C# bounds means changing this line in the same commit.
+    page_size: Annotated[
+        int | None,
+        "get_info: how many entries of the 'slices' list to return (1-4096, default 512). "
+        "A sheet sliced by hand can hold more slices than one response should carry.",
+    ] = None,
+    cursor: Annotated[
+        int | None,
+        "get_info: index to start the 'slices' page at. Pass back the 'next_cursor' from "
+        "the previous response; absent next_cursor means the list is finished. The image "
+        "is returned only on the first page.",
+    ] = None,
     target: Annotated[
         str | None,
         "GameObject name or hierarchy path for add_keyframe_anim.",
@@ -120,21 +128,6 @@ async def manage_sprite(
         "easing: 'linear' | 'ease_in' | 'ease_out' | 'ease_in_out'.",
     ] = None,
     loop: Annotated[bool | None, "Loop the animation (default: auto-detect from name)."] = None,
-    # The numbers below are documentation, not enforcement: SpriteParams and
-    # SpriteImportSetup.GetInfo are what actually refuse an out-of-range page_size, and
-    # this text is what the generated reference publishes to callers. Two copies, so
-    # changing the C# bounds means changing this line in the same commit.
-    page_size: Annotated[
-        int | None,
-        "get_info: how many entries of the 'slices' list to return (1-4096, default 512). "
-        "A sheet sliced by hand can hold more slices than one response should carry.",
-    ] = None,
-    cursor: Annotated[
-        int | None,
-        "get_info: index to start the 'slices' page at. Pass back the 'next_cursor' from "
-        "the previous response; absent next_cursor means the list is finished. The image "
-        "is returned only on the first page.",
-    ] = None,
 ) -> dict[str, Any]:
     """2D sprite animation tool."""
 
@@ -150,26 +143,9 @@ async def manage_sprite(
     if action_lower in ("get_info", "slice_sheet", "setup_clips", "full_setup") and not path:
         return {"success": False, "message": f"'path' is required for action '{action}'."}
 
-    if action_lower in ("slice_sheet", "full_setup") and not cols and not frame_width:
+    if action_lower in ("slice_sheet", "full_setup") and cols is None and frame_width is None:
         return {"success": False, "message": f"'cols' or 'frame_width' is required for '{action}'. "
                 "Use get_info first to retrieve image_base64, analyze the grid visually, then call full_setup with cols/rows."}
-
-    # The Unity side is the authority here - it composes the asset path and refuses the
-    # name again. Checking it up front turns a round-trip into an immediate answer, and a
-    # separator in a clip name is wrong under every configuration.
-    for clip in clips or []:
-        name = clip.get("name") if isinstance(clip, dict) else None
-        if name is None:
-            continue
-        # `clips` is typed as list[dict[str, Any]], so a JSON number reaches this check.
-        # Testing membership on one raises TypeError before the tool can answer at all.
-        if not isinstance(name, str):
-            return {"success": False,
-                    "message": f"Clip name must be a string, got {type(name).__name__}."}
-        if "/" in name or "\\" in name:
-            return {"success": False,
-                    "message": f"Clip name '{name}' cannot contain a path separator; "
-                               "use 'output_dir' to choose where clips are written."}
 
     if action_lower == "setup_controller" and not controller_path:
         return {"success": False, "message": "'controller_path' is required for setup_controller (e.g. 'Assets/Animators/Hero.controller')."}
@@ -194,9 +170,9 @@ async def manage_sprite(
         "animation_name": animation_name, "output_dir": output_dir,
         "controller_path": controller_path, "page_size": page_size,
         "cursor": cursor, "scene_target": scene_target,
+        "overwrite": overwrite or None, "add_to_scene": add_to_scene or None,
         "target": target, "clip_name": clip_name, "property": property,
         "keyframes": keyframes, "loop": loop,
-        "overwrite": overwrite or None, "add_to_scene": add_to_scene or None,
     }
 
     params: dict[str, Any] = {"action": action_lower}

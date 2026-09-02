@@ -25,11 +25,11 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
         {
             string targetName = @params["target"]?.ToString();
             if (string.IsNullOrEmpty(targetName))
-                return new ErrorResponse("'target' is required (GameObject name or hierarchy path).");
+                return diagnostics.Fail("BAD_PARAM", "'target' is required (GameObject name or hierarchy path).");
 
             var go = FindGameObject(targetName);
             if (go == null)
-                return new ErrorResponse($"GameObject '{targetName}' not found in scene.");
+                return diagnostics.Fail("SCENE_TARGET_NOT_FOUND", $"GameObject '{targetName}' not found in scene.");
 
             string clipName  = @params["clip_name"]?.ToString() ?? "NewAnimation";
             string outputDir = @params["output_dir"]?.ToString() ?? "Assets/Animations";
@@ -42,21 +42,21 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
 
             var keyframesToken = @params["keyframes"] as JArray;
             if (keyframesToken == null || keyframesToken.Count == 0)
-                return new ErrorResponse("'keyframes' array is required.");
+                return diagnostics.Fail("BAD_PARAM", "'keyframes' array is required.");
 
             var clip = new AnimationClip { name = clipName };
 
             // Property'ye göre curve oluştur
             bool ok = BuildCurves(clip, property, keyframesToken, go, diagnostics);
-            if (!ok) return new { success = false, diagnostics = diagnostics.Build() };
+            if (!ok) return diagnostics.Fail();
 
             var settings = AnimationUtility.GetAnimationClipSettings(clip);
             settings.loopTime = loop;
             AnimationUtility.SetAnimationClipSettings(clip, settings);
 
+            // CreateAsset replaces an existing asset itself; deleting first left nothing at
+            // the path when the replacement failed to be written.
             string clipPath = $"{outputDir}/{clipName}.anim";
-            if (AssetDatabase.LoadAssetAtPath<AnimationClip>(clipPath) != null)
-                AssetDatabase.DeleteAsset(clipPath);
             AssetDatabase.CreateAsset(clip, clipPath);
 
             // Animator controller oluştur / güncelle
@@ -135,9 +135,7 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                     diagnostics.AddError(
                         "PROPERTY_NOT_FOUND",
                         $"Unknown property '{property}'. Valid: position, rotation, scale, alpha, color.",
-                        null,
-                        new[] { "Use one of: position, rotation, scale, alpha, color" }
-                    );
+                        "Use one of: position, rotation, scale, alpha, color");
                     return false;
             }
         }

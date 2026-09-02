@@ -1,5 +1,6 @@
 using System;
 using Newtonsoft.Json.Linq;
+using MCPForUnity.Editor.Helpers;
 
 namespace MCPForUnity.Editor.Tools.Sprite2D
 {
@@ -12,6 +13,30 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
     /// </summary>
     internal static class SpriteParams
     {
+        internal static bool TryReadAssetPath(JObject @params, string key, out string path, out string error)
+        {
+            error = null;
+            path = @params[key]?.ToString();
+            if (string.IsNullOrEmpty(path))
+            {
+                error = $"'{key}' is required.";
+                return false;
+            }
+
+            path = AssetPathUtility.SanitizeAssetPath(path);
+            if (path == null)
+            {
+                error = $"'{key}' must stay under Assets/ and cannot contain '..'.";
+                return false;
+            }
+            if (path != "Assets" && !AssetPathUtility.IsValidAssetPath(path))
+            {
+                error = $"'{key}' contains a character that is not allowed in an asset path.";
+                return false;
+            }
+            return true;
+        }
+
         /// <summary>
         /// Reads an optional whole number. Returns false with a caller-facing reason when
         /// the value is present but is not a whole number an int can hold.
@@ -20,18 +45,15 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                                                 out int value, out string error)
         {
             value = fallback;
-            error = null;
-
-            JToken token = @params?[key];
-            // An explicit JSON null arrives as a JValue, not a C# null; it means "unset".
-            if (token == null || token.Type == JTokenType.Null)
-                return true;
-
-            if (token.Type != JTokenType.Integer)
+            if (!ParamCoercion.ValidateIntegerField(@params, key, out error))
             {
-                error = $"'{key}' must be a whole number; got {token.Type.ToString().ToLowerInvariant()}.";
+                error = $"'{key}' {error}.";
                 return false;
             }
+
+            JToken token = @params[key];
+            if (token == null || token.Type == JTokenType.Null)
+                return true;
 
             long raw;
             try
@@ -61,9 +83,7 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
         /// <summary>
         /// Reads an optional flag. Needed for `loop`, which hides inside the untyped `clips`
         /// array where nothing above C# validates it - measured 2026-08-21: ToObject&lt;bool?&gt;
-        /// threw on `loop: "maybe"` and silently accepted `loop: 2`. Top-level flags arrive
-        /// already coerced by FastMCP, but this layer owns the conversion, so it refuses here
-        /// rather than trusting the layer above.
+        /// threw on `loop: "maybe"` and silently accepted `loop: 2`.
         /// </summary>
         internal static bool TryReadBool(JObject @params, string key, bool fallback,
                                          out bool value, out string error)
@@ -71,17 +91,18 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
             value = fallback;
             error = null;
 
-            JToken token = @params?[key];
+            JToken token = @params[key];
             if (token == null || token.Type == JTokenType.Null)
                 return true;
 
-            if (token.Type != JTokenType.Boolean)
+            bool? parsed = ParamCoercion.CoerceBoolNullable(token);
+            if (parsed == null)
             {
                 error = $"'{key}' must be true or false; got {token.Type.ToString().ToLowerInvariant()}.";
                 return false;
             }
 
-            value = token.Value<bool>();
+            value = parsed.Value;
             return true;
         }
 
@@ -94,17 +115,15 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
                                                 out float value, out string error)
         {
             value = fallback;
-            error = null;
-
-            JToken token = @params?[key];
-            if (token == null || token.Type == JTokenType.Null)
-                return true;
-
-            if (token.Type != JTokenType.Integer && token.Type != JTokenType.Float)
+            if (!ParamCoercion.ValidateNumericField(@params, key, out error))
             {
-                error = $"'{key}' must be a number; got {token.Type.ToString().ToLowerInvariant()}.";
+                error = $"'{key}' {error}.";
                 return false;
             }
+
+            JToken token = @params[key];
+            if (token == null || token.Type == JTokenType.Null)
+                return true;
 
             double raw;
             try

@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System.Linq;
 
 namespace MCPForUnity.Editor.Tools.Sprite2D
 {
@@ -11,14 +10,6 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
         Combat,       // attack, slash, combo and the like: a trigger state.
         Object,       // open, close, activate: a single state.
         Generic,
-    }
-
-    internal enum ControllerComplexity
-    {
-        Single,       // a lone animation, or an object/generic name: one plain state.
-        BlendTree1D,  // locomotion: a 1D blend tree driven by a Speed float.
-        StateMachine, // combat present: trigger states.
-        Full,         // locomotion + combat: a blend tree plus trigger states.
     }
 
     internal class SpriteAnimEntry
@@ -40,17 +31,6 @@ namespace MCPForUnity.Editor.Tools.Sprite2D
             Categorize(clipName, entry);
             entry.Loop = AutoDetectLoop(entry.Category);
             return entry;
-        }
-
-        public static ControllerComplexity DecideComplexity(IEnumerable<SpriteAnimEntry> entries)
-        {
-            bool hasLocomotion = entries.Any(e => e.Category == SpriteAnimCategory.Locomotion);
-            bool hasCombat     = entries.Any(e => e.Category == SpriteAnimCategory.Combat);
-
-            if (hasLocomotion && hasCombat) return ControllerComplexity.Full;
-            if (hasLocomotion)              return ControllerComplexity.BlendTree1D;
-            if (hasCombat)                 return ControllerComplexity.StateMachine;
-            return ControllerComplexity.Single;
         }
 
         // ── Private ──────────────────────────────────────────────────────────
