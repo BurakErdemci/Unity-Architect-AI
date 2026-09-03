@@ -9,50 +9,76 @@
   moment they download. (This comment is invisible on GitHub.)
 -->
 
-## Gamachine v3.0.3
+## Gamachine v3.1.0
 
-Compact now actually shrinks the context.
+Offline live dictation, a 3D model preview, and bundled video tools.
 
-> 🍎 **macOS (Apple Silicon):** `Gamachine-3.0.3-arm64.dmg`
-> · 🪟 **Windows:** `Gamachine-Setup-3.0.3.exe`
+> 🍎 **macOS (Apple Silicon):** `Gamachine-3.1.0-arm64.dmg`
+> · 🪟 **Windows:** `Gamachine-Setup-3.1.0.exe`
 
-### 🧠 Compact was summarising, not shrinking
+### 🎙️ Dictation: speak into the chat box, and it never leaves the machine
 
-Pressing Compact collapsed the conversation into a summary and left the model's
-context exactly where it was. You could compact, then ask the CLI how much
-context it was holding, and get the same number back — **773k of 1M tokens,
-unchanged.** That was measured against a running session, not inferred from code.
+A microphone button in the chat box transcribes live, on-device, in Turkish or English, with no audio ever uploaded.
 
-Two faults, and the first one hid the second.
+### 🛡️ Hardened before release
 
-**The session was being revived.** Compact closes the live CLI session, which
-used to be enough on its own. Since 3.0.1 the app also remembers each chat's CLI
-session id so it can pick up where you left off — and nothing dropped that id
-when you compacted. The next message resumed the old session, the CLI reloaded
-its full transcript from disk, and the session that had just been closed came
-back exactly as it was. On a resumed session the new summary is deliberately not
-injected either, so the old context returned *and* the fresh summary never
-arrived.
+An external audit found 32 issues in the dictation code; 29 were fixed, each with a regression test.
 
-**Short chats skipped the reset.** Compact returned early when a chat had six
-messages or fewer — the right call for summarising, the wrong one for resetting.
-After a single compact the stored chat *is* short while the CLI session is still
-full, so the next press reported "chat is already short" and reset nothing. That
-is the state most people would actually run into.
+### 🧊 3D model files open in a preview instead of the code editor
 
-Compact now drops the session id on both paths, so even a short chat gets a clean
-CLI session. When there is nothing to summarise it says so and tells you the
-context was reset anyway — and that message now comes from the dictionary, so an
-English interface no longer shows a Turkish notification here.
+FBX, glTF/GLB, Collada, OBJ, STL and PLY files now open in an orbiting, animatable preview instead of the text editor.
 
-### 🪟 The Windows installer name is fixed at the source
+### 🖼️ Images open in the content area too
 
-For three releases the installer shipped as `Gamachine.Setup.X.Y.Z.exe` while the
-update feed asked for `Gamachine-Setup-X.Y.Z.exe`, and the difference was patched
-by hand each time. The dots come from the installer framework's default naming
-template rather than the product name, so renaming the product never helped. The
-template is now pinned, and the build and the update feed agree without anyone
-having to remember.
+Textures and sprites open as pictures in the same panel the 3D preview uses, with a pixel-sharp actual-size mode.
+
+### 🎬 Video links work without installing anything first
+
+The tools that fetch and read video now ship with the app, YouTube Shorts links no longer fail, and a stalled or blocked download says why.
+
+### 🗂️ The model list comes from your own account
+
+The hand-maintained model list is gone; each provider is now asked what your account can actually reach.
+
+### 📊 A usage and context panel, and a gauge that is always there
+
+The context gauge is always on screen now, backed by a panel with real token counts and cost, opened without touching the conversation.
+
+### ☑️ Questions from the assistant can take more than one answer
+
+Multi-select, a free-text answer, and a skip option are all available now, and a fresh question no longer inherits the last one's selection.
+
+### ⏹️ A run that stops early says why
+
+A stalled run now stops on repeated tool calls rather than a fixed step count, and says which tool repeated; the step ceiling is a 300-step last resort.
+
+### ⚠️ Errors say what actually went wrong
+
+Provider outages, rate limits, and tool-support gaps are each named instead of collapsed into one generic error, and long silences report who the app is waiting on.
+
+### 🔧 Gemini models can use tools
+
+A long-standing bug that broke tool calls on Gemini API models is fixed.
+
+### 📜 The chat stays where you left it
+
+Scrolling up no longer gets dragged back to the bottom on new output, except for cards that need your answer.
+
+### 🔗 The content area follows the file
+
+Renaming, moving, or deleting a file now keeps the preview or editor in sync with it instead of pointing at a stale path.
+
+### 🐳 The Docker development container actually runs
+
+Docker mode is fixed after never having worked, and now fails fast with a clear message instead of silently.
+
+### ⚖️ The project is now plain MIT
+
+The Commons Clause condition is removed; the project is MIT-licensed and open source in the OSI sense.
+
+### 🧹 Under the hood
+
+The bundled Unity sprite tool was updated, and a long series of audited fixes on file reading, approval gates, and the Docker path each shipped with a regression test.
 
 ---
 

@@ -9,6 +9,217 @@ Bu dosya kullanıcıya görünen değişiklikleri taşır. Tam geçmiş için `g
 
 ## Unreleased
 
+## v3.1.0 — 3 September 2026
+
+### Dictation: speak into the chat box, and it never leaves the machine
+
+There is a microphone button in the chat box now. Press it and talk, and the
+words appear in the box while you are still speaking; stop the mic, read what
+came out, fix anything that is wrong and press Enter. Nothing is sent for you.
+The language toggle starts on whatever language the app is set to, there is a
+running timer, and recording stops on its own after 60 seconds.
+
+Recognition happens here, on your computer. Turkish and English speech models
+ship inside the installer, so dictation works with the network unplugged and no
+audio is uploaded anywhere. The price is download size: the two models add
+roughly 176 MB to the installer.
+
+The first version of this pasted the whole sentence in at once when you stopped.
+Speaking into the box live came later the same day, after using it — the text
+should arrive as you talk, the way the Claude desktop app does it.
+
+### Hardened before release
+
+An external audit of the dictation code found 32 issues; 29 were fixed. Most
+were races and cleanup gaps: the recording could lose its last words if a
+request failed while stopping, a stray final result could land after an error
+had already been shown, and concurrent audio chunks could exceed the session's
+size budget. Each of these now has a regression test.
+
+### 3D model files open in a preview instead of the code editor
+
+Clicking an `.fbx` in the file tree used to hand it to the text editor, which
+had nothing to say about it. It now opens in a preview panel in the same content
+area: orbit the camera with the mouse, and if the file carries an animation, play
+it from a transport bar with a timeline you can scrub and speeds of 0.25x, 0.5x,
+1x and 2x.
+
+Six more file types (.glb, .gltf, .dae, .obj, .stl, .ply) read alongside FBX. A
+`.gltf` that keeps its data in a sibling `.bin` or texture file cannot be
+drawn here and says so rather than failing as a broken download; `.blend` and
+`.3ds` are refused before the file is even read, because nothing in this app can
+open them.
+
+Animation-only files get a body to look at. An FBX exported "without skin" is
+bones and clips and not a single visible surface — measured on a bought clip
+pack: 0 meshes, 65 bones, one 0.97-second clip — so the panel used to say there
+was nothing in the file. It now builds a mannequin out of the file's own bones
+and animates that, and it works whether the rig was authored in centimetres or
+metres. A rig with an unreasonable number of joints is refused with a message
+saying so instead of freezing the window: building the figure takes 104 ms at
+1,000 joints, 1,171 ms at 20,000 and 3,531 ms at 60,000, and the file carrying
+20,000 of them is only 682 KB, so no size limit was ever going to catch it.
+
+Every way a preview can fail now has its own sentence — over the 64 MiB size
+limit, a type nothing here can read, a half-complete glTF, a file that parses to
+nothing visible — where previously all of them read as "this model could not be
+opened". If the graphics context is lost, the panel says it is reconnecting
+rather than going quietly dark.
+
+### Images open in the content area too
+
+Clicking a texture or a sprite in the file tree shows the picture, in the same
+slot the 3D preview uses. Actual-size mode draws pixel art sharp instead of
+letting the browser smooth a 32x32 icon into a blur. Images up to 32 MiB open;
+`.tga`, `.psd`, `.exr` and `.tif` are not among the types that can be shown.
+
+### Video links work without installing anything first
+
+Pasting a YouTube link into the chat quietly did nothing on most machines: the
+two programs that fetch and read video were expected to be installed and on the
+system PATH, and they usually were not. Both now ship with the app.
+
+Two other things about that path were wrong. A YouTube Shorts link failed
+entirely because the sound track was being downloaded and then thrown away —
+nothing here listens to audio, frames come from the picture and the text comes
+from the subtitles — and when YouTube refused the sound, the whole video was
+lost. Dropping it fixed the failing links and halves what is downloaded.
+
+And when a download does fail, the message now says which failure it was. A
+refusal, a private or removed video and a region block each say so, instead of
+one sentence blaming "a dead link, geo-block or firewall" for whichever of the
+three it was. Downloads also have a size and time budget now, and pressing Stop
+actually stops the download rather than leaving it running in the background.
+
+### The model list comes from your own account
+
+The list of cloud models was forty lines maintained by hand, and it had drifted:
+it was still offering Groq's `llama-3.3-70b-versatile`, which Groq shut down on
+16 Aug 2026. That list is deleted.
+
+Each provider is now asked, with your key, what your account can actually reach,
+and that answer is the list. A second, public catalogue supplies the description
+beside each name — what it is called, how big its context is, what it costs — and
+that one needs no key at all, so the labels are there before you have configured
+anything (measured 30 Aug 2026: 396 models, no credentials). A provider you have
+no key for does not disappear from the picker; its models are shown as
+unconfirmed, because "this model exists" and "your account has it" are two
+different claims.
+
+The suggestion chips in the settings dialog were a second copy of the same
+hand-written list, found in a running build still recommending the dead Groq
+model. They come from the live list now.
+
+The subscription CLIs — Claude Code, Kimi, agy — keep hand-written lists: none of
+them has a command that lists models, checked by running them.
+
+### A usage and context panel, and a gauge that is always there
+
+The context gauge only appeared after a turn had finished, which is the opposite
+of what an indicator is for. It is now on screen whenever a conversation is open,
+and says "no data yet" until there is data — an empty ring reads as zero percent,
+and those are different claims. Beside the estimate sits the one number that is
+actually measured: the real tokens this session has spent, and the cost when the
+provider reported one. A path that reports nothing shows a dash rather than a
+zero.
+
+Usage and context reports used to be readable only by typing `/usage` or
+`/context` as a chat message, which left a question and an answer in the history
+every time you looked, and could not be done at all while a turn was running.
+There is a button beside the gauge now; the report opens in a panel and nothing
+is written into the conversation. When the real context figure arrives the gauge
+stops estimating and drops the "~".
+
+### Questions from the assistant can take more than one answer
+
+When the assistant asks you a question with a list of options, you can now pick
+several, type your own answer, or skip the question. Previously it was one option
+or nothing — and the tool that asks these questions deliberately leaves "None" and
+"Other" out of its options, on the understanding that a skip button and a text box
+exist. They did not.
+
+The card also no longer carries an answer over from the previous question. Two
+questions in a row would inherit the first one's selection, with Send already
+enabled, which could submit an answer nobody chose.
+
+### A run that stops early says why
+
+The agent used to stop after 15 tool calls and finish in a way that was
+byte-identical to finishing normally, so a half-done task looked done. Real MCP
+work runs fifty to sixty tool calls, reported from a running build and confirmed
+by a test: a plain sixty-step run ended as "hit the limit".
+
+What ends a run now is a lack of progress rather than a step count — the same
+tool returning the same answer over and over — and the notice says which tool
+repeated, instead of "I stopped making progress". The step ceiling still exists as
+a last resort and is 300. Stopping a turn yourself now always ends it: pressing
+Stop could previously hang a Codex turn with no way out, and the work already
+streamed to the screen is kept rather than discarded.
+
+### Errors say what actually went wrong
+
+A failing provider used to be reported as the model refusing to answer, which
+sends you off to rewrite a prompt when the answer is to wait — and an outage and
+a rate limit were given the same wording, erasing the one distinction that
+matters. Each now says what it was, and a model that cannot use tools at all says
+that instead of putting the provider's raw JSON on screen.
+
+Long silences are broken too. A slow provider could sit for two minutes with the
+screen showing only "thinking", with nothing to say whether the app or the
+provider was stuck; the SDK's own patience runs to ten minutes. Every fifteen
+seconds the app now reports who it is waiting on, for how long, and that Stop
+cancels it. The waits between retries announce themselves as well.
+
+Error messages from the backend used to be fixed Turkish sentences, so an English
+interface showed Turkish text. They are translated now.
+
+### Gemini models can use tools
+
+A run on a Gemini API model died on its first tool call with `Role 'tool' is not
+supported`. That is another provider's convention; Google's own SDK sends tool
+results a different way. The line had been wrong since 30 May 2026, so the
+tool-using half of that provider had never worked in the product.
+
+### The chat stays where you left it
+
+Scrolling up to read something older meant being dragged back to the bottom on
+every new chunk of output. It no longer moves the view unless you were already at
+the bottom. Cards that need an answer — approval, questions, delete confirmations
+— still scroll themselves into view, because a request you cannot see is a request
+nobody can answer.
+
+### The content area follows the file
+
+Renaming, deleting, moving or dragging a file left the preview or the editor
+sitting on a path that no longer named anything. Six separate operations had this
+same problem and each was fixed one at a time; they all now go through one rule.
+The panel follows a rename, empties itself when the file is gone, and clears when
+you switch to another project or a project turns out to be missing. Renaming an
+image to a `.cs` file now switches the content area from the picture to the
+editor, and back the other way.
+
+Underneath that, the app now recognises when two spellings mean the same file —
+a relative and an absolute path, either slash on Windows, a different case,
+`Assets/../hero.fbx` against `hero.fbx` — which is what let a deleted file stay
+on screen in the first place.
+
+### The Docker development container actually runs
+
+Docker mode had been in the tree since the web era and had never worked. Four
+independent reasons, measured on 31 Aug 2026: the app and the container held
+different secrets and so every request was rejected; the container's port was
+unreachable from outside; the image carried the wrong Python version; and nothing
+was mounted, so the file tools would have worked on an empty image and reported
+success. It runs now, and it refuses to start with a clear message rather than
+failing silently.
+
+The mode's limits are written down rather than left to be discovered: it is for
+working on the backend with a cloud API model, and the subscription CLIs cannot
+work inside it because they are installed on the host and signed in as the host
+user. If a container is left running against an older project folder, startup
+notices the mismatch and says so instead of quietly reading and writing the wrong
+project.
+
 ### The project is now plain MIT
 
 The Commons Clause condition has been removed; `LICENSE` is now the MIT licence
@@ -23,6 +234,17 @@ is now permitted. Already-released versions keep the terms they shipped with.
 
 `unity-mcp/` remains MIT (c) 2025 CoplayDev under its own `LICENSE`, and the
 third-party notices are unchanged.
+
+### Under the hood
+
+The bundled Unity sprite tool was brought up to date with its upstream project,
+which also fixed animations whose blend thresholds Unity was discarding and an
+"add to scene" step that reported success while attaching an animator to an
+object with nothing to animate. The README was split so the engineering notes
+start near the top rather than at 77% scroll depth, the reference material moving
+into `docs/`. The rest of the release is the usual invisible half: a long series
+of audits on file reading, the approval gates and the Docker path, each one
+turned into a test that goes red without its fix.
 
 ## v3.0.3 — 9 Ağustos 2026
 
