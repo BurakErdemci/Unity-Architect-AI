@@ -12,8 +12,10 @@ installed (Docker image, a dev tree without the fetch step).
 """
 import json
 import os
+import secrets
 import sys
 import threading
+import time
 
 MODEL_NAMES = {
     "tr": "vosk-model-small-tr-0.3",
@@ -168,6 +170,135 @@ def transcribe_wav(wav_bytes: bytes, lang: str) -> "tuple[str, int]":
 
 
 def reset_cache() -> None:
-    """Drops the loaded models. Exists for tests; nothing in the app calls it."""
+    """Drops the loaded models and any live session. Exists for tests."""
     with _models_lock:
         _models.clear()
+    with _sessions_lock:
+        _sessions.clear()
+
+
+# ── Streaming sessions ──────────────────────────────────────────────────────
+#
+# Live dictation feeds one recogniser across many small HTTP chunks, so the
+# recogniser has to outlive the request. The registry below is that lifetime:
+# ids handed out by the create route, dropped by finish or by the idle TTL.
+
+MAX_SESSIONS = 4
+SESSION_TTL_S = 90.0
+
+# The time source is a module attribute so a test can replace it; monotonic
+# because the TTL must survive a wall-clock jump.
+_now = time.monotonic
+
+
+class SttNoSession(Exception):
+    """No live session with this id (never existed, finished, or expired)."""
+
+
+class SttBusy(Exception):
+    """MAX_SESSIONS recognisers are already alive."""
+
+
+class _Session:
+    __slots__ = ("id", "lang", "recognizer", "lock", "created", "last_seen", "total_bytes")
+
+    def __init__(self, session_id: str, lang: str, recognizer):
+        self.id = session_id
+        self.lang = lang
+        self.recognizer = recognizer
+        # Per session, not global: two dictations must not serialise on each
+        # other, but the chunks of ONE dictation must reach vosk in order.
+        self.lock = threading.Lock()
+        now = _now()
+        self.created = now
+        self.last_seen = now
+        self.total_bytes = 0
+
+
+_sessions: "dict[str, _Session]" = {}
+_sessions_lock = threading.Lock()
+
+
+def purge_expired(now=None) -> "list[str]":
+    """Drops sessions idle for longer than the TTL. Returns the dropped ids."""
+    if now is None:
+        now = _now()
+    dropped = []
+    with _sessions_lock:
+        for session_id, session in list(_sessions.items()):
+            if now - session.last_seen > SESSION_TTL_S:
+                del _sessions[session_id]
+                dropped.append(session_id)
+    return dropped
+
+
+def open_session(lang: str) -> str:
+    """Creates a recogniser and returns its session id.
+
+    The model is loaded HERE rather than on the first chunk so the cost (and the
+    503 when it is missing) lands on the call the renderer can still show an
+    error for, and the first chunk stays fast.
+    """
+    with _sessions_lock:
+        if len(_sessions) >= MAX_SESSIONS:
+            raise SttBusy()
+    recognizer = _new_recognizer(lang)          # outside the lock: can take ~250 ms
+    session_id = secrets.token_urlsafe(16)
+    with _sessions_lock:
+        if len(_sessions) >= MAX_SESSIONS:
+            raise SttBusy()
+        _sessions[session_id] = _Session(session_id, lang, recognizer)
+    return session_id
+
+
+def _get(session_id: str) -> _Session:
+    with _sessions_lock:
+        session = _sessions.get(session_id)
+    if session is None:
+        raise SttNoSession(session_id)
+    return session
+
+
+def session_bytes(session_id: str) -> int:
+    """Decoded bytes fed to this session so far (the caller's running total)."""
+    return _get(session_id).total_bytes
+
+
+def feed(session_id: str, pcm: bytes) -> str:
+    """Feeds one chunk and returns the partial text so far.
+
+    An empty chunk is a keep-alive: it refreshes ``last_seen`` and reports the
+    current partial without touching the recogniser.
+    """
+    session = _get(session_id)
+    with session.lock:
+        for start in range(0, len(pcm), _CHUNK_BYTES):
+            session.recognizer.AcceptWaveform(pcm[start:start + _CHUNK_BYTES])
+        session.total_bytes += len(pcm)
+        try:
+            partial = json.loads(session.recognizer.PartialResult()).get("partial", "")
+        except (ValueError, TypeError, AttributeError):
+            partial = ""
+        session.last_seen = _now()
+    return partial
+
+
+def finish(session_id: str, discard: bool = False) -> "tuple[str, int]":
+    """Removes the session and returns ``(text, duration_ms)``.
+
+    With ``discard`` the recogniser is dropped without asking it for a result —
+    a cancelled dictation must not pay for a recognition nobody will read.
+    """
+    with _sessions_lock:
+        session = _sessions.pop(session_id, None)
+    if session is None:
+        raise SttNoSession(session_id)
+    if discard:
+        return "", 0
+    with session.lock:
+        try:
+            text = json.loads(session.recognizer.FinalResult()).get("text", "")
+        except (ValueError, TypeError, AttributeError):
+            text = ""
+        total = session.total_bytes
+    return text, total // 2 * 1000 // SAMPLE_RATE
