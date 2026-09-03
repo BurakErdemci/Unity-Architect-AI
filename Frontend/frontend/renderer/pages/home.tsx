@@ -788,6 +788,7 @@ export default function Home() {
             <div className="mt-3">
               <AnimatedChatInput
                 value={chat.chatInput} setValue={chat.setChatInput} onSendMessage={handleSendMessage} isLoading={chat.loading}
+                api={API}
                 placeholder={t('chat.placeholder')}
                 disabled={sohbetKilitli}
                 disabledPlaceholder={t('gate.placeholder')}

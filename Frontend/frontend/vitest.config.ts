@@ -17,6 +17,12 @@ export default defineConfig({
   // electron tiplerini okuduğu için tip güvenliği duruyor.
   resolve: {
     alias: {
+      // `@/*` → `renderer/*`, mirroring tsconfig `paths`. Next resolves this at
+      // build time; vitest did not, so any test that imported a component using
+      // the alias failed to COLLECT — not a red assertion but a missing file,
+      // which is the quieter failure of the two. Measured when the first test
+      // for `renderer/components/ui/animated-ai-chat.tsx` was written.
+      '@': path.resolve(__dirname, 'renderer'),
       electron: path.resolve(__dirname, '__tests__/stubs/electron.ts'),
       'electron-store': path.resolve(__dirname, '__tests__/stubs/electron-store.ts'),
     },

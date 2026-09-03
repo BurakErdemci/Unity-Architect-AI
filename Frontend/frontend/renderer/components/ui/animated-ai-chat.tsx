@@ -13,11 +13,13 @@ import {
     XIcon,
     Square,
     Sparkles,
+    Mic,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import * as React from "react"
 import { SkillsGallery, CommandMeta } from "../home/SkillsGallery";
 import { useLang } from "../../lib/i18n";
+import { useVoiceInput, formatElapsed } from "../../hooks/home/useVoiceInput";
 
 interface UseAutoResizeTextareaProps {
     minHeight: number;
@@ -151,7 +153,10 @@ export function AnimatedChatInput({
     slashCommands = [],
     skills = [],
     commandMeta = [],
-    galleryProvider = 'claude'
+    galleryProvider = 'claude',
+    // Backend base URL. Empty until `useAppInitialization` resolves it; the mic
+    // button stays disabled while it is.
+    api = ''
 }: {
     value: string;
     setValue: (val: string) => void;
@@ -168,11 +173,12 @@ export function AnimatedChatInput({
     skills?: string[];         // slash komutlarının skill olan alt kümesi (rozet için)
     commandMeta?: CommandMeta[];  // {name, description, argumentHint, insert?} — Skills galerisi için
     galleryProvider?: string;     // 'claude' | 'codex' | 'agy' — galeri gösterim/insert davranışı
+    api?: string;
 }) {
     // Typing state is INTERNAL — does not propagate to parent on every keystroke.
     const [internalValue, setInternalValue] = useState(value);
     const [attachments, setAttachments] = useState<{ name: string, data: string, type: 'image' | 'file' | 'video', path?: string, url?: string }[]>([]);
-    const { t } = useLang();
+    const { t, lang } = useLang();
     const [activeSuggestion, setActiveSuggestion] = useState<number>(-1);
     const [showCommandPalette, setShowCommandPalette] = useState(false);
     const { textareaRef, adjustHeight } = useAutoResizeTextarea({
@@ -194,6 +200,56 @@ export function AnimatedChatInput({
         setShowSkillsGallery(false);
         setShowCommandPalette(false);
         setTimeout(() => { textareaRef.current?.focus(); adjustHeight(); }, 0);
+    };
+
+    // ——— Voice dictation ———
+    //
+    // The microphone is driven from here, NOT from ChatPanel: what is being
+    // typed lives in `internalValue`, and text pushed in from outside through
+    // `setValue` would overwrite the textarea (see the sync effect below).
+    // Inserting at the caret is the job of the only place that sees the text —
+    // `handleSelectCommand` is here for the same reason.
+    const insertAtCaret = useCallback((text: string) => {
+        const ta = textareaRef.current;
+        const base = ta ? ta.value : internalValue;
+        const start = ta && ta.selectionStart != null ? ta.selectionStart : base.length;
+        const end = ta && ta.selectionEnd != null ? ta.selectionEnd : start;
+        const before = base.slice(0, start);
+        const after = base.slice(end);
+        // Separate with a single space — but add no separator at the start of
+        // the line or right after existing whitespace: prefixing every dictated
+        // piece would start the text with a space when speaking into an empty box.
+        const separator = before.length > 0 && !/\s$/.test(before) ? ' ' : '';
+        const inserted = separator + text;
+        const next = before + inserted + after;
+        setInternalValue(next);
+        setValue(next);
+        const caret = before.length + inserted.length;
+        // setTimeout(0): the caret has to move AFTER React has written the
+        // value, otherwise the controlled textarea's re-render throws the
+        // selection to the end.
+        setTimeout(() => {
+            const el = textareaRef.current;
+            if (el) { el.focus(); el.setSelectionRange(caret, caret); }
+            adjustHeight();
+        }, 0);
+    }, [internalValue, setValue, adjustHeight]);
+
+    // The speaking language defaults to the interface language and can be
+    // changed BEFORE recording (dictating English into a Turkish interface is
+    // an ordinary request).
+    const [micLang, setMicLang] = useState<'tr' | 'en'>(lang);
+    useEffect(() => { setMicLang(lang); }, [lang]);
+
+    const voice = useVoiceInput({ api, lang: micLang, onText: insertAtCaret });
+    // Empty `api` means the backend address has not been resolved yet, so there
+    // is nothing to post to.
+    const micBlocked = !api || disabled;
+
+    const handleMicClick = () => {
+        voice.clearError();  // a previous error clears on the next attempt
+        if (voice.state === 'recording') { void voice.stop(); return; }
+        if (voice.state === 'idle') { void voice.start(); }
     };
 
     const processFile = (file: File) => {
@@ -539,6 +595,56 @@ export function AnimatedChatInput({
                         className="p-2 rounded-lg text-white/40 hover:text-white/90 hover:bg-white/5 transition-colors text-sm leading-none"
                         title={t('composer.addVideo')}
                     >🎬</button>
+                    <button
+                        type="button"
+                        data-mic-button
+                        onClick={handleMicClick}
+                        disabled={micBlocked || voice.state === 'transcribing'}
+                        aria-pressed={voice.state === 'recording'}
+                        aria-label={voice.state === 'recording' ? t('mic.stop') : t('mic.start')}
+                        title={
+                            micBlocked ? t('mic.err.server')
+                                : voice.state === 'recording' ? t('mic.stop')
+                                : voice.state === 'transcribing' ? t('mic.transcribing')
+                                : t('mic.start')
+                        }
+                        className={cn(
+                            "p-2 rounded-lg transition-colors flex items-center gap-1",
+                            voice.state === 'recording'
+                                ? "text-red-400 bg-red-500/10"
+                                : voice.state === 'transcribing'
+                                    ? "text-violet-300 bg-violet-500/10 animate-pulse"
+                                    : "text-white/40 hover:text-white/90 hover:bg-white/5",
+                            micBlocked ? "opacity-40 cursor-not-allowed" : ""
+                        )}
+                    >
+                        <Mic className="w-3.5 h-3.5" />
+                        {voice.state === 'recording' && (
+                            <>
+                                <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+                                <span className="text-[10px] tabular-nums">{formatElapsed(voice.elapsedMs)}</span>
+                            </>
+                        )}
+                    </button>
+                    <button
+                        type="button"
+                        data-mic-lang
+                        onClick={() => setMicLang(p => (p === 'tr' ? 'en' : 'tr'))}
+                        disabled={voice.state !== 'idle'}
+                        title={t('mic.lang.toggle', { lang: micLang })}
+                        className="text-[10px] px-1 rounded text-white/40 hover:text-white/90 hover:bg-white/5 transition-colors uppercase"
+                    >{micLang}</button>
+                    {voice.error && (
+                        // Inline text, NOT a toast: the error has to stay next
+                        // to the button so it is still visible while the user
+                        // tries again. The raw detail goes in `title` — no
+                        // jargon on screen.
+                        <span
+                            data-mic-error
+                            className="text-[10px] text-red-400"
+                            title={voice.error.detail || t(`mic.err.${voice.error.kind}` as any)}
+                        >{t(`mic.err.${voice.error.kind}` as any)}</span>
+                    )}
                     {commandMeta.length > 0 && (
                         <button
                             type="button"
