@@ -301,6 +301,20 @@ def feed(session_id: str, pcm: bytes, cap: "int | None" = None) -> str:
     """
     session = _get(session_id)
     with session.lock:
+        # Re-check registry membership under the lock: a caller can block
+        # here (waiting for `session.lock`) while a CONCURRENT feed on the
+        # same session hits the exception branch below, pops the session, and
+        # releases the lock. Without this check the blocked caller would go on
+        # to use the now-detached `_Session` object — feeding a recognizer
+        # whose state nothing vouches for any more, and risking a SECOND,
+        # unrelated exception of its own (verification round, 3 Sep 2026:
+        # measured, the second waiter's own `AcceptWaveform` call raised
+        # again). `session` is held by identity, not just by id, in case a
+        # NEW session ever reused this id (`secrets.token_urlsafe` makes that
+        # astronomically unlikely, but identity costs nothing extra to check).
+        with _sessions_lock:
+            if _sessions.get(session_id) is not session:
+                raise SttNoSession(session_id)
         if cap is not None and session.total_bytes + len(pcm) > cap:
             raise SttTooLarge()
         try:

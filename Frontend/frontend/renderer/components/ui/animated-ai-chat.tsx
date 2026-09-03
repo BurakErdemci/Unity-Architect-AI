@@ -191,6 +191,30 @@ export function AnimatedChatInput({
     const galleryRef = useRef<HTMLDivElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
+    // setTimeout(0) callbacks scheduled below (caret/scroll work that has to
+    // run after React commits the value) had no cleanup, so unmounting the
+    // composer mid-dictation left them scheduled; they later ran against a
+    // detached textarea ref (audit finding, 3 Sep 2026 — harmless in effect,
+    // since every access below is null-guarded, but not free to leave
+    // scheduled). `scheduleDeferred` tracks each one so unmount can cancel it.
+    // Declared HERE, ahead of every caller: two of them (`handleSelectCommand`,
+    // `insertAtCaret`) used to schedule with a raw `setTimeout` that bypassed
+    // this Set entirely (verification round, 3 Sep 2026) — `insertAtCaret`'s
+    // own `useCallback` dependency array needs `scheduleDeferred` to already
+    // exist at the point THAT line runs, which is why this cannot sit further
+    // down the way the two dictation-only callers below do it (their reference
+    // is only inside a closure body, evaluated later, not in a deps array
+    // evaluated immediately at render time).
+    const pendingTimersRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
+    const scheduleDeferred = useCallback((fn: () => void) => {
+        const id = setTimeout(() => { pendingTimersRef.current.delete(id); fn(); }, 0);
+        pendingTimersRef.current.add(id);
+    }, []);
+    useEffect(() => () => {
+        pendingTimersRef.current.forEach((id) => clearTimeout(id));
+        pendingTimersRef.current.clear();
+    }, []);
+
     // Galeriden seçim: hazır metin (Claude: '/<isim> '; Codex: skill defaultPrompt'u)
     // girdiye yazılır, kullanıcı (gerekirse düzenleyip) Enter'a basar — yıkıcı komutların
     // kazara tetiklenmemesi için otomatik GÖNDERİLMEZ.
@@ -199,7 +223,14 @@ export function AnimatedChatInput({
         setValue(insertText);
         setShowSkillsGallery(false);
         setShowCommandPalette(false);
-        setTimeout(() => { textareaRef.current?.focus(); adjustHeight(); }, 0);
+        // `scheduleDeferred`, not a raw `setTimeout`: this one bypassed the
+        // unmount-cleared timer Set (verification round, 3 Sep 2026,
+        // `uncancelled-composer-callback`) and could still run its callback
+        // against a detached textarea ref after the composer unmounted.
+        // Referencing it here is safe though it is declared further down in
+        // this component — the callback only ever runs later, by which point
+        // the render that defines it has already completed.
+        scheduleDeferred(() => { textareaRef.current?.focus(); adjustHeight(); });
     };
 
     // ——— Voice dictation ———
@@ -225,15 +256,17 @@ export function AnimatedChatInput({
         setInternalValue(next);
         setValue(next);
         const caret = before.length + inserted.length;
-        // setTimeout(0): the caret has to move AFTER React has written the
-        // value, otherwise the controlled textarea's re-render throws the
-        // selection to the end.
-        setTimeout(() => {
+        // `scheduleDeferred`, not a raw `setTimeout` (same reason as
+        // `handleSelectCommand` above): the caret has to move AFTER React has
+        // written the value, otherwise the controlled textarea's re-render
+        // throws the selection to the end, but the callback still needs to be
+        // cancellable if the composer unmounts first.
+        scheduleDeferred(() => {
             const el = textareaRef.current;
             if (el) { el.focus(); el.setSelectionRange(caret, caret); }
             adjustHeight();
-        }, 0);
-    }, [internalValue, setValue, adjustHeight]);
+        });
+    }, [internalValue, setValue, adjustHeight, scheduleDeferred]);
 
     // ——— Live dictation ———
     //
@@ -255,22 +288,6 @@ export function AnimatedChatInput({
     // let a final that arrived after an error insert its text into a box the
     // error had already restored (audit finding, 3 Sep 2026).
     const abortedDictationRef = useRef(false);
-
-    // setTimeout(0) callbacks scheduled below (caret/scroll work that has to
-    // run after React commits the value) had no cleanup, so unmounting the
-    // composer mid-dictation left them scheduled; they later ran against a
-    // detached textarea ref (audit finding, 3 Sep 2026 — harmless in effect,
-    // since every access below is null-guarded, but not free to leave
-    // scheduled). `scheduleDeferred` tracks each one so unmount can cancel it.
-    const pendingTimersRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
-    const scheduleDeferred = useCallback((fn: () => void) => {
-        const id = setTimeout(() => { pendingTimersRef.current.delete(id); fn(); }, 0);
-        pendingTimersRef.current.add(id);
-    }, []);
-    useEffect(() => () => {
-        pendingTimersRef.current.forEach((id) => clearTimeout(id));
-        pendingTimersRef.current.clear();
-    }, []);
 
     /** Splice `text` into the interim range. Returns the caret position after it. */
     const applyInterim = useCallback((text: string): number | null => {
@@ -335,6 +352,16 @@ export function AnimatedChatInput({
 
     /** Dictation owns the textarea while it runs — see `readOnly` below. */
     const dictating = voice.state === 'recording' || voice.state === 'transcribing';
+
+    // A voice error and the state committing back to 'idle' land in the SAME
+    // render, but `endDictation(true)` — which restores the pre-recording
+    // text and clears `dictationRef` — runs afterward, in a passive effect.
+    // `dictating` alone therefore went false one render before the interim
+    // text was actually gone, and Send's `!dictating` check briefly allowed
+    // submitting it (verification round, 3 Sep 2026, `transcribing-send-allowed`).
+    // Reading the ref during render is safe here: it is a plain data ref this
+    // component itself owns, not a DOM node awaiting commit.
+    const sendBlockedByDictation = dictating || (Boolean(voice.error) && dictationRef.current !== null);
 
     // Every partial replaces the interim range in place.
     useEffect(() => {
@@ -828,15 +855,16 @@ export function AnimatedChatInput({
                     <button 
                         type="button" 
                         onClick={handleSendMessage} 
-                        // `dictating`, not just `=== 'recording'`: the box is still
-                        // showing unconfirmed interim text while `transcribing` too,
-                        // and Send used to stay enabled through that window — a
-                        // click there submitted the half-transcribed guess before
-                        // the final response ever arrived (audit finding, 3 Sep 2026).
-                        disabled={disabled || dictating || (!internalValue.trim() && attachments.length === 0)}
+                        // `sendBlockedByDictation`, not just `dictating`: the box is
+                        // still showing unconfirmed interim text while `transcribing`
+                        // too, AND for one more render after an error commits state
+                        // back to `idle` but before the restore effect has run — Send
+                        // used to stay enabled through both windows (audit findings,
+                        // 3 Sep 2026).
+                        disabled={disabled || sendBlockedByDictation || (!internalValue.trim() && attachments.length === 0)}
                         className={cn(
                             "px-4 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5",
-                            (internalValue.trim() || attachments.length > 0) && !disabled && !dictating
+                            (internalValue.trim() || attachments.length > 0) && !disabled && !sendBlockedByDictation
                                 ? "bg-white text-black hover:bg-white/90 active:scale-95 shadow-lg shadow-white/5" 
                                 : "bg-white/[0.05] text-white/20"
                         )}

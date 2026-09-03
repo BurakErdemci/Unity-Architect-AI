@@ -501,8 +501,12 @@ export const useVoiceInput = ({ api, lang, onText }: VoiceInputParams) => {
       // leak from the `AudioWorkletNode` constructor, from
       // `createMediaStreamSource()` and from `connect()`, all of which used to
       // run outside any cleanup (`partial-teardown-on-exception`).
-      let node: AudioWorkletNode;
-      let source: AudioNode;
+      // Nullable and initialized, not `let node: AudioWorkletNode;`: a `let`
+      // left unassigned is in the temporal dead zone, and even `node?.foo` in
+      // the catch below would throw a ReferenceError for an exception that
+      // hit before `node` was ever constructed. Matches `stream`/`ctx` above.
+      let node: AudioWorkletNode | null = null;
+      let source: AudioNode | null = null;
       try {
         await ctx!.audioWorklet.addModule(WORKLET_URL);
         if (abortAcquisitionRef.current) {
@@ -519,6 +523,14 @@ export const useVoiceInput = ({ api, lang, onText }: VoiceInputParams) => {
         // if — that request eventually settles.
         pendingRef.current = { stream, ctx, node, source };
       } catch (err: any) {
+        // `node`/`source` may be partially built (constructed but not yet
+        // connected, or not constructed at all) — release whichever of them
+        // exist. Verification round, 3 Sep 2026: a `connect()` throw left a
+        // constructed node and source with no cleanup call on either,
+        // because this catch released only `stream`/`ctx`.
+        try { node?.port?.close?.(); } catch { /* already closed */ }
+        try { node?.disconnect(); } catch { /* not connected */ }
+        try { source?.disconnect(); } catch { /* not connected */ }
         releaseStream(stream);
         releaseContext(ctx);
         pendingRef.current = null;
@@ -600,6 +612,14 @@ export const useVoiceInput = ({ api, lang, onText }: VoiceInputParams) => {
       sessionIdRef.current = sessionId;
       chunkFailuresRef.current = 0;
       sendingRef.current = false;
+      // A run that never sends its OWN chunk before stopping (nothing was
+      // queued yet) would otherwise inherit whatever the PREVIOUS run's last
+      // send left here. `stop()` awaits `inFlightRef.current` before its
+      // drain loop, so a stale unresolved promise from a cancelled prior run
+      // blocked this run's finish indefinitely until that old promise
+      // happened to settle (verification round, 3 Sep 2026,
+      // `cross-run-send-guard`).
+      inFlightRef.current = null;
       setPartialText('');
       chunksRef.current = [];
       rawSampleCountRef.current = 0;
@@ -757,9 +777,15 @@ export const useVoiceInput = ({ api, lang, onText }: VoiceInputParams) => {
     } finally {
       // Cleared whether the finish succeeded, failed (already discarded
       // above), or `run.cancelled` short-circuited past both branches — from
-      // here on this id is either gone server-side or no longer this hook's
-      // responsibility to discard a second time.
-      pendingFinishIdRef.current = null;
+      // here on THIS id is either gone server-side or no longer this hook's
+      // responsibility to discard a second time. Guarded by identity, not
+      // cleared unconditionally: a cancelled run's finish can still be
+      // settling here after a NEWER run has already installed its OWN id in
+      // `pendingFinishIdRef` — clearing it unconditionally wiped that newer
+      // run's tracking before cancel/unmount ever got a chance to read it
+      // (verification round, 3 Sep 2026, `transcribing-session-orphan`: the
+      // exact cross-run shape `sendingRef`'s own fix above already covers).
+      if (pendingFinishIdRef.current === id) pendingFinishIdRef.current = null;
       if (!run.cancelled) {
         setPartialText('');
         setState('idle');

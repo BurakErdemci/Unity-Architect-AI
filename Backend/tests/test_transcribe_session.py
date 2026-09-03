@@ -346,6 +346,47 @@ def test_a_partial_result_failure_poisons_the_session_instead_of_leaving_it_rese
     assert retry.json()["detail"] == "stt_no_session"
 
 
+def test_a_feed_blocked_on_the_lock_is_rejected_after_the_session_is_poisoned(ready, fake_vosk):
+    """Verification round, 3 Sep 2026: the poisoning fix above only stops a
+    FUTURE `_get()` call from finding the dropped session. A caller that
+    already obtained the `_Session` object and is blocked waiting for
+    `session.lock` when the poisoning happens used to go on to feed the
+    now-detached recognizer anyway — measured: it raised a SECOND, unrelated
+    exception of its own. `feed()` now re-checks registry membership by
+    identity once it holds the lock."""
+    session_id = _new_session(ready)
+    rec = fake_vosk.recognizers[0]
+    rec.block_delay = 0.05
+    rec.raise_on_block = 2   # the second 8000-byte slice of A's chunk
+
+    errors = []
+
+    def poison():
+        try:
+            stt_vosk.feed(session_id, b"\x00" * 16000)
+        except Exception as exc:                      # noqa: BLE001
+            errors.append(("A", exc))
+
+    def blocked():
+        try:
+            stt_vosk.feed(session_id, b"\x00" * 8000)
+        except Exception as exc:                       # noqa: BLE001
+            errors.append(("B", exc))
+
+    a = threading.Thread(target=poison)
+    b = threading.Thread(target=blocked)
+    a.start()
+    time.sleep(0.02)   # let A acquire session.lock before B calls _get()
+    b.start()
+    a.join(timeout=5)
+    b.join(timeout=5)
+
+    kinds = {who: type(exc).__name__ for who, exc in errors}
+    assert kinds.get("A") == "RuntimeError"        # A's own recognizer failure
+    assert kinds.get("B") == "SttNoSession"        # not a second RuntimeError
+    assert session_id not in stt_vosk._sessions
+
+
 def test_an_odd_byte_count_is_rejected(ready):
     """Half a 16-bit sample; vosk would reinterpret every following byte."""
     session_id = _new_session(ready)

@@ -345,6 +345,42 @@ describe('live dictation in the box', () => {
     await waitFor(() => expect(document.activeElement).toBe(ctx.textarea))
   })
 
+  it('Send stays disabled for the one render where state is idle but the interim text is not restored yet', () => {
+    // Verification round, 3 Sep 2026: `voice.error` and `voice.state ===
+    // 'idle'` commit in the SAME render, but `endDictation(true)` (which
+    // restores the pre-recording text and clears `dictationRef`) runs
+    // afterward, in a passive effect. `dictating` alone went false one
+    // render early. A `useLayoutEffect` in a wrapper observes the button
+    // BEFORE that passive effect has had a chance to run, which is exactly
+    // the window a real click could land in.
+    const observations: Array<{ disabled: boolean }> = []
+    const Probe = () => {
+      const setValue = vi.fn()
+      React.useLayoutEffect(() => {
+        if (!voice.error) return
+        const btn = Array.from(document.querySelectorAll('button')).find(b => b.textContent === 'Send') as HTMLButtonElement | undefined
+        if (btn) observations.push({ disabled: btn.disabled })
+      })
+      return <AnimatedChatInput value="" setValue={setValue} onSendMessage={vi.fn()} isLoading={false} api={API} />
+    }
+    const { rerender } = render(<Probe />)
+    const textarea = screen.getByRole('textbox') as HTMLTextAreaElement
+    fireEvent.change(textarea, { target: { value: 'hello' } })
+    textarea.setSelectionRange(5, 5)
+    fireEvent.click(micButton())
+    voice.state = 'recording'
+    act(() => { rerender(<Probe />) })
+    voice.partialText = 'there'
+    act(() => { rerender(<Probe />) })
+
+    voice.state = 'idle'
+    voice.error = { kind: 'server' }
+    act(() => { rerender(<Probe />) })
+
+    expect(observations.length).toBeGreaterThan(0)
+    expect(observations.every(o => o.disabled)).toBe(true)
+  })
+
   it('a final that arrives after an error has restored the box is dropped, not inserted', async () => {
     // Audit finding, 3 Sep 2026: `handleFinalText` treated a cleared
     // `dictationRef` as "no dictation was ever armed" and inserted the late
@@ -375,6 +411,25 @@ describe('live dictation in the box', () => {
     ctx.textarea.setSelectionRange(5, 5)
     act(() => { voice.captured!.onText('world') })
     await waitFor(() => expect(ctx.setValue).toHaveBeenCalled())
+  })
+
+  it('a one-shot final\'s caret timer is cancelled on unmount too, not left as a bare setTimeout', () => {
+    // Verification round, 3 Sep 2026: the first round's cleanup covered the
+    // two DICTATION-only deferred callbacks; `insertAtCaret`'s own (used by
+    // this one-shot path) still bypassed the tracked Set entirely.
+    vi.useFakeTimers()
+    try {
+      const ctx = mount()
+      fireEvent.change(ctx.textarea, { target: { value: 'hello' } })
+      ctx.textarea.setSelectionRange(5, 5)
+      const before = vi.getTimerCount()
+      act(() => { voice.captured!.onText('world') })
+      expect(vi.getTimerCount()).toBe(before + 1)
+      cleanup()
+      expect(vi.getTimerCount()).toBeLessThanOrEqual(before)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('Escape while recording cancels it and restores the box', async () => {

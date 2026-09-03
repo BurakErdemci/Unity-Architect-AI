@@ -931,3 +931,101 @@ describe('useVoiceInput session-budget and cleanup-ownership failures', () => {
     warn.mockRestore()
   })
 })
+
+/**
+ * Promoted from the 9b verification round (3 Sep 2026) — findings the FIRST
+ * round of fixes did not close, each reproduced against that round's own
+ * fixed tree before this round's fix.
+ */
+describe('useVoiceInput cross-run and graph-build gaps found in the verification round', () => {
+  it('an older cancelled run settling its finish cannot clear a newer run\'s pending id', async () => {
+    // `pendingFinishIdRef` used to be cleared unconditionally in `finally`,
+    // so an OLDER run's finish settling late could wipe the tracking a
+    // NEWER run had already installed for its own pending finish.
+    let sessionNum = 0
+    const finishResolvers: Record<string, (v: any) => void> = {}
+    mockedAxios.post.mockImplementation((url: string, body: any) => {
+      if (url.endsWith('/transcribe/session')) {
+        sessionNum += 1
+        return Promise.resolve({ data: { session_id: `sess-${sessionNum}`, lang: 'tr' } })
+      }
+      if (url.endsWith('/finish')) {
+        const id = url.split('/transcribe/session/')[1].split('/')[0]
+        if (body?.discard === true) return Promise.resolve({ data: {} })
+        return new Promise(res => { finishResolvers[id] = res })
+      }
+      return Promise.resolve({ data: { partial: '' } })
+    })
+
+    const { result } = setup()
+    await act(async () => { await result.current.start() })
+    speak()
+    act(() => { void result.current.stop() })
+    await flush()
+    expect(finishResolvers['sess-1']).toBeTruthy()
+
+    act(() => { result.current.cancel() })
+    await flush()
+    await act(async () => { await result.current.start() })
+    speak()
+    act(() => { void result.current.stop() })
+    await flush()
+    expect(finishResolvers['sess-2']).toBeTruthy()
+
+    finishResolvers['sess-1']({ data: { text: 'old' } })
+    await flush()
+    act(() => { result.current.cancel() })
+    await flush()
+
+    expect(calls().some((c: any[]) =>
+      String(c[0]).endsWith('/sess-2/finish') && c[1]?.discard === true)).toBe(true)
+  })
+
+  it('a run that never sends its own chunk does not wait on a stale prior run\'s in-flight promise', async () => {
+    // `inFlightRef` used to survive across runs: a run that stops without
+    // ever queuing a chunk of its own inherited whatever the PREVIOUS run's
+    // last send left there, and `stop()` awaits it before finishing.
+    vi.useFakeTimers()
+    let chunkNum = 0
+    let releaseOld: (v: any) => void = () => {}
+    chunkRespond = () => {
+      chunkNum += 1
+      if (chunkNum === 1) return new Promise(res => { releaseOld = res })
+      return { data: { partial: '' } }
+    }
+    const { result } = setup()
+    await act(async () => { await result.current.start() })
+    speak(8000)
+    await act(async () => { await vi.advanceTimersByTimeAsync(500) })
+    expect(chunkNum).toBe(1)
+
+    act(() => { result.current.cancel() })
+    await flush()
+    await act(async () => { await result.current.start() })
+
+    let secondStop!: Promise<void>
+    act(() => { secondStop = result.current.stop() as unknown as Promise<void> })
+    await flush()
+    // The second run's finish must not be blocked on the first run's promise.
+    expect(calls().some((c: any[]) =>
+      String(c[0]).endsWith('/finish') && c[1]?.discard !== true)).toBe(true)
+
+    releaseOld({ data: { partial: 'old' } })
+    await act(async () => { await secondStop })
+  })
+
+  it('a connect() failure during graph build releases the constructed node and source', async () => {
+    // The graph-build catch released only `stream`/`ctx`; a constructed node
+    // and source that failed to CONNECT had no cleanup call on either.
+    const source = { connect: vi.fn(() => { throw new Error('connect refused') }), disconnect: vi.fn() }
+    createSourceImpl = () => source
+    const { result } = setup()
+    await act(async () => { await result.current.start() })
+
+    expect(result.current.error?.kind).toBe('noDevice')
+    expect(lastNode.port.close).toHaveBeenCalled()
+    expect(lastNode.disconnect).toHaveBeenCalled()
+    expect(source.disconnect).toHaveBeenCalled()
+    expect(track.stop).toHaveBeenCalled()
+  })
+})
