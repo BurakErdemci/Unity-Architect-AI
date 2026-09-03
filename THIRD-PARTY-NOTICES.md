@@ -64,6 +64,8 @@ this project's own code under the FFmpeg build's license.
 **The Unlicense** (public domain dedication) — https://github.com/yt-dlp/yt-dlp
 
 ### Vosk (vosk-api) — **[bundled] [fetched]**
+Windows/Linux ship vosk 0.3.45; macOS ships 0.3.44 (universal2), the last version with a macOS wheel on PyPI (3 Sep 2026). Same licence, same runtime dependencies.
+
 Copyright (c) Alpha Cephei Inc — **Apache-2.0** — https://github.com/alphacep/vosk-api
 
 Where that license line comes from: the installed wheel's
