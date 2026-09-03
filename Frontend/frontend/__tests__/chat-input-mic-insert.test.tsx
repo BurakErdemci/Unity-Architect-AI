@@ -312,6 +312,22 @@ describe('live dictation in the box', () => {
     expect(sendButton().disabled).toBe(true)
   })
 
+  it('the Send button stays disabled while transcribing, not just while recording', async () => {
+    // Audit finding, 3 Sep 2026: the button's own disabled check only tested
+    // `voice.state === 'recording'`, so an interim value could still be sent
+    // during the `transcribing` window the textarea was already read-only for.
+    const ctx = mount()
+    startRecording(ctx)
+    say('half sentence', ctx)
+    await waitFor(() => expect(ctx.textarea.value).toBe('half sentence'))
+
+    voice.state = 'transcribing'
+    ctx.bump()
+    expect(sendButton().disabled).toBe(true)
+    fireEvent.click(sendButton())
+    expect(ctx.onSendMessage).not.toHaveBeenCalled()
+  })
+
   it('an error puts the pre-recording text back and hands the box over', async () => {
     const ctx = mount()
     fireEvent.change(ctx.textarea, { target: { value: 'hello world' } })
@@ -329,6 +345,38 @@ describe('live dictation in the box', () => {
     await waitFor(() => expect(document.activeElement).toBe(ctx.textarea))
   })
 
+  it('a final that arrives after an error has restored the box is dropped, not inserted', async () => {
+    // Audit finding, 3 Sep 2026: `handleFinalText` treated a cleared
+    // `dictationRef` as "no dictation was ever armed" and inserted the late
+    // text as if it were a fresh one-shot recording, undoing the error's own
+    // restore of the pre-recording text.
+    const ctx = mount()
+    fireEvent.change(ctx.textarea, { target: { value: 'hello world' } })
+    ctx.textarea.setSelectionRange(5, 5)
+    startRecording(ctx)
+    say('there', ctx)
+    await waitFor(() => expect(ctx.textarea.value).toBe('hello there world'))
+
+    voice.state = 'idle'
+    voice.error = { kind: 'server' }
+    ctx.bump()
+    await waitFor(() => expect(ctx.textarea.value).toBe('hello world'))
+
+    act(() => { voice.captured!.onText('late') })
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(ctx.textarea.value).toBe('hello world')
+  })
+
+  it('a genuine one-shot final (no button-armed dictation) still inserts normally', async () => {
+    // The drop above must be scoped to a final that follows THIS composer's
+    // own abort, not to every final with no armed range.
+    const ctx = mount()
+    fireEvent.change(ctx.textarea, { target: { value: 'hello' } })
+    ctx.textarea.setSelectionRange(5, 5)
+    act(() => { voice.captured!.onText('world') })
+    await waitFor(() => expect(ctx.setValue).toHaveBeenCalled())
+  })
+
   it('Escape while recording cancels it and restores the box', async () => {
     const ctx = mount()
     fireEvent.change(ctx.textarea, { target: { value: 'merhaba' } })
@@ -340,5 +388,29 @@ describe('live dictation in the box', () => {
     fireEvent.keyDown(ctx.textarea, { key: 'Escape' })
     expect(voice.cancel).toHaveBeenCalled()
     await waitFor(() => expect(ctx.textarea.value).toBe('merhaba'))
+  })
+
+  it('unmounting cancels the deferred caret/scroll work each partial scheduled', async () => {
+    // Audit finding, 3 Sep 2026: every partial armed a `setTimeout(0)` for
+    // caret and scroll work with nothing to cancel it, so unmounting mid-
+    // dictation left them scheduled. Fake timers only for this one test —
+    // real timers elsewhere in this file, restored in `finally` regardless of
+    // outcome so a failure here cannot leak into the next test.
+    vi.useFakeTimers()
+    try {
+      const ctx = mount()
+      startRecording(ctx)
+      const afterStart = vi.getTimerCount()
+      for (let i = 1; i <= 5; i++) say(`p${i}`, ctx)
+      const afterPartials = vi.getTimerCount()
+      expect(afterPartials).toBe(afterStart + 5)
+
+      cleanup()  // unmounts every currently-rendered tree, this composer included
+      // Exactly the 5 partial-driven callbacks must be gone; whatever existed
+      // before the first partial (unrelated to dictation) is not this fix's claim.
+      expect(vi.getTimerCount()).toBeLessThanOrEqual(afterStart)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

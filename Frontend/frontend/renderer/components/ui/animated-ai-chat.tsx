@@ -248,6 +248,30 @@ export function AnimatedChatInput({
     // so a cancel or a failure can put it back exactly.
     const dictationRef = useRef<{ anchor: number; end: number; base: string; original: string } | null>(null);
 
+    // True once a dictation ends by error or cancel and no final has claimed it
+    // yet. `handleFinalText` reads this to tell "a final arrived after this
+    // dictation was aborted" apart from "no dictation was ever armed" — both
+    // present as `dictationRef.current === null`, and treating them the same
+    // let a final that arrived after an error insert its text into a box the
+    // error had already restored (audit finding, 3 Sep 2026).
+    const abortedDictationRef = useRef(false);
+
+    // setTimeout(0) callbacks scheduled below (caret/scroll work that has to
+    // run after React commits the value) had no cleanup, so unmounting the
+    // composer mid-dictation left them scheduled; they later ran against a
+    // detached textarea ref (audit finding, 3 Sep 2026 — harmless in effect,
+    // since every access below is null-guarded, but not free to leave
+    // scheduled). `scheduleDeferred` tracks each one so unmount can cancel it.
+    const pendingTimersRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
+    const scheduleDeferred = useCallback((fn: () => void) => {
+        const id = setTimeout(() => { pendingTimersRef.current.delete(id); fn(); }, 0);
+        pendingTimersRef.current.add(id);
+    }, []);
+    useEffect(() => () => {
+        pendingTimersRef.current.forEach((id) => clearTimeout(id));
+        pendingTimersRef.current.clear();
+    }, []);
+
     /** Splice `text` into the interim range. Returns the caret position after it. */
     const applyInterim = useCallback((text: string): number | null => {
         const d = dictationRef.current;
@@ -270,27 +294,36 @@ export function AnimatedChatInput({
         const d = dictationRef.current;
         if (!d) return;
         dictationRef.current = null;
+        abortedDictationRef.current = true;
         if (restore) { setInternalValue(d.original); setValue(d.original); }
-        setTimeout(() => { textareaRef.current?.focus(); adjustHeight(); }, 0);
-    }, [setValue, adjustHeight]);
+        scheduleDeferred(() => { textareaRef.current?.focus(); adjustHeight(); });
+    }, [setValue, adjustHeight, scheduleDeferred]);
 
     /**
      * The final transcript.
      *
-     * Falls back to `insertAtCaret` when no range is armed: the hook can still
-     * deliver text from a recording that was never started through the button
-     * (and that path is what the one-shot insertion tests measure).
+     * Falls back to `insertAtCaret` when no range is armed AND no dictation was
+     * just aborted: the hook can still deliver text from a recording that was
+     * never started through the button (and that path is what the one-shot
+     * insertion tests measure). A final that arrives after THIS composer's own
+     * dictation was aborted is a stray — the error already restored the box,
+     * and inserting the late text on top of that would look like the error
+     * never happened. It is dropped once, not treated as a fresh one-shot.
      */
     const handleFinalText = useCallback((text: string) => {
-        if (!dictationRef.current) { insertAtCaret(text); return; }
+        if (!dictationRef.current) {
+            if (abortedDictationRef.current) { abortedDictationRef.current = false; return; }
+            insertAtCaret(text);
+            return;
+        }
         const caret = applyInterim(text);
         dictationRef.current = null;
-        setTimeout(() => {
+        scheduleDeferred(() => {
             const el = textareaRef.current;
             if (el) { el.focus(); if (caret != null) el.setSelectionRange(caret, caret); }
             adjustHeight();
-        }, 0);
-    }, [insertAtCaret, applyInterim, adjustHeight]);
+        });
+    }, [insertAtCaret, applyInterim, adjustHeight, scheduleDeferred]);
 
     // The speaking language defaults to the interface language and can be
     // changed BEFORE recording (dictating English into a Turkish interface is
@@ -310,7 +343,7 @@ export function AnimatedChatInput({
         // setTimeout(0) for the same reason as the one-shot insert: the caret
         // can only be moved after React has written the value, or the
         // controlled textarea's re-render throws the selection to the end.
-        setTimeout(() => {
+        scheduleDeferred(() => {
             const el = textareaRef.current;
             if (el && caret != null) {
                 el.setSelectionRange(caret, caret);
@@ -319,8 +352,8 @@ export function AnimatedChatInput({
                 el.scrollTop = el.scrollHeight;
             }
             adjustHeight();
-        }, 0);
-    }, [voice.partialText, voice.state, applyInterim, adjustHeight]);
+        });
+    }, [voice.partialText, voice.state, applyInterim, adjustHeight, scheduleDeferred]);
 
     // A failure means the interim text is not going to be confirmed by
     // anything, so it must not be left in the box looking like input.
@@ -343,6 +376,12 @@ export function AnimatedChatInput({
         // would do to it. The untouched original is kept for the restore paths.
         const base = original.slice(0, start) + original.slice(end);
         dictationRef.current = { anchor: start, end: start, base, original };
+        // A stray final from an EARLIER aborted dictation must not be dropped
+        // silently if it lands during THIS one instead — that final would
+        // never reach here anyway (it belongs to a different `dictationRef`
+        // than the one this run is about to build), but clearing the flag
+        // keeps it from swallowing a genuine future no-button final by mistake.
+        abortedDictationRef.current = false;
         if (base !== original) { setInternalValue(base); setValue(base); }
         void voice.start();
     };
@@ -789,10 +828,15 @@ export function AnimatedChatInput({
                     <button 
                         type="button" 
                         onClick={handleSendMessage} 
-                        disabled={disabled || voice.state === 'recording' || (!internalValue.trim() && attachments.length === 0)} 
+                        // `dictating`, not just `=== 'recording'`: the box is still
+                        // showing unconfirmed interim text while `transcribing` too,
+                        // and Send used to stay enabled through that window — a
+                        // click there submitted the half-transcribed guess before
+                        // the final response ever arrived (audit finding, 3 Sep 2026).
+                        disabled={disabled || dictating || (!internalValue.trim() && attachments.length === 0)}
                         className={cn(
-                            "px-4 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5", 
-                            (internalValue.trim() || attachments.length > 0) && !disabled && voice.state !== 'recording'
+                            "px-4 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5",
+                            (internalValue.trim() || attachments.length > 0) && !disabled && !dictating
                                 ? "bg-white text-black hover:bg-white/90 active:scale-95 shadow-lg shadow-white/5" 
                                 : "bg-white/[0.05] text-white/20"
                         )}

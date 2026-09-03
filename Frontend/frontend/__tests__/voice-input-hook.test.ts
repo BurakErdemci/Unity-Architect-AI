@@ -748,3 +748,186 @@ describe('useVoiceInput cleanup diagnostics', () => {
     warn.mockRestore()
   })
 })
+
+/**
+ * Promoted from the 9b live-dictation audit (3 Sep 2026, state+resource lens).
+ */
+describe('useVoiceInput stop() drain and finish failures', () => {
+  it('a failed drain chunk is retried, not dropped, before finish is called', async () => {
+    // `stop()` used to give up on the FIRST drain failure, throw the still-
+    // queued audio away, and finish anyway — delivering a truncated transcript
+    // as if the recording had completed cleanly.
+    vi.useFakeTimers()
+    let failNext = true
+    chunkRespond = () => {
+      if (failNext) { failNext = false; throw new Error('Network Error') }
+      return { data: { partial: 'tamam' } }
+    }
+    finishRespond = () => ({ data: { text: 'tam cumle' } })
+    const { result, onText } = setup()
+    await act(async () => { await result.current.start() })
+    speak(16000)   // queued, not yet sent — no tick has advanced
+    await act(async () => { await result.current.stop() })
+
+    expect(chunkCalls()).toHaveLength(2)               // the failure, then the retry
+    expect(chunkBytes(chunkCalls()[1])).toBe(chunkBytes(chunkCalls()[0]))  // same audio, not partial
+    expect(onText).toHaveBeenCalledWith('tam cumle')
+    expect(result.current.error).toBeNull()
+  })
+
+  it('three drain failures abandon the recording instead of finishing with a partial result', async () => {
+    // The retry above has a ceiling: it is the SAME MAX_CHUNK_FAILURES used
+    // during live recording, not an unbounded retry loop.
+    vi.useFakeTimers()
+    chunkRespond = () => { throw new Error('Network Error') }
+    const { result, onText } = setup()
+    await act(async () => { await result.current.start() })
+    speak(16000)
+    await act(async () => { await result.current.stop() })
+
+    expect(chunkCalls()).toHaveLength(3)
+    expect(result.current.error?.kind).toBe('server')
+    expect(result.current.state).toBe('idle')
+    expect(onText).not.toHaveBeenCalled()
+    // `abandon()` still hands the session back with discard — the count is 1,
+    // not 0, and it must not be a normal (non-discard) finish carrying no text.
+    const finishCalls = calls().filter((c: any[]) => String(c[0]).endsWith('/finish'))
+    expect(finishCalls).toHaveLength(1)
+    expect(finishCalls[0][1]).toEqual({ discard: true })
+  })
+
+  it('a normal finish that fails still discards the session instead of leaving it for the TTL', async () => {
+    // `sessionIdRef` is cleared for this hook's own bookkeeping before the
+    // finish request goes out, so its failure path had nothing left to hand
+    // `discardSession`; the slot sat occupied until the 90 s idle TTL even
+    // though the user had already seen an error.
+    finishRespond = () => { throw new Error('Network Error') }
+    const { result } = setup()
+    await act(async () => { await result.current.start() })
+    speak()
+    await act(async () => { await result.current.stop() })
+
+    expect(result.current.error?.kind).toBe('server')
+    const finishCalls = calls().filter((c: any[]) => String(c[0]).endsWith('/finish'))
+    expect(finishCalls).toHaveLength(2)
+    expect(finishCalls[0][1]).toEqual({})
+    expect(finishCalls[1][1]).toEqual({ discard: true })
+  })
+
+  it('an old cancelled run settling late cannot clear the new run\'s send guard', async () => {
+    // `sendChunk`'s `finally` used to write the shared `sendingRef` back to
+    // false unconditionally. A cancelled run's request settling AFTER a new
+    // run had already started its own send let the scheduler fire a second,
+    // overlapping request for the new run while its first was still pending.
+    vi.useFakeTimers()
+    const resolvers: Array<(v: any) => void> = []
+    chunkRespond = () => new Promise(res => { resolvers.push(res) })
+    const { result } = setup()
+
+    await act(async () => { await result.current.start() })
+    speak(8000)
+    await act(async () => { await vi.advanceTimersByTimeAsync(500) })
+    expect(chunkCalls()).toHaveLength(1)
+
+    act(() => { result.current.cancel() })
+    await flush()
+    await act(async () => { await result.current.start() })
+    speak(8000)
+    await act(async () => { await vi.advanceTimersByTimeAsync(500) })
+    expect(chunkCalls()).toHaveLength(2)     // the new run's own first send
+
+    // The old run's send settles now, after the new run's send is in flight.
+    resolvers[0]({ data: { partial: 'old' } })
+    await flush()
+    speak(8000)
+    await act(async () => { await vi.advanceTimersByTimeAsync(500) })
+
+    // A third send here would mean the old run's settle freed the new run's
+    // guard while its own second send was still pending.
+    expect(chunkCalls()).toHaveLength(2)
+    expect(resolvers).toHaveLength(2)
+  })
+})
+
+/**
+ * Promoted from the 9b live-dictation audit (3 Sep 2026, error-path lens).
+ */
+describe('useVoiceInput session-budget and cleanup-ownership failures', () => {
+  it('a session-budget 413 stops cleanly and finishes with what was already accepted', async () => {
+    // The route's own contract for this status: the session survives the
+    // refusal specifically so the caller can finish the accepted prefix.
+    // Retrying it like any other failure used to run the counter to
+    // MAX_CHUNK_FAILURES and discard that prefix along with everything else.
+    vi.useFakeTimers()
+    let chunkNum = 0
+    chunkRespond = () => {
+      chunkNum += 1
+      if (chunkNum === 1) return { data: { partial: 'ok' } }
+      throw { response: { status: 413, data: { detail: 'stt_too_large' } } }
+    }
+    finishRespond = () => ({ data: { text: 'accepted so far' } })
+    const { result, onText } = setup()
+    await act(async () => { await result.current.start() })
+    speak(8000)
+    await act(async () => { await vi.advanceTimersByTimeAsync(500) })
+    speak(8000)
+    await act(async () => { await vi.advanceTimersByTimeAsync(500) })
+
+    expect(result.current.state).toBe('idle')
+    expect(onText).toHaveBeenCalledWith('accepted so far')
+    const finishCalls = calls().filter((c: any[]) => String(c[0]).endsWith('/finish'))
+    expect(finishCalls).toHaveLength(1)
+    expect(finishCalls[0][1]).toEqual({})
+  })
+
+  it('unmounting while the normal finish is still pending still discards the session', async () => {
+    // `sessionIdRef` is cleared before the finish request goes out, so
+    // `discardSession()` (called from the unmount cleanup) used to find
+    // nothing to discard in exactly this window.
+    let resolveFinish: (v: any) => void = () => {}
+    finishRespond = () => new Promise(res => { resolveFinish = res })
+    const { result, unmount } = setup()
+    await act(async () => { await result.current.start() })
+    speak()
+    act(() => { void result.current.stop() })
+    await flush()
+    unmount()
+
+    const finishCalls = calls().filter((c: any[]) => String(c[0]).endsWith('/finish'))
+    expect(finishCalls.some((c: any[]) => c[1]?.discard === true)).toBe(true)
+    resolveFinish({ data: { text: 'too late' } })
+    await flush()
+  })
+
+  it('cancelling while the normal finish is still pending still discards the session', async () => {
+    let resolveFinish: (v: any) => void = () => {}
+    finishRespond = () => new Promise(res => { resolveFinish = res })
+    const { result } = setup()
+    await act(async () => { await result.current.start() })
+    speak()
+    act(() => { void result.current.stop() })
+    await flush()
+    await act(async () => { result.current.cancel() })
+
+    expect(result.current.state).toBe('idle')
+    const finishCalls = calls().filter((c: any[]) => String(c[0]).endsWith('/finish'))
+    expect(finishCalls.some((c: any[]) => c[1]?.discard === true)).toBe(true)
+    resolveFinish({ data: { text: 'too late' } })
+    await flush()
+  })
+
+  it('a discard request that cannot reach the backend is logged, not swallowed', async () => {
+    // An empty catch on the fire-and-forget discard left repeated abandoned
+    // sessions with no trace anywhere that they had failed to clean up.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    finishRespond = () => { throw new Error('discard network down') }
+    const { result } = setup()
+    await act(async () => { await result.current.start() })
+    speak()
+    await act(async () => { result.current.cancel() })
+    await flush()
+
+    expect(warn.mock.calls.flat().join(' ')).toContain('session discard failed')
+    warn.mockRestore()
+  })
+})

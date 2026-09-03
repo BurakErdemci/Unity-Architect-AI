@@ -145,6 +145,16 @@ export const useVoiceInput = ({ api, lang, onText }: VoiceInputParams) => {
 
   /** Server-side recogniser id. Null means there is nothing to send or finish. */
   const sessionIdRef = useRef<string | null>(null);
+  /**
+   * Set for exactly the window between `stop()` clearing `sessionIdRef` and
+   * its normal finish request settling. `sessionIdRef` being null in that
+   * window used to mean `discardSession()` found nothing to clean up if
+   * cancel or unmount landed there too — the session could still be alive on
+   * the server with nothing left client-side that named it (audit findings,
+   * 3 Sep 2026). An extra discard once the finish already succeeded is
+   * harmless: the session is gone, the request just answers 404.
+   */
+  const pendingFinishIdRef = useRef<string | null>(null);
   const chunkTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   /**
    * One chunk POST in flight at a time.
@@ -189,7 +199,19 @@ export const useVoiceInput = ({ api, lang, onText }: VoiceInputParams) => {
    * makes release possible at any instant rather than only at the await
    * boundaries. The post-await abort checks stay as the second line of defence.
    */
-  const pendingRef = useRef<{ stream: MediaStream | null; ctx: AudioContext | null } | null>(null);
+  const pendingRef = useRef<{
+    stream: MediaStream | null;
+    ctx: AudioContext | null;
+    // Present only once the graph is fully built and `start()` is awaiting
+    // `/transcribe/session` — the window a cancel used to have no way to
+    // reach synchronously, since these two live only as LOCAL variables in
+    // `start()` until the atomic final commit near its end (audit finding,
+    // 3 Sep 2026, `async-acquisition-graph-leak`: cancelling here stopped the
+    // track but left the worklet node and its source connection untouched
+    // until — or unless — the pending request eventually settled).
+    node?: AudioWorkletNode | null;
+    source?: AudioNode | null;
+  } | null>(null);
 
   /**
    * "The thing we are acquiring for is gone." Set by unmount and by `cancel()`,
@@ -227,6 +249,9 @@ export const useVoiceInput = ({ api, lang, onText }: VoiceInputParams) => {
     releaseContext(ctxRef.current);
     ctxRef.current = null;
     // Anything an in-flight `start()` has acquired but not yet committed.
+    try { pendingRef.current?.node?.port?.close?.(); } catch { /* already closed */ }
+    try { pendingRef.current?.node?.disconnect(); } catch { /* not connected */ }
+    try { pendingRef.current?.source?.disconnect(); } catch { /* not connected */ }
     releaseStream(pendingRef.current?.stream);
     releaseContext(pendingRef.current?.ctx);
     pendingRef.current = null;
@@ -264,20 +289,54 @@ export const useVoiceInput = ({ api, lang, onText }: VoiceInputParams) => {
     return out;
   }, []);
 
-  /** Fire-and-forget session close. Used where nobody is waiting for a result. */
+  /**
+   * Fire-and-forget discard of a specific server-side session id.
+   *
+   * Split out of `discardSession` so a caller that already knows the id (and
+   * has already cleared `sessionIdRef` for its own bookkeeping, as `stop()`'s
+   * finish path does) can still release the slot immediately instead of
+   * leaving it to the 90 s idle TTL (audit finding, 3 Sep 2026: a normal
+   * finish request that failed before reaching the server left the id
+   * nowhere for `discardSession` to find, and the slot sat occupied for up
+   * to 90 s across a failure the user has already seen an error for).
+   */
+  const discardSessionId = useCallback((id: string) => {
+    // Not awaited on purpose: every caller of this needs to keep going (or is
+    // already in a cleanup path) regardless of whether the backend answers.
+    // Failing to reach it is harmless either way — the session's own 90 s
+    // idle TTL is the backstop. The outer try/catch is for a throw from the
+    // CALL ITSELF, not just a rejected promise — this is reachable from
+    // `stop()`'s own finish failure, where `axios.post` can fail before it
+    // ever returns a promise (measured: an interceptor or transport error at
+    // the exact moment a normal finish request already failed the same way).
+    try {
+      axios.post(
+        `${apiRef.current}/transcribe/session/${id}/finish`,
+        { discard: true },
+        { headers: authHeaders(), timeout: 5000 },
+      ).catch((err: any) => {
+        // Handled is not the same as explained (same rule as
+        // `releaseContext`'s AudioContext.close): an empty catch here left a
+        // discard that genuinely could not reach the backend with no trace
+        // anywhere, so a caller whose four slots quietly filled up with dead
+        // sessions had nothing to read (audit finding, 3 Sep 2026). A 404 is
+        // excluded on purpose — it means the session was already gone (the
+        // TTL, or a finish that actually succeeded despite its own request
+        // failing), which is the discard doing its job, not a failure of it.
+        if (err?.response?.status !== 404) {
+          console.warn('[voice] session discard failed:', apiHataMesaji(err, err?.message ?? String(err)));
+        }
+      });
+    } catch (err: any) {
+      console.warn('[voice] session discard failed:', err?.message ?? String(err));
+    }
+  }, []);
+
   const discardSession = useCallback(() => {
     const id = sessionIdRef.current;
     sessionIdRef.current = null;
-    if (!id) return;
-    // Not awaited on purpose: this runs from cancel() and from the unmount
-    // cleanup, neither of which may return a promise. Failing to reach the
-    // backend is harmless — the session's own 90 s idle TTL collects it.
-    axios.post(
-      `${apiRef.current}/transcribe/session/${id}/finish`,
-      { discard: true },
-      { headers: authHeaders(), timeout: 5000 },
-    ).catch(() => { /* the TTL is the backstop */ });
-  }, []);
+    if (id) discardSessionId(id);
+  }, [discardSessionId]);
 
   /** Give up on a recording that cannot reach the backend any more. */
   const abandon = useCallback((detail?: string) => {
@@ -325,13 +384,37 @@ export const useVoiceInput = ({ api, lang, onText }: VoiceInputParams) => {
         setPartialText(partial);
       } catch (err: any) {
         if (run.cancelled) return;
+        // The route's OWN contract for this status: the session survives the
+        // refusal SPECIFICALLY so the caller can still finish what it already
+        // accepted. Treating it like any other failure used to retry this
+        // audio (which the backend will refuse forever — the budget does not
+        // shrink) until the retry count reached MAX_CHUNK_FAILURES and
+        // `abandon()` discarded the whole recording, accepted prefix included
+        // (audit finding, 3 Sep 2026). The chunk — and the rest of the queue,
+        // since none of it will fit either — is dropped rather than requeued.
+        if (err?.response?.status === 413 && err?.response?.data?.detail === 'stt_too_large') {
+          chunksRef.current = [];
+          // `chunkTimerRef` is only armed during live recording: a 413 hit
+          // from `stop()`'s OWN drain loop must not call `stop()` again —
+          // emptying the queue is enough, the drain loop's own while
+          // condition then ends it and proceeds straight to a normal finish.
+          if (chunkTimerRef.current !== null) void stopRef.current();
+          return;
+        }
         chunksRef.current.unshift(samples);
         chunkFailuresRef.current += 1;
         if (chunkFailuresRef.current >= MAX_CHUNK_FAILURES) {
           abandon(apiHataMesaji(err, err?.message ?? String(err)) || undefined);
         }
       } finally {
-        sendingRef.current = false;
+        // Only THIS run's own settle may clear the shared guard. A run that was
+        // cancelled and replaced still owns its promise until it settles; if its
+        // `finally` cleared the guard unconditionally, its late settle could
+        // free a NEW run's guard while that run's own send was still in flight,
+        // letting the scheduler fire a second overlapping request for it (audit
+        // finding, 3 Sep 2026 — `runRef.current` had already moved on to the
+        // new run's object by the time the stale settle landed).
+        if (runRef.current === run) sendingRef.current = false;
       }
     })();
     inFlightRef.current = inFlight;
@@ -368,6 +451,11 @@ export const useVoiceInput = ({ api, lang, onText }: VoiceInputParams) => {
           audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
         });
       } catch (err: any) {
+        // A cancel that landed while this promise was pending has nothing to
+        // release yet (no stream was ever acquired), but must not read a
+        // deliberately abandoned request as a device/permission failure
+        // (audit finding, 3 Sep 2026, `canceled-acquisition-error`).
+        if (abortAcquisitionRef.current) return;
         const name = err?.name;
         // NotAllowedError/SecurityError are a REFUSAL (user or policy);
         // NotFound/Overconstrained mean there is no device that fits. Different
@@ -424,11 +512,24 @@ export const useVoiceInput = ({ api, lang, onText }: VoiceInputParams) => {
         node = new (globalThis as any).AudioWorkletNode(ctx, PROCESSOR_NAME);
         source = ctx!.createMediaStreamSource(stream!);
         source.connect(node);
+        // Published as soon as they exist, same reason `stream`/`ctx` were
+        // above: `teardown()` (which cancel and unmount both already call)
+        // can now release them immediately if a cancellation lands during
+        // the session-open await just below, instead of only whenever — or
+        // if — that request eventually settles.
+        pendingRef.current = { stream, ctx, node, source };
       } catch (err: any) {
         releaseStream(stream);
         releaseContext(ctx);
         pendingRef.current = null;
-        setError({ kind: 'noDevice', detail: err?.message ?? String(err) });
+        // See the `getUserMedia` catch above: a cancel already marked this
+        // run abandoned, so a late rejection here must not overwrite the
+        // clean canceled state with a false device error (audit finding,
+        // 3 Sep 2026, `canceled-acquisition-error`). Resources are still
+        // released either way — only reporting the error is conditional.
+        if (!abortAcquisitionRef.current) {
+          setError({ kind: 'noDevice', detail: err?.message ?? String(err) });
+        }
         return;
       }
 
@@ -460,6 +561,12 @@ export const useVoiceInput = ({ api, lang, onText }: VoiceInputParams) => {
         sessionId = id;
       } catch (err: any) {
         releaseGraph();
+        // A cancel already tore this run down and put the hook back at
+        // `idle`; a late failure of the very request that raced it must not
+        // write a false server error over that clean state (audit finding,
+        // 3 Sep 2026, `canceled-acquisition-error`). The graph is still
+        // released above regardless — only reporting the error is skipped.
+        if (abortAcquisitionRef.current) return;
         const status = err?.response?.status;
         const detail = err?.response?.data?.detail;
         // 503 is normally "the recognition files are missing", but the same
@@ -588,18 +695,30 @@ export const useVoiceInput = ({ api, lang, onText }: VoiceInputParams) => {
 
     // Wait out whatever the scheduler still has in flight, then ship the tail.
     // Ordered, one at a time: the backend feeds one recogniser per session.
+    //
+    // The loop used to give up after the FIRST failed drain send (`=== 0`),
+    // fall through, and still call finish() — silently delivering a truncated
+    // transcript as if the recording had completed cleanly (audit finding,
+    // 3 Sep 2026). `sendChunk`'s own catch already re-queues the failed
+    // samples at the FRONT and only calls `abandon()` at the same
+    // MAX_CHUNK_FAILURES threshold used during live recording, which also
+    // clears `chunksRef` and cancels `run` — so retrying up to that threshold
+    // here either delivers every queued sample before finishing, or lets
+    // `abandon()` take over and the `run.cancelled` / empty-queue check below
+    // returns before finish() is ever called.
     await (inFlightRef.current ?? Promise.resolve());
     while (
       chunksRef.current.length > 0 &&
       !run.cancelled &&
       sessionIdRef.current === id &&
-      chunkFailuresRef.current === 0
+      chunkFailuresRef.current < MAX_CHUNK_FAILURES
     ) {
       await sendChunk();
     }
     chunksRef.current = [];
     if (run.cancelled || sessionIdRef.current !== id) return;
     sessionIdRef.current = null;
+    pendingFinishIdRef.current = id;
 
     try {
       const res = await axios.post(
@@ -616,6 +735,13 @@ export const useVoiceInput = ({ api, lang, onText }: VoiceInputParams) => {
       }
     } catch (err: any) {
       if (run.cancelled) return;
+      // The id was already cleared above for this hook's own bookkeeping, so
+      // a failure here would otherwise leave nothing for `discardSession` to
+      // find. The server may or may not have actually finished the session
+      // before the failure — either way, telling it to discard is safe: a
+      // session that already finished itself just answers 404, and one still
+      // alive frees its slot now instead of at the 90 s idle TTL.
+      discardSessionId(id);
       const status = err?.response?.status;
       if (status === 503) {
         setError({ kind: 'model', detail: apiHataMesaji(err, '') || undefined });
@@ -629,19 +755,42 @@ export const useVoiceInput = ({ api, lang, onText }: VoiceInputParams) => {
         setError({ kind: 'server', detail: apiHataMesaji(err, `HTTP ${status}`) });
       }
     } finally {
+      // Cleared whether the finish succeeded, failed (already discarded
+      // above), or `run.cancelled` short-circuited past both branches — from
+      // here on this id is either gone server-side or no longer this hook's
+      // responsibility to discard a second time.
+      pendingFinishIdRef.current = null;
       if (!run.cancelled) {
         setPartialText('');
         setState('idle');
         setElapsedMs(0);
       }
     }
-  }, [state, teardown, sendChunk, discardSession]);
+  }, [state, teardown, sendChunk, discardSession, discardSessionId]);
 
   // Timers hold the CURRENT `stop`, not the one that existed when the timer was
   // armed: `stop` closes over `state` and would otherwise fire a stale copy
   // that sees `state === 'idle'` and returns without encoding anything.
   const stopRef = useRef(stop);
   stopRef.current = stop;
+
+  /**
+   * Discards whatever server-side session this hook currently owns, in
+   * EITHER of the two shapes that can exist: a live one (`sessionIdRef`) or
+   * one `stop()`'s own normal finish request has not yet settled for
+   * (`pendingFinishIdRef`) — the two are mutually exclusive at any instant,
+   * but a caller cleaning up does not need to know which one it is. Shared by
+   * `cancel()` and the unmount cleanup, which used to each check only
+   * `sessionIdRef` and so found nothing during that pending-finish window
+   * (audit findings, 3 Sep 2026, `transcribing-session-orphan`).
+   */
+  const discardPending = useCallback(() => {
+    discardSession();
+    if (pendingFinishIdRef.current) {
+      discardSessionId(pendingFinishIdRef.current);
+      pendingFinishIdRef.current = null;
+    }
+  }, [discardSession, discardSessionId]);
 
   const cancel = useCallback(() => {
     runRef.current.cancelled = true;
@@ -650,11 +799,11 @@ export const useVoiceInput = ({ api, lang, onText }: VoiceInputParams) => {
     chunksRef.current = [];
     // Fire-and-forget: the user asked for the recording to go away, so nothing
     // here waits on the network to tell them it did.
-    discardSession();
+    discardPending();
     setPartialText('');
     setState('idle');
     setElapsedMs(0);
-  }, [teardown, discardSession]);
+  }, [teardown, discardPending]);
 
   useEffect(() => () => {
     // Unmount: the flags first, so neither a request already in flight nor an
@@ -665,8 +814,8 @@ export const useVoiceInput = ({ api, lang, onText }: VoiceInputParams) => {
     // The session lives on the SERVER: without this the recogniser it holds
     // would stay allocated until the 90 s idle TTL, and MAX_SESSIONS is 4 —
     // four closed composers would lock everyone out of dictation.
-    discardSession();
-  }, [teardown, discardSession]);
+    discardPending();
+  }, [teardown, discardPending]);
 
   return { state, elapsedMs, error, partialText, start, stop, cancel, clearError };
 };
