@@ -216,6 +216,24 @@ def test_a_wav_that_is_not_16k_mono_16bit_is_rejected(client, fake_vosk, tmp_pat
     assert response.json()["detail"] == "stt_wrong_format", name
 
 
+@pytest.mark.parametrize(
+    "keep_bytes",
+    [46, 44 + 8000],
+    ids=["two bytes of a declared second", "a quarter of a declared second"],
+)
+def test_a_wav_whose_data_chunk_is_shorter_than_declared_is_rejected(client, fake_vosk, tmp_path, monkeypatch, keep_bytes):
+    """Class: declared-length-not-enforced. `wave` reports the declared frame
+    count; `readframes` silently returns fewer bytes. The audit probe posted a
+    file declaring 32,000 PCM bytes with two present and got a 200 whose
+    recognition ran on two bytes."""
+    _install_models(tmp_path, monkeypatch)
+    truncated = _wav(frames=16000)[:keep_bytes]
+    response = _post(client, lang="tr", wav_base64=_b64(truncated))
+    assert response.status_code == 400
+    assert response.json()["detail"] == "stt_not_wav"
+    assert fake_vosk.recognizers == []
+
+
 def test_a_wav_with_zero_frames_is_rejected(client, fake_vosk, tmp_path, monkeypatch):
     _install_models(tmp_path, monkeypatch)
     response = _post(client, lang="tr", wav_base64=_b64(_wav(pcm=b"")))

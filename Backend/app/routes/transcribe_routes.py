@@ -61,6 +61,7 @@ def create_transcribe_router():
                 width = wav.getsampwidth()
                 rate = wav.getframerate()
                 frames = wav.getnframes()
+                pcm = wav.readframes(frames)
         except Exception:                            # noqa: BLE001
             # `wave` raises wave.Error, EOFError or struct.error depending on
             # where the bytes stop being a RIFF file; all three mean the same
@@ -73,8 +74,14 @@ def create_transcribe_router():
         if frames <= 0:
             raise HTTPException(400, detail="stt_empty_audio")
 
+        # `wave` trusts the declared data length; `readframes` returns what is
+        # actually there. A truncated file otherwise reaches recognition as
+        # complete audio (audit probe, 3 Sep 2026: 32,000 declared, 2 present, 200).
+        if len(pcm) != frames * channels * width:
+            raise HTTPException(400, detail="stt_not_wav")
+
         try:
-            text, duration_ms = stt_vosk.transcribe_wav(wav_bytes, request.lang)
+            text, duration_ms = stt_vosk.transcribe_pcm(pcm, request.lang)
         except stt_vosk.SttModelMissing:
             raise HTTPException(503, detail="stt_model_missing")
         except stt_vosk.SttModelLoadFailed as exc:
