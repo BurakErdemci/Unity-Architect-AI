@@ -50,6 +50,32 @@ interface VoiceInputParams {
   onText: (text: string) => void;
 }
 
+/**
+ * Stop every track of a stream we hold no ref to yet.
+ *
+ * Separate from `teardown()` because the leaks the audit found all happen
+ * BEFORE the refs are installed: at that point `teardown()` has nothing to
+ * release, so the only handle on the microphone is the local variable.
+ */
+const releaseStream = (stream: MediaStream | null | undefined) => {
+  try { stream?.getTracks?.().forEach(t => t.stop()); } catch { /* no tracks */ }
+};
+
+/**
+ * Close a context without letting the failure escape.
+ *
+ * `void ctx.close()` catches only a SYNCHRONOUS throw. `AudioContext.close()`
+ * returns a promise, and a browser-level refusal became an unhandled rejection
+ * surfacing outside the hook's error handling, after the context ref had
+ * already been nulled (audit: `unhandled-cleanup-rejection`). Wrapping the call
+ * in `Promise.resolve().then(...)` also covers a stub that throws synchronously
+ * or returns a non-promise.
+ */
+const releaseContext = (ctx: AudioContext | null | undefined) => {
+  if (!ctx) return;
+  Promise.resolve().then(() => ctx.close()).catch(() => { /* closing is best-effort */ });
+};
+
 const WORKLET_URL = '/audio/pcm-capture-worklet.js';
 const PROCESSOR_NAME = 'pcm-capture';
 /** Elapsed-time refresh. 200 ms is under one mm:ss tick, so the timer never skips a second. */
@@ -79,6 +105,27 @@ export const useVoiceInput = ({ api, lang, onText }: VoiceInputParams) => {
    */
   const runRef = useRef<{ cancelled: boolean }>({ cancelled: true });
 
+  /**
+   * SYNCHRONOUS duplicate-start guard.
+   *
+   * The old guard read React state, which stays `idle` for the whole async
+   * acquisition — so two clicks in the same render both passed it, both called
+   * `getUserMedia`, and the single set of refs kept only the second. The first
+   * microphone track was then unreachable and could never be stopped (audit:
+   * `duplicate-start-race`). A ref is written before the first await, so the
+   * second call sees it in the same tick.
+   */
+  const startingRef = useRef(false);
+
+  /**
+   * "The thing we are acquiring for is gone." Set by unmount and by `cancel()`,
+   * and re-checked after EVERY await inside `start()`: a `getUserMedia` or
+   * `addModule` promise that settles after cleanup would otherwise install a
+   * live capture graph that no effect will ever tear down again (audit:
+   * `async-start-after-unmount`).
+   */
+  const abortAcquisitionRef = useRef(false);
+
   // `onText` and `lang` read through refs: `start`/`stop` are handed to a
   // button and to timers, and rebuilding them on every parent render would
   // restart the auto-stop timeout mid-recording.
@@ -100,107 +147,134 @@ export const useVoiceInput = ({ api, lang, onText }: VoiceInputParams) => {
     sourceRef.current = null;
     // Tracks first among the things the OS can see — this is what turns the
     // microphone indicator off.
-    try { streamRef.current?.getTracks().forEach(t => t.stop()); } catch { /* no tracks */ }
+    releaseStream(streamRef.current);
     streamRef.current = null;
-    try { void ctxRef.current?.close(); } catch { /* already closed */ }
+    releaseContext(ctxRef.current);
     ctxRef.current = null;
   }, []);
 
   const clearError = useCallback(() => setError(null), []);
 
   const start = useCallback(async () => {
+    // Ref first, state second: only the ref is reliable inside the same tick.
+    if (startingRef.current || streamRef.current) return;
     if (state !== 'idle') return;
-    setError(null);
+    startingRef.current = true;
+    abortAcquisitionRef.current = false;
 
-    const media = (globalThis as any).navigator?.mediaDevices;
-    if (!media?.getUserMedia) {
-      setError({ kind: 'noDevice' });
-      return;
-    }
+    // Held locally until the graph is fully built. Every early return below
+    // releases these directly, because until the refs are assigned `teardown()`
+    // cannot see them.
+    let stream: MediaStream | null = null;
+    let ctx: AudioContext | null = null;
 
-    let stream: MediaStream;
     try {
-      stream = await media.getUserMedia({
-        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
-      });
-    } catch (err: any) {
-      const name = err?.name;
-      // NotAllowedError/SecurityError are a REFUSAL (user or policy);
-      // NotFound/Overconstrained mean there is no device that fits. Different
-      // sentences, because the fix is different: grant permission vs plug
-      // something in.
-      if (name === 'NotAllowedError' || name === 'SecurityError') {
-        setError({ kind: 'permission', detail: err?.message });
-      } else if (name === 'NotFoundError' || name === 'OverconstrainedError') {
-        setError({ kind: 'noDevice', detail: err?.message });
-      } else {
-        setError({ kind: 'noDevice', detail: err?.message ?? String(err) });
+      setError(null);
+
+      const media = (globalThis as any).navigator?.mediaDevices;
+      if (!media?.getUserMedia) {
+        setError({ kind: 'noDevice' });
+        return;
       }
-      return;
-    }
 
-    let ctx: AudioContext;
-    try {
-      // Asking for 16000 directly avoids resampling entirely where the browser
-      // honours it. Where it refuses (Firefox historically throws), we take the
-      // default rate and decimate — hence reading `ctx.sampleRate` below rather
-      // than assuming the requested value was applied.
-      ctx = new (globalThis as any).AudioContext({ sampleRate: WAV_SAMPLE_RATE });
-    } catch {
       try {
-        ctx = new (globalThis as any).AudioContext();
+        stream = await media.getUserMedia({
+          audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+        });
       } catch (err: any) {
-        stream.getTracks().forEach(t => t.stop());
+        const name = err?.name;
+        // NotAllowedError/SecurityError are a REFUSAL (user or policy);
+        // NotFound/Overconstrained mean there is no device that fits. Different
+        // sentences, because the fix is different: grant permission vs plug
+        // something in.
+        if (name === 'NotAllowedError' || name === 'SecurityError') {
+          setError({ kind: 'permission', detail: err?.message });
+        } else {
+          setError({ kind: 'noDevice', detail: err?.message ?? String(err) });
+        }
+        return;
+      }
+
+      // The permission dialog can outlive the component. Bail without touching
+      // state — a `setError` here would be a write into an unmounted tree, and
+      // the point is to release the microphone, not to report anything.
+      if (abortAcquisitionRef.current) { releaseStream(stream); return; }
+
+      try {
+        // Asking for 16000 directly avoids resampling entirely where the browser
+        // honours it. Where it refuses (Firefox historically throws), we take the
+        // default rate and decimate — hence reading `ctx.sampleRate` below rather
+        // than assuming the requested value was applied.
+        ctx = new (globalThis as any).AudioContext({ sampleRate: WAV_SAMPLE_RATE });
+      } catch {
+        try {
+          ctx = new (globalThis as any).AudioContext();
+        } catch (err: any) {
+          releaseStream(stream);
+          setError({ kind: 'noDevice', detail: err?.message ?? String(err) });
+          return;
+        }
+      }
+
+      // ONE protected block for every remaining graph step. Each of these could
+      // throw after the microphone was already live — the audit reproduced a
+      // leak from the `AudioWorkletNode` constructor, from
+      // `createMediaStreamSource()` and from `connect()`, all of which used to
+      // run outside any cleanup (`partial-teardown-on-exception`).
+      let node: AudioWorkletNode;
+      let source: AudioNode;
+      try {
+        await ctx!.audioWorklet.addModule(WORKLET_URL);
+        if (abortAcquisitionRef.current) { releaseStream(stream); releaseContext(ctx); return; }
+
+        node = new (globalThis as any).AudioWorkletNode(ctx, PROCESSOR_NAME);
+        source = ctx!.createMediaStreamSource(stream!);
+        source.connect(node);
+      } catch (err: any) {
+        releaseStream(stream);
+        releaseContext(ctx);
         setError({ kind: 'noDevice', detail: err?.message ?? String(err) });
         return;
       }
+
+      // Past this line nothing can throw, so installing the refs here means the
+      // refs and the live resources are always in the same state.
+      const run = { cancelled: false };
+      runRef.current = run;
+      chunksRef.current = [];
+      rawSampleCountRef.current = 0;
+      inputRateRef.current = ctx!.sampleRate || WAV_SAMPLE_RATE;
+      streamRef.current = stream;
+      ctxRef.current = ctx;
+      nodeRef.current = node;
+      sourceRef.current = source;
+
+      node.port.onmessage = (event: MessageEvent) => {
+        const block = event.data as Float32Array;
+        if (!block || !block.length) return;
+        chunksRef.current.push(block);
+        rawSampleCountRef.current += block.length;
+        // Budget check in the 16 kHz domain, because that is what actually goes
+        // on the wire. Stopping early is better than posting a body the backend
+        // answers with 413 — a rejection the user cannot act on.
+        const ratio = inputRateRef.current / WAV_SAMPLE_RATE;
+        const projected = wavByteLength(Math.floor(rawSampleCountRef.current / ratio));
+        if (projected >= WAV_MAX_BYTES) stopRef.current();
+      };
+
+      startedAtRef.current = Date.now();
+      setElapsedMs(0);
+      setState('recording');
+      tickRef.current = setInterval(() => {
+        setElapsedMs(Date.now() - startedAtRef.current);
+      }, TICK_MS);
+      // Hard ceiling. Without it a forgotten recording runs until the byte budget
+      // trips, and the byte budget depends on the sample rate — i.e. the user
+      // would get a different maximum length on different machines.
+      autoStopRef.current = setTimeout(() => { stopRef.current(); }, MAX_RECORD_MS);
+    } finally {
+      startingRef.current = false;
     }
-
-    try {
-      await ctx.audioWorklet.addModule(WORKLET_URL);
-    } catch (err: any) {
-      stream.getTracks().forEach(t => t.stop());
-      try { void ctx.close(); } catch { /* ignore */ }
-      setError({ kind: 'noDevice', detail: err?.message ?? String(err) });
-      return;
-    }
-
-    const run = { cancelled: false };
-    runRef.current = run;
-    chunksRef.current = [];
-    rawSampleCountRef.current = 0;
-    inputRateRef.current = ctx.sampleRate || WAV_SAMPLE_RATE;
-    streamRef.current = stream;
-    ctxRef.current = ctx;
-
-    const node = new (globalThis as any).AudioWorkletNode(ctx, PROCESSOR_NAME);
-    nodeRef.current = node;
-    node.port.onmessage = (event: MessageEvent) => {
-      const block = event.data as Float32Array;
-      if (!block || !block.length) return;
-      chunksRef.current.push(block);
-      rawSampleCountRef.current += block.length;
-      // Budget check in the 16 kHz domain, because that is what actually goes
-      // on the wire. Stopping early is better than posting a body the backend
-      // answers with 413 — a rejection the user cannot act on.
-      const ratio = inputRateRef.current / WAV_SAMPLE_RATE;
-      const projected = wavByteLength(Math.floor(rawSampleCountRef.current / ratio));
-      if (projected >= WAV_MAX_BYTES) stopRef.current();
-    };
-    const source = ctx.createMediaStreamSource(stream);
-    sourceRef.current = source;
-    source.connect(node);
-
-    startedAtRef.current = Date.now();
-    setElapsedMs(0);
-    setState('recording');
-    tickRef.current = setInterval(() => {
-      setElapsedMs(Date.now() - startedAtRef.current);
-    }, TICK_MS);
-    // Hard ceiling. Without it a forgotten recording runs until the byte budget
-    // trips, and the byte budget depends on the sample rate — i.e. the user
-    // would get a different maximum length on different machines.
-    autoStopRef.current = setTimeout(() => { stopRef.current(); }, MAX_RECORD_MS);
   }, [state]);
 
   const stop = useCallback(async () => {
@@ -279,6 +353,7 @@ export const useVoiceInput = ({ api, lang, onText }: VoiceInputParams) => {
 
   const cancel = useCallback(() => {
     runRef.current.cancelled = true;
+    abortAcquisitionRef.current = true;
     teardown();
     chunksRef.current = [];
     setState('idle');
@@ -286,9 +361,10 @@ export const useVoiceInput = ({ api, lang, onText }: VoiceInputParams) => {
   }, [teardown]);
 
   useEffect(() => () => {
-    // Unmount: the flag first, so a request already in flight cannot call
-    // `onText` into a composer that no longer exists.
+    // Unmount: the flags first, so neither a request already in flight nor an
+    // acquisition still resolving can write into a composer that is gone.
     runRef.current.cancelled = true;
+    abortAcquisitionRef.current = true;
     teardown();
   }, [teardown]);
 
