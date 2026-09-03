@@ -112,6 +112,8 @@ model. They come from the live list now.
 
 The subscription CLIs — Claude Code, Kimi, agy — keep hand-written lists: none of
 them has a command that lists models, checked by running them.
+Claude Fable 5.1 (`claude-fable-5-1`) is on the Claude Code list now, next to Fable 5:
+both ids answer as themselves when run through the installed CLI (measured 3 Sep 2026).
 
 ### A usage and context panel, and a gauge that is always there
 

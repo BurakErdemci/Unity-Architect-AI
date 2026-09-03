@@ -40,3 +40,26 @@ def test_opus_5_is_selectable_on_the_claude_code_side():
     assert "claude-opus-5" in subscription
     assert "claude-opus-4-8" in subscription
     assert subscription["claude-opus-5"]["provider"] == "subscription"
+
+
+@patch("providers.api_providers.anthropic.Anthropic")
+def test_fable_5_1_and_fable_5_keep_distinct_api_model_ids(anthropic_client):
+    """Measured 3 Sep 2026: `claude --model claude-fable-5-1 -p ...` answers with
+    modelUsage `claude-fable-5-1`, and `claude-fable-5` still answers as itself —
+    two models, not an alias, so the generic `"fable"` branch must not swallow
+    the 5.1 id."""
+    anthropic_client.return_value = MagicMock()
+
+    assert AnthropicProvider("test-key", "claude-fable-5-1").model_name == "claude-fable-5-1"
+    assert AnthropicProvider("test-key", "claude-fable-5").model_name == "claude-fable-5"
+
+
+def test_fable_5_1_is_selectable_on_the_claude_code_side():
+    router = create_config_router(MagicMock())
+    route = next(route for route in router.routes if route.path == "/available-models")
+    catalog = asyncio.run(route.endpoint())
+    subscription = {model["id"]: model for model in catalog["subscription"]}
+
+    assert "claude-fable-5-1" in subscription
+    assert "claude-fable-5" in subscription
+    assert subscription["claude-fable-5-1"]["name"] == "Claude Fable 5.1 (CLI)"

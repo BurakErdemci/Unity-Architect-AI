@@ -458,6 +458,7 @@ def create_config_router(db):
             "cloud": [],
             "subscription": [
                 {"id": "claude-sonnet-5",      "name": "Claude Sonnet 5 (CLI)",         "provider": "subscription"},
+                {"id": "claude-fable-5-1",     "name": "Claude Fable 5.1 (CLI)",        "provider": "subscription"},
                 {"id": "claude-fable-5",       "name": "Claude Fable 5 (CLI)",          "provider": "subscription"},
                 {"id": "claude-opus-5",        "name": "Claude Opus 5 (CLI)",           "provider": "subscription"},
                 {"id": "claude-opus-4-8",      "name": "Claude 4.8 Opus (CLI)",         "provider": "subscription"},
