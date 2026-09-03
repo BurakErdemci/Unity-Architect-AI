@@ -32,10 +32,16 @@ const STAMP = path.join(MODELS_DIR, '.fetched');
 // pinned identity and `app/providers/stt_vosk.py` resolves models by it, so the
 // two must not drift; a rename upstream shows up here as a re-download, not as a
 // silently wrong model.
+// Third column: where final.mdl sits — TR 0.3 is flat, EN 0.15 keeps it under
+// am/. A directory is not evidence that a model was installed; the marker is.
 const MODELS = [
-  ['vosk-model/small-tr', 'vosk-model-small-tr-0.3'],
-  ['vosk-model/small-en-us', 'vosk-model-small-en-us-0.15'],
+  ['vosk-model/small-tr', 'vosk-model-small-tr-0.3', 'final.mdl'],
+  ['vosk-model/small-en-us', 'vosk-model-small-en-us-0.15', path.join('am', 'final.mdl')],
 ];
+
+function markersPresent() {
+  return MODELS.every(([, d, marker]) => fs.existsSync(path.join(MODELS_DIR, d, marker)));
+}
 
 function run(cmd, args) {
   const r = spawnSync(cmd, args, { stdio: 'inherit', cwd: repoRoot });
@@ -87,7 +93,7 @@ function installedLines() {
 
 function alreadyCurrent(stamp) {
   if (!stamp) return false;
-  if (!MODELS.every(([, d]) => fs.existsSync(path.join(MODELS_DIR, d)))) return false;
+  if (!markersPresent()) return false;
   try {
     const lines = fs.readFileSync(STAMP, 'utf8').trim().split(/\r?\n/);
     if (lines[0].trim() !== stamp) return false;
@@ -106,13 +112,17 @@ function writeStamp(stamp) {
   } catch { /* an unwritable stamp only costs one extra fetch next build */ }
 }
 
+// True only when the platform fetcher itself reported success. The build is
+// best-effort either way (main() always exits 0), but the STAMP must not be: a
+// fetcher that failed after creating the directories was otherwise stamped as
+// verified (verification probe, 3 Sep 2026).
 function fetchModels() {
   if (process.platform === 'win32') {
     const script = path.join(vendorDir, 'fetch_vosk_models.ps1');
     if (!fs.existsSync(script)) return warn(`not found: ${script}`);
     for (const shell of ['pwsh', 'powershell']) {
       const code = run(shell, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script]);
-      if (code === 0) return 0;
+      if (code === 0) return true;
       if (code !== null) return warn(`${shell} exit code ${code}`);
       // code === null → shell absent, try the next one
     }
@@ -122,7 +132,7 @@ function fetchModels() {
   const script = path.join(vendorDir, 'fetch_vosk_models.sh');
   if (!fs.existsSync(script)) return warn(`not found: ${script}`);
   const code = run('bash', [script]);
-  if (code === 0) return 0;
+  if (code === 0) return true;
   return warn(code === null ? 'bash could not be started' : `bash exit code ${code}`);
 }
 
@@ -132,7 +142,7 @@ function warn(reason) {
     '  The package will be built WITHOUT them; voice dictation answers 503\n' +
     '  stt_model_missing and the mic button reports the model as unavailable.'
   );
-  return 0;
+  return false;
 }
 
 function main() {
@@ -151,11 +161,8 @@ function main() {
     fs.rmSync(path.join(MODELS_DIR, dir), { recursive: true, force: true });
   }
   try { fs.rmSync(STAMP, { force: true }); } catch { /* absent already */ }
-  const code = fetchModels();
-  if (code === 0 && MODELS.every(([, d]) => fs.existsSync(path.join(MODELS_DIR, d)))) {
-    writeStamp(stamp);
-  }
-  return code;
+  if (fetchModels() && markersPresent()) writeStamp(stamp);
+  return 0;
 }
 
 process.exit(main());

@@ -34,6 +34,8 @@ foreach ($dir in @(${MODEL_DIRS.map((d) => `'${d}'`).join(', ')})) {
     if (Test-Path (Join-Path $target 'final.mdl')) { continue }
     New-Item -ItemType Directory -Force -Path $target | Out-Null
     Set-Content -Path (Join-Path $target 'final.mdl') -Value 'clean-model' -NoNewline -Encoding ascii
+    New-Item -ItemType Directory -Force -Path (Join-Path $target 'am') | Out-Null
+    Set-Content -Path (Join-Path $target 'am\\final.mdl') -Value 'clean-model' -NoNewline -Encoding ascii
     Set-Content -Path (Join-Path $target 'README') -Value 'clean-readme' -NoNewline -Encoding ascii
 }
 exit 0
@@ -49,6 +51,7 @@ for dir in ${MODEL_DIRS.join(' ')}; do
   if [ -f "$target/final.mdl" ]; then continue; fi
   mkdir -p "$target"
   printf 'clean-model' > "$target/final.mdl"
+  mkdir -p "$target/am"; printf 'clean-model' > "$target/am/final.mdl"
   printf 'clean-readme' > "$target/README"
 done
 exit 0
@@ -136,6 +139,33 @@ describe('fetch-vosk-models stale stamp handling', () => {
 
     expect(fs.readFileSync(tampered, 'utf8')).toBe('clean-readme')
     expect(fs.readFileSync(stamp, 'utf8')).not.toContain(tamperedDigest)
+  })
+
+  it('does not stamp when the fetcher fails after creating empty directories', () => {
+    // Class: stale-artifact-not-reverified, second form (verification round,
+    // 3 Sep 2026). The wrapper used to turn a failing fetcher into "success" and
+    // stamp whatever directories existed; a later run then skipped the fetch
+    // and the app shipped two empty model folders.
+    const fx = makeFixture()
+    runWrapper(fx.root, fx.script)
+    expect(fs.existsSync(fx.stamp)).toBe(true)
+    fs.writeFileSync(path.join(fx.modelsDir, MODEL_DIRS[0], 'README'), 'TAMPERED-PAYLOAD')
+    const failingPs1 = `$root = Join-Path $PSScriptRoot 'models\\vosk'
+foreach ($dir in @(${MODEL_DIRS.map((d) => `'${d}'`).join(', ')})) { New-Item -ItemType Directory -Force -Path (Join-Path $root $dir) | Out-Null }
+exit 1
+`
+    const failingSh = `#!/usr/bin/env bash
+here="$(cd "$(dirname "$0")" && pwd)"
+for dir in ${MODEL_DIRS.join(' ')}; do mkdir -p "$here/models/vosk/$dir"; done
+exit 1
+`
+    fs.writeFileSync(path.join(fx.root, 'Backend', 'vendor', 'fetch_vosk_models.ps1'), failingPs1)
+    fs.writeFileSync(path.join(fx.root, 'Backend', 'vendor', 'fetch_vosk_models.sh'), failingSh)
+    runWrapper(fx.root, fx.script)
+    for (const dir of MODEL_DIRS) {
+      expect(fs.existsSync(path.join(fx.modelsDir, dir, 'final.mdl'))).toBe(false)
+    }
+    expect(fs.existsSync(fx.stamp)).toBe(false)
   })
 
   it('skips entirely when the stamp matches the installed bytes', () => {
