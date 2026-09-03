@@ -16,7 +16,7 @@ import re
 import wave
 
 from fastapi import APIRouter, Header, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, StrictBool
 
 from auth_utils import _check_token
 from providers import stt_vosk
@@ -56,7 +56,10 @@ class SessionChunkRequest(BaseModel):
 
 
 class SessionFinishRequest(BaseModel):
-    discard: bool = False
+    # StrictBool, not bool: Pydantic's plain bool coerces 1 and "yes" to True,
+    # so a stray non-boolean value silently discarded a dictation instead of
+    # being refused (audit finding, 3 Sep 2026).
+    discard: StrictBool = False
 
 
 def create_transcribe_router():
@@ -166,12 +169,15 @@ def create_transcribe_router():
             raise HTTPException(400, detail="stt_wrong_format")
 
         try:
-            # The cap is read before feeding so the session survives the refusal
-            # and the caller can still finish what it has already said.
-            if stt_vosk.session_bytes(session_id) + len(pcm) > MAX_SESSION_BYTES:
-                raise HTTPException(413, detail="stt_too_large")
-            partial = stt_vosk.feed(session_id, pcm)
+            # The cap check and the increment happen inside `feed`, in the same
+            # per-session lock: two chunks admitted from a stale total pushed a
+            # session two bytes past the cap when the check ran here, before the
+            # lock (audit finding, 3 Sep 2026). The session survives a refusal
+            # either way — the caller can still finish what it has already said.
+            partial = stt_vosk.feed(session_id, pcm, cap=MAX_SESSION_BYTES)
             total = stt_vosk.session_bytes(session_id)
+        except stt_vosk.SttTooLarge:
+            raise HTTPException(413, detail="stt_too_large")
         except stt_vosk.SttNoSession:
             raise HTTPException(404, detail="stt_no_session")
 

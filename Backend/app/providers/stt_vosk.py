@@ -186,6 +186,16 @@ def reset_cache() -> None:
 MAX_SESSIONS = 4
 SESSION_TTL_S = 90.0
 
+# Independent of idle time: an empty chunk is a keep-alive that refreshes
+# `last_seen` without doing any recognition work, so a caller sending one every
+# 89 s could hold a slot forever and starve the other three (audit finding,
+# 3 Sep 2026 — measured: four sessions stayed live and a fifth stayed refused
+# through 356 s of keep-alives). The renderer's own dictation never runs this
+# long (60 s hard auto-stop, `MAX_RECORD_MS`), so this is a backstop against a
+# caller that never legitimately needs a session this old, not a limit real
+# dictation can hit.
+SESSION_MAX_LIFETIME_S = 300.0
+
 # The time source is a module attribute so a test can replace it; monotonic
 # because the TTL must survive a wall-clock jump.
 _now = time.monotonic
@@ -197,6 +207,10 @@ class SttNoSession(Exception):
 
 class SttBusy(Exception):
     """MAX_SESSIONS recognisers are already alive."""
+
+
+class SttTooLarge(Exception):
+    """Feeding this chunk would push the session over its byte budget."""
 
 
 class _Session:
@@ -220,13 +234,19 @@ _sessions_lock = threading.Lock()
 
 
 def purge_expired(now=None) -> "list[str]":
-    """Drops sessions idle for longer than the TTL. Returns the dropped ids."""
+    """Drops sessions idle too long OR simply too old. Returns the dropped ids.
+
+    Two independent clocks, checked with `or`: idle time resets on every
+    chunk (including an empty keep-alive), age never does — a session that
+    keeps refreshing `last_seen` forever is exactly what the age check exists
+    to still expire.
+    """
     if now is None:
         now = _now()
     dropped = []
     with _sessions_lock:
         for session_id, session in list(_sessions.items()):
-            if now - session.last_seen > SESSION_TTL_S:
+            if now - session.last_seen > SESSION_TTL_S or now - session.created > SESSION_MAX_LIFETIME_S:
                 del _sessions[session_id]
                 dropped.append(session_id)
     return dropped
@@ -264,21 +284,48 @@ def session_bytes(session_id: str) -> int:
     return _get(session_id).total_bytes
 
 
-def feed(session_id: str, pcm: bytes) -> str:
+def feed(session_id: str, pcm: bytes, cap: "int | None" = None) -> str:
     """Feeds one chunk and returns the partial text so far.
 
     An empty chunk is a keep-alive: it refreshes ``last_seen`` and reports the
     current partial without touching the recogniser.
+
+    ``cap``, when given, is checked and the total is incremented in the SAME
+    critical section (``session.lock``). Read-then-write across two requests
+    used to happen outside any lock, so two chunks arriving at once could both
+    pass the check against the same stale total and push the session past the
+    cap together — audit finding, 3 Sep 2026, reproduced with two concurrent
+    2-byte chunks 2 bytes below the cap. A refused chunk changes nothing: the
+    recogniser is not fed and ``total_bytes`` is not touched, matching the
+    caller's expectation that the session survives the refusal.
     """
     session = _get(session_id)
     with session.lock:
-        for start in range(0, len(pcm), _CHUNK_BYTES):
-            session.recognizer.AcceptWaveform(pcm[start:start + _CHUNK_BYTES])
-        session.total_bytes += len(pcm)
+        if cap is not None and session.total_bytes + len(pcm) > cap:
+            raise SttTooLarge()
         try:
-            partial = json.loads(session.recognizer.PartialResult()).get("partial", "")
-        except (ValueError, TypeError, AttributeError):
-            partial = ""
+            for start in range(0, len(pcm), _CHUNK_BYTES):
+                session.recognizer.AcceptWaveform(pcm[start:start + _CHUNK_BYTES])
+            session.total_bytes += len(pcm)
+            try:
+                partial = json.loads(session.recognizer.PartialResult()).get("partial", "")
+            except (ValueError, TypeError, AttributeError):
+                partial = ""
+        except Exception:
+            # A recognizer exception here can leave `total_bytes` and what the
+            # recognizer actually consumed disagreeing: `AcceptWaveform` raising
+            # on a later slice leaves an earlier slice consumed with the total
+            # still at its PRE-call value (a retry would re-feed that prefix);
+            # `PartialResult` raising leaves the total already committed for
+            # bytes the caller has no way to know were accepted, so its retry
+            # feeds them again. Either way this session can no longer be
+            # trusted to answer "how much audio has it heard" — drop it so a
+            # retry gets `stt_no_session` (an honest restart) instead of
+            # silently duplicating audio in the transcript (audit finding,
+            # 3 Sep 2026).
+            with _sessions_lock:
+                _sessions.pop(session_id, None)
+            raise
         session.last_seen = _now()
     return partial
 

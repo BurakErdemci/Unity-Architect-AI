@@ -51,6 +51,9 @@ class _FakeRecognizer:
         self.inside = False
         self.overlapped = False
         self.block_delay = 0.0
+        # 1-based AcceptWaveform call number to raise on, or None to never raise.
+        self.raise_on_block = None
+        self.raise_on_partial = False
 
     def AcceptWaveform(self, data):
         if self.inside:
@@ -59,12 +62,16 @@ class _FakeRecognizer:
         try:
             if self.block_delay:
                 time.sleep(self.block_delay)
+            if self.raise_on_block is not None and len(self.chunks) + 1 == self.raise_on_block:
+                raise RuntimeError("recognizer refused this block")
             self.chunks.append(data)
         finally:
             self.inside = False
         return False
 
     def PartialResult(self):
+        if self.raise_on_partial:
+            raise RuntimeError("recognizer refused to report a partial")
         return json.dumps({"partial": " ".join(f"w{i}" for i in range(1, len(self.chunks) + 1))})
 
     def FinalResult(self):
@@ -125,7 +132,11 @@ def fake_vosk(monkeypatch):
 def client():
     app = FastAPI()
     app.include_router(create_transcribe_router())
-    return TestClient(app)
+    # `raise_server_exceptions=False` matches what a real HTTP client sees (a
+    # 500 response) rather than the test client's default of re-raising —
+    # needed to assert on the response a recognizer exception produces, not
+    # just to observe the exception itself.
+    return TestClient(app, raise_server_exceptions=False)
 
 
 @pytest.fixture
@@ -264,6 +275,77 @@ def test_the_session_total_cap_refuses_the_chunk_but_keeps_the_session(ready):
     assert _finish(ready, session_id).status_code == 200
 
 
+def test_two_concurrent_boundary_chunks_cannot_both_pass_the_session_cap(ready, fake_vosk):
+    """Audit finding, 3 Sep 2026: the cap used to be read (`session_bytes`) and
+    the total incremented (inside `feed`) in two separate critical sections, so
+    two chunks arriving at once could both read the same stale total and push
+    the session two bytes past the 2 MiB cap together. The recogniser's own
+    delay is what makes two real HTTP requests actually overlap in time; a
+    unit-level race needs no delay because it drives `feed` directly, but this
+    is the route's own admission check, so the overlap has to be real."""
+    session_id = _new_session(ready)
+    fake_vosk.recognizers[0].block_delay = 0.05
+    block = b"\x00" * MAX_CHUNK_BYTES
+    for _ in range((MAX_SESSION_BYTES - 2) // MAX_CHUNK_BYTES):
+        assert _chunk(ready, session_id, block).status_code == 200
+    remainder = (MAX_SESSION_BYTES - 2) % MAX_CHUNK_BYTES
+    if remainder:
+        assert _chunk(ready, session_id, block[:remainder]).status_code == 200
+
+    responses = []
+
+    def send():
+        responses.append(_chunk(ready, session_id, b"\x00\x00"))
+
+    threads = [threading.Thread(target=send) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=15)
+
+    assert len(responses) == 2
+    statuses = sorted(r.status_code for r in responses)
+    assert statuses == [200, 413], [r.text for r in responses]
+    admitted = next(r for r in responses if r.status_code == 200)
+    assert admitted.json()["bytes"] == MAX_SESSION_BYTES
+
+
+def test_a_mid_chunk_recognizer_failure_poisons_the_session_instead_of_leaving_it_resendable(ready, fake_vosk):
+    """Audit finding, 3 Sep 2026: `AcceptWaveform` raising on a later 8000-byte
+    slice used to leave the recogniser having consumed an earlier slice while
+    `total_bytes` stayed at its pre-call value — a retry of the same chunk
+    would re-feed the already-consumed prefix into the transcript. The session
+    is now dropped on any feed exception, so a retry gets an honest 404
+    instead of a silent duplicate."""
+    session_id = _new_session(ready)
+    fake_vosk.recognizers[0].raise_on_block = 2   # the second 8000-byte slice
+    two_blocks = b"\x00" * 16000
+    response = _chunk(ready, session_id, two_blocks)
+    assert response.status_code == 500
+    assert len(fake_vosk.recognizers[0].chunks) == 1  # the first slice was consumed
+
+    retry = _chunk(ready, session_id, two_blocks)
+    assert retry.status_code == 404
+    assert retry.json()["detail"] == "stt_no_session"
+
+
+def test_a_partial_result_failure_poisons_the_session_instead_of_leaving_it_resendable(ready, fake_vosk):
+    """Same class, the other trigger: `PartialResult` raising AFTER
+    `total_bytes` was already incremented for the accepted chunk. Without the
+    fix a retry of that same chunk would be accepted a second time, feeding it
+    to the recogniser twice."""
+    session_id = _new_session(ready)
+    fake_vosk.recognizers[0].raise_on_partial = True
+    one_block = b"\x00" * 8000
+    response = _chunk(ready, session_id, one_block)
+    assert response.status_code == 500
+    assert len(fake_vosk.recognizers[0].chunks) == 1
+
+    retry = _chunk(ready, session_id, one_block)
+    assert retry.status_code == 404
+    assert retry.json()["detail"] == "stt_no_session"
+
+
 def test_an_odd_byte_count_is_rejected(ready):
     """Half a 16-bit sample; vosk would reinterpret every following byte."""
     session_id = _new_session(ready)
@@ -311,6 +393,25 @@ def test_a_session_id_outside_the_token_alphabet_is_a_404_not_a_lookup(ready):
     assert response.status_code == 404
 
 
+def test_an_empty_session_id_never_reaches_the_registry(ready):
+    """Audit finding, 3 Sep 2026, demoted: a raw slash or an empty id are not
+    valid path segments, so Starlette answers them itself -- a generic 404 for
+    the slash (already covered above) and a 307 redirect toward the session
+    CREATE route for the empty one, before either reaches `_SESSION_ID_RE` or
+    the registry. Neither form ever names or mutates a live session; this
+    pins the current (not the ideal) status codes so a future change to it is
+    visible rather than silent. `follow_redirects=False`: the redirect target
+    expects `{lang}`, not `{pcm_base64}`, and following it would just measure
+    a second, unrelated 422 from the create route."""
+    response = ready.post(
+        "/transcribe/session/",
+        json={"pcm_base64": ""},
+        headers=HEADERS,
+        follow_redirects=False,
+    )
+    assert response.status_code == 307
+
+
 # ── Finish ──────────────────────────────────────────────────────────────────
 
 def test_finish_returns_the_final_text_and_the_duration_of_the_audio(ready):
@@ -341,6 +442,18 @@ def test_a_discarded_session_is_dropped_without_a_recognition(ready, fake_vosk):
     assert response.json() == {"text": "", "duration_ms": 0}
     assert fake_vosk.recognizers[0].final_calls == 0
     assert _chunk(ready, session_id, b"\x00\x00").status_code == 404
+
+
+@pytest.mark.parametrize("value", [1, "yes"])
+def test_a_non_boolean_discard_value_is_rejected_not_coerced(ready, value):
+    """Audit finding, 3 Sep 2026: plain `bool` coerces `1` and `"yes"` to True,
+    so a stray non-boolean value silently discarded a dictation instead of
+    being refused. `StrictBool` turns both into a 422 instead."""
+    session_id = _new_session(ready)
+    response = _finish(ready, session_id, discard=value)
+    assert response.status_code == 422
+    # The session is untouched by the refused request.
+    assert _chunk(ready, session_id, b"\x00\x00").status_code == 200
 
 
 def test_finish_on_an_unknown_session_is_a_404(ready):
