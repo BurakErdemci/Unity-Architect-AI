@@ -19,6 +19,7 @@ vi.mock('axios', () => {
 
 import axios from 'axios'
 import { useVoiceInput } from '../renderer/hooks/home/useVoiceInput'
+import { WAV_MAX_BYTES } from '../renderer/lib/wav'
 
 const mockedAxios = axios as unknown as {
   post: ReturnType<typeof vi.fn>
@@ -40,6 +41,7 @@ let contextRate = 16000
 let closeImpl: () => any
 let createSourceImpl: () => any
 let onNodeConstruct: (() => void) | null
+let onHandlerAssigned: ((handler: any) => void) | null
 
 class FakeAudioContext {
   sampleRate: number
@@ -55,10 +57,23 @@ class FakeAudioContext {
 }
 
 class FakeAudioWorkletNode {
-  port: any = { onmessage: null, close: vi.fn() }
+  port: any
   connect = vi.fn()
   disconnect = vi.fn()
-  constructor(_ctx: any, _name: string) { onNodeConstruct?.(); lastNode = this }
+  constructor(_ctx: any, _name: string) {
+    onNodeConstruct?.()
+    lastNode = this
+    // A real MessagePort delivers asynchronously, so a message can never
+    // interleave with the code installing the handler. The setter hook lets a
+    // test force that interleaving anyway, which is how the ordering invariant
+    // is measured rather than assumed.
+    let handler: any = null
+    this.port = {
+      close: vi.fn(),
+      get onmessage() { return handler },
+      set onmessage(h: any) { handler = h; onHandlerAssigned?.(h) },
+    }
+  }
 }
 
 const failWith = (name: string) => {
@@ -74,6 +89,7 @@ beforeEach(() => {
   closeImpl = () => Promise.resolve()
   createSourceImpl = () => ({ connect: vi.fn(), disconnect: vi.fn() })
   onNodeConstruct = null
+  onHandlerAssigned = null
   track = { stop: vi.fn() }
   getUserMedia = vi.fn().mockResolvedValue({ getTracks: () => [track] })
   addModule = vi.fn().mockResolvedValue(undefined)
@@ -423,5 +439,93 @@ describe('useVoiceInput duplicate start', () => {
     expect(getUserMedia).toHaveBeenCalledTimes(1)
     expect(tracks[0].stop).toHaveBeenCalled()
     expect(tracks[1].stop).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * Second audit round. Same class of defect as the first, one layer in: the
+ * first round made the post-await checks release what `start()` held, but
+ * between two awaits the stream and context live ONLY in `start()`'s locals, so
+ * a `cancel()` or `stop()` arriving in that window had nothing to release.
+ */
+describe('useVoiceInput release during an in-flight acquisition', () => {
+  it('partial teardown on async cancel: cancel while addModule is pending releases the held stream and context', async () => {
+    let resolveModule: () => void = () => {}
+    addModule = vi.fn(() => new Promise<void>(res => { resolveModule = res }))
+    const { result } = setup()
+    let pending!: Promise<void>
+    act(() => { pending = result.current.start() as unknown as Promise<void> })
+    await act(async () => {
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve()
+    })
+    expect(addModule).toHaveBeenCalledTimes(1)
+
+    // The release must happen NOW, not when the stalled module load finally
+    // settles: a worklet fetch that never returns would otherwise leave the
+    // microphone indicator lit with no way for the user to turn it off.
+    act(() => { result.current.cancel() })
+    expect(track.stop).toHaveBeenCalled()
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(lastCtx.close).toHaveBeenCalled()
+
+    await act(async () => { resolveModule(); await pending })
+    expect(result.current.state).toBe('idle')
+  })
+
+  it('stop during async acquisition: a stop issued while start is pending does not become a recording', async () => {
+    let resolveMedia: (v: any) => void = () => {}
+    getUserMedia = vi.fn(() => new Promise(res => { resolveMedia = res }))
+    const { result } = setup()
+    let pending!: Promise<void>
+    act(() => { pending = result.current.start() as unknown as Promise<void> })
+    expect(result.current.state).toBe('idle')
+
+    act(() => { void result.current.stop() })
+    await act(async () => { resolveMedia({ getTracks: () => [track] }); await pending })
+
+    expect(result.current.state).toBe('idle')
+    expect(track.stop).toHaveBeenCalled()
+    expect(mockedAxios.post).not.toHaveBeenCalled()
+  })
+})
+
+describe('useVoiceInput state ordering', () => {
+  it('premature stop state race: a budget stop during handler install is not overwritten by recording', async () => {
+    // The byte-budget callback calls `stop()`. If the handler is installed
+    // BEFORE `setState('recording')`, the stop runs first and `start()` then
+    // announces `recording` for a graph it has already torn down — an active
+    // microphone indicator over a dead capture.
+    mockedAxios.post.mockImplementation(() => new Promise(() => {}))  // never settles
+    onHandlerAssigned = (handler) => {
+      // One block past the 2 MiB budget (2 bytes per sample), at install time.
+      handler({ data: new Float32Array(WAV_MAX_BYTES / 2) })
+    }
+    const { result } = setup()
+    await act(async () => { await result.current.start() })
+
+    expect(track.stop).toHaveBeenCalled()
+    expect(mockedAxios.post).toHaveBeenCalledTimes(1)
+    expect(result.current.state).not.toBe('recording')
+    expect(result.current.state).toBe('transcribing')
+  })
+})
+
+describe('useVoiceInput cleanup diagnostics', () => {
+  it('silent cleanup failure: a rejected AudioContext.close is reported, not swallowed', async () => {
+    // Handled is not the same as explained. With an empty catch the hook had
+    // neither a diagnostic nor a retained reference, so a context that refused
+    // to close left no trace at all for anyone reading a bug report.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    closeImpl = () => Promise.reject(new Error('close refused'))
+    mockedAxios.post.mockResolvedValue({ data: { text: 'x' } })
+    const { result } = setup()
+    await act(async () => { await result.current.start() })
+    speak()
+    await act(async () => { await result.current.stop() })
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+
+    expect(lastCtx.close).toHaveBeenCalledTimes(1)
+    expect(warn.mock.calls.flat().join(' ')).toContain('close refused')
+    warn.mockRestore()
   })
 })

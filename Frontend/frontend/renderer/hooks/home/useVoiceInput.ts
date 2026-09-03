@@ -73,7 +73,12 @@ const releaseStream = (stream: MediaStream | null | undefined) => {
  */
 const releaseContext = (ctx: AudioContext | null | undefined) => {
   if (!ctx) return;
-  Promise.resolve().then(() => ctx.close()).catch(() => { /* closing is best-effort */ });
+  // Handled is not the same as explained: an empty catch left a context that
+  // refused to close with no trace at all, and `teardown()` has already dropped
+  // the ref, so there is nothing left to retry with either. Warn, never throw.
+  Promise.resolve().then(() => ctx.close()).catch((reason) => {
+    console.warn('[voice] AudioContext.close rejected:', reason);
+  });
 };
 
 const WORKLET_URL = '/audio/pcm-capture-worklet.js';
@@ -118,6 +123,19 @@ export const useVoiceInput = ({ api, lang, onText }: VoiceInputParams) => {
   const startingRef = useRef(false);
 
   /**
+   * The stream and context DURING acquisition, before the graph is committed.
+   *
+   * Between `getUserMedia` resolving and `addModule` settling these existed only
+   * as `start()` locals, so a `cancel()`/`stop()`/unmount arriving in that window
+   * had nothing to release: a worklet fetch that never returns left the
+   * microphone on with no way for the user to turn it off (audit round 2,
+   * `partial-teardown-on-async-cancel`). `teardown()` drains this too, which
+   * makes release possible at any instant rather than only at the await
+   * boundaries. The post-await abort checks stay as the second line of defence.
+   */
+  const pendingRef = useRef<{ stream: MediaStream | null; ctx: AudioContext | null } | null>(null);
+
+  /**
    * "The thing we are acquiring for is gone." Set by unmount and by `cancel()`,
    * and re-checked after EVERY await inside `start()`: a `getUserMedia` or
    * `addModule` promise that settles after cleanup would otherwise install a
@@ -151,6 +169,10 @@ export const useVoiceInput = ({ api, lang, onText }: VoiceInputParams) => {
     streamRef.current = null;
     releaseContext(ctxRef.current);
     ctxRef.current = null;
+    // Anything an in-flight `start()` has acquired but not yet committed.
+    releaseStream(pendingRef.current?.stream);
+    releaseContext(pendingRef.current?.ctx);
+    pendingRef.current = null;
   }, []);
 
   const clearError = useCallback(() => setError(null), []);
@@ -195,10 +217,14 @@ export const useVoiceInput = ({ api, lang, onText }: VoiceInputParams) => {
         return;
       }
 
+      // Publish immediately: from here on the microphone is live, so anyone
+      // calling cancel/stop/unmount must be able to reach it.
+      pendingRef.current = { stream, ctx: null };
+
       // The permission dialog can outlive the component. Bail without touching
       // state — a `setError` here would be a write into an unmounted tree, and
       // the point is to release the microphone, not to report anything.
-      if (abortAcquisitionRef.current) { releaseStream(stream); return; }
+      if (abortAcquisitionRef.current) { releaseStream(stream); pendingRef.current = null; return; }
 
       try {
         // Asking for 16000 directly avoids resampling entirely where the browser
@@ -211,10 +237,12 @@ export const useVoiceInput = ({ api, lang, onText }: VoiceInputParams) => {
           ctx = new (globalThis as any).AudioContext();
         } catch (err: any) {
           releaseStream(stream);
+          pendingRef.current = null;
           setError({ kind: 'noDevice', detail: err?.message ?? String(err) });
           return;
         }
       }
+      pendingRef.current = { stream, ctx };
 
       // ONE protected block for every remaining graph step. Each of these could
       // throw after the microphone was already live — the audit reproduced a
@@ -225,7 +253,9 @@ export const useVoiceInput = ({ api, lang, onText }: VoiceInputParams) => {
       let source: AudioNode;
       try {
         await ctx!.audioWorklet.addModule(WORKLET_URL);
-        if (abortAcquisitionRef.current) { releaseStream(stream); releaseContext(ctx); return; }
+        if (abortAcquisitionRef.current) {
+          releaseStream(stream); releaseContext(ctx); pendingRef.current = null; return;
+        }
 
         node = new (globalThis as any).AudioWorkletNode(ctx, PROCESSOR_NAME);
         source = ctx!.createMediaStreamSource(stream!);
@@ -233,6 +263,7 @@ export const useVoiceInput = ({ api, lang, onText }: VoiceInputParams) => {
       } catch (err: any) {
         releaseStream(stream);
         releaseContext(ctx);
+        pendingRef.current = null;
         setError({ kind: 'noDevice', detail: err?.message ?? String(err) });
         return;
       }
@@ -248,7 +279,28 @@ export const useVoiceInput = ({ api, lang, onText }: VoiceInputParams) => {
       ctxRef.current = ctx;
       nodeRef.current = node;
       sourceRef.current = source;
+      // The refs own these now.
+      pendingRef.current = null;
 
+
+      startedAtRef.current = Date.now();
+      setElapsedMs(0);
+      setState('recording');
+      tickRef.current = setInterval(() => {
+        setElapsedMs(Date.now() - startedAtRef.current);
+      }, TICK_MS);
+      // Hard ceiling. Without it a forgotten recording runs until the byte budget
+      // trips, and the byte budget depends on the sample rate — i.e. the user
+      // would get a different maximum length on different machines.
+      autoStopRef.current = setTimeout(() => { stopRef.current(); }, MAX_RECORD_MS);
+
+      // Handler installed LAST, after the recording state and the timers are
+      // committed. A real MessagePort delivers asynchronously so a message
+      // cannot interleave here, but the budget callback calls `stop()`, and with
+      // the handler installed first that stop could be immediately overwritten
+      // by this function's own `setState('recording')` - leaving the indicator
+      // lit over a graph already torn down. The ordering costs nothing and
+      // removes the possibility (audit round 2, `premature-stop-state-race`).
       node.port.onmessage = (event: MessageEvent) => {
         const block = event.data as Float32Array;
         if (!block || !block.length) return;
@@ -261,23 +313,27 @@ export const useVoiceInput = ({ api, lang, onText }: VoiceInputParams) => {
         const projected = wavByteLength(Math.floor(rawSampleCountRef.current / ratio));
         if (projected >= WAV_MAX_BYTES) stopRef.current();
       };
-
-      startedAtRef.current = Date.now();
-      setElapsedMs(0);
-      setState('recording');
-      tickRef.current = setInterval(() => {
-        setElapsedMs(Date.now() - startedAtRef.current);
-      }, TICK_MS);
-      // Hard ceiling. Without it a forgotten recording runs until the byte budget
-      // trips, and the byte budget depends on the sample rate — i.e. the user
-      // would get a different maximum length on different machines.
-      autoStopRef.current = setTimeout(() => { stopRef.current(); }, MAX_RECORD_MS);
     } finally {
       startingRef.current = false;
     }
   }, [state]);
 
   const stop = useCallback(async () => {
+    // A stop asked for while `start()` is still awaiting used to fall through
+    // this guard (state idle, refs empty) and the acquisition then committed
+    // `recording` anyway - the user's stop was silently ignored and the
+    // microphone stayed live (audit round 2, `stop-during-async-acquisition`).
+    // `!streamRef.current` narrows this to the ACQUIRING window specifically:
+    // `startingRef` is still true at the moment the message handler is
+    // installed, by which point the graph is committed and a stop there is a
+    // real stop that must transcribe, not an abort.
+    if (startingRef.current && !streamRef.current) {
+      abortAcquisitionRef.current = true;
+      teardown();  // drains `pendingRef`, i.e. whatever has been acquired so far
+      setState('idle');
+      setElapsedMs(0);
+      return;
+    }
     if (state !== 'recording' && !streamRef.current) return;
     const run = runRef.current;
     const chunks = chunksRef.current;
