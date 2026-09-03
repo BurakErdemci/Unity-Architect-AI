@@ -135,6 +135,7 @@ class TestIndirmeKaynagiAllowlistDisinaCikamaz:
         "builds.dotnet.microsoft.com",   # dotnet-sdk/*
         "evermeet.cx",                   # ffmpeg/macos (statik, checksum yayınlamıyor)
         "johnvansickle.com",             # ffmpeg/linux (statik)
+        "alphacephei.com",               # vosk-model/* (checksum yayınlamıyor)
     })
 
     @staticmethod

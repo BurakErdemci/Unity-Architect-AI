@@ -45,6 +45,9 @@ Backend/vendor/bin/win/*.exe
 Backend/vendor/bin/*/.fetched
 Backend/vendor/bin/mac/
 Backend/vendor/bin/linux/
+# Vosk speech models (~130MB unpacked, TR+EN) — never committed.
+# Re-fetch: pwsh Backend/vendor/fetch_vosk_models.ps1  (mac/linux: bash fetch_vosk_models.sh)
+Backend/vendor/models/
 
 # OmniSharp-Roslyn sidecar (~46MB) — repoda tutulmaz (video bins deseni).
 # Tekrar: python scripts/fetch_omnisharp.py  (build öncesi bir kez)

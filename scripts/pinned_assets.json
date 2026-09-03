@@ -116,6 +116,21 @@
       "$not": "⏳ BU PİN SÜRESİ DOLACAK. BtbN her build'den sonra util/prunetags.sh koşuyor: KEEP_LATEST=14 (son 14 build) + KEEP_MONTHLY=24 (son 24 ayın ay-sonu tag'i), gerisi 'gh release delete --cleanup-tag' ile SİLİNİYOR — release de git tag'i de. Yani kalıcı sabitlenebilir adres YOK. Bu bilerek bir AY-SONU tag'i (~24 ay ömür); günlük bir tag seçilseydi ~2 haftada 404 olurdu. Dosya adı da tag'e gömülü git-describe taşıyor (n8.1.2-21-gce3c09c101), yani yenilerken URL'in tamamı değişir — ad sabit kabul edilemez. Kalıcı tekrarlanabilirlik isteniyorsa tek çözüm zip'i kendimizin aynalaması; bu ayrı bir karar. Sürüm mac'teki ffmpeg 8.1.2 ile bilerek hizalı."
     },
 
+    "vosk-model/small-tr": {
+      "url": "https://alphacephei.com/vosk/models/vosk-model-small-tr-0.3.zip",
+      "digest": "sha256:8c8d07cec1bce31add14967c16891c84152cdf76d391e33c08278119b9ea96e5",
+      "size": 36855784,
+      "kaynak": "yerel:2026-09-03",
+      "$not": "alphacephei HİÇBİR checksum yayınlamıyor — https://alphacephei.com/vosk/models sayfasında model başına yalnız boyut, WER ve lisans sütunu var, sha256/md5 sütunu YOK (3 Eyl 2026'da sayfa çekilerek doğrulandı). Özet 3 Eyl 2026'da indirilen baytlardan ELLE hesaplandı; güven kökü yayıncı değil, hesaplayan kişi. Arşiv açılmadan ÖNCE doğrulanır (fetch_vosk_models.*)."
+    },
+    "vosk-model/small-en-us": {
+      "url": "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip",
+      "digest": "sha256:30f26242c4eb449f948e42cb302dd7a686cb29a3423a8367f99ff41780942498",
+      "size": 41205931,
+      "kaynak": "yerel:2026-09-03",
+      "$not": "Aynı gerekçe: alphacephei checksum yayınlamıyor (sayfada lisans 'Apache 2.0' yazılı, özet sütunu yok). Elle hesaplandı 3 Eyl 2026."
+    },
+
     "roslyn/microsoft.codeanalysis.common": {
       "url": "https://api.nuget.org/v3-flatcontainer/microsoft.codeanalysis.common/4.12.0/microsoft.codeanalysis.common.4.12.0.nupkg",
       "digest": "sha256:9a6fce286df33cb01e4d5199b6e2f1486fa3a500ce7219f5a321ea041256d87a",

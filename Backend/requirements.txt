@@ -56,6 +56,15 @@ websockets==15.0.1
 # tedarik zinciri yüzeyi). numpy'ı zorunlu gereksinen tek paketler bunlardı; kalan
 # bağımlılıklarda numpy yalnızca opsiyonel extra olarak geçiyor (openai[datalib] vb.).
 # Yeniden gerekirse (vektör arama / embedding) birlikte geri eklenmeli.
+# Offline speech-to-text for the dictation button (Burak, 2 Sep 2026).
+# The wheel carries libvosk.dll plus three MinGW runtime DLLs; `collect_all('vosk')`
+# in backend.spec is REQUIRED, see the note there.
+# srt and tqdm are vosk's own runtime dependencies and are pinned here so the frozen
+# build cannot drift; its other three (cffi, requests, websockets) are already pinned
+# above and are deliberately NOT repeated.
+vosk==0.3.45
+srt==3.5.3
+tqdm==4.70.0
 mcp
 fastmcp
 tomli

@@ -78,6 +78,20 @@ jobs:
         continue-on-error: true
         run: bash Backend/vendor/fetch_video_bins.sh
 
+      # The models do not go through PyInstaller (see the note in backend.spec);
+      # electron-builder ships them via extraResources. They are still fetched
+      # BEFORE the PyInstaller step: otherwise the download is deferred to the
+      # frontend build, and a failure there ships a package silently without models.
+      - name: Vosk modelleri — TR + EN (Windows, best-effort)
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        run: pwsh -File Backend/vendor/fetch_vosk_models.ps1
+
+      - name: Vosk modelleri — TR + EN (macOS, best-effort)
+        if: runner.os == 'macOS'
+        continue-on-error: true
+        run: bash Backend/vendor/fetch_vosk_models.sh
+
       - name: Backend'i dondur (PyInstaller → Backend/dist/backend)
         working-directory: Backend
         run: pyinstaller backend.spec --noconfirm
