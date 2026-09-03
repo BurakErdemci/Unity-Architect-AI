@@ -65,6 +65,10 @@ websockets==15.0.1
 vosk==0.3.45
 srt==3.5.3
 tqdm==4.70.0
+# tqdm's own Windows-only runtime dependency (platform_system == "Windows"); without
+# an exact pin a later colorama could enter the frozen installer with no diff here
+# (audit probe, 3 Sep 2026).
+colorama==0.4.6
 mcp
 fastmcp
 tomli

@@ -93,6 +93,7 @@ extraResources:
     to: vosk
     filter:
       - "**/*"
+      - "!.fetched"   # the wrapper's stamp is build bookkeeping, not a model file
 mac:
   category: public.app-category.developer-tools
   # Measured 3 Sep 2026: `grep -rn NSMicrophone Frontend/frontend` → 0 hits, the key

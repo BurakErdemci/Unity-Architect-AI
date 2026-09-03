@@ -141,6 +141,16 @@ function main() {
     console.log('[fetch-vosk-models] models already at the pinned version — skipped.');
     return 0;
   }
+  // Not current means: no stamp, an old-format stamp, a pin that moved, or bytes
+  // that no longer match the stamp. The platform fetchers treat an existing
+  // `final.mdl` as "already installed" and skip, so a tree the stamp could not
+  // vouch for would be left in place and then re-stamped as verified (audit
+  // probe, 3 Sep 2026). Evict it first: what the fetcher then installs has
+  // passed the digest check, and what it cannot install is absent, not stale.
+  for (const [, dir] of MODELS) {
+    fs.rmSync(path.join(MODELS_DIR, dir), { recursive: true, force: true });
+  }
+  try { fs.rmSync(STAMP, { force: true }); } catch { /* absent already */ }
   const code = fetchModels();
   if (code === 0 && MODELS.every(([, d]) => fs.existsSync(path.join(MODELS_DIR, d)))) {
     writeStamp(stamp);
