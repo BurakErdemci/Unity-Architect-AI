@@ -10,7 +10,7 @@
  * response cannot write into a composer that is gone.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { act, renderHook } from '@testing-library/react'
+import { act, cleanup, renderHook } from '@testing-library/react'
 
 vi.mock('axios', () => {
   const post = vi.fn()
@@ -42,6 +42,13 @@ let closeImpl: () => any
 let createSourceImpl: () => any
 let onNodeConstruct: (() => void) | null
 let onHandlerAssigned: ((handler: any) => void) | null
+// The three routes of the chunk-session contract, stubbed per test. Routing by
+// URL rather than by call order: the scheduler decides how many chunk POSTs
+// happen between the open and the finish, so an index-based stub would depend
+// on timing the test does not control.
+let sessionRespond: (body: any) => any
+let chunkRespond: (body: any) => any
+let finishRespond: (body: any) => any
 
 class FakeAudioContext {
   sampleRate: number
@@ -94,6 +101,14 @@ beforeEach(() => {
   getUserMedia = vi.fn().mockResolvedValue({ getTracks: () => [track] })
   addModule = vi.fn().mockResolvedValue(undefined)
   mockedAxios.post.mockReset()
+  sessionRespond = () => ({ data: { session_id: 'sess-1', lang: 'tr' } })
+  chunkRespond = () => ({ data: { partial: '', bytes: 0 } })
+  finishRespond = () => ({ data: { text: '', duration_ms: 0 } })
+  mockedAxios.post.mockImplementation((url: string, body: any) => {
+    if (url.endsWith('/transcribe/session')) return Promise.resolve(sessionRespond(body))
+    if (url.endsWith('/finish')) return Promise.resolve(finishRespond(body))
+    return Promise.resolve(chunkRespond(body))
+  })
   mockedAxios.defaults.headers.common = {}
   Object.defineProperty(globalThis.navigator, 'mediaDevices', {
     value: { getUserMedia: (...a: any[]) => getUserMedia(...a) },
@@ -104,6 +119,11 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  // Unmount every hook this test rendered BEFORE dropping the fake timers.
+  // The chunk scheduler is a 500 ms interval owned by the hook: a test that
+  // ends mid-recording used to leave it ticking into the next test, where it
+  // posted chunks against that test's mock (measured: 18 unrelated failures).
+  cleanup()
   vi.useRealTimers()
 })
 
@@ -113,6 +133,24 @@ const speak = (samples = 1600) => {
 
 const setup = (onText = vi.fn(), lang: 'tr' | 'en' = 'tr') =>
   ({ onText, ...renderHook(() => useVoiceInput({ api: API, lang, onText })) })
+
+const calls = () => mockedAxios.post.mock.calls
+const chunkCalls = () => calls().filter((c: any[]) => /\/transcribe\/session\/[^/]+$/.test(String(c[0])))
+/** Bytes a chunk body actually carries, decoded — the backend caps this at 65_536. */
+const chunkBytes = (call: any[]) => atob(call[1].pcm_base64).length
+/**
+ * Let the microtask queue drain.
+ *
+ * `stop()` is no longer one request: it waits out the in-flight chunk, ships
+ * the tail and only then asks for the final text. A test that resolves the
+ * finish response has to let those awaits run first, or it resolves a promise
+ * nobody has created yet and hangs (measured: a 5 s timeout).
+ */
+const flush = async (rounds = 12) => {
+  await act(async () => {
+    for (let i = 0; i < rounds; i++) await Promise.resolve()
+  })
+}
 
 describe('useVoiceInput failures at the microphone', () => {
   it('a denied permission is reported as `permission`, not as a generic failure', async () => {
@@ -146,9 +184,8 @@ describe('useVoiceInput failures at the microphone', () => {
 })
 
 describe('useVoiceInput happy path', () => {
-  it('start → stop posts the WAV to /transcribe with the session token and hands the text back', async () => {
-    mockedAxios.defaults.headers.common['X-Session-Token'] = 'tok-123'
-    mockedAxios.post.mockResolvedValue({ data: { text: '  merhaba dünya  ' } })
+  it('start → stop opens a session, ships the audio and finishes it, in that order', async () => {
+    finishRespond = () => ({ data: { text: '  merhaba dünya  ', duration_ms: 100 } })
     const { result, onText } = setup()
 
     await act(async () => { await result.current.start() })
@@ -156,34 +193,52 @@ describe('useVoiceInput happy path', () => {
     speak()
     await act(async () => { await result.current.stop() })
 
-    expect(mockedAxios.post).toHaveBeenCalledTimes(1)
-    const [url, body, config] = mockedAxios.post.mock.calls[0]
-    expect(url).toBe(`${API}/transcribe`)
-    expect(body.lang).toBe('tr')
-    expect(typeof body.wav_base64).toBe('string')
-    expect(body.wav_base64.length).toBeGreaterThan(0)
-    // The base64 really is a RIFF file, not just some string: 'RIFF' encodes
-    // to 'UklGR' at offset 0.
-    expect(body.wav_base64.startsWith('UklGR')).toBe(true)
-    expect(config.headers['X-Session-Token']).toBe('tok-123')
-    expect(config.timeout).toBe(30000)
+    const urls = calls().map((c: any[]) => c[0])
+    expect(urls[0]).toBe(`${API}/transcribe/session`)
+    expect(calls()[0][1]).toEqual({ lang: 'tr' })
+    expect(urls[urls.length - 1]).toBe(`${API}/transcribe/session/sess-1/finish`)
+    expect(chunkCalls().length).toBeGreaterThan(0)
     expect(onText).toHaveBeenCalledWith('merhaba dünya')
     expect(result.current.state).toBe('idle')
   })
 
-  it('the chosen speaking language is what goes on the wire, not the app language', async () => {
-    mockedAxios.post.mockResolvedValue({ data: { text: 'hello' } })
+  it('every request of the session carries the gate token, not just the first', async () => {
+    mockedAxios.defaults.headers.common['X-Session-Token'] = 'tok-123'
+    const { result } = setup()
+    await act(async () => { await result.current.start() })
+    speak()
+    await act(async () => { await result.current.stop() })
+    expect(calls().length).toBeGreaterThanOrEqual(3)
+    for (const [, , config] of calls()) {
+      expect(config.headers['X-Session-Token']).toBe('tok-123')
+      expect(config.headers['Content-Type']).toBe('application/json')
+    }
+  })
+
+  it('the audio on the wire is raw PCM — no RIFF header, which the recogniser would read as sound', async () => {
+    const { result } = setup()
+    await act(async () => { await result.current.start() })
+    speak(1600)
+    await act(async () => { await result.current.stop() })
+    const body = chunkCalls()[0][1]
+    expect(typeof body.pcm_base64).toBe('string')
+    // 'RIFF' base64-encodes to 'UklGR'; the one-shot route sends that, a chunk must not.
+    expect(body.pcm_base64.startsWith('UklGR')).toBe(false)
+    expect(chunkBytes(chunkCalls()[0])).toBe(3200)  // 1600 samples, 2 bytes each
+  })
+
+  it('the chosen speaking language is what opens the session, not the app language', async () => {
     const { result } = setup(vi.fn(), 'en')
     await act(async () => { await result.current.start() })
     speak()
     await act(async () => { await result.current.stop() })
-    expect(mockedAxios.post.mock.calls[0][1].lang).toBe('en')
+    expect(calls()[0][1]).toEqual({ lang: 'en' })
   })
 })
 
 describe('useVoiceInput answers from the backend', () => {
-  const run = async (respond: () => Promise<any>) => {
-    mockedAxios.post.mockImplementation(respond)
+  const run = async (respond: () => any) => {
+    finishRespond = respond
     const { result, onText } = setup()
     await act(async () => { await result.current.start() })
     speak()
@@ -192,30 +247,175 @@ describe('useVoiceInput answers from the backend', () => {
   }
 
   it('200 with empty text is `empty` — the request worked, the audio did not', async () => {
-    const { result, onText } = await run(async () => ({ data: { text: '   ' } }))
+    const { result, onText } = await run(() => ({ data: { text: '   ' } }))
     expect(result.current.error?.kind).toBe('empty')
     expect(onText).not.toHaveBeenCalled()
   })
 
   it('503 is `model` — the recognition files are missing, not the server', async () => {
-    const { result } = await run(async () => {
+    const { result } = await run(() => {
       throw { response: { status: 503, data: { detail: 'stt_model_missing' } } }
     })
     expect(result.current.error?.kind).toBe('model')
   })
 
   it('no response at all is `server`', async () => {
-    const { result } = await run(async () => { throw new Error('Network Error') })
+    const { result } = await run(() => { throw new Error('Network Error') })
     expect(result.current.error?.kind).toBe('server')
     expect(result.current.error?.detail).toBe('Network Error')
   })
 
   it('any other status is `server` and keeps the raw detail for the title', async () => {
-    const { result } = await run(async () => {
+    const { result } = await run(() => {
       throw { response: { status: 413, data: { detail: 'stt_too_large' } } }
     })
     expect(result.current.error?.kind).toBe('server')
     expect(result.current.error?.detail).toBe('stt_too_large')
+  })
+})
+
+/**
+ * The 500 ms chunk scheduler.
+ *
+ * This is the part that makes the words appear while the user speaks, and it
+ * is also the part that can quietly ruin a dictation: chunks feed ONE ordered
+ * recogniser, so anything that reorders, duplicates or drops one corrupts every
+ * partial after it. Fake timers throughout — the interval is the subject.
+ */
+describe('useVoiceInput chunk scheduler', () => {
+  it('ships whatever has accumulated every 500 ms', async () => {
+    vi.useFakeTimers()
+    const { result } = setup()
+    await act(async () => { await result.current.start() })
+
+    speak(8000)
+    await act(async () => { await vi.advanceTimersByTimeAsync(500) })
+    expect(chunkCalls()).toHaveLength(1)
+
+    speak(8000)
+    await act(async () => { await vi.advanceTimersByTimeAsync(500) })
+    expect(chunkCalls()).toHaveLength(2)
+  })
+
+  it('a tick that lands on an unfinished send waits instead of overlapping it', async () => {
+    vi.useFakeTimers()
+    let releaseFirst: () => void = () => {}
+    let seen = 0
+    chunkRespond = () => {
+      seen += 1
+      if (seen === 1) {
+        return new Promise(res => { releaseFirst = () => res({ data: { partial: 'ilk' } }) })
+      }
+      return { data: { partial: 'ikinci' } }
+    }
+    const { result } = setup()
+    await act(async () => { await result.current.start() })
+
+    speak(8000)
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_000) })
+    // Four ticks went by and the first answer never came: still one request.
+    expect(chunkCalls()).toHaveLength(1)
+
+    speak(8000)
+    await act(async () => { releaseFirst(); await vi.advanceTimersByTimeAsync(500) })
+    expect(chunkCalls()).toHaveLength(2)
+  })
+
+  it('the partial from each answer is what the composer reads', async () => {
+    vi.useFakeTimers()
+    chunkRespond = () => ({ data: { partial: 'merhaba d', bytes: 16000 } })
+    const { result } = setup()
+    await act(async () => { await result.current.start() })
+    expect(result.current.partialText).toBe('')
+
+    speak(8000)
+    await act(async () => { await vi.advanceTimersByTimeAsync(500) })
+    expect(result.current.partialText).toBe('merhaba d')
+  })
+
+  it('a failed chunk is retried with the next one, so no spoken audio is dropped', async () => {
+    vi.useFakeTimers()
+    let failNext = true
+    chunkRespond = () => {
+      if (failNext) { failNext = false; throw { response: { status: 500, data: { detail: 'boom' } } } }
+      return { data: { partial: 'tamam' } }
+    }
+    const { result } = setup()
+    await act(async () => { await result.current.start() })
+
+    speak(4000)
+    await act(async () => { await vi.advanceTimersByTimeAsync(500) })
+    expect(chunkBytes(chunkCalls()[0])).toBe(8000)
+    // One dropped request must not cost the user a word they cannot re-speak.
+    expect(result.current.state).toBe('recording')
+
+    speak(4000)
+    await act(async () => { await vi.advanceTimersByTimeAsync(500) })
+    expect(chunkBytes(chunkCalls()[1])).toBe(16000)  // the failed 8000 plus the new 8000
+    expect(result.current.partialText).toBe('tamam')
+  })
+
+  it('three consecutive failures end the recording with a `server` error', async () => {
+    vi.useFakeTimers()
+    chunkRespond = () => { throw new Error('Network Error') }
+    const { result, onText } = setup()
+    await act(async () => { await result.current.start() })
+
+    speak(4000)
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_500) })
+
+    expect(chunkCalls()).toHaveLength(3)
+    expect(result.current.error?.kind).toBe('server')
+    expect(result.current.state).toBe('idle')
+    expect(result.current.partialText).toBe('')
+    expect(track.stop).toHaveBeenCalled()
+    expect(onText).not.toHaveBeenCalled()
+    // The abandoned session is handed back rather than left to the 90 s TTL.
+    expect(calls().filter((c: any[]) => String(c[0]).endsWith('/finish'))).toHaveLength(1)
+  })
+
+  it('stop ships the tail the scheduler never got to, before asking for the final text', async () => {
+    const { result, onText } = setup()
+    finishRespond = () => ({ data: { text: 'son cumle' } })
+    await act(async () => { await result.current.start() })
+    speak(1600)
+    await act(async () => { await result.current.stop() })
+
+    const urls = calls().map((c: any[]) => String(c[0]))
+    expect(chunkBytes(chunkCalls()[0])).toBe(3200)
+    expect(urls.lastIndexOf(`${API}/transcribe/session/sess-1`))
+      .toBeLessThan(urls.indexOf(`${API}/transcribe/session/sess-1/finish`))
+    expect(onText).toHaveBeenCalledWith('son cumle')
+  })
+})
+
+describe('useVoiceInput opening the session', () => {
+  it('503 while opening is `model` — the recognition files are missing', async () => {
+    sessionRespond = () => { throw { response: { status: 503, data: { detail: 'stt_model_missing' } } } }
+    const { result } = setup()
+    await act(async () => { await result.current.start() })
+    expect(result.current.error?.kind).toBe('model')
+    expect(result.current.state).toBe('idle')
+    // The microphone was already live when the open failed.
+    expect(track.stop).toHaveBeenCalled()
+  })
+
+  it('503 stt_busy is `server`, not `model` — every slot is taken, nothing is broken', async () => {
+    sessionRespond = () => { throw { response: { status: 503, data: { detail: 'stt_busy' } } } }
+    const { result } = setup()
+    await act(async () => { await result.current.start() })
+    expect(result.current.error?.kind).toBe('server')
+    expect(result.current.error?.detail).toContain('stt_busy')
+  })
+
+  it('an unreachable backend while opening is `server` and leaves nothing recording', async () => {
+    sessionRespond = () => { throw new Error('Network Error') }
+    const { result } = setup()
+    await act(async () => { await result.current.start() })
+    expect(result.current.error?.kind).toBe('server')
+    expect(result.current.state).toBe('idle')
+    expect(lastCtx.close).toHaveBeenCalled()
+    expect(chunkCalls()).toHaveLength(0)
   })
 })
 
@@ -224,8 +424,8 @@ describe('useVoiceInput resource release', () => {
     // The OS recording indicator follows the live track. Releasing it after the
     // round trip would leave the light on for the whole transcription, which
     // reads as "still listening".
-    let resolvePost: (v: any) => void = () => {}
-    mockedAxios.post.mockImplementation(() => new Promise(res => { resolvePost = res }))
+    let resolveFinish: (v: any) => void = () => {}
+    finishRespond = () => new Promise(res => { resolveFinish = res })
     const { result, onText } = setup()
     await act(async () => { await result.current.start() })
     speak()
@@ -233,51 +433,71 @@ describe('useVoiceInput resource release', () => {
     let stopped: Promise<void> = Promise.resolve()
     act(() => { stopped = result.current.stop() as unknown as Promise<void> })
 
+    // Synchronous, before anything is awaited: this is the ordering invariant.
     expect(track.stop).toHaveBeenCalled()
+    await flush()
     expect(onText).not.toHaveBeenCalled()
     expect(result.current.state).toBe('transcribing')
 
-    await act(async () => { resolvePost({ data: { text: 'ok' } }); await stopped })
+    await act(async () => { resolveFinish({ data: { text: 'ok' } }); await stopped })
     expect(onText).toHaveBeenCalledWith('ok')
   })
 
-  it('cancel discards the audio and never posts', async () => {
+  it('cancel hands the session back with discard and never asks for a transcript', async () => {
+    // The session holds a recogniser on the server and MAX_SESSIONS is 4, so a
+    // cancel that just walked away would burn a slot until the 90 s idle TTL.
     const { result, onText } = setup()
     await act(async () => { await result.current.start() })
     speak()
-    act(() => { result.current.cancel() })
+    await act(async () => { result.current.cancel() })
     expect(track.stop).toHaveBeenCalled()
     expect(result.current.state).toBe('idle')
-    expect(mockedAxios.post).not.toHaveBeenCalled()
+    const finishes = calls().filter((c: any[]) => String(c[0]).endsWith('/finish'))
+    expect(finishes).toHaveLength(1)
+    expect(finishes[0][1]).toEqual({ discard: true })
     expect(onText).not.toHaveBeenCalled()
   })
 
+  it('the live partial is cleared once the recording is over, so nothing stale is left behind', async () => {
+    chunkRespond = () => ({ data: { partial: 'yarim cumle', bytes: 3200 } })
+    const { result } = setup()
+    await act(async () => { await result.current.start() })
+    speak()
+    await act(async () => { await result.current.stop() })
+    expect(result.current.partialText).toBe('')
+  })
+
   it('unmounting mid-recording stops the tracks and no late answer reaches onText', async () => {
-    let resolvePost: (v: any) => void = () => {}
-    mockedAxios.post.mockImplementation(() => new Promise(res => { resolvePost = res }))
+    let resolveFinish: (v: any) => void = () => {}
+    finishRespond = () => new Promise(res => { resolveFinish = res })
     const { result, onText, unmount } = setup()
     await act(async () => { await result.current.start() })
     speak()
     act(() => { void result.current.stop() })
+    await flush()
     unmount()
     expect(track.stop).toHaveBeenCalled()
-    await act(async () => { resolvePost({ data: { text: 'too late' } }) })
+    await act(async () => { resolveFinish({ data: { text: 'too late' } }) })
+    await flush()
     expect(onText).not.toHaveBeenCalled()
   })
 
-  it('unmounting while still recording stops the tracks', async () => {
+  it('unmounting while still recording stops the tracks and discards the session', async () => {
     const { result, unmount } = setup()
     await act(async () => { await result.current.start() })
     speak()
-    unmount()
+    await act(async () => { unmount() })
     expect(track.stop).toHaveBeenCalled()
+    const finishes = calls().filter((c: any[]) => String(c[0]).endsWith('/finish'))
+    expect(finishes).toHaveLength(1)
+    expect(finishes[0][1]).toEqual({ discard: true })
   })
 })
 
 describe('useVoiceInput limits', () => {
   it('a recording left running stops itself at 60 s and transcribes what it has', async () => {
     vi.useFakeTimers()
-    mockedAxios.post.mockResolvedValue({ data: { text: 'uzun kayıt' } })
+    finishRespond = () => ({ data: { text: 'uzun kayıt' } })
     const { result, onText } = setup()
     await act(async () => { await result.current.start() })
     speak()
@@ -285,7 +505,7 @@ describe('useVoiceInput limits', () => {
 
     await act(async () => { await vi.advanceTimersByTimeAsync(60_000) })
 
-    expect(mockedAxios.post).toHaveBeenCalledTimes(1)
+    expect(calls().filter((c: any[]) => String(c[0]).endsWith('/finish'))).toHaveLength(1)
     // No `waitFor` here: fake timers are installed, so its polling would never
     // advance and the test would hang rather than fail (measured).
     await act(async () => { await Promise.resolve(); await Promise.resolve() })
@@ -294,17 +514,15 @@ describe('useVoiceInput limits', () => {
 
   it('a 48 kHz device is decimated, so the wire format stays 16 kHz mono', async () => {
     contextRate = 48000
-    mockedAxios.post.mockResolvedValue({ data: { text: 'x' } })
     const { result } = setup()
     await act(async () => { await result.current.start() })
     speak(48000)  // one second at the device rate
     await act(async () => { await result.current.stop() })
 
-    const wav = atob(mockedAxios.post.mock.calls[0][1].wav_base64)
-    const bytes = Uint8Array.from(wav, c => c.charCodeAt(0))
-    const view = new DataView(bytes.buffer)
-    expect(view.getUint32(24, true)).toBe(16000)   // header rate
-    expect(view.getUint32(40, true)).toBe(32000)   // one second of 16 kHz 16-bit
+    // One second of 16 kHz 16-bit mono is 32000 bytes, however many chunks it
+    // took to get there.
+    const total = chunkCalls().reduce((sum: number, c: any[]) => sum + chunkBytes(c), 0)
+    expect(total).toBe(32000)
   })
 })
 
@@ -406,7 +624,7 @@ describe('useVoiceInput cleanup that itself fails', () => {
         return this.then(undefined, onRejected)
       },
     })
-    mockedAxios.post.mockResolvedValue({ data: { text: 'x' } })
+    finishRespond = () => ({ data: { text: 'x' } })
     const { result } = setup()
     await act(async () => { await result.current.start() })
     speak()
@@ -495,16 +713,17 @@ describe('useVoiceInput state ordering', () => {
     // BEFORE `setState('recording')`, the stop runs first and `start()` then
     // announces `recording` for a graph it has already torn down — an active
     // microphone indicator over a dead capture.
-    mockedAxios.post.mockImplementation(() => new Promise(() => {}))  // never settles
+    finishRespond = () => new Promise(() => {})  // never settles
     onHandlerAssigned = (handler) => {
       // One block past the 2 MiB budget (2 bytes per sample), at install time.
       handler({ data: new Float32Array(WAV_MAX_BYTES / 2) })
     }
     const { result } = setup()
     await act(async () => { await result.current.start() })
+    await flush()
 
     expect(track.stop).toHaveBeenCalled()
-    expect(mockedAxios.post).toHaveBeenCalledTimes(1)
+    expect(calls().filter((c: any[]) => String(c[0]).endsWith('/finish'))).toHaveLength(1)
     expect(result.current.state).not.toBe('recording')
     expect(result.current.state).toBe('transcribing')
   })
@@ -517,7 +736,7 @@ describe('useVoiceInput cleanup diagnostics', () => {
     // to close left no trace at all for anyone reading a bug report.
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     closeImpl = () => Promise.reject(new Error('close refused'))
-    mockedAxios.post.mockResolvedValue({ data: { text: 'x' } })
+    finishRespond = () => ({ data: { text: 'x' } })
     const { result } = setup()
     await act(async () => { await result.current.start() })
     speak()

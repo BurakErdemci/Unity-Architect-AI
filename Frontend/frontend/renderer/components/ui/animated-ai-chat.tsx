@@ -235,13 +235,98 @@ export function AnimatedChatInput({
         }, 0);
     }, [internalValue, setValue, adjustHeight]);
 
+    // ——— Live dictation ———
+    //
+    // While the microphone is on, the composer owns a RANGE of the text — the
+    // interim range — that is rewritten from scratch on every partial result.
+    // Rewriting a range rather than appending is what makes the recogniser's
+    // corrections visible: vosk revises the words it already emitted, so text
+    // that was merely appended would keep the wrong guess on screen forever.
+    //
+    // `base` is the text WITHOUT anything dictated, i.e. the string the interim
+    // is spliced into; `original` is what the box held before recording, kept
+    // so a cancel or a failure can put it back exactly.
+    const dictationRef = useRef<{ anchor: number; end: number; base: string; original: string } | null>(null);
+
+    /** Splice `text` into the interim range. Returns the caret position after it. */
+    const applyInterim = useCallback((text: string): number | null => {
+        const d = dictationRef.current;
+        if (!d) return null;
+        const before = d.base.slice(0, d.anchor);
+        const after = d.base.slice(d.anchor);
+        // Same rule as a one-shot insert: no separator at the start of the line
+        // or right after existing whitespace.
+        const separator = d.anchor > 0 && !/\s$/.test(before) ? ' ' : '';
+        const inserted = text ? separator + text : '';
+        d.end = d.anchor + inserted.length;
+        const next = before + inserted + after;
+        setInternalValue(next);
+        setValue(next);
+        return d.end;
+    }, [setValue]);
+
+    /** Hand the box back to the keyboard, optionally undoing the dictation. */
+    const endDictation = useCallback((restore: boolean) => {
+        const d = dictationRef.current;
+        if (!d) return;
+        dictationRef.current = null;
+        if (restore) { setInternalValue(d.original); setValue(d.original); }
+        setTimeout(() => { textareaRef.current?.focus(); adjustHeight(); }, 0);
+    }, [setValue, adjustHeight]);
+
+    /**
+     * The final transcript.
+     *
+     * Falls back to `insertAtCaret` when no range is armed: the hook can still
+     * deliver text from a recording that was never started through the button
+     * (and that path is what the one-shot insertion tests measure).
+     */
+    const handleFinalText = useCallback((text: string) => {
+        if (!dictationRef.current) { insertAtCaret(text); return; }
+        const caret = applyInterim(text);
+        dictationRef.current = null;
+        setTimeout(() => {
+            const el = textareaRef.current;
+            if (el) { el.focus(); if (caret != null) el.setSelectionRange(caret, caret); }
+            adjustHeight();
+        }, 0);
+    }, [insertAtCaret, applyInterim, adjustHeight]);
+
     // The speaking language defaults to the interface language and can be
     // changed BEFORE recording (dictating English into a Turkish interface is
     // an ordinary request).
     const [micLang, setMicLang] = useState<'tr' | 'en'>(lang);
     useEffect(() => { setMicLang(lang); }, [lang]);
 
-    const voice = useVoiceInput({ api, lang: micLang, onText: insertAtCaret });
+    const voice = useVoiceInput({ api, lang: micLang, onText: handleFinalText });
+
+    /** Dictation owns the textarea while it runs — see `readOnly` below. */
+    const dictating = voice.state === 'recording' || voice.state === 'transcribing';
+
+    // Every partial replaces the interim range in place.
+    useEffect(() => {
+        if (voice.state !== 'recording' || !dictationRef.current) return;
+        const caret = applyInterim(voice.partialText);
+        // setTimeout(0) for the same reason as the one-shot insert: the caret
+        // can only be moved after React has written the value, or the
+        // controlled textarea's re-render throws the selection to the end.
+        setTimeout(() => {
+            const el = textareaRef.current;
+            if (el && caret != null) {
+                el.setSelectionRange(caret, caret);
+                // A long dictation grows past the visible box; without this the
+                // words being spoken scroll out of sight.
+                el.scrollTop = el.scrollHeight;
+            }
+            adjustHeight();
+        }, 0);
+    }, [voice.partialText, voice.state, applyInterim, adjustHeight]);
+
+    // A failure means the interim text is not going to be confirmed by
+    // anything, so it must not be left in the box looking like input.
+    useEffect(() => {
+        if (voice.error) endDictation(true);
+    }, [voice.error, endDictation]);
     // Empty `api` means the backend address has not been resolved yet, so there
     // is nothing to post to.
     const micBlocked = !api || disabled;
@@ -249,7 +334,23 @@ export function AnimatedChatInput({
     const handleMicClick = () => {
         voice.clearError();  // a previous error clears on the next attempt
         if (voice.state === 'recording') { void voice.stop(); return; }
-        if (voice.state === 'idle') { void voice.start(); }
+        if (voice.state !== 'idle') return;
+        const ta = textareaRef.current;
+        const original = ta ? ta.value : internalValue;
+        const start = ta && ta.selectionStart != null ? ta.selectionStart : original.length;
+        const end = ta && ta.selectionEnd != null ? ta.selectionEnd : start;
+        // A selection is REPLACED by what is dictated — the same thing typing
+        // would do to it. The untouched original is kept for the restore paths.
+        const base = original.slice(0, start) + original.slice(end);
+        dictationRef.current = { anchor: start, end: start, base, original };
+        if (base !== original) { setInternalValue(base); setValue(base); }
+        void voice.start();
+    };
+
+    /** Escape, or anything else that means "forget this recording". */
+    const cancelDictation = () => {
+        voice.cancel();
+        endDictation(true);
     };
 
     const processFile = (file: File) => {
@@ -384,6 +485,16 @@ export function AnimatedChatInput({
     }, []);
 
     const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+        if (dictating) {
+            // The box belongs to dictation while it runs. Escape drops the
+            // recording; everything else is ignored — Enter especially, which
+            // would otherwise send a half-transcribed sentence.
+            if (e.key === 'Escape' && voice.state === 'recording') {
+                e.preventDefault();
+                cancelDictation();
+            }
+            return;
+        }
         if (showCommandPalette) {
             if (e.key === 'ArrowDown') {
                 e.preventDefault();
@@ -524,6 +635,10 @@ export function AnimatedChatInput({
                     placeholder={disabled ? disabledPlaceholder : placeholder}
                     containerClassName="w-full"
                     disabled={disabled}
+                    // readOnly, not disabled: a disabled textarea loses focus
+                    // and cannot hold a selection, and the live transcript is
+                    // written by moving the caret inside this element.
+                    readOnly={dictating}
                     className={cn(
                         "w-full px-3 py-2 resize-none bg-transparent border-none text-[13px] focus:outline-none min-h-[40px] custom-scrollbar",
                         disabled ? "text-orange-500/50 cursor-not-allowed italic" : "text-white/90 placeholder:text-white/20"
@@ -674,10 +789,10 @@ export function AnimatedChatInput({
                     <button 
                         type="button" 
                         onClick={handleSendMessage} 
-                        disabled={disabled || (!internalValue.trim() && attachments.length === 0)} 
+                        disabled={disabled || voice.state === 'recording' || (!internalValue.trim() && attachments.length === 0)} 
                         className={cn(
                             "px-4 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5", 
-                            (internalValue.trim() || attachments.length > 0) && !disabled
+                            (internalValue.trim() || attachments.length > 0) && !disabled && voice.state !== 'recording'
                                 ? "bg-white text-black hover:bg-white/90 active:scale-95 shadow-lg shadow-white/5" 
                                 : "bg-white/[0.05] text-white/20"
                         )}

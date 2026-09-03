@@ -129,3 +129,20 @@ export function bytesToBase64(bytes: Uint8Array): string {
   }
   return btoa(binary);
 }
+
+/**
+ * Raw PCM samples → base64, with no RIFF header.
+ *
+ * The chunk-session route feeds vosk directly, so a header in the middle of a
+ * stream would be recognised as audio: the backend contract is "raw 16 kHz mono
+ * signed-16-bit little-endian PCM, NO WAV header". `Int16Array`'s own buffer is
+ * host-endian, which is little-endian on every platform this ships to but is
+ * not guaranteed by the spec — the DataView writes make the wire order the
+ * thing the code states rather than the thing the CPU happens to do.
+ */
+export function int16ToBase64(samples: Int16Array): string {
+  const bytes = new Uint8Array(samples.length * 2);
+  const view = new DataView(bytes.buffer);
+  for (let i = 0; i < samples.length; i++) view.setInt16(i * 2, samples[i], true);
+  return bytesToBase64(bytes);
+}

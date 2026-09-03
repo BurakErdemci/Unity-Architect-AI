@@ -13,6 +13,7 @@ import {
   downsampleTo16k,
   encodeWav16kMono,
   floatTo16BitPcm,
+  int16ToBase64,
 } from '../renderer/lib/wav'
 
 const ascii = (bytes: Uint8Array, at: number, len: number) =>
@@ -132,5 +133,53 @@ describe('limits', () => {
     // byte check instead, at a length that varies with the device sample rate.
     const bytes = 44 + (MAX_RECORD_MS / 1000) * 16000 * 2
     expect(bytes).toBeLessThan(WAV_MAX_BYTES)
+  })
+})
+
+/**
+ * Raw PCM for the chunk-session route.
+ *
+ * The one-shot route sends a RIFF file; this one must NOT — a header in the
+ * middle of a stream is fed to the recogniser as if it were sound. And the byte
+ * order is the contract, so it is asserted rather than trusted to the platform.
+ */
+describe('raw PCM base64', () => {
+  const decode = (b64: string) => Uint8Array.from(atob(b64), c => c.charCodeAt(0))
+
+  it('writes little-endian pairs, low byte first', () => {
+    const bytes = decode(int16ToBase64(Int16Array.from([1, -2, 0x1234])))
+    expect(Array.from(bytes.subarray(0, 4))).toEqual([0x01, 0x00, 0xfe, 0xff])
+    expect(bytes[4]).toBe(0x34)
+    expect(bytes[5]).toBe(0x12)
+  })
+
+  it('is two bytes per sample and carries no RIFF header at all', () => {
+    const b64 = int16ToBase64(new Int16Array(1600))
+    expect(decode(b64)).toHaveLength(3200)
+    // 'RIFF' base64-encodes to a string starting 'UklGR'.
+    expect(b64.startsWith('UklGR')).toBe(false)
+  })
+
+  it('an empty chunk encodes to an empty string, which the backend treats as a keep-alive', () => {
+    expect(int16ToBase64(new Int16Array(0))).toBe('')
+  })
+
+  it('survives a chunk larger than the argument-count limit that broke fromCharCode', () => {
+    // 32_768 samples is the backend's per-chunk ceiling; 65_536 bytes is past
+    // the ~64k spread limit that made the one-shot encoder throw RangeError.
+    const b64 = int16ToBase64(new Int16Array(32_768).fill(0x7fff))
+    const bytes = decode(b64)
+    expect(bytes).toHaveLength(65_536)
+    expect(bytes[0]).toBe(0xff)
+    expect(bytes[1]).toBe(0x7f)
+    expect(bytes[65_535]).toBe(0x7f)
+  })
+
+  it('round-trips what floatTo16BitPcm produced, so the chunk path shares the clamping', () => {
+    const bytes = decode(int16ToBase64(floatTo16BitPcm(Float32Array.from([1, -1, 0]))))
+    const view = new DataView(bytes.buffer)
+    expect(view.getInt16(0, true)).toBe(32767)
+    expect(view.getInt16(2, true)).toBe(-32768)
+    expect(view.getInt16(4, true)).toBe(0)
   })
 })

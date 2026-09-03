@@ -1,16 +1,22 @@
 /**
- * useVoiceInput — microphone → 16 kHz mono WAV → POST /transcribe → text.
+ * useVoiceInput — microphone → 16 kHz mono PCM chunks → /transcribe/session → text.
  *
  * DICTATION, not an assistant: the recognised text is handed back through
  * `onText` and the caller drops it at the caret. Nothing is sent on the user's
  * behalf; they press Enter themselves.
  *
- * Why the renderer encodes the WAV instead of shipping the browser's own
- * MediaRecorder output: the backend validates with the stdlib `wave` module and
- * accepts only PCM 16-bit mono 16000 Hz. MediaRecorder produces WebM/Opus on
- * Chromium with no way to ask for RIFF, so the backend would have to carry a
- * decoder. An AudioWorklet tap plus `renderer/lib/wav.ts` keeps the format
- * contract on one side of the wire.
+ * LIVE: the words appear in the box while the user speaks. That is why the
+ * audio goes up as a chunk session (open → 500 ms chunks → finish) rather than
+ * one WAV at the end: a partial transcript needs a recogniser that is already
+ * fed. Transport is plain HTTP — the production CSP has no `ws:` entry and it
+ * stays that way, so a WebSocket was never an option here.
+ *
+ * Why the renderer downsamples instead of shipping the browser's own
+ * MediaRecorder output: the backend feeds vosk, which takes 16 kHz mono
+ * signed-16-bit PCM. MediaRecorder produces WebM/Opus on Chromium with no way
+ * to ask for raw PCM, so the backend would have to carry a decoder. An
+ * AudioWorklet tap plus `renderer/lib/wav.ts` keeps the format contract on one
+ * side of the wire.
  *
  * ⚠️ TEARDOWN HAPPENS BEFORE THE REQUEST, not after. The OS microphone
  * indicator is driven by the live MediaStreamTrack; leaving the track open
@@ -26,10 +32,9 @@ import {
   MAX_RECORD_MS,
   WAV_MAX_BYTES,
   WAV_SAMPLE_RATE,
-  bytesToBase64,
   downsampleTo16k,
-  encodeWav16kMono,
   floatTo16BitPcm,
+  int16ToBase64,
   wavByteLength,
 } from '../../lib/wav';
 
@@ -86,10 +91,46 @@ const PROCESSOR_NAME = 'pcm-capture';
 /** Elapsed-time refresh. 200 ms is under one mm:ss tick, so the timer never skips a second. */
 const TICK_MS = 200;
 
+/**
+ * How often the accumulated audio is shipped.
+ *
+ * 500 ms is the latency the user feels between speaking and seeing the word.
+ * Shorter would mean more round trips than vosk's partial result changes at.
+ */
+const CHUNK_MS = 500;
+
+/**
+ * Backend per-chunk ceiling: 65_536 decoded bytes = 32_768 samples.
+ *
+ * One tick is ~8_000 samples, so this only bites after retries have piled up
+ * audio; the remainder stays queued for the next send rather than being sent
+ * as a body the backend answers with 413 — a rejection the user cannot act on.
+ */
+const MAX_CHUNK_SAMPLES = 32_768;
+
+/** Consecutive chunk failures before the recording is abandoned. */
+const MAX_CHUNK_FAILURES = 3;
+
+/**
+ * The session token, read back from the axios default rather than relied on.
+ *
+ * `useAuth` puts it on `axios.defaults.headers.common`, but a per-call
+ * `headers` object REPLACES the default for that header, so anything that later
+ * adds headers here would silently drop auth.
+ */
+const authHeaders = (): Record<string, string> => {
+  const token = (axios as any).defaults?.headers?.common?.['X-Session-Token'];
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (token) headers['X-Session-Token'] = String(token);
+  return headers;
+};
+
 export const useVoiceInput = ({ api, lang, onText }: VoiceInputParams) => {
   const [state, setState] = useState<VoiceState>('idle');
   const [elapsedMs, setElapsedMs] = useState(0);
   const [error, setError] = useState<VoiceError | null>(null);
+  /** The recogniser's running guess. Replaced wholesale on every chunk answer. */
+  const [partialText, setPartialText] = useState('');
 
   const streamRef = useRef<MediaStream | null>(null);
   const ctxRef = useRef<AudioContext | null>(null);
@@ -101,6 +142,21 @@ export const useVoiceInput = ({ api, lang, onText }: VoiceInputParams) => {
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const autoStopRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const startedAtRef = useRef(0);
+
+  /** Server-side recogniser id. Null means there is nothing to send or finish. */
+  const sessionIdRef = useRef<string | null>(null);
+  const chunkTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  /**
+   * One chunk POST in flight at a time.
+   *
+   * vosk feeds a single recogniser per session, so two overlapping requests
+   * would interleave audio at the backend's per-session lock in whatever order
+   * the network delivered them — i.e. the words would come back scrambled on a
+   * slow link. A tick that finds this set simply waits for the next one.
+   */
+  const sendingRef = useRef(false);
+  const inFlightRef = useRef<Promise<void> | null>(null);
+  const chunkFailuresRef = useRef(0);
 
   /**
    * Per-recording cancellation flag, an object rather than a boolean so the
@@ -157,6 +213,7 @@ export const useVoiceInput = ({ api, lang, onText }: VoiceInputParams) => {
   /** Release every OS-visible resource. Safe to call twice. */
   const teardown = useCallback(() => {
     if (tickRef.current) { clearInterval(tickRef.current); tickRef.current = null; }
+    if (chunkTimerRef.current) { clearInterval(chunkTimerRef.current); chunkTimerRef.current = null; }
     if (autoStopRef.current) { clearTimeout(autoStopRef.current); autoStopRef.current = null; }
     try { nodeRef.current?.port?.close?.(); } catch { /* already closed */ }
     try { nodeRef.current?.disconnect(); } catch { /* not connected */ }
@@ -176,6 +233,113 @@ export const useVoiceInput = ({ api, lang, onText }: VoiceInputParams) => {
   }, []);
 
   const clearError = useCallback(() => setError(null), []);
+
+  /**
+   * Take up to `maxSamples` from the head of the unsent queue.
+   *
+   * The queue is drained rather than copied because a chunk that fails has to
+   * go back to the FRONT: the recogniser is fed a single ordered stream, so
+   * dropping or reordering one chunk corrupts every partial after it.
+   */
+  const drainQueued = useCallback((maxSamples: number): Float32Array => {
+    const queue = chunksRef.current;
+    let available = 0;
+    for (const c of queue) available += c.length;
+    const take = Math.min(available, maxSamples);
+    const out = new Float32Array(take);
+    let filled = 0;
+    while (filled < take && queue.length) {
+      const head = queue[0];
+      const need = take - filled;
+      if (head.length <= need) {
+        out.set(head, filled);
+        filled += head.length;
+        queue.shift();
+      } else {
+        out.set(head.subarray(0, need), filled);
+        queue[0] = head.subarray(need);
+        filled += need;
+      }
+    }
+    return out;
+  }, []);
+
+  /** Fire-and-forget session close. Used where nobody is waiting for a result. */
+  const discardSession = useCallback(() => {
+    const id = sessionIdRef.current;
+    sessionIdRef.current = null;
+    if (!id) return;
+    // Not awaited on purpose: this runs from cancel() and from the unmount
+    // cleanup, neither of which may return a promise. Failing to reach the
+    // backend is harmless — the session's own 90 s idle TTL collects it.
+    axios.post(
+      `${apiRef.current}/transcribe/session/${id}/finish`,
+      { discard: true },
+      { headers: authHeaders(), timeout: 5000 },
+    ).catch(() => { /* the TTL is the backstop */ });
+  }, []);
+
+  /** Give up on a recording that cannot reach the backend any more. */
+  const abandon = useCallback((detail?: string) => {
+    runRef.current.cancelled = true;
+    teardown();
+    chunksRef.current = [];
+    discardSession();
+    setPartialText('');
+    setError({ kind: 'server', detail });
+    setState('idle');
+    setElapsedMs(0);
+  }, [teardown, discardSession]);
+
+  /**
+   * One scheduler tick: ship whatever has accumulated, show the new partial.
+   *
+   * A failure does NOT end the recording — a single dropped request while the
+   * user is mid-sentence would throw away audio they cannot re-speak. The
+   * samples go back on the queue and ride along with the next tick; only three
+   * consecutive failures mean the backend is really gone.
+   */
+  const sendChunk = useCallback((): Promise<void> => {
+    const run = runRef.current;
+    const id = sessionIdRef.current;
+    // A tick that lands on an in-flight send returns THAT send's promise, so
+    // `stop()` can wait the ordering out instead of polling a timer it would
+    // have to advance itself.
+    if (!id || run.cancelled) return Promise.resolve();
+    if (sendingRef.current) return inFlightRef.current ?? Promise.resolve();
+    const ratio = inputRateRef.current / WAV_SAMPLE_RATE;
+    const samples = drainQueued(Math.max(1, Math.floor(MAX_CHUNK_SAMPLES * ratio)));
+    if (samples.length === 0) return Promise.resolve();
+    sendingRef.current = true;
+    const inFlight = (async () => {
+      try {
+        const pcm = int16ToBase64(floatTo16BitPcm(downsampleTo16k(samples, inputRateRef.current)));
+        const res = await axios.post(
+          `${apiRef.current}/transcribe/session/${id}`,
+          { pcm_base64: pcm },
+          { headers: authHeaders(), timeout: 15000 },
+        );
+        if (run.cancelled) return;
+        chunkFailuresRef.current = 0;
+        const partial = typeof res?.data?.partial === 'string' ? res.data.partial : '';
+        setPartialText(partial);
+      } catch (err: any) {
+        if (run.cancelled) return;
+        chunksRef.current.unshift(samples);
+        chunkFailuresRef.current += 1;
+        if (chunkFailuresRef.current >= MAX_CHUNK_FAILURES) {
+          abandon(apiHataMesaji(err, err?.message ?? String(err)) || undefined);
+        }
+      } finally {
+        sendingRef.current = false;
+      }
+    })();
+    inFlightRef.current = inFlight;
+    return inFlight;
+  }, [drainQueued, abandon]);
+
+  const sendChunkRef = useRef(sendChunk);
+  sendChunkRef.current = sendChunk;
 
   const start = useCallback(async () => {
     // Ref first, state second: only the ref is reliable inside the same tick.
@@ -268,10 +432,68 @@ export const useVoiceInput = ({ api, lang, onText }: VoiceInputParams) => {
         return;
       }
 
+      // Everything the graph holds, for the failure paths below. `teardown()`
+      // still cannot see the node and the source (they are locals until the
+      // commit), so they are released by hand exactly like the stream is.
+      const releaseGraph = () => {
+        try { (node as any)?.port?.close?.(); } catch { /* already closed */ }
+        try { node?.disconnect(); } catch { /* not connected */ }
+        try { source?.disconnect(); } catch { /* not connected */ }
+        releaseStream(stream);
+        releaseContext(ctx);
+        pendingRef.current = null;
+      };
+
+      // The session is opened with the microphone already live but BEFORE the
+      // recording state is announced: the backend loads the vosk model here, so
+      // a missing model is reported as a failure to start rather than as a
+      // recording that silently produces nothing.
+      let sessionId: string;
+      try {
+        const res = await axios.post(
+          `${apiRef.current}/transcribe/session`,
+          { lang: langRef.current },
+          { headers: authHeaders(), timeout: 15000 },
+        );
+        const id = res?.data?.session_id;
+        if (typeof id !== 'string' || id === '') throw new Error('stt_no_session_id');
+        sessionId = id;
+      } catch (err: any) {
+        releaseGraph();
+        const status = err?.response?.status;
+        const detail = err?.response?.data?.detail;
+        // 503 is normally "the recognition files are missing", but the same
+        // status also means "all four recogniser slots are busy" — a temporary
+        // condition with a different fix, so it must not read as a broken
+        // install.
+        if (status === 503 && detail !== 'stt_busy') {
+          setError({ kind: 'model', detail: apiHataMesaji(err, '') || undefined });
+        } else if (!err?.response) {
+          setError({ kind: 'server', detail: err?.message ?? String(err) });
+        } else {
+          setError({ kind: 'server', detail: apiHataMesaji(err, `HTTP ${status}`) });
+        }
+        return;
+      }
+
+      // Same window as every other await in here: a cancel/unmount that landed
+      // while the session was being opened must not leave a live graph behind,
+      // and the session it asked for has to be handed back.
+      if (abortAcquisitionRef.current) {
+        releaseGraph();
+        sessionIdRef.current = sessionId;
+        discardSession();
+        return;
+      }
+
       // Past this line nothing can throw, so installing the refs here means the
       // refs and the live resources are always in the same state.
       const run = { cancelled: false };
       runRef.current = run;
+      sessionIdRef.current = sessionId;
+      chunkFailuresRef.current = 0;
+      sendingRef.current = false;
+      setPartialText('');
       chunksRef.current = [];
       rawSampleCountRef.current = 0;
       inputRateRef.current = ctx!.sampleRate || WAV_SAMPLE_RATE;
@@ -289,6 +511,10 @@ export const useVoiceInput = ({ api, lang, onText }: VoiceInputParams) => {
       tickRef.current = setInterval(() => {
         setElapsedMs(Date.now() - startedAtRef.current);
       }, TICK_MS);
+      // The scheduler holds the CURRENT `sendChunk` through a ref for the same
+      // reason the auto-stop holds the current `stop`: a stale closure would
+      // keep sending against state that has moved on.
+      chunkTimerRef.current = setInterval(() => { void sendChunkRef.current(); }, CHUNK_MS);
       // Hard ceiling. Without it a forgotten recording runs until the byte budget
       // trips, and the byte budget depends on the sample rate — i.e. the user
       // would get a different maximum length on different machines.
@@ -316,7 +542,7 @@ export const useVoiceInput = ({ api, lang, onText }: VoiceInputParams) => {
     } finally {
       startingRef.current = false;
     }
-  }, [state]);
+  }, [state, discardSession]);
 
   const stop = useCallback(async () => {
     // A stop asked for while `start()` is still awaiting used to fall through
@@ -330,6 +556,8 @@ export const useVoiceInput = ({ api, lang, onText }: VoiceInputParams) => {
     if (startingRef.current && !streamRef.current) {
       abortAcquisitionRef.current = true;
       teardown();  // drains `pendingRef`, i.e. whatever has been acquired so far
+      discardSession();
+      setPartialText('');
       setState('idle');
       setElapsedMs(0);
       return;
@@ -337,40 +565,47 @@ export const useVoiceInput = ({ api, lang, onText }: VoiceInputParams) => {
     if (state !== 'recording' && !streamRef.current) return;
     const run = runRef.current;
     const chunks = chunksRef.current;
-    const inputRate = inputRateRef.current;
 
     // Order matters — see the header note. Everything the OS can see is gone
     // before a single byte is sent.
     teardown();
-    chunksRef.current = [];
-    if (run.cancelled) { setState('idle'); return; }
+    // The unsent tail stays queued: it is exactly the audio the recogniser has
+    // not heard yet, and `teardown()` only released OS resources. Clearing it
+    // here would drop the last half second — usually the end of a word.
+    chunksRef.current = chunks;
+    if (run.cancelled) { chunksRef.current = []; discardSession(); setState('idle'); return; }
 
     setState('transcribing');
 
-    let total = 0;
-    for (const c of chunks) total += c.length;
-    const merged = new Float32Array(total);
-    let offset = 0;
-    for (const c of chunks) { merged.set(c, offset); offset += c.length; }
+    const id = sessionIdRef.current;
+    if (!id) {
+      // No session means `start()` never got one; there is nothing to finish.
+      chunksRef.current = [];
+      setState('idle');
+      setElapsedMs(0);
+      return;
+    }
 
-    const at16k = downsampleTo16k(merged, inputRate);
-    const wav = encodeWav16kMono(floatTo16BitPcm(at16k));
-    const wavBase64 = bytesToBase64(wav);
-
-    // Belt and braces on the token: `useAuth` puts it on
-    // `axios.defaults.headers.common`, but a per-call `headers` object REPLACES
-    // the default for that header, so anything that later adds headers here
-    // would silently drop auth. Reading the default back and passing it
-    // explicitly makes the two impossible to diverge.
-    const token = (axios as any).defaults?.headers?.common?.['X-Session-Token'];
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (token) headers['X-Session-Token'] = String(token);
+    // Wait out whatever the scheduler still has in flight, then ship the tail.
+    // Ordered, one at a time: the backend feeds one recogniser per session.
+    await (inFlightRef.current ?? Promise.resolve());
+    while (
+      chunksRef.current.length > 0 &&
+      !run.cancelled &&
+      sessionIdRef.current === id &&
+      chunkFailuresRef.current === 0
+    ) {
+      await sendChunk();
+    }
+    chunksRef.current = [];
+    if (run.cancelled || sessionIdRef.current !== id) return;
+    sessionIdRef.current = null;
 
     try {
       const res = await axios.post(
-        `${apiRef.current}/transcribe`,
-        { lang: langRef.current, wav_base64: wavBase64 },
-        { headers, timeout: 30000 },
+        `${apiRef.current}/transcribe/session/${id}/finish`,
+        {},
+        { headers: authHeaders(), timeout: 30000 },
       );
       if (run.cancelled) return;
       const text = typeof res?.data?.text === 'string' ? res.data.text : '';
@@ -388,18 +623,19 @@ export const useVoiceInput = ({ api, lang, onText }: VoiceInputParams) => {
         // No response at all: the backend is down, or the request never left.
         setError({ kind: 'server', detail: err?.message ?? String(err) });
       } else {
-        // 400 / 413 / 401 / other 5xx all land here. The user-facing sentence
-        // is the same "could not reach the backend" one by contract; the raw
-        // detail goes into the title so a report can name it.
+        // 400 / 413 / 401 / 404 / other 5xx all land here. The user-facing
+        // sentence is the same "could not reach the backend" one by contract;
+        // the raw detail goes into the title so a report can name it.
         setError({ kind: 'server', detail: apiHataMesaji(err, `HTTP ${status}`) });
       }
     } finally {
       if (!run.cancelled) {
+        setPartialText('');
         setState('idle');
         setElapsedMs(0);
       }
     }
-  }, [state, teardown]);
+  }, [state, teardown, sendChunk, discardSession]);
 
   // Timers hold the CURRENT `stop`, not the one that existed when the timer was
   // armed: `stop` closes over `state` and would otherwise fire a stale copy
@@ -412,9 +648,13 @@ export const useVoiceInput = ({ api, lang, onText }: VoiceInputParams) => {
     abortAcquisitionRef.current = true;
     teardown();
     chunksRef.current = [];
+    // Fire-and-forget: the user asked for the recording to go away, so nothing
+    // here waits on the network to tell them it did.
+    discardSession();
+    setPartialText('');
     setState('idle');
     setElapsedMs(0);
-  }, [teardown]);
+  }, [teardown, discardSession]);
 
   useEffect(() => () => {
     // Unmount: the flags first, so neither a request already in flight nor an
@@ -422,9 +662,13 @@ export const useVoiceInput = ({ api, lang, onText }: VoiceInputParams) => {
     runRef.current.cancelled = true;
     abortAcquisitionRef.current = true;
     teardown();
-  }, [teardown]);
+    // The session lives on the SERVER: without this the recogniser it holds
+    // would stay allocated until the 90 s idle TTL, and MAX_SESSIONS is 4 —
+    // four closed composers would lock everyone out of dictation.
+    discardSession();
+  }, [teardown, discardSession]);
 
-  return { state, elapsedMs, error, start, stop, cancel, clearError };
+  return { state, elapsedMs, error, partialText, start, stop, cancel, clearError };
 };
 
 /** `mm:ss` for the recording badge. Kept here so the button and its tests agree. */
