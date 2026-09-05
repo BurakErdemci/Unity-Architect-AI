@@ -1,7 +1,9 @@
 import os
 import json
+import time
 import shutil
 import logging
+from typing import Optional
 from .cli_base import BaseCLIProvider
 
 logger = logging.getLogger(__name__)
@@ -37,9 +39,38 @@ class AgyProvider(BaseCLIProvider):
             cmd += ["--conversation", self._resume_uuid]
         return cmd
 
-    async def analyze_code(self, *args, **kwargs):
-        """Agy requires the conversation-scoped AgyStreamSession entry point."""
-        yield {"type": "error", "content": "agy requires a persistent conversation session."}
+    async def analyze_code(self, prompt: str, max_tokens: int = 4096,
+                           images=None, thinking_level: str = "medium",
+                           cwd: Optional[str] = None, interactive: bool = False):
+        """One-shot path for callers that have no conversation (project analysis,
+        compact summary, security check, validator).
+
+        The persistent session belongs to a conversation; these callers own none,
+        so a throwaway session runs exactly one turn and is closed. The generic
+        one-shot spawn in cli_base no longer covers agy (removed with the
+        stream-json migration, 2026-09-05), which would have left these callers
+        with a bare error. Emits the same delta/final/error events the other CLI
+        providers' one-shot path emits.
+        """
+        from providers.agy_session import AgyStreamSession
+        workspace = cwd or "."
+        session = AgyStreamSession(-(int(time.time() * 1000) & 0x7FFFFFFF), cwd=workspace)
+        session.auto_approve = True
+        collected = ""
+        try:
+            async for ev in session.stream(prompt, model=self.binary_name, cwd=workspace):
+                kind = ev.get("type")
+                if kind == "text":
+                    piece = ev.get("content", "")
+                    collected += piece
+                    yield {"type": "delta", "text": piece}
+                elif kind == "response":
+                    yield {"type": "final", "text": ev.get("content") or collected}
+                elif kind == "error":
+                    yield {"type": "error", "content": ev.get("message", "")}
+                    return
+        finally:
+            await session.close()
 
     def _stream_instructions(self) -> str:
         """Keep the existing tool approval bridge guidance on the stdin path."""

@@ -357,3 +357,66 @@ class TestAgyStreamSession(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([e["type"] for e in events], ["error"])
         self.assertIn("upstream failed", events[0]["message"])
         self.assertIsNone(agy_session.peek_session(11))
+
+
+class TestAnalyzeCodeOneShot:
+    """AgyProvider.analyze_code runs one throwaway session turn and closes it.
+
+    Callers without a conversation (analysis routes, compact summary, security
+    check) used cli_base's generic one-shot spawn before the stream-json
+    migration; that branch is gone, so this is the only path left for them.
+    """
+
+    def test_maps_session_events_and_closes(self, monkeypatch):
+        import asyncio
+        from providers import agy_session
+        from providers.agy_provider import AgyProvider
+
+        closed = []
+
+        async def fake_stream(self, message, *, model="x", cwd=None):
+            assert message == "summarize"
+            assert model == "gemini-3.8-flash"
+            yield {"type": "text", "content": "hel"}
+            yield {"type": "text", "content": "lo"}
+            yield {"type": "response", "content": "hello"}
+            yield {"type": "done", "iterations": 1, "session_id": "s"}
+
+        async def fake_close(self, *, preserve_resume=False):
+            closed.append(self.conversation_id)
+
+        monkeypatch.setattr(agy_session.AgyStreamSession, "stream", fake_stream)
+        monkeypatch.setattr(agy_session.AgyStreamSession, "close", fake_close)
+
+        async def run():
+            provider = AgyProvider(binary_name="gemini-3.8-flash")
+            return [ev async for ev in provider.analyze_code("summarize", cwd=".")]
+
+        events = asyncio.run(run())
+        assert [e["type"] for e in events] == ["delta", "delta", "final"]
+        assert events[-1]["text"] == "hello"
+        assert len(closed) == 1 and closed[0] < 0
+
+    def test_error_event_is_forwarded_and_session_closed(self, monkeypatch):
+        import asyncio
+        from providers import agy_session
+        from providers.agy_provider import AgyProvider
+
+        closed = []
+
+        async def fake_stream(self, message, *, model="x", cwd=None):
+            yield {"type": "error", "message": "boom"}
+
+        async def fake_close(self, *, preserve_resume=False):
+            closed.append(True)
+
+        monkeypatch.setattr(agy_session.AgyStreamSession, "stream", fake_stream)
+        monkeypatch.setattr(agy_session.AgyStreamSession, "close", fake_close)
+
+        async def run():
+            provider = AgyProvider(binary_name="gemini-3.8-flash")
+            return [ev async for ev in provider.analyze_code("x", cwd=".")]
+
+        events = asyncio.run(run())
+        assert events == [{"type": "error", "content": "boom"}]
+        assert closed == [True]
