@@ -91,7 +91,9 @@ def test_chain_counter_exhausts_at_the_limit_and_resets_on_user_message():
 def test_wait_returns_immediately_when_a_notice_is_pending():
     async def run_it():
         wake_queue.enqueue(7, "ready")
+        assert wake_queue.pending(7) == 1
         await asyncio.wait_for(wake_queue.wait(7), timeout=1.0)
+        assert wake_queue.drain(7) == ["ready"]
 
     asyncio.run(run_it())
 
@@ -100,8 +102,11 @@ def test_wait_wakes_up_on_enqueue():
     async def run_it():
         bekle = asyncio.create_task(wake_queue.wait(7))
         await asyncio.sleep(0)
+        assert not bekle.done()
         wake_queue.enqueue(7, "late arrival")
         await asyncio.wait_for(bekle, timeout=1.0)
+        assert bekle.done()
+        assert wake_queue.drain(7) == ["late arrival"]
 
     asyncio.run(run_it())
 

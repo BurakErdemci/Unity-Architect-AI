@@ -294,6 +294,20 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             if (prevC === '/usage') slashCmd = 'usage';
             else if (prevC === '/context') slashCmd = 'context';
           }
+          let wakeText = msg.content;
+          if (msg.role === 'system') {
+            const separator = msg.content.indexOf('|');
+            if (separator >= 0) {
+              const reason = msg.content.slice(0, separator);
+              const detail = msg.content.slice(separator + 1);
+              const wakeKey = reason === 'tasks_done_saved'
+                ? 'chat.wakeRow.tasks_done_saved'
+                : reason === 'tasks_done'
+                  ? 'chat.wakeRow.tasks_done'
+                  : null;
+              if (wakeKey) wakeText = `${t(wakeKey)} — ${detail}`;
+            }
+          }
           return (
           <div key={msg.id} className={`chat-message-enter ${msg.role === 'user' ? 'flex justify-end' : ''}`}>
             {msg.role === 'system' ? (
@@ -306,7 +320,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
               <div className="flex items-center gap-2 py-1 text-[11px] text-slate-500 select-none">
                 <RefreshCw size={11} className="text-violet-400/70 shrink-0" />
                 <span className="font-medium shrink-0">{t('chat.wakeRow')}</span>
-                <span className="truncate text-slate-600">· {msg.content}</span>
+                <span className="truncate text-slate-600">· {wakeText}</span>
               </div>
             ) : msg.role === 'assistant' ? (
               // Avatar yan sütun yerine ÜSTTE tek meta satırı — dar panelde

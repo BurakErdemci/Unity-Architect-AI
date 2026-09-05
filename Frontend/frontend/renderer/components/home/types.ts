@@ -95,7 +95,7 @@ export interface Message {
   images?: string[];
   slashCommand?: string;  // 'usage' | 'cost' — özel kart olarak render edilen slash komutu yanıtı
   // Tur sonu istatistiği (backend turn_usage event'i) — mesaj altında küçük özet satırı
-  usage?: { input_tokens?: number; output_tokens?: number; cost_usd?: number | null; duration_ms?: number | null };
+  usage?: { output_tokens?: number; duration_ms?: number | null };
   notices?: MessageNotice[];
 }
 

@@ -69,6 +69,8 @@ export const tr = {
   'notice.detail': 'Teknik ayrıntı',
   'notice.wakeChainExhausted': 'Arka plan işleri bitince sohbet kendiliğinden üst üste 3 kez devam etti; dördüncüsü başlatılmadı. Bu bir hata değil — sen yokken sonsuza kadar dönmemesi için konmuş bir sınır. Devam etmesini istiyorsan bir mesaj yaz.',
   'chat.wakeRow': 'Arka plan işi bitti — sohbet kendiliğinden devam etti',
+  'chat.wakeRow.tasks_done_saved': 'Arka plan görevleri bitti ve tur kaydedildi',
+  'chat.wakeRow.tasks_done': 'Arka plan görevleri bitti',
   // Sağlayıcı hataları: backend `code` + hazır metin gönderiyor; kodu
   // tanıyorsak burası kazanıyor, tanımıyorsak backend'in metni gösteriliyor.
   'error.providerQuota': 'Sağlayıcı kota/hız sınırı nedeniyle üç denemede de isteği reddetti. Bir süre bekleyip tekrar dene ya da başka bir modele geç.',
@@ -572,6 +574,8 @@ export const en: Record<keyof typeof tr, string> = {
   'notice.detail': 'Technical detail',
   'notice.wakeChainExhausted': 'The chat carried on by itself 3 times in a row as background jobs finished; the fourth was not started. This is not a failure — it is a limit so it cannot loop forever while you are away. Send a message if you want it to keep going.',
   'chat.wakeRow': 'Background job finished — the chat continued on its own',
+  'chat.wakeRow.tasks_done_saved': 'background tasks finished and the turn was saved',
+  'chat.wakeRow.tasks_done': 'background tasks finished',
   'error.providerQuota': 'The provider refused the request on all three attempts because of a quota or rate limit. Wait a while and try again, or switch to another model.',
   'error.providerUnavailable': 'The provider came back busy on all three attempts (503). This is temporary; try again shortly.',
   'error.providerUnreachable': 'The provider could not be reached on any of the three attempts.',

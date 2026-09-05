@@ -1225,7 +1225,7 @@ class ClaudeSDKSession:
             # pressed, or where no task finished at all, would mean restarting on its
             # own a job the user had shut down.
             if self._done_tasks and not self._cancel_requested:
-                self._queue_wake("Arka plan görevleri tamamlandı ve tur kaydedildi")
+                self._queue_wake("tasks_done_saved")
 
     # ── Grace/nudge zamanlayıcıları (arka plan görev orkestrasyonu) ──────
     def _cancel_grace(self):
@@ -1274,11 +1274,11 @@ class ClaudeSDKSession:
         was talking into a void. The notice is queued here instead; `/wake-stream`
         carries it to the client, and the client starts the next turn itself.
         """
-        names = ", ".join(self._done_tasks[-3:]) if self._done_tasks else "arka plan işi"
+        names = ", ".join(self._done_tasks[-3:]) if self._done_tasks else "background work"
         self._done_tasks = []
         try:
             from agentic.wake_queue import enqueue as _wake_enqueue
-            _wake_enqueue(self.conversation_id, f"{reason}: {names}")
+            _wake_enqueue(self.conversation_id, f"{reason}|{names}")
         except Exception:
             logger.exception("[ClaudeSDKSession] failed to enqueue wake notification")
 
@@ -1291,7 +1291,7 @@ class ClaudeSDKSession:
             return
         if self._out_q is None:
             # SSE is closed: no one to nudge. Queue a wake notice instead of a nudge.
-            self._queue_wake("Arka plan görevleri tamamlandı")
+            self._queue_wake("tasks_done")
             return
         if (self._turn_active and self._result_pending) or not self._turn_active:
             self._schedule_grace(_TASKS_DONE_GRACE_S, "nudge")
@@ -1494,7 +1494,7 @@ class ClaudeSDKSession:
                     if name == "KillShell" or "completed" in txt.lower():
                         _sid, _cmd = next(iter(self._bg_shells.items()))
                         self._bg_shells.pop(_sid, None)
-                        self._done_tasks.append(f"arka plan komutu ({_cmd})")
+                        self._done_tasks.append(f"background command ({_cmd})")
                         await self._maybe_tasks_drained()
             return
 

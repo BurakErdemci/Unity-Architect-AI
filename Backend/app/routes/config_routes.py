@@ -431,6 +431,37 @@ def create_config_router(db):
                 cloud.append(model)
         return durum
 
+    # Copilot'un programatik model listeleme komutu yok → statik liste (dinamik
+    # endpoint'ten servis edilir ki plan-caps disabled bayrakları eklenebilsin).
+    # Also feeds /available-models: the same ids used to be typed out in both
+    # endpoints, and two hand-kept copies drift (hygiene audit, 5 Sep 2026).
+    _COPILOT_MODELS = [
+        {"id": "copilot-auto",                   "name": "Copilot Auto (Önerilen)", "provider": "subscription"},
+        {"id": "copilot-claude-sonnet-5",        "name": "Claude Sonnet 5",         "provider": "subscription"},
+        {"id": "copilot-claude-fable-5",         "name": "Claude Fable 5",          "provider": "subscription"},
+        {"id": "copilot-claude-opus-4.8",        "name": "Claude Opus 4.8",         "provider": "subscription"},
+        {"id": "copilot-claude-haiku-4.5",       "name": "Claude Haiku 4.5",         "provider": "subscription"},
+        {"id": "copilot-gpt-5.6-sol",            "name": "GPT-5.6 Sol",             "provider": "subscription"},
+        {"id": "copilot-gpt-5.6-luna",           "name": "GPT-5.6 Luna",            "provider": "subscription"},
+        {"id": "copilot-gpt-5.5",                "name": "GPT-5.5",                 "provider": "subscription"},
+        {"id": "copilot-gpt-5.4-mini",           "name": "GPT-5.4 Mini",            "provider": "subscription"},
+        {"id": "copilot-gemini-3.1-pro-preview", "name": "Gemini 3.1 Pro",          "provider": "subscription"},
+    ]
+
+    # Codex modelleri: statik liste. Hesap/plan cevabı tutarsız olabildiği için
+    # bunlara kalıcı UI kilidi uygulanmaz; kullanıcı modeli her zaman deneyebilir.
+    _CODEX_MODELS = [
+        # Codex 0.153.x does not list GPT-6 in its own picker but accepts it
+        # via `-m` (installed 0.153.4), so it is offered here by hand.
+        {"id": "gpt-6-astra",   "name": "GPT-6 Astra",    "provider": "subscription"},
+        {"id": "gpt-5.6-terra", "name": "GPT-5.6 Terra",  "provider": "subscription"},
+        {"id": "gpt-5.6-sol",   "name": "GPT-5.6 Sol",    "provider": "subscription"},
+        {"id": "gpt-5.6-luna",  "name": "GPT-5.6 Luna",   "provider": "subscription"},
+        {"id": "gpt-5.5",       "name": "GPT-5.5",        "provider": "subscription"},
+        {"id": "gpt-5.4",       "name": "GPT-5.4",        "provider": "subscription"},
+        {"id": "gpt-5.4-mini",  "name": "GPT-5.4 Mini",   "provider": "subscription"},
+    ]
+
     @router.get("/available-models")
     async def get_available_models(
         refresh: bool = False,
@@ -464,13 +495,7 @@ def create_config_router(db):
                 {"id": "claude-opus-4-8",      "name": "Claude 4.8 Opus (CLI)",         "provider": "subscription"},
                 {"id": "claude-sonnet-4-6",    "name": "Claude 4.6 Sonnet (CLI)",       "provider": "subscription"},
                 {"id": "claude-haiku-4-5",     "name": "Claude 4.5 Haiku (CLI)",        "provider": "subscription"},
-                {"id": "gpt-6-astra",         "name": "Codex (GPT-6 Astra)",           "provider": "subscription"},
-                {"id": "gpt-5.6-sol",         "name": "Codex (GPT-5.6 Sol)",           "provider": "subscription"},
-                {"id": "gpt-5.6-terra",       "name": "Codex (GPT-5.6 Terra)",         "provider": "subscription"},
-                {"id": "gpt-5.6-luna",        "name": "Codex (GPT-5.6 Luna)",          "provider": "subscription"},
-                {"id": "gpt-5.5",              "name": "Codex (GPT-5.5)",               "provider": "subscription"},
-                {"id": "gpt-5.4",              "name": "Codex (GPT-5.4)",               "provider": "subscription"},
-                {"id": "gpt-5.4-mini",         "name": "Codex (GPT-5.4 Mini)",          "provider": "subscription"},
+                *[{**model, "name": f"Codex ({model['name']})"} for model in _CODEX_MODELS],
                 {"id": "kimi-k3",              "name": "Kimi K3 (CLI)",                 "provider": "subscription"},
                 {"id": "kimi-k2.7-code",       "name": "Kimi K2.7 Code (CLI)",          "provider": "subscription"},
                 {"id": "gemini-3.8-flash",             "name": "Gemini 3.8 Flash (Önerilen)", "provider": "subscription"},
@@ -489,16 +514,7 @@ def create_config_router(db):
                 {"id": "agy-gpt-oss-120b",             "name": "GPT-OSS 120B (Medium)",       "provider": "subscription"},
                 # GitHub Copilot CLI (statik — copilot'un programatik model listesi yok;
                 # ID'ler CLI'ın kendi model seçicisinden alındı, 2026-07-13)
-                {"id": "copilot-auto",                 "name": "Copilot Auto (Önerilen)",     "provider": "subscription"},
-                {"id": "copilot-claude-sonnet-5",      "name": "Claude Sonnet 5",             "provider": "subscription"},
-                {"id": "copilot-claude-fable-5",       "name": "Claude Fable 5",              "provider": "subscription"},
-                {"id": "copilot-claude-opus-4.8",      "name": "Claude Opus 4.8",             "provider": "subscription"},
-                {"id": "copilot-claude-haiku-4.5",     "name": "Claude Haiku 4.5",            "provider": "subscription"},
-                {"id": "copilot-gpt-5.6-sol",          "name": "GPT-5.6 Sol",                 "provider": "subscription"},
-                {"id": "copilot-gpt-5.6-luna",         "name": "GPT-5.6 Luna",                "provider": "subscription"},
-                {"id": "copilot-gpt-5.5",              "name": "GPT-5.5",                     "provider": "subscription"},
-                {"id": "copilot-gpt-5.4-mini",         "name": "GPT-5.4 Mini",                "provider": "subscription"},
-                {"id": "copilot-gemini-3.1-pro-preview", "name": "Gemini 3.1 Pro",            "provider": "subscription"},
+                *_COPILOT_MODELS,
                 # Cursor ve OpenCode modelleri DİNAMİK: /cli-models/{cli} endpoint'i
                 # kullanıcının hesabına/kurulumuna göre canlı liste döner.
             ]
@@ -595,35 +611,6 @@ def create_config_router(db):
             name = name.split(" (current")[0].split(" (default")[0].strip()
             models.append({"id": f"cursor-{mid}", "name": name, "provider": "subscription"})
         return models
-
-    # Copilot'un programatik model listeleme komutu yok → statik liste (dinamik
-    # endpoint'ten servis edilir ki plan-caps disabled bayrakları eklenebilsin).
-    _COPILOT_MODELS = [
-        {"id": "copilot-auto",                   "name": "Copilot Auto (Önerilen)", "provider": "subscription"},
-        {"id": "copilot-claude-sonnet-5",        "name": "Claude Sonnet 5",         "provider": "subscription"},
-        {"id": "copilot-claude-fable-5",         "name": "Claude Fable 5",          "provider": "subscription"},
-        {"id": "copilot-claude-opus-4.8",        "name": "Claude Opus 4.8",         "provider": "subscription"},
-        {"id": "copilot-claude-haiku-4.5",       "name": "Claude Haiku 4.5",        "provider": "subscription"},
-        {"id": "copilot-gpt-5.6-sol",            "name": "GPT-5.6 Sol",             "provider": "subscription"},
-        {"id": "copilot-gpt-5.6-luna",           "name": "GPT-5.6 Luna",            "provider": "subscription"},
-        {"id": "copilot-gpt-5.5",                "name": "GPT-5.5",                 "provider": "subscription"},
-        {"id": "copilot-gpt-5.4-mini",           "name": "GPT-5.4 Mini",            "provider": "subscription"},
-        {"id": "copilot-gemini-3.1-pro-preview", "name": "Gemini 3.1 Pro",          "provider": "subscription"},
-    ]
-
-    # Codex modelleri: statik liste. Hesap/plan cevabı tutarsız olabildiği için
-    # bunlara kalıcı UI kilidi uygulanmaz; kullanıcı modeli her zaman deneyebilir.
-    _CODEX_MODELS = [
-        # Codex 0.153.x does not list GPT-6 in its own picker but accepts it
-        # via `-m` (installed 0.153.4), so it is offered here by hand.
-        {"id": "gpt-6-astra",   "name": "GPT-6 Astra",    "provider": "subscription"},
-        {"id": "gpt-5.6-terra", "name": "GPT-5.6 Terra",  "provider": "subscription"},
-        {"id": "gpt-5.6-sol",   "name": "GPT-5.6 Sol",    "provider": "subscription"},
-        {"id": "gpt-5.6-luna",  "name": "GPT-5.6 Luna",   "provider": "subscription"},
-        {"id": "gpt-5.5",       "name": "GPT-5.5",        "provider": "subscription"},
-        {"id": "gpt-5.4",       "name": "GPT-5.4",        "provider": "subscription"},
-        {"id": "gpt-5.4-mini",  "name": "GPT-5.4 Mini",   "provider": "subscription"},
-    ]
 
     def _apply_plan_caps(cli: str, models: list) -> list:
         """Yalnız Cursor/Copilot'un doğrulanmış ``Auto-only`` planını işaretle.

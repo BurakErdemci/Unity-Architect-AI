@@ -20,9 +20,11 @@ class AgyStreamSession(SaglayiciSahipligi):
 
     def __init__(self, conversation_id: int, *, resume_id: Optional[str] = None,
                  cwd: str = "."):
+        # A negative conversation ID marks a throwaway one-shot session; it is
+        # never registered in _SESSIONS or the _RESUME_IDS store.
         self.conversation_id = conversation_id
         self.cwd = os.path.abspath(cwd)
-        self.session_id = resume_id
+        self.session_id = resume_id if conversation_id >= 0 else None
         self.model = None
         self.auto_approve = False
         self._active_process = None
@@ -41,7 +43,8 @@ class AgyStreamSession(SaglayiciSahipligi):
     def _remember_id(self, session_id) -> None:
         if isinstance(session_id, str) and session_id:
             self.session_id = session_id
-            _RESUME_IDS[(self.conversation_id, self.cwd)] = session_id
+            if self.conversation_id >= 0:
+                _RESUME_IDS[(self.conversation_id, self.cwd)] = session_id
 
     async def _drain_stderr(self, process) -> None:
         while True:
@@ -89,9 +92,9 @@ class AgyStreamSession(SaglayiciSahipligi):
         return was_live
 
     async def close(self, *, preserve_resume: bool = False) -> None:
-        if _SESSIONS.get(self.conversation_id) is self:
+        if self.conversation_id >= 0 and _SESSIONS.get(self.conversation_id) is self:
             _SESSIONS.pop(self.conversation_id, None)
-        if not preserve_resume:
+        if not preserve_resume and self.conversation_id >= 0:
             _RESUME_IDS.pop((self.conversation_id, self.cwd), None)
         await oturumu_kapat(self)
         await self._stop_process(force=True)
@@ -110,7 +113,8 @@ class AgyStreamSession(SaglayiciSahipligi):
         if self.is_live:
             return ""
         if self.cwd != cwd:
-            self.session_id = _RESUME_IDS.get((self.conversation_id, cwd))
+            self.session_id = (_RESUME_IDS.get((self.conversation_id, cwd))
+                               if self.conversation_id >= 0 else None)
         self.cwd = cwd
         if not os.path.isdir(cwd):
             raise RuntimeError("agy workspace directory does not exist.")
@@ -264,6 +268,8 @@ AgySession = AgyStreamSession
 
 def get_session(conversation_id: int, *, resume_id: Optional[str] = None,
                 cwd: str = ".") -> AgyStreamSession:
+    if conversation_id < 0:
+        return AgyStreamSession(conversation_id, cwd=cwd)
     session = _SESSIONS.get(conversation_id)
     if session is None:
         known_id = _RESUME_IDS.get((conversation_id, os.path.abspath(cwd)), resume_id)
@@ -273,10 +279,14 @@ def get_session(conversation_id: int, *, resume_id: Optional[str] = None,
 
 
 def peek_session(conversation_id: int) -> Optional[AgyStreamSession]:
+    if conversation_id < 0:
+        return None
     return _SESSIONS.get(conversation_id)
 
 
 async def close_session(conversation_id: int) -> None:
+    if conversation_id < 0:
+        return
     session = _SESSIONS.get(conversation_id)
     if session is not None:
         await session.close()

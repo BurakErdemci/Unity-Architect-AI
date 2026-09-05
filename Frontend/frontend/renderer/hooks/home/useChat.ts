@@ -390,7 +390,7 @@ export const useChat = (
                     }
                   }
                   else if (data.type === 'turn_usage') {
-                    updated.usage = { input_tokens: data.input_tokens, output_tokens: data.output_tokens, cost_usd: data.cost_usd, duration_ms: data.duration_ms };
+                    updated.usage = { output_tokens: data.output_tokens, duration_ms: data.duration_ms };
                   }
                   else if (data.type === 'tool_call') {
                     const args = typeof data.arguments === 'string' ? JSON.parse(data.arguments) : data.arguments;
@@ -547,7 +547,11 @@ export const useChat = (
             const satir = parca.split('\n').find(l => l.startsWith('data: '));
             if (!satir) continue;
             let data: any;
-            try { data = JSON.parse(satir.slice(6)); } catch { continue; }
+            const payload = satir.slice(6);
+            try { data = JSON.parse(payload); } catch (err) {
+              console.warn('[AUTO-WAKE] malformed wake frame:', payload.slice(0, 500), err);
+              continue;
+            }
             if (data?.type !== 'wake' || iptal) continue;
             const args = lastSendArgsRef.current;
             // No args means nothing has been sent yet in this session; in that

@@ -52,7 +52,8 @@ interface Props {
 export const SessionReportPanel: React.FC<Props> = ({
   open, onClose, API, sessionToken, convId, onContextText,
 }) => {
-  const { t } = useLang();
+  const { t, lang } = useLang();
+  const numberLocale = lang === 'tr' ? 'tr-TR' : 'en-US';
   const [usage, setUsage] = useState<Rapor>({ durum: 'yukleniyor' });
   const [context, setContext] = useState<Rapor>({ durum: 'yukleniyor' });
 
@@ -81,7 +82,8 @@ export const SessionReportPanel: React.FC<Props> = ({
         return { durum: d.status };
       }
       return { durum: 'error' };
-    } catch {
+    } catch (err) {
+      console.error('[session-report] request/parse failed', { kind, conversationId: convId }, err);
       return { durum: 'error' };
     }
   }, [API, convId, sessionToken]);
@@ -160,7 +162,7 @@ export const SessionReportPanel: React.FC<Props> = ({
               <span className="text-[12px] text-slate-300 font-medium">
                 {t('report.estimateMeta', {
                   sayi: c.message_count ?? 0,
-                  harf: (c.total_chars ?? 0).toLocaleString('tr-TR'),
+                  harf: (c.total_chars ?? 0).toLocaleString(numberLocale),
                 })}
               </span>
               <span className="text-[12px] font-semibold tabular-nums text-slate-300">~%{y}</span>
@@ -172,8 +174,8 @@ export const SessionReportPanel: React.FC<Props> = ({
           {c.last_turn && (typeof c.last_turn.input_tokens === 'number' || typeof c.last_turn.output_tokens === 'number') && (
             <p className="text-[11px] text-slate-400">
               {t('report.estimateLastTurn', {
-                giris: (c.last_turn.input_tokens ?? 0).toLocaleString('tr-TR'),
-                cikis: (c.last_turn.output_tokens ?? 0).toLocaleString('tr-TR'),
+                giris: (c.last_turn.input_tokens ?? 0).toLocaleString(numberLocale),
+                cikis: (c.last_turn.output_tokens ?? 0).toLocaleString(numberLocale),
               })}
             </p>
           )}

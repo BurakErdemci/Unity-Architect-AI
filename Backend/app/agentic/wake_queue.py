@@ -39,6 +39,7 @@ MAX_CHAIN = 3
 class _ConvWake:
     notices: List[str] = field(default_factory=list)
     chain: int = 0
+    waiters: int = 0
     # Created lazily on first use; asyncio.Event does not bind a loop at
     # construction time on Python 3.10+, so a module-level store is safe.
     event: asyncio.Event = field(default_factory=asyncio.Event)
@@ -88,9 +89,14 @@ def pending(conv_id: int) -> int:
 async def wait(conv_id: int) -> None:
     """Block until at least one notice is pending for this conversation."""
     e = _entry(conv_id)
-    if e.notices:
-        return
-    await e.event.wait()
+    e.waiters += 1
+    try:
+        if e.notices:
+            return
+        await e.event.wait()
+    finally:
+        e.waiters -= 1
+        release(conv_id)
 
 
 def chain(conv_id: int) -> int:
@@ -120,6 +126,15 @@ def reset_chain(conv_id: int) -> None:
 def reset(conv_id: int) -> None:
     """Drop everything for one conversation (delete/compact/tests)."""
     _QUEUES.pop(conv_id, None)
+
+
+def release(conv_id: int) -> None:
+    """Drop an idle conversation entry after its last waiter goes away."""
+    e = _QUEUES.get(conv_id)
+    # All three guards matter: waiters still need the entry, notices must not
+    # be lost, and the chain counter belongs to the next wake sequence.
+    if e is not None and e.waiters == 0 and not e.notices and e.chain == 0:
+        _QUEUES.pop(conv_id, None)
 
 
 def reset_all() -> None:

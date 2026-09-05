@@ -67,8 +67,7 @@ def test_the_endpoint_is_actually_callable():
     # veriyordu ve hiçbir test oraya kadar gitmiyordu.
     with patch("providers.claude_sdk_session.peek_session", return_value=None):
         sonuc = _cagir("context")
-    assert sonuc["status"] in ("no_session", "unsupported", "busy", "ok", "error",
-                              "estimate", "no_data")
+    assert sonuc["status"] == "no_data"
 
 
 def test_an_unknown_kind_is_rejected():

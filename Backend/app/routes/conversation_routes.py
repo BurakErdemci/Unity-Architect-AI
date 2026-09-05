@@ -341,6 +341,8 @@ async def _cli_bagalamini_sifirla(db, conv_id: int) -> None:
         # Canlı session kapanmasa bile kimlik düştüğü için sonraki tur temiz
         # açılır; bu yüzden ölümcül değil.
         logger.warning(f"[Compact] session reset hatası (kritik değil): {e}")
+    from agentic import wake_queue
+    wake_queue.reset(conv_id)
 
 
 def _oturum_saglayici_anahtari(provider_type: str, model_name: str) -> str:
@@ -537,6 +539,8 @@ def create_conversation_router(db, progress_store):
                 raise
             except Exception:
                 logger.exception("[wake] stream error")
+            finally:
+                wake_queue.release(conv_id)
 
         return StreamingResponse(gen(), media_type="text/event-stream")
 
@@ -705,6 +709,8 @@ def create_conversation_router(db, progress_store):
             await _close_agy(conv_id)
         except Exception as e:
             logger.warning(f"[delete] session kapatma hatası: {e}")
+        from agentic import wake_queue
+        wake_queue.reset(conv_id)
         # Fiziksel hafıza dosyasını sil
         memory_manager.delete_memory(str(conv_id))
         return {"status": "success"}
