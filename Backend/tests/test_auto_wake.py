@@ -136,9 +136,24 @@ def _chat_stream(db, **alanlar):
 
 def test_wake_turn_message_is_stored_with_system_role():
     db = _db()
+    wake_queue.issue_ticket(1)
     _chat_stream(db, origin="wake")
     roller = [c.args[1] for c in db.add_message.call_args_list]
     assert roller == ["system"], roller
+
+
+def test_unticketed_wake_claim_is_stored_as_user_turn():
+    db = _db()
+    with patch("routes.conversation_routes._check_chat_rate_limit"):
+        _chat_stream(db, origin="wake")
+    assert db.add_message.call_args_list[0].args[1] == "user"
+    assert wake_queue.chain(1) == 0
+
+
+def test_wake_ticket_cannot_be_consumed_twice():
+    wake_queue.issue_ticket(1)
+    assert wake_queue.consume_ticket(1) is True
+    assert wake_queue.consume_ticket(1) is False
 
 
 def test_user_turn_is_stored_with_user_role_and_cancels_pending_wake():
@@ -171,6 +186,7 @@ def test_when_chain_is_exhausted_turn_does_NOT_start_and_notice_frame_is_sent():
     for _ in range(wake_queue.MAX_CHAIN):
         wake_queue.bump_chain(1)
 
+    wake_queue.issue_ticket(1)
     yanit = _chat_stream(db, origin="wake")
 
     govde = asyncio.run(_govde(yanit))
@@ -182,8 +198,10 @@ def test_when_chain_is_exhausted_turn_does_NOT_start_and_notice_frame_is_sent():
 
 def test_chain_increments_on_every_wake():
     db = _db()
+    wake_queue.issue_ticket(1)
     _chat_stream(db, origin="wake")
     assert wake_queue.chain(1) == 1
+    wake_queue.issue_ticket(1)
     _chat_stream(db, origin="wake")
     assert wake_queue.chain(1) == 2
 
@@ -264,3 +282,33 @@ def test_wake_stream_does_NOT_fire_while_approval_pending_and_does_NOT_drop_noti
     finally:
         APPROVAL_GATES.pop("test-gate", None)
     assert wake_queue.pending(1) == 1
+
+
+def test_a_gate_owned_by_ANOTHER_conversation_does_not_block_this_wake():
+    """The blocker must be this conversation's card, not anyone's card.
+
+    The gate id is random in production (`uuid4().hex`), so it carries no
+    conversation: the owner comes from GATE_OWNERS. A probe whose id spelled
+    out its own conversation would pass without the registry ever being read,
+    which is why this test registers the owner separately from the id.
+    An UNREGISTERED gate still blocks - the test above covers that direction.
+    """
+    from agentic.command_gates import APPROVAL_GATES, GATE_OWNERS
+
+    db = _db()
+    route = _wake_stream_route(db)
+    wake_queue.enqueue(2, "task B")
+    foreign = "9f2c41ab7d6e4c0fa1b35e8d90c72461"
+    APPROVAL_GATES[foreign] = asyncio.Event()
+    GATE_OWNERS[foreign] = 1
+    try:
+        async def run_it():
+            yanit = await route.endpoint(conv_id=2, x_session_token="t")
+            return await asyncio.wait_for(_govde(yanit), timeout=2.0)
+
+        govde = asyncio.run(run_it())
+    finally:
+        APPROVAL_GATES.pop(foreign, None)
+        GATE_OWNERS.pop(foreign, None)
+    assert '"type": "wake"' in govde
+    assert wake_queue.pending(2) == 0

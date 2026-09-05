@@ -272,6 +272,17 @@ class TestAgyStreamSession(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.processes[0].returncode)
         self.assertFalse(BaseCLIProvider._AGY_LOCK.locked())
 
+    async def test_lock_wait_is_subject_to_turn_time_limit(self):
+        await BaseCLIProvider._AGY_LOCK.acquire()
+        try:
+            with patch.object(BaseCLIProvider, "_AGY_MAX_TOTAL", 0.02):
+                events = await self.collect()
+        finally:
+            BaseCLIProvider._AGY_LOCK.release()
+        self.assertEqual([event["type"] for event in events], ["error"])
+        self.assertIn("timed out", events[0]["message"])
+        self.assertEqual(self.spawns, [])
+
     async def test_cancel_while_stdin_drain_is_blocked_closes_process(self):
         self.plans = [{"release": asyncio.Event()}]
         session = agy_session.get_session(11)

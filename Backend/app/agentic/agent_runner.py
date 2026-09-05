@@ -23,6 +23,7 @@ from typing import Any, AsyncGenerator, Callable, Dict, List, NamedTuple, Option
 
 from agentic.command_gates import APPROVAL_GATES as _APPROVAL_GATES, APPROVAL_RESULTS as _APPROVAL_RESULTS
 from agentic.command_gates import APPROVAL_TIMEOUT_S
+from agentic.command_gates import GATE_OWNERS as _GATE_OWNERS
 
 from agentic.command_safety import requires_approval as _is_dangerous_command
 
@@ -917,6 +918,8 @@ class AgentRunner:
                     break
         _APPROVAL_GATES[gate_id] = asyncio.Event()
         _APPROVAL_RESULTS[gate_id] = False
+        if self.conversation_id is not None:
+            _GATE_OWNERS[gate_id] = self.conversation_id
         try:
             yield (AgentEvent("command_approval_needed",
                               {"command": command_text, "gate_id": gate_id}), gate_id)
@@ -925,6 +928,7 @@ class AgentRunner:
             # RESULTS'ı da düşür: yazan taraf conversation_routes, temizleyen
             # yoktu → gate_id başına kalıcı girdi birikiyordu.
             _APPROVAL_RESULTS.pop(gate_id, None)
+            _GATE_OWNERS.pop(gate_id, None)
 
     async def _await_approval(self, gate_id: str) -> "_ApprovalDecision":
         """Waits for the user's answer. Anything other than an explicit yes is a no.

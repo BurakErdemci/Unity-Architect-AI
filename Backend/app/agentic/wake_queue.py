@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
+from time import monotonic
 from typing import Dict, List
 
 logger = logging.getLogger(__name__)
@@ -34,6 +35,9 @@ MAX_NOTICES = 20
 # those tasks can wake again — an unattended loop that spends the user's quota.
 MAX_CHAIN = 3
 
+# A stale wake remains claimable for at most 120 seconds.
+WAKE_TICKET_TTL = 120.0
+
 
 @dataclass
 class _ConvWake:
@@ -46,6 +50,7 @@ class _ConvWake:
 
 
 _QUEUES: Dict[int, _ConvWake] = {}
+_WAKE_TICKETS: Dict[int, float] = {}
 
 
 def _entry(conv_id: int) -> _ConvWake:
@@ -79,6 +84,20 @@ def drain(conv_id: int) -> List[str]:
     out, e.notices = e.notices, []
     e.event.clear()
     return out
+
+
+def issue_ticket(conv_id: int) -> None:
+    """Mark that the backend has issued one wake frame for this conversation."""
+    if conv_id:
+        _WAKE_TICKETS[conv_id] = monotonic()
+
+
+def consume_ticket(conv_id: int) -> bool:
+    """Consume a fresh wake ticket once; expired or missing tickets are invalid."""
+    issued_at = _WAKE_TICKETS.pop(conv_id, None)
+    if issued_at is None:
+        return False
+    return monotonic() - issued_at < WAKE_TICKET_TTL
 
 
 def pending(conv_id: int) -> int:
@@ -126,6 +145,7 @@ def reset_chain(conv_id: int) -> None:
 def reset(conv_id: int) -> None:
     """Drop everything for one conversation (delete/compact/tests)."""
     _QUEUES.pop(conv_id, None)
+    _WAKE_TICKETS.pop(conv_id, None)
 
 
 def release(conv_id: int) -> None:
@@ -139,3 +159,4 @@ def release(conv_id: int) -> None:
 
 def reset_all() -> None:
     _QUEUES.clear()
+    _WAKE_TICKETS.clear()

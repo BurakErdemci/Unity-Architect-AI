@@ -20,6 +20,7 @@ APPROVAL_TIMEOUT_S = 300.0
 APPROVAL_GATES: Dict[str, asyncio.Event] = {}
 # gate_id → bool (True=onaylandı, False=reddedildi)
 APPROVAL_RESULTS: Dict[str, bool] = {}
+GATE_OWNERS: Dict[str, int] = {}
 
 # AskUserQuestion (Claude SDK) için soru gate'leri — Opus kullanıcıya A/B/C soruyor,
 # frontend seçimi /question-answer ile bildirir, can_use_tool callback'i burada bekler.
