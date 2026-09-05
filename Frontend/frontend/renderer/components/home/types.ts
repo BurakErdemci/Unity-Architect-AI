@@ -75,7 +75,14 @@ export interface MessageNotice {
 
 export interface Message {
   id: number;
-  role: 'user' | 'assistant';
+  /**
+   * `system` = AUTO-WAKE row: a turn the client started by itself when a
+   * background task finished, NOT something the user typed. It is a separate
+   * role because attributing it to `user` would put words in the user's mouth
+   * — on screen (a blue user bubble) and in the CLI handoff transcript, where
+   * the backend deliberately skips system rows.
+   */
+  role: 'user' | 'assistant' | 'system';
   content: string;
   smells: any[];
   timestamp: string;

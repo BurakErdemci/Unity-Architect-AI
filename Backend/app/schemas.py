@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Literal, Optional
 from pydantic import BaseModel, Field
 
 
@@ -69,6 +69,13 @@ class ChatRequest(BaseModel):
     # yok sayılır. effort_level → ClaudeAgentOptions.effort; ultracode → mesaj keyword'ü.
     effort_level: str = "medium"  # low | medium | high | max
     ultracode: bool = False
+    # AUTO-WAKE: who started the turn. "user" is real human input; "wake" is a
+    # continuation turn the client starts BY ITSELF once a background job
+    # finishes. The distinction matters for visibility: a wake message is
+    # written to the chat with the `system` role (so a sentence the user never
+    # said isn't attributed to them), and the consecutive-wake counter only
+    # resets on a real user message.
+    origin: Literal["user", "wake"] = "user"
 
 
 class WorkspaceRequest(BaseModel):

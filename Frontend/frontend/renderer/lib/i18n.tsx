@@ -67,6 +67,8 @@ export const tr = {
   'notice.noProgressTool': '`{arac}` aracı aynı argümanlarla arka arkaya çağrıldı ve hep aynı cevabı döndürdü, yani yeni bilgi üretmiyordu; boşuna dönmemek için durdu. Adım sayısı yüzünden DEĞİL — farklı adımlar atılsaydı devam ederdi.',
   'notice.stoppedOther': 'Koşum tamamlanmadan durdu. Bu bir hata değil — işin bir kısmı yapılmış olabilir; ne kadarının bittiğini yazarsan sürdürebiliriz.',
   'notice.detail': 'Teknik ayrıntı',
+  'notice.wakeChainExhausted': 'Arka plan işleri bitince sohbet kendiliğinden üst üste 3 kez devam etti; dördüncüsü başlatılmadı. Bu bir hata değil — sen yokken sonsuza kadar dönmemesi için konmuş bir sınır. Devam etmesini istiyorsan bir mesaj yaz.',
+  'chat.wakeRow': 'Arka plan işi bitti — sohbet kendiliğinden devam etti',
   // Sağlayıcı hataları: backend `code` + hazır metin gönderiyor; kodu
   // tanıyorsak burası kazanıyor, tanımıyorsak backend'in metni gösteriliyor.
   'error.providerQuota': 'Sağlayıcı kota/hız sınırı nedeniyle üç denemede de isteği reddetti. Bir süre bekleyip tekrar dene ya da başka bir modele geç.',
@@ -568,6 +570,8 @@ export const en: Record<keyof typeof tr, string> = {
   'notice.noProgressTool': 'The `{arac}` tool was called repeatedly with the same arguments and kept returning the same answer, so nothing new was coming in; the run stopped rather than spin. This was NOT about the number of steps — different steps would have kept it going.',
   'notice.stoppedOther': 'The run stopped before finishing. This is not a failure — part of the work may be done; tell me how far it got and we can carry on.',
   'notice.detail': 'Technical detail',
+  'notice.wakeChainExhausted': 'The chat carried on by itself 3 times in a row as background jobs finished; the fourth was not started. This is not a failure — it is a limit so it cannot loop forever while you are away. Send a message if you want it to keep going.',
+  'chat.wakeRow': 'Background job finished — the chat continued on its own',
   'error.providerQuota': 'The provider refused the request on all three attempts because of a quota or rate limit. Wait a while and try again, or switch to another model.',
   'error.providerUnavailable': 'The provider came back busy on all three attempts (503). This is temporary; try again shortly.',
   'error.providerUnreachable': 'The provider could not be reached on any of the three attempts.',

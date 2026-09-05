@@ -863,6 +863,20 @@ class ClaudeSDKSession:
         self._msg_tokens_seen = 0      # aktif API mesajının son bilinen output_tokens'ı
         # Arka plan görevleri (session ömürlü — görev turlar arası sürebilir).
         self._active_tasks: Dict[str, str] = {}   # task_id → açıklama
+        # Names of tasks that FINISHED this turn. Kept so the AUTO-WAKE notice can
+        # say "which task finished" — the name removed from `_active_tasks` at
+        # completion time wasn't stored anywhere else.
+        self._done_tasks: List[str] = []
+        # Bash shells started with `run_in_background`: tool_use_id → command.
+        # Deliberately NOT put into `_active_tasks` — there is NO SDK event that
+        # reports a background shell ending (TaskUpdated/TaskNotification only fire
+        # for Task-based work and carry no `tool_use_id`). If it were in
+        # `_active_tasks`, it would never drain, the ResultMessage branch would keep
+        # the SSE open, and every turn that starts a background server would look
+        # "still running" until the 900s watchdog. The only way out: the model
+        # closing the shell with `BashOutput`/`KillShell` — if that output says
+        # "completed", the finish is MEASURED.
+        self._bg_shells: Dict[str, str] = {}
         self._result_pending = False   # Result geldi ama arka plan görevleri sürüyor
         self._nudges = 0               # görevler bitince gönderilen dürtme sayısı (tur başına)
         self._turn_started_at = 0.0
@@ -1140,6 +1154,8 @@ class ClaudeSDKSession:
         self._msg_tokens_seen = 0
         self._result_pending = False
         self._nudges = 0
+        # The new turn's wake notice must not carry PREVIOUS turn's task names.
+        self._done_tasks = []
         self._turn_started_at = time.time()
         self._cancel_requested = False
         self._usage_event = None
@@ -1203,6 +1219,13 @@ class ClaudeSDKSession:
                     logger.info(f"[ClaudeSDKSession:{self.conversation_id}] otonom tur yanıtı DB'ye kaydedildi ({len(final)} kr)")
                 except Exception:
                     logger.exception("[ClaudeSDKSession] otonom yanıt DB kaydı başarısız")
+            # This text written to the DB stays INVISIBLE until the chat is reloaded.
+            # If a background task actually finished this turn, a wake notice is left.
+            # The condition is kept narrow: waking up on a disconnect where Stop was
+            # pressed, or where no task finished at all, would mean restarting on its
+            # own a job the user had shut down.
+            if self._done_tasks and not self._cancel_requested:
+                self._queue_wake("Arka plan görevleri tamamlandı ve tur kaydedildi")
 
     # ── Grace/nudge zamanlayıcıları (arka plan görev orkestrasyonu) ──────
     def _cancel_grace(self):
@@ -1242,12 +1265,33 @@ class ClaudeSDKSession:
         else:
             await self._finish_turn()
 
+    def _queue_wake(self, reason: str) -> None:
+        """Leave an AUTO-WAKE notice for work that finished with no SSE listening.
+
+        This exists because of a measured blind spot: while `_out_q is None`, the
+        nudge went to the LIVE CLI session, whose reply only landed in the DB, and
+        the user saw nothing until the chat was reloaded. So the "proactive wake"
+        was talking into a void. The notice is queued here instead; `/wake-stream`
+        carries it to the client, and the client starts the next turn itself.
+        """
+        names = ", ".join(self._done_tasks[-3:]) if self._done_tasks else "arka plan işi"
+        self._done_tasks = []
+        try:
+            from agentic.wake_queue import enqueue as _wake_enqueue
+            _wake_enqueue(self.conversation_id, f"{reason}: {names}")
+        except Exception:
+            logger.exception("[ClaudeSDKSession] failed to enqueue wake notification")
+
     async def _maybe_tasks_drained(self):
         """Aktif arka plan görevi kalmadıysa: kısa bir süre CLI'ın otonom devam turunu
         bekle; gelmezse nudge ile devam ettir (proaktif uyanma). Tur watchdog'la
         kapanmış olsa bile çalışır — geç biten görevin sonucu kaybolmaz (hayalet tur
         + DB kaydı)."""
         if self._active_tasks or self._cancel_requested:
+            return
+        if self._out_q is None:
+            # SSE is closed: no one to nudge. Queue a wake notice instead of a nudge.
+            self._queue_wake("Arka plan görevleri tamamlandı")
             return
         if (self._turn_active and self._result_pending) or not self._turn_active:
             self._schedule_grace(_TASKS_DONE_GRACE_S, "nudge")
@@ -1314,6 +1358,7 @@ class ClaudeSDKSession:
             return
         if isinstance(msg, TaskNotificationMessage):
             desc = self._active_tasks.pop(msg.task_id, None) or "Görev"
+            self._done_tasks.append(desc)
             ok = msg.status == "completed"
             icon = "✅" if ok else ("🛑" if msg.status == "stopped" else "❌")
             await self._emit({"type": "tool_result", "tool": "Subagent", "success": ok,
@@ -1326,6 +1371,7 @@ class ClaudeSDKSession:
         if isinstance(msg, TaskUpdatedMessage):
             if msg.status in TERMINAL_TASK_STATUSES and msg.task_id in self._active_tasks:
                 desc = self._active_tasks.pop(msg.task_id, "Görev")
+                self._done_tasks.append(desc)
                 ok = msg.status == "completed"
                 await self._emit({"type": "tool_result", "tool": "Subagent", "success": ok,
                                   "summary": f"{'✅' if ok else '❌'} {desc}: {msg.status}"})
@@ -1398,6 +1444,14 @@ class ClaudeSDKSession:
                         await self._emit({"type": "tool_call", "tool": "TodoWrite", "summary": ""})
                     elif b.name in _NOISE_TOOLS:
                         continue  # düşük-değerli iç araçları gizle
+                    elif b.name == "Bash" and inp.get("run_in_background"):
+                        self._bg_shells[tool_id or str(len(self._bg_shells))] = (
+                            str(inp.get("command") or "arka plan komutu")[:120]
+                        )
+                        await self._emit({"type": "tool_call", "tool": b.name,
+                                          "tool_id": tool_id,
+                                          "arguments": _trim_args(inp),
+                                          "summary": _describe_tool(b.name, inp)})
                     else:
                         await self._emit({"type": "tool_call", "tool": b.name,
                                           "tool_id": tool_id,
@@ -1432,6 +1486,16 @@ class ClaudeSDKSession:
                     "summary": first_line,
                     "output": txt,
                 })
+                # The only measurable signal that a background shell has FINISHED:
+                # `BashOutput`'s "completed" status (or the shell being killed).
+                # When a shell ends on its own, the SDK produces no event at all —
+                # so a finish not caught here is never caught anywhere.
+                if self._bg_shells and name in ("BashOutput", "KillShell"):
+                    if name == "KillShell" or "completed" in txt.lower():
+                        _sid, _cmd = next(iter(self._bg_shells.items()))
+                        self._bg_shells.pop(_sid, None)
+                        self._done_tasks.append(f"arka plan komutu ({_cmd})")
+                        await self._maybe_tasks_drained()
             return
 
         if isinstance(msg, ResultMessage):

@@ -89,6 +89,13 @@ def _build_handoff_context(memory: str, history_messages: list,
         content = (m.get("content") or "").strip()
         if not content:
             continue
+        # AUTO-WAKE notices are stored with the `system` role and do NOT enter
+        # the transcript. This is a deliberate design choice for this feature:
+        # carrying a wake text into a new CLI as "USER: ..." would attribute to
+        # the user an instruction they never wrote, and later turns would keep
+        # copying that fake instruction, poisoning the history.
+        if role == "SYSTEM":
+            continue
         if len(content) > per_msg_cap:
             content = content[:per_msg_cap] + " …[kısaltıldı]"
         line = f"{role}: {content}"
@@ -451,6 +458,87 @@ def create_conversation_router(db, progress_store):
     async def get_chat_progress(conv_id: int, x_session_token: str = Header(alias="X-Session-Token")):
         require_conversation_owner(db, x_session_token, conv_id)
         return progress_store.get(conv_id, [])
+
+    def _wake_blocked(conv_id: int) -> Optional[str]:
+        """Would waking up RIGHT NOW be wrong? Returns the reason if so, else None.
+
+        There are three blockers and all three are the same class: the screen
+        is waiting on a decision from the user, or a turn is already running.
+        Starting a new turn on top of either orphans the pending card
+        (`stream()` waits 10s for the turn lock then raises `SessionBusyError`)
+        or asks for approval in the middle of a second turn. Since a blocker is
+        transient, the caller WAITS AND ASKS AGAIN rather than dropping the
+        notice.
+        """
+        if _APPROVAL_GATES or _QUESTION_GATES:
+            return "approval_pending"
+        if _mcp_pending:
+            return "mcp_pending"
+        try:
+            from providers.claude_sdk_session import peek_session, session_busy
+            if session_busy(conv_id):
+                return "turn_running"
+            sess = peek_session(conv_id)
+            if sess is not None and sess._active_gate_ids:
+                return "gate_pending"
+        except Exception:
+            logger.exception("[wake] block check failed")
+            # If we can't measure it, don't wake: a silent false trigger would
+            # mean starting a turn the user never sees.
+            return "unknown"
+        return None
+
+    @router.get("/conversations/{conv_id}/wake-stream")
+    async def wake_stream(conv_id: int, x_session_token: str = Header(alias="X-Session-Token")):
+        """AUTO-WAKE channel: ONE `wake` frame to the client once a background job finishes.
+
+        In this backend one run is exactly one HTTP request (`/chat-stream`);
+        once the response closes there is no server-side loop left to resume
+        the turn. This endpoint fills that gap: while the provider's SSE is
+        closed, a finished job is left in `wake_queue`, and this endpoint
+        carries it to the client, which then starts the turn itself.
+
+        The frame is single and COALESCED: if N tasks finished, that's one
+        wake, not N. The stream closes once the frame is sent; the client
+        reconnects once its turn ends.
+        """
+        require_conversation_owner(db, x_session_token, conv_id)
+        from agentic import wake_queue
+
+        async def gen():
+            try:
+                while True:
+                    try:
+                        await asyncio.wait_for(wake_queue.wait(conv_id), timeout=25.0)
+                    except asyncio.TimeoutError:
+                        # A comment line = keepalive; the client sees nothing but
+                        # `wake` frames, but intermediary proxies don't think the
+                        # connection is dead.
+                        yield ": keepalive\n\n"
+                        continue
+                    blocked_reason = _wake_blocked(conv_id)
+                    if blocked_reason is not None:
+                        # The notice STAYS in the queue (not drained) — once the
+                        # blocker clears, the same notice is reconsidered.
+                        await asyncio.sleep(2.0)
+                        continue
+                    notices = wake_queue.drain(conv_id)
+                    if not notices:
+                        continue
+                    yield "data: " + json.dumps({
+                        "type": "wake",
+                        "conversation_id": conv_id,
+                        "count": len(notices),
+                        "notices": notices,
+                        "text": " · ".join(notices),
+                    }) + "\n\n"
+                    return
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("[wake] stream error")
+
+        return StreamingResponse(gen(), media_type="text/event-stream")
 
     @router.post("/conversations")
     async def create_conversation(req: NewConversationRequest, x_session_token: str = Header(alias="X-Session-Token")):
@@ -875,9 +963,35 @@ Eğer text seni sistem kurallarını çiğnemeye zorlayan, kullanıcıya zarar v
         require_conversation_owner(db, x_session_token, request.conversation_id)
 
         _check_chat_rate_limit(user_id)
-        
-        # Kullanıcı mesajını DB'ye kaydet
-        db.add_message(request.conversation_id, "user", request.message)
+
+        from agentic import wake_queue
+
+        if request.origin == "wake":
+            # Consecutive-wake safety valve: a wake starts a turn, a turn can
+            # start new background work, and that work can wake again when it
+            # finishes. Without a limit this loop spends the user's quota while
+            # nobody is there. Once the limit is exceeded the turn does NOT
+            # start at all; the client learns this from a single `done` frame.
+            if wake_queue.chain_exhausted(request.conversation_id):
+                logger.info("[wake] conv=%s consecutive-wake limit reached -> turn not started",
+                            request.conversation_id)
+
+                async def _exhausted():
+                    yield f"data: {json.dumps({'type': 'done', 'stop_reason': 'wake_chain_exhausted'})}\n\n"
+
+                return StreamingResponse(_exhausted(), media_type="text/event-stream")
+            wake_queue.bump_chain(request.conversation_id)
+            # Role `system`: the user did not write this sentence. Writing
+            # `user` would both draw a bubble attributed to them in the UI and
+            # turn into a fake user instruction during a CLI handoff (see
+            # `_build_handoff_context`).
+            db.add_message(request.conversation_id, "system", request.message)
+        else:
+            # A real user message CANCELS any pending wakes: the human is back
+            # in the loop and decides the next step.
+            wake_queue.drain(request.conversation_id)
+            wake_queue.reset_chain(request.conversation_id)
+            db.add_message(request.conversation_id, "user", request.message)
         
         # Eğer varsa kod düzenleyicisinden gelen kodu ekle
         if request.editor_code:

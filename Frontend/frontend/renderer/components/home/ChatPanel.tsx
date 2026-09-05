@@ -8,7 +8,8 @@ import {
   Trash2,
   AlertTriangle,
   Bot,
-  Sparkles
+  Sparkles,
+  RefreshCw
 } from 'lucide-react';
 import { Message, UserData, FileEntry, GenerationMode, ChatActivity } from './types';
 import { ModelAvatar } from './ModelAvatar';
@@ -295,7 +296,19 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           }
           return (
           <div key={msg.id} className={`chat-message-enter ${msg.role === 'user' ? 'flex justify-end' : ''}`}>
-            {msg.role === 'assistant' ? (
+            {msg.role === 'system' ? (
+              /* AUTO-WAKE row. This branch is MANDATORY: the ternary below only
+                 distinguished assistant/other, so a `system` role would render
+                 as a BLUE USER BUBBLE — a sentence the user never wrote would
+                 look like theirs. The event row is deliberately muted: not a
+                 message, but a system marker saying the chat continued on its
+                 own. */
+              <div className="flex items-center gap-2 py-1 text-[11px] text-slate-500 select-none">
+                <RefreshCw size={11} className="text-violet-400/70 shrink-0" />
+                <span className="font-medium shrink-0">{t('chat.wakeRow')}</span>
+                <span className="truncate text-slate-600">· {msg.content}</span>
+              </div>
+            ) : msg.role === 'assistant' ? (
               // Avatar yan sütun yerine ÜSTTE tek meta satırı — dar panelde
               // içerik tam genişlik akar, model/süre/token bilgisi tek bakışta.
               <div className="max-w-full group">
