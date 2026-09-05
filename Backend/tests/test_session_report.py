@@ -31,10 +31,28 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "app"))
 from routes.conversation_routes import create_conversation_router
 
 
-def _db(provider="subscription", model="claude-opus-5"):
+def _db(provider="subscription", model="claude-opus-5", mesajlar=None):
     db = MagicMock()
     db.get_ai_config.return_value = (provider, model, "", False)
+    # Stored messages are what the context fallback counts. Left EMPTY by
+    # default so a test that does not set them measures the "no data at all"
+    # branch rather than silently inheriting an estimate.
+    db.get_conversation_messages.return_value = mesajlar or []
     return db
+
+
+@pytest.fixture(autouse=True)
+def _kullanim_cachei_temiz():
+    """The usage cache is module-global and OUTLIVES a test.
+
+    Without this, a cached "50% used" from an earlier test answers a later
+    test's "no session" case as a stale `ok` — the later test then measures the
+    leak, not the endpoint.
+    """
+    from routes import conversation_routes as cr
+    cr._USAGE_CACHE.clear()
+    yield
+    cr._USAGE_CACHE.clear()
 
 
 def _cagir(kind: str, db=None):
@@ -49,7 +67,8 @@ def test_the_endpoint_is_actually_callable():
     # veriyordu ve hiçbir test oraya kadar gitmiyordu.
     with patch("providers.claude_sdk_session.peek_session", return_value=None):
         sonuc = _cagir("context")
-    assert sonuc["status"] in ("no_session", "unsupported", "busy", "ok", "error")
+    assert sonuc["status"] in ("no_session", "unsupported", "busy", "ok", "error",
+                              "estimate", "no_data")
 
 
 def test_an_unknown_kind_is_rejected():
@@ -63,7 +82,10 @@ def test_no_live_session_is_reported_as_such_and_no_session_is_created():
     # Rapor isteyen bir uç, raporlayacağı süreci VAR ETMEMELİ.
     with patch("providers.claude_sdk_session.peek_session", return_value=None) as peek, \
          patch("providers.claude_sdk_session.get_session") as get:
-        assert _cagir("context")["status"] == "no_session"
+        sonuc = _cagir("context")
+    # Nothing stored either, so the fallback has nothing to offer and the reason
+    # still names the real cause.
+    assert sonuc == {"status": "no_data", "kind": "context", "reason": "no_session"}
     peek.assert_called_once()
     get.assert_not_called()
 
@@ -72,7 +94,7 @@ def test_a_running_turn_is_busy_rather_than_a_ten_second_wait():
     sess = MagicMock()
     with patch("providers.claude_sdk_session.peek_session", return_value=sess), \
          patch("providers.claude_sdk_session.session_busy", return_value=True):
-        assert _cagir("context")["status"] == "busy"
+        assert _cagir("context")["reason"] == "busy"
     # Meşgulken oturuma HİÇ mesaj gitmemeli.
     sess.stream.assert_not_called()
 
@@ -83,7 +105,8 @@ def test_a_cloud_provider_has_no_such_report():
 
 def test_codex_has_usage_but_not_context():
     db = _db(model="gpt-5.6-sol")
-    assert _cagir("context", db) == {"status": "unsupported", "reason": "codex_no_context"}
+    assert _cagir("context", db) == {"status": "no_data", "kind": "context",
+                                     "reason": "codex_no_context"}
 
 
 def test_codex_usage_comes_from_the_zero_token_path():
@@ -128,7 +151,7 @@ def test_a_failing_stream_is_an_error_not_a_crash():
     sess.stream = _akis
     with patch("providers.claude_sdk_session.peek_session", return_value=sess), \
          patch("providers.claude_sdk_session.session_busy", return_value=False):
-        assert _cagir("context")["status"] == "error"
+        assert _cagir("context")["reason"] == "error"
 
 
 # ── Denetim turu: cache'te DURAN ama BAŞLAMAMIŞ oturum ──────────────────────
@@ -312,6 +335,90 @@ def test_a_turn_that_starts_after_the_busy_check_still_answers_busy_immediately(
         sonuc = _cagir("context")
     gecen = time.monotonic() - baslangic
 
-    assert sonuc["status"] == "busy", f"{sonuc!r} döndü — 'busy' bekleniyordu"
+    assert sonuc["reason"] == "busy", f"{sonuc!r} döndü — 'busy' bekleniyordu"
     assert gecen < 1.0, f"cevap {gecen:.2f}s bekledi; anında olmalıydı"
     assert sorgular == [], "meşgul oturuma mesaj gönderildi"
+
+
+# ── 5 Sep 2026: the panel must not go blank while a turn streams ────────────
+# Measured complaint: usage and context both emptied out during a run, and the
+# context section never filled in any state. The two tests below fix what the
+# endpoint is allowed to answer instead — and the third fixes what it must NOT
+# invent.
+
+def _mesajlar(*metinler):
+    return [{"content": m} for m in metinler]
+
+
+def test_usage_survives_a_running_turn_by_serving_the_last_reading_with_its_age():
+    """A running turn must not blank the usage section.
+
+    The report is read by sending `/usage` into the live session, and that
+    session serialises turns — while a turn runs it is unreachable. The numbers
+    are account-level though (quota), so the previous reading is still true; it
+    goes out stamped `stale` with its age, never as a fresh reading.
+    """
+    db = _db()
+    sess = MagicMock()
+
+    async def _akis(mesaj, lock_timeout=10.0):
+        assert mesaj == "/usage"
+        yield {"type": "text", "content": "Current session: 22% used"}
+        yield {"type": "done"}
+
+    sess.stream = _akis
+    with patch("providers.claude_sdk_session.peek_session", return_value=sess), \
+         patch("providers.claude_sdk_session.session_busy", return_value=False):
+        taze = _cagir("usage", db)
+    assert taze["status"] == "ok" and "22% used" in taze["text"]
+    assert "stale" not in taze, "a live reading must not be labelled stale"
+
+    # Now a turn is running: the same session cannot be queried.
+    with patch("providers.claude_sdk_session.peek_session", return_value=sess), \
+         patch("providers.claude_sdk_session.session_busy", return_value=True):
+        mesgul = _cagir("usage", db)
+    assert mesgul["status"] == "ok", f"{mesgul!r} — the section went blank again"
+    assert mesgul["text"] == taze["text"]
+    assert mesgul["stale"] is True and mesgul["reason"] == "busy"
+    assert isinstance(mesgul["age_s"], int)
+
+
+def test_context_falls_back_to_the_stored_conversation_in_every_dead_state():
+    """The context section showed data in NO state; now the stored chat feeds it."""
+    db = _db(mesajlar=_mesajlar("merhaba", "x" * 4000))
+
+    # 1) No live session at all.
+    with patch("providers.claude_sdk_session.peek_session", return_value=None):
+        yok = _cagir("context", db)
+    # 2) A turn is streaming.
+    with patch("providers.claude_sdk_session.peek_session", return_value=MagicMock()), \
+         patch("providers.claude_sdk_session.session_busy", return_value=True):
+        mesgul = _cagir("context", db)
+    # 3) Codex, where `/context` does not exist as a command at all.
+    kodeks = _cagir("context", _db(model="gpt-5.6-sol",
+                                   mesajlar=_mesajlar("merhaba", "x" * 4000)))
+
+    for sonuc, sebep in ((yok, "no_session"), (mesgul, "busy"),
+                         (kodeks, "codex_no_context")):
+        assert sonuc["status"] == "estimate", f"{sebep}: {sonuc!r}"
+        assert sonuc["reason"] == sebep
+        p = sonuc["context_usage"]
+        assert p["message_count"] == 2
+        assert p["total_chars"] == 4007
+        # The stamp that keeps the number from being read as a measurement.
+        assert p["estimated"] is True
+
+
+def test_an_estimate_is_never_dressed_up_as_a_live_report():
+    """`estimate` must not arrive as `ok`, and no token is invented for it.
+
+    Real token counts exist on only 4 of the 8 run paths. An estimate that
+    arrived as `ok` would be drawn in the same card as a measured reading, and
+    the user could not tell which one they were looking at.
+    """
+    db = _db(mesajlar=_mesajlar("merhaba"))
+    with patch("providers.claude_sdk_session.peek_session", return_value=None):
+        sonuc = _cagir("context", db)
+    assert sonuc["status"] == "estimate"
+    assert "text" not in sonuc, "an estimate must not travel as report text"
+    assert "last_turn" not in sonuc["context_usage"], "no turn tokens were measured"

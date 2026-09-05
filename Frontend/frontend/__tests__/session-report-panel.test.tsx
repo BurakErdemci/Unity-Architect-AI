@@ -251,3 +251,72 @@ describe('yenileme', () => {
     expect(screen.queryByTestId('session-report-panel')).toBeNull()
   })
 })
+
+// ── 5 Sep 2026: the panel must not go blank while a turn streams ────────────
+describe('canlı okuma yapılamadığında', () => {
+  it('kullanım son okumayı YAŞIYLA gösteriyor, boş kutu değil', async () => {
+    // The numbers `/usage` carries are account-level (quota), not turn-level,
+    // so the previous reading is still true while a turn runs. Its age is what
+    // keeps it from being read as a fresh measurement.
+    cevapla({
+      usage: { status: 'ok', text: 'Current session: 22% used', stale: true, age_s: 180, reason: 'busy' },
+      context: { status: 'no_data' },
+    })
+    ciz()
+    await waitFor(() => expect(screen.getByTestId('report-stale-usage')).toBeTruthy())
+    const metin = screen.getByTestId('session-report-panel').textContent || ''
+    expect(metin).toContain('22')
+    expect(metin).toContain('3 dk')
+  })
+
+  it('taze okumada yaş notu YOK', async () => {
+    cevapla({ usage: { status: 'ok', text: 'Current session: 22% used' }, context: { status: 'no_data' } })
+    ciz()
+    await waitFor(() => expect(screen.getByTestId('session-report-panel').textContent).toContain('22'))
+    expect(screen.queryByTestId('report-stale-usage')).toBeNull()
+  })
+
+  it('bağlam, kayıtlı yazışmadan türetilen tahmini çiziyor', async () => {
+    // The bug this fixes: the context section showed data in NO state at all.
+    cevapla({
+      usage: { status: 'no_session' },
+      context: {
+        status: 'estimate',
+        reason: 'busy',
+        context_usage: {
+          percent: 12, should_compact: false, message_count: 8,
+          total_chars: 24_500, max_chars: 200_000, estimated: true,
+        },
+      },
+    })
+    ciz()
+    await waitFor(() => expect(screen.getByTestId('report-context-estimate')).toBeTruthy())
+    const metin = screen.getByTestId('report-context-estimate').textContent || ''
+    expect(metin).toContain('~%12')
+    expect(metin).toContain('8')
+    // The estimate must SAY it is an estimate; a bare percentage reads as a
+    // measurement, and this one does not see tool output or the system prompt.
+    expect(metin).toMatch(/tahmin/i)
+  })
+
+  it('tahmin, gerçek rapor kartıyla KARIŞTIRILMIYOR', async () => {
+    cevapla({
+      usage: { status: 'no_session' },
+      context: {
+        status: 'estimate',
+        context_usage: { percent: 12, should_compact: false, message_count: 8, total_chars: 100, estimated: true },
+      },
+    })
+    ciz()
+    await waitFor(() => expect(screen.getByTestId('report-context-estimate')).toBeTruthy())
+    // Signature of the `/context` card: "X / Y token". An estimate has NO such number.
+    expect(screen.queryByText(/\/ .* token$/)).toBeNull()
+    expect(screen.queryByTestId('report-empty-estimate')).toBeNull()
+  })
+
+  it('gerçekten hiç veri yoksa bunu açıkça söylüyor', async () => {
+    cevapla({ usage: { status: 'no_session' }, context: { status: 'no_data' } })
+    ciz()
+    await waitFor(() => expect(screen.getByTestId('report-empty-no_data')).toBeTruthy())
+  })
+})
