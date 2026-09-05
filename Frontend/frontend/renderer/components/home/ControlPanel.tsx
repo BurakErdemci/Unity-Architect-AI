@@ -10,14 +10,7 @@ import {
   Gauge,
   Rocket
 } from 'lucide-react';
-import { ContextUsage, SessionUsage } from './types';
-
-/** 41200 → "41,2k". Uzun sayı barı taşırıyor, tam değer başlıkta duruyor. */
-const kisaSayi = (n: number): string => {
-  if (n < 1000) return String(n);
-  const bin = n / 1000;
-  return (bin < 100 ? bin.toFixed(1).replace('.', ',') : String(Math.round(bin))) + 'k';
-};
+import { ContextUsage } from './types';
 import { GenerationModeSelector, GenerationMode } from './GenerationModeSelector';
 
 // Kanonik effort skalası — hangi seviyelerin GÖSTERİLECEĞİ backend kayıtçısından
@@ -50,7 +43,6 @@ interface ControlPanelProps {
   // aynı dala düşüyor ve gösterge "henüz veri yok" diyor. Sıfır bir halka
   // çizmek, hiç ölçmediğimiz bir şeyi ölçtük demek olurdu.
   contextUsage?: ContextUsage | null;
-  sessionUsage?: SessionUsage | null;
   /** Kullanım/bağlam panelini aç-kapa. Panelin kendisi home.tsx'te mount ediliyor. */
   reportsOpen?: boolean;
   onToggleReports?: () => void;
@@ -74,7 +66,6 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
   compactConversation,
   isCompacting,
   contextUsage,
-  sessionUsage,
   reportsOpen = false,
   onToggleReports,
   isClaudeSubscription = false,
@@ -86,9 +77,6 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
   const [showThinkingMenu, setShowThinkingMenu] = useState(false);
 
   const yuzde = contextUsage?.percent ?? 0;
-  // `turns > 0` şart: sayaç sıfırdayken "0 tok" ile "bu model bildirmiyor"
-  // ekranda aynı görünür, oysa biri ölçüm diğeri bilgi yokluğu.
-  const tokenVar = !!sessionUsage && sessionUsage.turns > 0;
 
   // Seviye görselleri — hangi seviyelerin listeleneceğine backend kayıtçısı karar
   // verir (effortCaps.levels). Burada yalnız etiket/renk/açıklama eşlemesi var.
@@ -353,36 +341,13 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
             <span>{isCompacting ? t('memory.compacting') : t('memory.compact')}</span>
           </button>
 
-          {/* GERÇEK token — yalnız sağlayıcı bildirdiyse. 8 çalıştırma yolunun
-              4'ü (Codex, agy, oneshot CLI'lar, basit yol) hiç bildirmiyor, ve
-              orada sıfır göstermek "hiç harcamadın" demek olurdu. */}
-          {tokenVar ? (
-            <span
-              data-testid="session-tokens"
-              title={t('usage.tokensTitle', {
-                giris: sessionUsage!.input_tokens.toLocaleString('tr-TR'),
-                cikis: sessionUsage!.output_tokens.toLocaleString('tr-TR'),
-                tur: sessionUsage!.turns,
-              })}
-              className="px-2 py-1 rounded-lg text-[11px] font-medium text-slate-500 border border-transparent"
-            >
-              {kisaSayi(sessionUsage!.input_tokens + sessionUsage!.output_tokens)} tok
-              {typeof sessionUsage!.cost_usd === 'number' && (
-                <span className="ml-1.5 text-slate-600" title={t('usage.costTitle', { tutar: `$${sessionUsage!.cost_usd.toFixed(2)}` })}>
-                  ${sessionUsage!.cost_usd.toFixed(2)}
-                </span>
-              )}
-            </span>
-          ) : (
-            <span
-              data-testid="session-tokens-none"
-              title={t('usage.noTokens')}
-              className="px-2 py-1 rounded-lg text-[11px] font-medium text-slate-700 border border-transparent"
-            >
-              — tok
-            </span>
-          )}
-
+          {/* The per-turn token/cost readout was REMOVED on 5 Sep 2026. The
+              counter only summed SSE `turn_usage` events: 4 of the 8 run paths
+              report no tokens at all, the counter restarted from zero whenever
+              the app restarted and reset on every conversation switch — so the
+              number on screen answered none of the questions the user was
+              actually asking of it ("what did this chat cost"). The real
+              figures live in the "Kullanım" panel, which states their source. */}
           {/* Kullanım/bağlam raporlarını SOHBETE YAZMADAN açan düğme. Bu iki
               rapora bugüne kadar ancak sohbete `/usage` yazarak bakılabiliyordu,
               yani her bakış geçmişe bir mesaj çifti bırakıyordu. */}

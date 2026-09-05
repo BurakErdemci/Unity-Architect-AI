@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import axios from 'axios';
-import { Message, Conversation, UserData, AIConfig, GenerationMode, ChatActivity, ContextUsage, SessionUsage } from '../../components/home/types';
+import { Message, Conversation, UserData, AIConfig, GenerationMode, ChatActivity, ContextUsage } from '../../components/home/types';
 import { PendingFile } from '../../components/home/FileCreationApproval';
 import { Task } from '../../components/ui/agent-plan';
 import { confirmDialog } from '../../components/ui/ConfirmDialog';
@@ -32,7 +32,6 @@ export const useChat = (
   // drawn as a confident near-empty gauge. The gauge renders the unavailable
   // state itself (ControlPanel: `usage.noData`).
   const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
-  const [sessionUsage, setSessionUsage] = useState<SessionUsage>({ input_tokens: 0, output_tokens: 0, cost_usd: null, turns: 0 });
   const [isCompacting, setIsCompacting] = useState(false);
   const [isAnalyzingProject, setIsAnalyzingProject] = useState(false);
   const [pendingFix, setPendingFix] = useState<{ data: any; messageId?: number; applied?: boolean } | null>(null);
@@ -126,9 +125,6 @@ export const useChat = (
     // conversation's reading must not carry over, and a zero placeholder would
     // be a claim about a conversation we have not looked at.
     setContextUsage(null);
-    // Tur istatistikleri sohbete değil OTURUMA ait; başka bir sohbete geçince
-    // devretmeleri "bu sohbette şu kadar harcadın" diye okunurdu.
-    setSessionUsage({ input_tokens: 0, output_tokens: 0, cost_usd: null, turns: 0 });
     await fetchMessages(conv.id);
   }, [editingId, fetchMessages]);
 
@@ -438,21 +434,6 @@ export const useChat = (
                   return null;
                 });
               }
-              // Biriktirme BURADA, `setMessages` güncelleyicisinin içinde değil:
-              // React bir state güncelleyicisini iki kez çağırabiliyor (StrictMode)
-              // ve sayaç sessizce ikiye katlanırdı.
-              if (data.type === 'turn_usage') {
-                setSessionUsage(prev => ({
-                  input_tokens: prev.input_tokens + (Number(data.input_tokens) || 0),
-                  output_tokens: prev.output_tokens + (Number(data.output_tokens) || 0),
-                  // `null` "bilmiyoruz", 0 "bedava". Maliyet bildiren tek yol
-                  // Claude Code; toplam ancak bir tur gerçekten sayı verirse doğuyor.
-                  cost_usd: typeof data.cost_usd === 'number'
-                    ? (prev.cost_usd ?? 0) + data.cost_usd
-                    : prev.cost_usd,
-                  turns: prev.turns + 1,
-                }));
-              }
               if (data.type === 'context_usage') setContextUsage({
                 percent: data.percent,
                 should_compact: data.should_compact,
@@ -601,7 +582,7 @@ export const useChat = (
     loading, setLoading,
     chatInput, setChatInput,
     currentPlan, setCurrentPlan,
-    contextUsage, setContextUsage, sessionUsage, applyContextReport,
+    contextUsage, setContextUsage, applyContextReport,
     isCompacting, setIsCompacting,
     isAnalyzingProject, setIsAnalyzingProject,
     pendingFix, setPendingFix,

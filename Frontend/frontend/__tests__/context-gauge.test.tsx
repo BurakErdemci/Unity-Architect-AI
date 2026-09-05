@@ -40,7 +40,7 @@ const ciz = (ekler: Record<string, any>) =>
 
 describe('görünürlük', () => {
   it('aktif sohbet varken ilk tur BİTMEDEN de görünüyor', () => {
-    ciz({ contextUsage: undefined, sessionUsage: undefined })
+    ciz({ contextUsage: undefined })
     expect(screen.getByTestId('context-gauge')).toBeTruthy()
   })
 
@@ -113,49 +113,31 @@ describe('yüzdenin dürüstlüğü', () => {
   })
 })
 
-describe('gerçek token', () => {
-  it('hiç tur token bildirmediyse sayı değil çizgi gösteriliyor', () => {
+describe('the removed per-turn token readout', () => {
+  // Removed 5 Sep 2026. The counter only summed SSE `turn_usage` events; 4 of
+  // the 8 run paths report no tokens, and the counter reset on every app
+  // restart and conversation switch. The user found the numbers wildly wrong
+  // and asked for the readout to go. These tests stay so it cannot come back
+  // unnoticed.
+  it('no longer draws a token/cost row', () => {
     ciz({
       contextUsage: { percent: 3, should_compact: false, message_count: 2 },
-      sessionUsage: { input_tokens: 0, output_tokens: 0, cost_usd: null, turns: 0 },
-    })
+      sessionUsage: { input_tokens: 41_200, output_tokens: 800, cost_usd: 0.21, turns: 2 },
+    } as any)
     expect(screen.queryByTestId('session-tokens')).toBeNull()
-    expect(screen.getByTestId('session-tokens-none').textContent).toContain('—')
+    expect(screen.queryByTestId('session-tokens-none')).toBeNull()
+    const metin = screen.getByTestId('context-gauge').parentElement?.textContent || ''
+    expect(metin).not.toContain('tok')
+    expect(metin).not.toContain('$')
   })
 
-  it('bildirildiyse giriş ve çıkış toplanıp kısaltılarak gösteriliyor', () => {
+  it('keeps the memory ring and the "Kullanim" button', () => {
     ciz({
       contextUsage: { percent: 3, should_compact: false, message_count: 2 },
-      sessionUsage: { input_tokens: 41_200, output_tokens: 800, cost_usd: null, turns: 2 },
+      onToggleReports: () => {},
     })
-    expect(screen.getByTestId('session-tokens').textContent).toContain('42,0k tok')
-  })
-
-  it('tam sayılar ve tur sayısı başlıkta duruyor', () => {
-    ciz({
-      contextUsage: { percent: 3, should_compact: false, message_count: 2 },
-      sessionUsage: { input_tokens: 41_200, output_tokens: 800, cost_usd: null, turns: 2 },
-    })
-    const baslik = screen.getByTestId('session-tokens').getAttribute('title') || ''
-    expect(baslik).toContain('41.200')
-    expect(baslik).toContain('2 tur')
-  })
-
-  it('maliyet yalnız gerçekten bildirilmişse yazılıyor', () => {
-    // `cost_usd` yalnız Claude Code yolunda dolu; null "bilmiyoruz" demek ve
-    // "$0.00" olarak gösterilirse bedava sanılır.
-    ciz({
-      contextUsage: { percent: 3, should_compact: false, message_count: 2 },
-      sessionUsage: { input_tokens: 100, output_tokens: 10, cost_usd: null, turns: 1 },
-    })
-    expect(screen.getByTestId('session-tokens').textContent).not.toContain('$')
-
-    cleanup()
-    ciz({
-      contextUsage: { percent: 3, should_compact: false, message_count: 2 },
-      sessionUsage: { input_tokens: 100, output_tokens: 10, cost_usd: 0.21, turns: 1 },
-    })
-    expect(screen.getByTestId('session-tokens').textContent).toContain('$0.21')
+    expect(screen.getByTestId('context-gauge')).toBeTruthy()
+    expect(screen.getByTestId('reports-toggle')).toBeTruthy()
   })
 })
 

@@ -111,16 +111,6 @@ export interface ContextUsage {
   real?: { used: string; total: string; model?: string };
 }
 
-// Sohbet açıldığından beri biriken GERÇEK token. Yeniden açılışta sıfırlanır:
-// tur istatistikleri DB'ye yazılmıyor, ve olmayan bir geçmişi varmış gibi
-// göstermektense sayacın kapsamını arayüzde söylemek dürüst olanı.
-export interface SessionUsage {
-  input_tokens: number;
-  output_tokens: number;
-  cost_usd: number | null;
-  turns: number;
-}
-
 // Canlı aktivite göstergesi (backend status event'leri): Claude'un o an ne yaptığı +
 // tur boyunca üretilen token. loading sırasında ChatPanel'de spinner satırı olarak görünür.
 export interface ChatActivity {

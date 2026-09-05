@@ -781,7 +781,7 @@ export default function Home() {
             <ControlPanel
               thinkingLevel={thinkingLevel} setThinkingLevel={setThinkingLevel} generationMode={chat.generationMode} setGenerationMode={chat.setGenerationMode}
               isAnalyzingProject={chat.isAnalyzingProject} activeConvId={chat.activeConvId} analyzeProject={chat.analyzeProject}
-              exportMemory={chat.exportMemory} importMemory={chat.importMemory} compactConversation={chat.compactConversation} isCompacting={chat.isCompacting} contextUsage={chat.contextUsage} sessionUsage={chat.sessionUsage}
+              exportMemory={chat.exportMemory} importMemory={chat.importMemory} compactConversation={chat.compactConversation} isCompacting={chat.isCompacting} contextUsage={chat.contextUsage}
               reportsOpen={reportsOpen} onToggleReports={() => setReportsOpen(v => !v)}
               isClaudeSubscription={isClaudeSub} ultracode={ultracode} setUltracode={setUltracode} effortCaps={effortCaps}
             />
