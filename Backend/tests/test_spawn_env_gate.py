@@ -528,7 +528,9 @@ class TestSpawnEnvKapisi:
 # Gerekçe: bir kapı testinin en kötü arıza biçimi hiçbir şey bulamayıp yeşil
 # kalmasıdır — "muafiyet yok, demek ki temiz" ile "hiç bakmadım" aynı görünür.
 _ANCHORS: Dict[Tuple[str, str], int] = {
-    ("app/providers/cli_base.py", "BaseCLIProvider.analyze_code"): 2,
+    # 2026-09-05: was 2; the agy one-shot spawn moved to a persistent
+    # stream-json process in agy_session.py (AgyStreamSession._start).
+    ("app/providers/cli_base.py", "BaseCLIProvider.analyze_code"): 1,
     ("app/providers/codex_session.py", "CodexSession.start"): 1,
     ("app/providers/codex_session.py", "fetch_codex_skills"): 1,
     ("app/providers/oneshot_cli.py", "probe_named_models"): 1,

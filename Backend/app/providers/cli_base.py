@@ -107,8 +107,9 @@ class BaseCLIProvider(AIProvider):
     Claude Code, Codex ve agy CLI'larını UnityAI MCP Server üzerinden çalıştırır.
     """
 
-    # Race condition önlemi: settings.json yazma + subprocess spawn atomik olmalı
+    # Serialize whole agy turns: live processes share the settings file.
     _AGY_LOCK = asyncio.Lock()
+    _AGY_MAX_TOTAL = 1800  # Preserve the existing 30-minute agy turn ceiling.
 
     # K5(b) — prompt argv'de mi, stdin'de mi?
     #
@@ -411,7 +412,6 @@ class BaseCLIProvider(AIProvider):
             # kalan bir yük yanlış prompt'u stdin'e yazardı.
             self._stdin_payload = None
             cmd = self._build_cmd(enriched_prompt, thinking_level, workspace)
-            _is_agy = self.binary_name.startswith("gemini") or self.binary_name.startswith("agy-")
             # İZİN LİSTESİ — `{**os.environ}` DEĞİL. Eskiden ebeveynin ortamının
             # tamamı geçiyordu ve ölçüldü (2026-07-28): seçilen sağlayıcı hangisi
             # olursa olsun çocuk BÜTÜN vendor anahtarlarını, veritabanı şifreleme
@@ -451,158 +451,76 @@ class BaseCLIProvider(AIProvider):
             logger.info(f"[CLIProvider:{self.binary_name}][CWD] {workspace}")
             logger.info(f"[CLIProvider:{self.binary_name}][ENV] LOCAL_APP_TOKEN={'set' if _env.get('LOCAL_APP_TOKEN') else 'unset'} UNITYAI_URL={_env.get('UNITYAI_URL', _env.get('ANTIGRAVITY_URL', 'unset'))}")
 
-            if _is_agy:
-                async with BaseCLIProvider._AGY_LOCK:
-                    self._set_agy_model(self._pending_agy_model, workspace)
-                    # agy --print ARTIK MCP yükler (2026-07-14, agy 1.1.2 canlı doğrulandı):
-                    # config göç-sonrası yola (~/.gemini/config/mcp_config.json) yazıldığı için
-                    # agy unityMCP + meshy + unityai tool'larını görüyor (bkz. _register_mcp 1b).
-                    # Yine de DOSYA YAZMA/SİLME/SHELL için agy'nin kendi write araçları
-                    # (write_to_file vb.) _AGY_DISABLED_TOOLS ile kapalı → agy bunları 'unityai'
-                    # CLI'ı ile run_command üzerinden yapmak zorunda → onay kartı çıkar.
-                    unityai_cli = self._launcher_path("unityai")
-                    self._ensure_exec(unityai_cli)
-                    mcp_hint = (
-                        "IMPORTANT: You MUST respond in Turkish (Türkçe) at all times.\n\n"
-                        "AVAILABLE MCP TOOLS — call these DIRECTLY when the task needs them:\n"
-                        "- unityMCP: Unity editor operations (manage_gameobject, manage_scene,\n"
-                        "  manage_fbx, manage_animation, manage_material, refresh_unity, read_console,\n"
-                        "  run_tests, find_gameobjects, etc.). Use directly for Unity queries/actions.\n"
-                        "- meshy: 3D asset generation (meshy_text_to_3d, meshy_image_to_3d, meshy_rig,\n"
-                        "  meshy_animate, meshy_retexture, meshy_check_balance, etc.). Use directly.\n"
-                        "  Meshy calls cost credits — state the cost and get user confirmation first.\n"
-                        "Do NOT route unityMCP/meshy through the unityai CLI — call them as MCP tools.\n\n"
-                        "RESUMING A LONG TASK: You remember previous turns. If earlier you started a\n"
-                        "long async job (e.g. meshy_text_to_3d returns a task id and generation takes\n"
-                        "minutes) and it looks unfinished/interrupted, do NOT restart it — call the\n"
-                        "status tool (meshy_get_task_status with the task id from your history) and\n"
-                        "continue from where you left off (download / refine / place in scene).\n\n"
-                        "EFFICIENCY — answer directly, do NOT flail:\n"
-                        "- Respond to the user's actual request. Do NOT go on filesystem expeditions.\n"
-                        "- Do NOT call list_dir / grep_search / view_file / invoke_subagent / schedule\n"
-                        "  unless the task genuinely requires it. No self-scheduling, no timers, no\n"
-                        "  probing the .system_generated / brain / transcript folders. Just do the task.\n\n"
-                        "You have a command-line tool 'unityai' for file WRITES, DELETES and shell.\n"
-                        "Your own write_to_file/replace_file_content tools are DISABLED on purpose —\n"
-                        "the ONLY way to create, edit, delete a file or run shell is via run_command\n"
-                        "calling 'unityai' with its ABSOLUTE PATH:\n"
-                        f"  {unityai_cli}\n\n"
-                        "CRITICAL RULES — follow exactly:\n"
-                        "1. CREATE or EDIT a file — pipe the content via stdin (handles multiline):\n"
-                        f"   run_command: {unityai_cli} save-file --path \"<rel/path>\" --content-stdin <<'UNITYAI_EOF'\n"
-                        "   ...full file content here...\n"
-                        "   UNITYAI_EOF\n"
-                        "   FORBIDDEN for writing files: python3 -c, printf, echo, cat, tee, or shell\n"
-                        "   redirection (>). These bypass user approval. ALWAYS use unityai save-file.\n"
-                        f"2. DELETE a file:    run_command: {unityai_cli} delete-file --path \"<rel/path>\"\n"
-                        f"3. SHELL commands (git, npm, mkdir, rm, mv, etc.):\n"
-                        f"   run_command: {unityai_cli} bash --command \"<shell command>\"\n"
-                        "4. To READ a file or LIST a directory you MAY use your own view_file / list_dir.\n\n"
-                        "Every write, delete and shell command MUST go through unityai so the user can\n"
-                        "approve it in the IDE. SCOPE: Only the current workspace. No unprompted test files.\n\n"
-                        "REPLY STYLE — match the reply length to the task:\n"
-                        "- For file WRITE / DELETE / shell actions: reply with ONE short Turkish\n"
-                        "  sentence stating what you did (e.g. 'TestScripts.cs oluşturuldu.'). NEVER\n"
-                        "  paste the file's full content/code block — the IDE approval card already\n"
-                        "  shows the code and diff. NEVER explain approval mechanics ('onayınızı\n"
-                        "  bekliyor', 'onay verdikten sonra', 'komutu çalıştırdım'). Don't repeat.\n"
-                        "- For QUESTIONS, reading/analysis, or reports (e.g. 'read the GDD and tell me\n"
-                        "  the rules', 'check MCP access', 'what does X do'): give a COMPLETE, substantive\n"
-                        "  Turkish answer — actually report the findings, rules, values, or console output\n"
-                        "  you gathered. Do NOT collapse it into a passive one-liner like 'öğrenildi',\n"
-                        "  'incelendi' or 'test edildi'. Be genuinely informative, not terse.\n"
-                        "- LANGUAGE: ALWAYS reply in the language the user writes in (Turkish user →\n"
-                        "  Turkish reply), including resumed conversations. Never drift to English.\n\n"
-                    )
-                    # Prompt = mcp_hint + enriched_prompt, SON POZİSYONEL ARG olarak
-                    # verilir (stdin DEĞİL — agy 1.1.1 ham-metin stdin'i bozuk okuyup
-                    # help/derail'e düşüyor; canlı doğrulandı). stdin=DEVNULL. Uzunluk
-                    # sınırı _run_agy_session'da yönetiliyor (Windows ~32K argv limiti).
-                    agy_prompt = mcp_hint + enriched_prompt
-                    process = await asyncio.create_subprocess_exec(
-                        *spawn_cmd, agy_prompt,
-                        stdin=asyncio.subprocess.DEVNULL,
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.PIPE,
-                        env=_env,
-                        cwd=workspace,
-                        creationflags=_CREATE_NO_WINDOW,
-                        limit=self._CLI_STREAM_LIMIT_BYTES,
-                    )
-            else:
-                # Prompt stdin'den mi gidiyor? İki ayrı sebep, tek mekanizma:
-                #
-                # 1) K5(b) GÜVENLİK (asıl sebep): argv makinedeki her sürece
-                #    görünür. `prompt_via_stdin` diyen sağlayıcı yükü zaten
-                #    `_stdin_payload`'a koydu; argv'de prompt HİÇ yok.
-                # 2) Windows .cmd shim (eski sebep, KALIYOR): cmd.exe komut
-                #    satırındaki çok satırlı arg'ı ilk newline'da kesiyor →
-                #    prompt bozuluyordu. Henüz taşınmamış sağlayıcılar (cursor,
-                #    kimi) bu yoldan korunmaya devam ediyor.
-                _stdin_prompt = getattr(self, "_stdin_payload", None)
-                if _stdin_prompt is None and spawn_cmd[:2] == ["cmd", "/c"] and len(spawn_cmd) > 3:
-                    _stdin_prompt = spawn_cmd.pop()  # son eleman = prompt metni
-                process = await asyncio.create_subprocess_exec(
-                    *spawn_cmd,
-                    stdin=(asyncio.subprocess.PIPE if _stdin_prompt is not None
-                           else asyncio.subprocess.DEVNULL),
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    env=_env,
-                    cwd=workspace,
-                    creationflags=_CREATE_NO_WINDOW,
-                    limit=self._CLI_STREAM_LIMIT_BYTES,
-                )
-                # ⚠️ SÜREÇ, stdin'e YAZMADAN ÖNCE kaydediliyor.
-                #
-                # Denetim bulgusu (1 Ağu 2026, `stdin_handoff_uncancellable.py`):
-                # `_active_process` yalnız write+drain+close bittikten sonra
-                # atanıyordu. Çocuk stdin'i tüketmeden oyalanırsa `drain()` dolu
-                # boruda bloke oluyor ve o pencerede süreç ÇALIŞIYOR ama
-                # `cancel_active_process` onu göremiyor: Durdur'a basan kullanıcı
-                # `False` alıyor, tur ve çocuk süreç ayakta kalıyor. Pencere
-                # prompt argv'deyken yoktu; stdin'e taşıma onu açtı.
-                #
-                # Atama spawn'ın hemen ardına alınınca pencere kapanıyor: artık
-                # süreç var olduğu andan itibaren iptal edilebilir.
-                self._active_process = process
-                if _stdin_prompt is not None:
-                    try:
-                        process.stdin.write(_stdin_prompt.encode("utf-8"))
-                        await process.stdin.drain()
-                        process.stdin.close()
-                        # ⚠️ `close()` YETMİYOR — kapanış ASENKRON.
-                        # Üçüncü doğrulama turu (`stdin_close_failure_answer`):
-                        # `drain()` boru tamponu yüzünden çocuk okuma ucunu
-                        # kapatmadan ÖNCE dönebiliyor ve `close()` hatayı
-                        # senkron yüzeye çıkarmıyor; hata `wait_closed()`'da
-                        # fırlıyor. O nokta beklenmediği için teslim edilmemiş
-                        # bir prompt'un ardından gelen cevap kabul ediliyordu.
-                        await process.stdin.wait_closed()
-                    except (BrokenPipeError, ConnectionResetError) as _e:
-                        # ⛔ YUTULMUYOR — TUR BURADA BİTİYOR.
-                        #
-                        # İlk düzeltme bunu yalnız loglayıp devam ediyordu ve
-                        # doğrulama turu onu kırdı (`broken_pipe_prompt_not_
-                        # delivered.py`, 1 Ağu 2026): prompt teslim EDİLMEMİŞken
-                        # çocuğun geçerli bir stdout'u ve `exit 0`'ı kabul
-                        # ediliyordu → kullanıcı, sorusunun sorulmadığı bir
-                        # cevabı gerçek cevap sanıyordu. Sessiz yanlış cevap,
-                        # görünür hatadan pahalıya geliyor.
-                        logger.error(
-                            f"[CLIProvider:{self.binary_name}] prompt stdin'e yazılamadı "
-                            f"(çocuk erken kapandı): {type(_e).__name__}")
-                        try:
-                            process.kill()
-                        except (ProcessLookupError, OSError):
-                            pass
-                        yield {"type": "error", "content": (
-                            "⚠️ İstek CLI'a iletilemedi (süreç girdi kanalını erken kapattı). "
-                            "Mesajınız işlenmedi — lütfen tekrar deneyin.")}
-                        return
-            # agy dalı için (ve non-agy'de zararsız tekrar) — orada stdin
-            # DEVNULL, yani yukarıdaki pencere hiç oluşmuyor.
+            # Prompt stdin'den mi gidiyor? İki ayrı sebep, tek mekanizma:
+            #
+            # 1) K5(b) GÜVENLİK (asıl sebep): argv makinedeki her sürece
+            #    görünür. `prompt_via_stdin` diyen sağlayıcı yükü zaten
+            #    `_stdin_payload`'a koydu; argv'de prompt HİÇ yok.
+            # 2) Windows .cmd shim (eski sebep, KALIYOR): cmd.exe komut
+            #    satırındaki çok satırlı arg'ı ilk newline'da kesiyor →
+            #    prompt bozuluyordu. Henüz taşınmamış sağlayıcılar (cursor,
+            #    kimi) bu yoldan korunmaya devam ediyor.
+            _stdin_prompt = getattr(self, "_stdin_payload", None)
+            if _stdin_prompt is None and spawn_cmd[:2] == ["cmd", "/c"] and len(spawn_cmd) > 3:
+                _stdin_prompt = spawn_cmd.pop()  # son eleman = prompt metni
+            process = await asyncio.create_subprocess_exec(
+                *spawn_cmd,
+                stdin=(asyncio.subprocess.PIPE if _stdin_prompt is not None
+                       else asyncio.subprocess.DEVNULL),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=_env,
+                cwd=workspace,
+                creationflags=_CREATE_NO_WINDOW,
+                limit=self._CLI_STREAM_LIMIT_BYTES,
+            )
+            # ⚠️ SÜREÇ, stdin'e YAZMADAN ÖNCE kaydediliyor.
+            #
+            # Denetim bulgusu (1 Ağu 2026, `stdin_handoff_uncancellable.py`):
+            # `_active_process` yalnız write+drain+close bittikten sonra
+            # atanıyordu. Çocuk stdin'i tüketmeden oyalanırsa `drain()` dolu
+            # boruda bloke oluyor ve o pencerede süreç ÇALIŞIYOR ama
+            # `cancel_active_process` onu göremiyor: Durdur'a basan kullanıcı
+            # `False` alıyor, tur ve çocuk süreç ayakta kalıyor. Pencere
+            # prompt argv'deyken yoktu; stdin'e taşıma onu açtı.
+            #
+            # Atama spawn'ın hemen ardına alınınca pencere kapanıyor: artık
+            # süreç var olduğu andan itibaren iptal edilebilir.
             self._active_process = process
+            if _stdin_prompt is not None:
+                try:
+                    process.stdin.write(_stdin_prompt.encode("utf-8"))
+                    await process.stdin.drain()
+                    process.stdin.close()
+                    # ⚠️ `close()` YETMİYOR — kapanış ASENKRON.
+                    # Üçüncü doğrulama turu (`stdin_close_failure_answer`):
+                    # `drain()` boru tamponu yüzünden çocuk okuma ucunu
+                    # kapatmadan ÖNCE dönebiliyor ve `close()` hatayı
+                    # senkron yüzeye çıkarmıyor; hata `wait_closed()`'da
+                    # fırlıyor. O nokta beklenmediği için teslim edilmemiş
+                    # bir prompt'un ardından gelen cevap kabul ediliyordu.
+                    await process.stdin.wait_closed()
+                except (BrokenPipeError, ConnectionResetError) as _e:
+                    # ⛔ YUTULMUYOR — TUR BURADA BİTİYOR.
+                    #
+                    # İlk düzeltme bunu yalnız loglayıp devam ediyordu ve
+                    # doğrulama turu onu kırdı (`broken_pipe_prompt_not_
+                    # delivered.py`, 1 Ağu 2026): prompt teslim EDİLMEMİŞken
+                    # çocuğun geçerli bir stdout'u ve `exit 0`'ı kabul
+                    # ediliyordu → kullanıcı, sorusunun sorulmadığı bir
+                    # cevabı gerçek cevap sanıyordu. Sessiz yanlış cevap,
+                    # görünür hatadan pahalıya geliyor.
+                    logger.error(
+                        f"[CLIProvider:{self.binary_name}] prompt stdin'e yazılamadı "
+                        f"(çocuk erken kapandı): {type(_e).__name__}")
+                    try:
+                        process.kill()
+                    except (ProcessLookupError, OSError):
+                        pass
+                    yield {"type": "error", "content": (
+                        "⚠️ İstek CLI'a iletilemedi (süreç girdi kanalını erken kapattı). "
+                        "Mesajınız işlenmedi — lütfen tekrar deneyin.")}
+                    return
             _stdout_reader = process.stdout
             logger.info(f"[CLIProvider:{self.binary_name}] PID={process.pid} başlatıldı")
 
@@ -642,20 +560,6 @@ class BaseCLIProvider(AIProvider):
             _copilot_streamed = set()        # delta'sı akıtılan messageId'ler (dedup)
             _is_cursor = self.binary_name.startswith("cursor-")
 
-            # agy CANLI-İZLEME: --print modunda uzun meshy işlerinde stdout SESSİZ kalır ama
-            # agy conversation .db'ye step (meshy status-poll'leri) yazmaya devam eder.
-            # Liveness'i STDOUT yerine DB BÜYÜMESİNDEN ölç → sahte timeout yok + yeni tool
-            # aktivitesini chate akıt (Fable gibi görünürlük). Yalnız agy için.
-            import time as _time
-            if _is_agy:
-                from .agy_session import get_max_step_idx, newest_conv_uuid, poll_agy_activity
-                _agy_uuid = getattr(self, "_resume_uuid", None)
-                _agy_last_idx = get_max_step_idx(_agy_uuid) if _agy_uuid else -1
-                _agy_last_activity = _start
-                _agy_wall_start = _time.time()
-                _AGY_IDLE_LIMIT = 300     # 5dk HİÇ db büyümesi yok → gerçek hang
-                _AGY_MAX_TOTAL = 1800     # 30dk mutlak tavan (Fable ~20dk meshy'yi kapsar)
-
             while True:
                 try:
                     line = await asyncio.wait_for(
@@ -667,28 +571,6 @@ class BaseCLIProvider(AIProvider):
                     if process.returncode is not None:
                         logger.error(f"[CLIProvider:{self.binary_name}] Process bitti rc={process.returncode}")
                         break
-
-                    if _is_agy:
-                        # agy stdout SESSİZ olabilir ama DB'ye step yazıyorsa CANLI'dır.
-                        # Aktif turun db'sini bul (resume-uuid; yoksa ilk turda beliren yeni db),
-                        # yeni tool aktivitesini oku → chate akıt + idle sayacını SIFIRLA.
-                        if _agy_uuid is None:
-                            _agy_uuid = newest_conv_uuid(min_mtime=_agy_wall_start - 2.0)
-                            if _agy_uuid:
-                                _agy_last_idx = -1  # yeni db → bu turun tüm aktivitesini akıt
-                        if _agy_uuid:
-                            _acts, _agy_last_idx = poll_agy_activity(_agy_uuid, _agy_last_idx)
-                            if _acts:
-                                _agy_last_activity = _now  # db büyüdü → agy canlı
-                                for _a in _acts:
-                                    yield {"type": "thinking", "text": f"⚙ {_a}"}
-                        _idle = _now - _agy_last_activity
-                        if _idle > _AGY_IDLE_LIMIT or (_now - _start) > _AGY_MAX_TOTAL:
-                            logger.error(
-                                f"[CLIProvider:agy] hang (idle={_idle:.0f}s / toplam={_now-_start:.0f}s) — kill")
-                            process.kill()
-                            break
-                        continue
 
                     # Diğer provider'lar (claude/codex/...): onay veya uzun MCP işi
                     # beklerken sessiz kalabilir. Toplam 300 saniyede öldürmek yerine
@@ -720,9 +602,6 @@ class BaseCLIProvider(AIProvider):
                 raw = _strip_ansi(line.decode("utf-8", errors="ignore")).strip()
                 if not raw:
                     continue
-                # agy interactive mode: "You >" ve "You (press Ctrl+D..." prompt kalıntılarını filtrele
-                if _is_agy and re.match(r'^You\s*(>|\(press)', raw):
-                    continue
                 line_count += 1
                 # Codex akışının İZİ — içeriği DEĞİL.
                 #
@@ -744,8 +623,6 @@ class BaseCLIProvider(AIProvider):
                 import json as _json
                 _is_json_provider = (
                     self.binary_name.startswith("claude") or
-                    self.binary_name.startswith("gemini") or
-                    self.binary_name.startswith("agy-") or
                     self.binary_name.startswith("gpt-") or
                     self.binary_name.startswith("cursor-") or
                     self.binary_name.startswith("copilot-") or
@@ -940,17 +817,14 @@ class BaseCLIProvider(AIProvider):
                                         })
                                 yield _event
 
-                        # ── agy / Gemini CLI JSONL (hot-swap) ───────────────
+                        # Preserve generic JSONL text/tool handling for other CLIs.
                         elif ev_type == "content":
                             t = _cli_value_to_text(
                                 ev.get("content", ev.get("text", ""))
                             )
                             if t:
-                                if self.binary_name.startswith(("gemini", "agy-")) and "timed out" in t.lower():
-                                    yield {"type": "error", "text": "agy zaman aşımına uğradı."}
-                                else:
-                                    full_text += t
-                                    yield {"type": "delta", "text": t}
+                                full_text += t
+                                yield {"type": "delta", "text": t}
                         elif ev_type == "tool_call":
                             name = ev.get("tool", ev.get("name", ""))
                             inp = ev.get("input", ev.get("args", {}))
@@ -1094,11 +968,7 @@ class BaseCLIProvider(AIProvider):
                     "reset_session": True,
                     "reason": "process_exit",
                 }
-            elif line_count == 0 and not _is_agy:
-                # NOT: agy --print stdout'u non-TTY'de SESSİZCE kaybolur (repo bug #76) —
-                # bu agy için NORMALDİR (yanıt conversation .db'sinden okunur, bkz.
-                # agent_runner._run_agy_session). Bu yüzden agy'de boş stdout'u hata SAYMA;
-                # diğer CLI'larda (claude/codex) boş stdout gerçek başarısızlıktır.
+            elif line_count == 0:
                 stderr_full = "\n".join(stderr_buffer)
                 # Gerekçe [FAILED] dalıyla aynı: ölçü diske, içerik kullanıcıya.
                 logger.error(f"[CLIProvider:{self.binary_name}][NO_OUTPUT] Stdout boş! "

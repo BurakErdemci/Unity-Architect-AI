@@ -24,7 +24,10 @@ The backend invokes the official CLI on your machine as a subprocess, using the 
 
 > ⚠️ **Kimi Code honesty note:** the provider is written and its tests pass, but the development machine has no Kimi subscription, so it has **never been exercised end to end**. If you hit unexpected behaviour on the Kimi path, that is why — an issue would be welcome.
 
-> **Why is agy different?** agy's `--print` mode does not natively load MCP servers. So file/terminal operations go through a `unityai` CLI bridge invoked via `run_command` that **shares the exact same approval gate** as the MCP tools. Details: [Developer Notes — The agy Saga, Scene 7](engineering-notes.md#scene-7-the-fix--i-was-knocking-on-the-wrong-door).
+Antigravity uses one persistent `agy --input-format stream-json --output-format stream-json -p=""` process per conversation.
+Each turn is one UTF-8 NDJSON stdin line; text, tools, and usage arrive on stdout, with no history injection or prompt in argv.
+Turns are serialized globally. A model change respawns the process; saved conversation UUIDs support resume after restart or process failure.
+File and terminal operations retain the `unityai` approval bridge, while configured MCP tools are available directly.
 
 ### 2. Cloud API (direct API call)
 

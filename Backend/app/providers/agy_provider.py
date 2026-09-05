@@ -25,36 +25,78 @@ class AgyProvider(BaseCLIProvider):
                 return cand
         return "agy"  # PATH'e güven (subprocess başlatılınca çözülür)
 
-    def _build_cmd(self, prompt: str, thinking_level: str = "medium", workspace: str = None) -> list:
-        """agy komutunu kurar. Prompt cli_base tarafından SON POZİSYONEL ARG olarak
-        eklenir (stdin DEĞİL — agy 1.1.1 stdin'i bozdu: ham-metin stdin verilince
-        prompt'u görmeyip help/derail'e düşüyor; canlı doğrulandı).
-
-        agy 1.1.1 derail kuralı (canlı doğrulandı): bazı flag'ler modele 'kullanıcı bu
-        flag'i soruyor' gibi görünüp built-in antigravity-guide skill'ini tetikliyor →
-        kullanıcının mesajı hiç yanıtlanmıyor. Bu yüzden:
-        - --dangerously-skip-permissions YOK → yerine settings.json toolPermission=always-proceed
-        - --print-timeout YOK → default 5dk + kendi subprocess timeout'umuz
-        - --mode YOK → hâlâ derail ediyor (1.1.2 canlı doğrulandı)
-        - --conversation VAR (RESUME AKTİF, 2026-07-15): 1.1.2'de NORMAL devam mesajıyla
-          derail ETMİYOR (canlı: 'Gölge Avcısı' görevini hatırlayıp doğal devam etti;
-          'analiz' framing'i yalnız transcript'e dair META-sorularda çıkıyor). _resume_uuid
-          set'liyse native disk-resume → context prompt'a enjekte edilmez (26K kırpma yok).
-        """
-        full_id = self.binary_name
-        # Tüm agy modelleri: Gemini, Claude Sonnet/Opus, GPT-OSS
-        self._pending_agy_model = self._AGY_MODEL_MAP.get(full_id, "Gemini 3.6 Flash (High)")
-        cmd = [self._agy_binary()]
+    def _build_cmd(self, prompt: str = "", thinking_level: str = "medium", workspace: str = None) -> list:
+        """Build persistent stream argv; user content is sent only through stdin."""
+        self._pending_agy_model = self._AGY_MODEL_MAP.get(
+            self.binary_name, "Gemini 3.6 Flash (High)")
+        cmd = [self._agy_binary(), "--input-format", "stream-json",
+               "--output-format", "stream-json", "-p="]
         if workspace:
             cmd += ["--add-dir", workspace]
-        resume_uuid = getattr(self, "_resume_uuid", None)
-        if resume_uuid:
-            cmd += [f"--conversation={resume_uuid}"]
-        cmd += ["--print"]  # prompt cli_base'de son arg olarak eklenir
-        # ⚠️ --model FLAG'İ EKLENMEZ — derail tetikliyor (agy guide-skill'e düşüp
-        # kullanıcının mesajını yanıtlamıyor; 2026-07-24 canlı doğrulandı). Model,
-        # _set_agy_model ile settings.json "model" key'inden seçilir.
+        if getattr(self, "_resume_uuid", None):
+            cmd += ["--conversation", self._resume_uuid]
         return cmd
+
+    async def analyze_code(self, *args, **kwargs):
+        """Agy requires the conversation-scoped AgyStreamSession entry point."""
+        yield {"type": "error", "content": "agy requires a persistent conversation session."}
+
+    def _stream_instructions(self) -> str:
+        """Keep the existing tool approval bridge guidance on the stdin path."""
+        unityai_cli = self._launcher_path("unityai")
+        self._ensure_exec(unityai_cli)
+        return (
+            "IMPORTANT: You MUST respond in Turkish (Türkçe) at all times.\n\n"
+            "AVAILABLE MCP TOOLS — call these DIRECTLY when the task needs them:\n"
+            "- unityMCP: Unity editor operations (manage_gameobject, manage_scene,\n"
+            "  manage_fbx, manage_animation, manage_material, refresh_unity, read_console,\n"
+            "  run_tests, find_gameobjects, etc.). Use directly for Unity queries/actions.\n"
+            "- meshy: 3D asset generation (meshy_text_to_3d, meshy_image_to_3d, meshy_rig,\n"
+            "  meshy_animate, meshy_retexture, meshy_check_balance, etc.). Use directly.\n"
+            "  Meshy calls cost credits — state the cost and get user confirmation first.\n"
+            "Do NOT route unityMCP/meshy through the unityai CLI — call them as MCP tools.\n\n"
+            "RESUMING A LONG TASK: You remember previous turns. If earlier you started a\n"
+            "long async job (e.g. meshy_text_to_3d returns a task id and generation takes\n"
+            "minutes) and it looks unfinished/interrupted, do NOT restart it — call the\n"
+            "status tool (meshy_get_task_status with the task id from your history) and\n"
+            "continue from where you left off (download / refine / place in scene).\n\n"
+            "EFFICIENCY — answer directly, do NOT flail:\n"
+            "- Respond to the user's actual request. Do NOT go on filesystem expeditions.\n"
+            "- Do NOT call list_dir / grep_search / view_file / invoke_subagent / schedule\n"
+            "  unless the task genuinely requires it. No self-scheduling, no timers, no\n"
+            "  probing the .system_generated / brain / transcript folders. Just do the task.\n\n"
+            "You have a command-line tool 'unityai' for file WRITES, DELETES and shell.\n"
+            "Your own write_to_file/replace_file_content tools are DISABLED on purpose —\n"
+            "the ONLY way to create, edit, delete a file or run shell is via run_command\n"
+            "calling 'unityai' with its ABSOLUTE PATH:\n"
+            f"  {unityai_cli}\n\n"
+            "CRITICAL RULES — follow exactly:\n"
+            "1. CREATE or EDIT a file — pipe the content via stdin (handles multiline):\n"
+            f"   run_command: {unityai_cli} save-file --path \"<rel/path>\" --content-stdin <<'UNITYAI_EOF'\n"
+            "   ...full file content here...\n"
+            "   UNITYAI_EOF\n"
+            "   FORBIDDEN for writing files: python3 -c, printf, echo, cat, tee, or shell\n"
+            "   redirection (>). These bypass user approval. ALWAYS use unityai save-file.\n"
+            f"2. DELETE a file:    run_command: {unityai_cli} delete-file --path \"<rel/path>\"\n"
+            f"3. SHELL commands (git, npm, mkdir, rm, mv, etc.):\n"
+            f"   run_command: {unityai_cli} bash --command \"<shell command>\"\n"
+            "4. To READ a file or LIST a directory you MAY use your own view_file / list_dir.\n\n"
+            "Every write, delete and shell command MUST go through unityai so the user can\n"
+            "approve it in the IDE. SCOPE: Only the current workspace. No unprompted test files.\n\n"
+            "REPLY STYLE — match the reply length to the task:\n"
+            "- For file WRITE / DELETE / shell actions: reply with ONE short Turkish\n"
+            "  sentence stating what you did (e.g. 'TestScripts.cs oluşturuldu.'). NEVER\n"
+            "  paste the file's full content/code block — the IDE approval card already\n"
+            "  shows the code and diff. NEVER explain approval mechanics ('onayınızı\n"
+            "  bekliyor', 'onay verdikten sonra', 'komutu çalıştırdım'). Don't repeat.\n"
+            "- For QUESTIONS, reading/analysis, or reports (e.g. 'read the GDD and tell me\n"
+            "  the rules', 'check MCP access', 'what does X do'): give a COMPLETE, substantive\n"
+            "  Turkish answer — actually report the findings, rules, values, or console output\n"
+            "  you gathered. Do NOT collapse it into a passive one-liner like 'öğrenildi',\n"
+            "  'incelendi' or 'test edildi'. Be genuinely informative, not terse.\n"
+            "- LANGUAGE: ALWAYS reply in the language the user writes in (Turkish user →\n"
+            "  Turkish reply), including resumed conversations. Never drift to English.\n\n"
+        )
 
     def _set_agy_model(self, agy_model_name: str, workspace: str = ""):
         """~/.gemini/antigravity-cli/settings.json ve global ~/.gemini/settings.json

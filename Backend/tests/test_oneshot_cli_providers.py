@@ -461,22 +461,20 @@ class TestOneShotSessionRecovery(unittest.TestCase):
         self.assertFalse(session.ctx_injected)
         _SESSIONS.clear()
 
-    def test_cancelled_agy_stream_invalidates_disk_resume_session(self):
+    def test_cancelled_agy_stream_closes_persistent_session(self):
         from agentic.agent_runner import AgentRunner
         from providers.agy_session import _SESSIONS, get_session
 
         started = asyncio.Event()
 
-        class FakeAgyProvider:
-            async def analyze_code(self, *args, **kwargs):
-                yield {"type": "thinking", "text": "başladı"}
-                started.set()
-                await asyncio.Event().wait()
+        async def fake_stream(*args, **kwargs):
+            yield {"type": "thinking", "text": "başladı"}
+            started.set()
+            await asyncio.Event().wait()
 
         _SESSIONS.clear()
         session = get_session(1000)
-        session.agy_uuid = "agy-partial"
-        session.last_step_idx = 42
+        session.session_id = "agy-partial"
         runner = AgentRunner(
             provider_type="subscription",
             api_key="",
@@ -496,14 +494,11 @@ class TestOneShotSessionRecovery(unittest.TestCase):
             with self.assertRaises(asyncio.CancelledError):
                 await task
 
-        with patch(
-            "ai_providers.AIProviderManager.get_provider",
-            return_value=FakeAgyProvider(),
-        ):
+        with patch.object(session, "stream", fake_stream):
             asyncio.run(cancel_mid_stream())
 
-        self.assertIsNone(session.agy_uuid)
-        self.assertEqual(session.last_step_idx, -1)
+        self.assertFalse(session.is_live)
+        self.assertNotIn(1000, _SESSIONS)
         self.assertIsNone(session.active_provider)
         _SESSIONS.clear()
 
@@ -805,7 +800,7 @@ class TestOpenCodeApprovalPolicy(unittest.TestCase):
 
         agy_provider = FakeProvider()
         agy_session = get_agy_session(998)
-        agy_session.agy_uuid = "agy-partial"
+        agy_session.session_id = "agy-partial"
         agy_session.active_provider = agy_provider
 
         app = FastAPI()

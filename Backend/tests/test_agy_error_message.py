@@ -22,32 +22,27 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "app"))
 import agentic.agent_runner as ar
 
 
-class _SahteOturum:
-    agy_uuid = None
-    last_step_idx = -1
+class FakeSession:
     auto_approve = False
     active_provider = None
 
 
-def _hata_veren_saglayici(event: dict):
-    class _P:
-        async def analyze_code(self, *args, **kwargs):
+def error_session(event: dict):
+    class Session(FakeSession):
+        async def stream(self, *args, **kwargs):
             yield event
 
-    return _P()
+    return Session()
 
 
 def _kostur(event: dict):
-    import ai_providers
     import providers.agy_session as agy_session
 
     runner = ar.AgentRunner(provider_type="subscription", api_key="",
                             model_name="gemini-test", workspace_path=".",
                             conversation_id=9911)
     patches = [
-        mock.patch.object(agy_session, "get_session", lambda cid: _SahteOturum()),
-        mock.patch.object(ai_providers.AIProviderManager, "get_provider",
-                          lambda cfg: _hata_veren_saglayici(event)),
+        mock.patch.object(agy_session, "get_session", lambda cid, **kwargs: error_session(event)),
     ]
 
     async def _go():

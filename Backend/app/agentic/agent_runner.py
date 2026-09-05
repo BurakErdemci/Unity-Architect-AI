@@ -2121,195 +2121,46 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
     # AGY KALICI SESSION (disk-resume + conversation-db okuma)
     # ═══════════════════════════════════════════════
     async def _run_agy_session(self, user_message: str) -> AsyncGenerator[AgentEvent, None]:
-        """
-        agy'yi (Antigravity CLI) sohbet başına bağlamlı sürer.
-
-        agy'nin Codex/Claude gibi canlı server'ı YOK ve KENDİ disk-resume'u
-        (--conversation) agy 1.1.1'de KIRIK: resume flag'i modeli built-in
-        antigravity-guide skill'ine sokup kullanıcının mesajını hiç yanıtlatmıyor
-        (canlı doğrulandı). Bu yüzden:
-        - Resume KULLANILMAZ. Her turda tam transcript (_build_handoff_context)
-          prompt'a enjekte edilir → agy her turu "kaldığı yerden" görür.
-        - Prompt STDIN değil ARG olarak verilir (agy 1.1.1 ham-metin stdin'i de bozdu);
-          Windows argv limiti için context en-yeni-kısım korunacak şekilde sınırlanır.
-        - Auto-approve: --dangerously-skip-permissions YERİNE settings.json
-          toolPermission=always-proceed (flag skill-derail'i tetikliyordu).
-        - Yanıt metni: stdout genelde çalışır (final event); boşsa bu turun
-          conversation .db'sinden (step_type==15) fallback okunur.
-        Ephemeral dosya-değişiklik akışı (kod blokları) korunur.
-        """
-        from ai_providers import AIProviderManager
-        from providers.agy_session import (
-            get_session, snapshot_db_names, detect_new_uuid, read_new_response,
-            read_agy_tool_activity, get_max_step_idx,
-        )
-
-        provider = AIProviderManager.get_provider({
-            "provider_type": self.provider_type,
-            "model_name": self.model_name,
-            "api_key": getattr(self, "api_key", ""),
-        })
-
-        sess = get_session(self.conversation_id)
-        sess.auto_approve = (getattr(self, "generation_mode", "auto") == "auto")
-
-        # NATIVE DISK-RESUME (2026-07-15, agy 1.1.2 canlı doğrulandı): --conversation ile
-        # agy geçmişi KENDİ conversation .db'sinden yükler → normal devam mesajıyla derail
-        # ETMİYOR ('analiz' framing'i yalnız transcript'e dair meta-sorularda). Böylece:
-        #   • agy_uuid VARSA (bu sohbette daha önce agy koştu) → SADECE yeni mesajı yolla;
-        #     context'i prompt'a BASMAYIZ → 26K kırpma yok, unutma yok, token ucuz.
-        #   • agy_uuid YOKSA (ilk agy turu / app restart sonrası) → context'i enjekte et,
-        #     tur sonrası beliren yeni .db'nin UUID'ini yakala + sakla (sonraki turlar resume).
-        # _SESSIONS in-memory → app restart'ta agy_uuid kaybolur; ilk tur context'i yeniden
-        # enjekte edip disk db'yi taze bir agy conversation'la resume eder (kabul edilebilir).
-        resuming = bool(sess.agy_uuid)
-        prev_idx = sess.last_step_idx if resuming else -1
-        provider._resume_uuid = sess.agy_uuid if resuming else None
-
-        enriched_prompt = user_message
-        if not resuming and self.context:
-            _CTX_CAP = 26000  # mcp_hint (~1.5K) + görsel + argv payı için güvenli sınır
-            _ctx = self.context
-            if len(_ctx) > _CTX_CAP:
-                _ctx = "…[eski geçmiş kırpıldı — en yeni kısım korundu]\n" + _ctx[-_CTX_CAP:]
-            enriched_prompt = f"{user_message}\n\n{_HANDOFF_HEADER}\n{_ctx}"
-
-        # Görsel: agy'nin native görsel girişi YOK → dosyaya yaz + prompt'a yol enjekte;
-        # agy kendi Read/dosya aracıyla açar (auto modda otomatik, kullanıcıdan ek iş yok).
+        """Send one stdin turn to the conversation's persistent agy process."""
+        from providers.agy_session import get_session
         from providers._attachments import materialize_images, cleanup_dir
-        _img_paths, _att_dir = materialize_images(
+        from secret_redaction import redact_secrets
+
+        session = get_session(
+            self.conversation_id, resume_id=self.resume_id,
+            cwd=self.workspace_path or ".",
+        )
+        session.auto_approve = (self.generation_mode == "auto")
+        image_paths, attachment_dir = materialize_images(
             self.images, self.workspace_path, f"agy_conv{self.conversation_id}")
-        if _img_paths:
-            _lines = "\n".join(f"- {p}" for p in _img_paths)
-            enriched_prompt += ("\n\n[EKLİ GÖRSELLER] Kullanıcı bu turda görsel ekledi. "
-                                "İncelemen için (Read/dosya aracıyla aç):\n" + _lines)
-
-        # Resume YOKSA ilk tur yeni bir .db yaratır → UUID'i yakalamak için önceki db
-        # kümesini fotoğrafla. Resume'da aynı .db'ye append edilir (yeni db yok).
-        db_before = snapshot_db_names() if not resuming else set()
-
-        final_text = ""
-        ephemeral_files = []
-        got_error = False
-        sess.active_provider = provider
+        message = user_message
+        if image_paths:
+            message += "\n\nAttached images; open these files to inspect them:\n"
+            message += "\n".join(f"- {path}" for path in image_paths)
+        turn_complete = False
         try:
-            async for event in provider.analyze_code(
-                enriched_prompt,
-                thinking_level="medium" if self.use_thinking else "off",
-                cwd=self.workspace_path or ".",
-                interactive=True,  # Her zaman ephemeral mod
-            ):
-                etype = event.get("type")
-
-                if etype == "delta":
-                    yield AgentEvent("text", {"content": event.get("text", "")})
-                elif etype == "thinking":
-                    yield AgentEvent("thinking", {"text": event.get("text", "")})
-                elif etype == "tool_call":
-                    yield AgentEvent("tool_call", {
-                        "tool": event.get("tool", "CLI"),
-                        "arguments": {"summary": event.get("summary", "")},
-                        "iteration": 1,
-                    })
-                elif etype == "tool_result":
-                    yield AgentEvent("tool_result", {
-                        "tool": event.get("tool", "CLI"),
-                        "success": event.get("success", True),
-                        "summary": event.get("summary", ""),
-                    })
-                elif etype == "ephemeral_changes":
-                    ephemeral_files = event.get("files", [])
-                elif etype == "final":
-                    final_text = event.get("text", "")
-                elif etype == "error":
-                    got_error = True
-                    # İKİ alan da okunuyor. `cli_base` agy'nin zaman aşımını bir
-                    # JSON content event'inden üretiyor ve mesajı `text` altına
-                    # koyuyor; yalnız `content` okunduğu için kullanıcıya BOŞ
-                    # mesajlı bir `error` gidiyordu (denetim, 30 Ağu 2026) —
-                    # terminal olay vardı ama hiçbir şey anlatmıyordu.
-                    _detay = event.get("content") or event.get("text") or ""
-                    yield AgentEvent("error", {"message": _detay or (
-                        "agy oturumu bir hata ile sonlandı ama ayrıntı bildirmedi."
-                    )})
-                    break
+            async with contextlib.aclosing(session.stream(
+                message, model=self.model_name, cwd=self.workspace_path or ".",
+            )) as events:
+                async for event in events:
+                    payload = dict(event)
+                    event_type = payload.pop("type", "text")
+                    if event_type == "error":
+                        detail = (payload.get("message") or payload.get("content")
+                                  or payload.get("text") or "agy session failed without details.")
+                        payload["message"] = redact_secrets(str(detail))
+                    turn_complete = event_type == "done"
+                    yield _normalize_session_event(event_type, payload)
+                    if event_type == "error":
+                        return
         except (asyncio.CancelledError, GeneratorExit):
-            # Durdur/SSE kopması sonrası yarım agy disk conversation'ını resume etme.
-            sess.agy_uuid = None
-            sess.last_step_idx = -1
+            if not turn_complete:
+                await session.close()
             raise
+        except Exception as exc:
+            yield AgentEvent("error", {"message": f"agy session failed: {redact_secrets(str(exc))}"})
         finally:
-            if sess.active_provider is provider:
-                sess.active_provider = None
-            # agy subprocess bitti/iptal edildi → ekli görsel artık okunmayacak.
-            cleanup_dir(_att_dir)
-
-        if got_error:
-            return
-
-        # UUID: resume ise sess'te mevcut; değilse (ilk tur) yeni beliren .db'yi yakala + SAKLA
-        # ki sonraki turlar native resume yapsın.
-        if resuming:
-            turn_uuid = sess.agy_uuid
-        else:
-            turn_uuid = detect_new_uuid(db_before)
-            if turn_uuid:
-                sess.agy_uuid = turn_uuid  # sonraki turlar --conversation ile resume eder
-                logger.info(f"[AgySession] conv={self.conversation_id} agy UUID yakalandı+saklandı: {turn_uuid}")
-            else:
-                logger.warning(f"[AgySession] conv={self.conversation_id} yeni agy .db bulunamadı")
-
-        # Asistan yanıt metnini .db'den oku (stdout boş kalırsa fallback). SADECE bu turun
-        # yeni step'leri (prev_idx sonrası) → resume'da eski turların prose'unu tekrar
-        # okumayı önler. agy 1.1.2'de stdout genelde çalışıyor; bu blok yalnız final boşsa.
-        if turn_uuid and not final_text:
-            prose, _ = read_new_response(turn_uuid, prev_idx)
-            if not prose:
-                # nadiren db flush gecikebilir → tek kısa retry
-                await asyncio.sleep(0.4)
-                prose, _ = read_new_response(turn_uuid, prev_idx)
-            if prose:
-                final_text = prose
-
-        # Sonraki resume turu için son okunan step idx'ini güncelle (stdout yolu da dahil).
-        if turn_uuid:
-            sess.last_step_idx = get_max_step_idx(turn_uuid, fallback=prev_idx)
-
-        # Ephemeral değişiklikleri encode et
-        # Silinen dosyalar → pending_delete event'i olarak ayrıca gönder
-        # Değiştirilen/eklenen dosyalar → // path: code block (parseGeneratedFiles yakalar)
-        modified = [f for f in ephemeral_files if not f.get("deleted")]
-        deleted  = [f for f in ephemeral_files if f.get("deleted")]
-
-        # agy ne bir yanıt metni ne de dosya değişikliği ürettiyse — stdout boş kalmış
-        # olabilir (uzun meshy işi tur sonunda prose yazmadan bitti; db-prose fallback'i
-        # 1.1.2 şema kaymasında boş dönüyor). "yanıt üretmedi" demek yerine db'deki gerçek
-        # tool aktivitesini göster ki kullanıcı agy'nin ÇALIŞTIĞINI görsün (patlamadı sansın).
-        if not final_text and not modified and not deleted:
-            activities = read_agy_tool_activity(turn_uuid, since_idx=prev_idx) if turn_uuid else []
-            if activities:
-                _acts = "\n".join(f"• {a}" for a in activities)
-                final_text = (
-                    "Bu turda araçları çalıştırdım ama bir metin yanıtı oluşmadı "
-                    "(uzun bir işlem sürüyor olabilir). Yaptığım işlemler:\n"
-                    f"{_acts}\n\nDevam etmemi mi istersin, yoksa sonucu mu sorayım?"
-                )
-            else:
-                final_text = "⚠️ agy bu tur için bir yanıt veya değişiklik üretmedi."
-
-        response_parts = [final_text] if final_text else []
-        for f in modified:
-            ext  = f["path"].rsplit(".", 1)[-1] if "." in f["path"] else "cs"
-            lang = "csharp" if ext == "cs" else ext
-            response_parts.append(f"\n```{lang}\n// path: {f['path']}\n{f['code']}\n```")
-
-        yield AgentEvent("response", {"content": "\n".join(response_parts)})
-
-        # Silinen her dosya için ayrı pending_delete event'i
-        for f in deleted:
-            yield AgentEvent("pending_delete", {"path": f["path"]})
-
-        yield _done_event(1)
+            cleanup_dir(attachment_dir)
 
     # ═══════════════════════════════════════════════
     # CURSOR / COPILOT / OPENCODE / KIMI — one-shot CLI
