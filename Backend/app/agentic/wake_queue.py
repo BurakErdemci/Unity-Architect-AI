@@ -88,8 +88,25 @@ def drain(conv_id: int) -> List[str]:
 
 def issue_ticket(conv_id: int) -> None:
     """Mark that the backend has issued one wake frame for this conversation."""
-    if conv_id:
-        _WAKE_TICKETS[conv_id] = monotonic()
+    if not conv_id:
+        return
+    now = monotonic()
+    for ticket_conv, issued_at in list(_WAKE_TICKETS.items()):
+        if now - issued_at >= WAKE_TICKET_TTL:
+            _WAKE_TICKETS.pop(ticket_conv, None)
+    if conv_id not in _WAKE_TICKETS:
+        _WAKE_TICKETS[conv_id] = now
+
+
+def ticket_outstanding(conv_id: int) -> bool:
+    """Return whether an unconsumed, unexpired wake ticket is still held."""
+    issued_at = _WAKE_TICKETS.get(conv_id)
+    if issued_at is None:
+        return False
+    if monotonic() - issued_at >= WAKE_TICKET_TTL:
+        _WAKE_TICKETS.pop(conv_id, None)
+        return False
+    return True
 
 
 def consume_ticket(conv_id: int) -> bool:
@@ -144,7 +161,11 @@ def reset_chain(conv_id: int) -> None:
 
 def reset(conv_id: int) -> None:
     """Drop everything for one conversation (delete/compact/tests)."""
-    _QUEUES.pop(conv_id, None)
+    e = _QUEUES.get(conv_id)
+    if e is not None:
+        # Signal before removal so waiters holding this entry wake and re-evaluate state.
+        e.event.set()
+        _QUEUES.pop(conv_id, None)
     _WAKE_TICKETS.pop(conv_id, None)
 
 
@@ -158,5 +179,8 @@ def release(conv_id: int) -> None:
 
 
 def reset_all() -> None:
+    # Signal every entry before clearing it so existing waiters are never stranded.
+    for e in _QUEUES.values():
+        e.event.set()
     _QUEUES.clear()
     _WAKE_TICKETS.clear()

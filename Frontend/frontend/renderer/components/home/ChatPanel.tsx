@@ -296,17 +296,18 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           }
           let wakeText = msg.content;
           if (msg.role === 'system') {
-            const separator = msg.content.indexOf('|');
-            if (separator >= 0) {
-              const reason = msg.content.slice(0, separator);
-              const detail = msg.content.slice(separator + 1);
+            wakeText = msg.content.split(' · ').map((part) => {
+              const separator = part.indexOf('|');
+              if (separator < 0) return part;
+              const reason = part.slice(0, separator);
+              const detail = part.slice(separator + 1);
               const wakeKey = reason === 'tasks_done_saved'
                 ? 'chat.wakeRow.tasks_done_saved'
                 : reason === 'tasks_done'
                   ? 'chat.wakeRow.tasks_done'
                   : null;
-              if (wakeKey) wakeText = `${t(wakeKey)} — ${detail}`;
-            }
+              return wakeKey ? `${t(wakeKey)} — ${detail}` : part;
+            }).join(' · ');
           }
           return (
           <div key={msg.id} className={`chat-message-enter ${msg.role === 'user' ? 'flex justify-end' : ''}`}>

@@ -298,6 +298,22 @@ class TestAgyStreamSession(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(agy_session.peek_session(11))
         self.assertIsNone(session.active_provider)
 
+    async def test_lock_is_released_when_cleanup_raises_cancelled_error(self):
+        session = agy_session.AgyStreamSession(-12, cwd=".")
+
+        async def fail_start(*_args):
+            raise RuntimeError("original turn failure")
+
+        async def fail_close(*_args, **_kwargs):
+            raise asyncio.CancelledError("cleanup cancellation")
+
+        with patch.object(session, "_start", fail_start), \
+             patch.object(session, "close", fail_close):
+            events = await self.collect(session)
+
+        self.assertEqual(events, [{"type": "error", "message": "original turn failure"}])
+        self.assertFalse(BaseCLIProvider._AGY_LOCK.locked())
+
     async def test_closed_queued_session_cannot_spawn(self):
         session = agy_session.get_session(11)
         await BaseCLIProvider._AGY_LOCK.acquire()

@@ -537,6 +537,11 @@ def create_conversation_router(db, progress_store):
                         # blocker clears, the same notice is reconsidered.
                         await asyncio.sleep(2.0)
                         continue
+                    if wake_queue.ticket_outstanding(conv_id):
+                        # One wake at a time per conversation; keep notices queued
+                        # until the outstanding frame's ticket is consumed or expires.
+                        await asyncio.sleep(2.0)
+                        continue
                     notices = wake_queue.drain(conv_id)
                     if not notices:
                         continue

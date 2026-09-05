@@ -3,6 +3,7 @@ import asyncio
 import json
 import logging
 import os
+from collections.abc import Mapping
 from typing import AsyncGenerator, Dict, Optional
 
 from .agy_provider import AgyProvider
@@ -18,9 +19,16 @@ _USAGE_KEYS = ("input_tokens", "output_tokens", "cache_read_tokens",
 logger = logging.getLogger(__name__)
 
 
+class AgyWorkspaceError(RuntimeError):
+    """The requested workspace was invalid before the live child was touched."""
+
+
 def _redact_tool_payload(value):
-    if isinstance(value, dict):
-        return {key: _redact_tool_payload(item) for key, item in value.items()}
+    if isinstance(value, Mapping):
+        return {
+            (redact_secrets(key) if isinstance(key, str) else key): _redact_tool_payload(item)
+            for key, item in value.items()
+        }
     if isinstance(value, list):
         return [_redact_tool_payload(item) for item in value]
     if isinstance(value, str):
@@ -76,19 +84,47 @@ class AgyStreamSession(SaglayiciSahipligi):
         if process is None:
             return
         pid = getattr(process, "pid", None)
+        reaped = False
+        kill_retry_failed = False
+
+        async def _kill_with_retry() -> bool:
+            try:
+                process.kill()
+                return True
+            except OSError:
+                if process.returncode is not None:
+                    return True
+                await asyncio.sleep(0.05)
+                try:
+                    process.kill()
+                    return True
+                except OSError:
+                    return process.returncode is not None
+
         try:
             if force and process.returncode is None:
-                process.kill()
+                if not await _kill_with_retry():
+                    kill_retry_failed = True
+                    return
             if process.stdin is not None:
                 process.stdin.close()
             try:
-                await asyncio.wait_for(process.wait(), timeout=3)
+                wait_result = await asyncio.wait_for(process.wait(), timeout=3)
+                reaped = process.returncode is not None or wait_result is not None
             except asyncio.TimeoutError:
                 if process.returncode is None:
-                    process.kill()
-                await asyncio.wait_for(process.wait(), timeout=3)
+                    if not await _kill_with_retry():
+                        kill_retry_failed = True
+                        return
+                    try:
+                        wait_result = await asyncio.wait_for(process.wait(), timeout=3)
+                        reaped = process.returncode is not None or wait_result is not None
+                    except asyncio.TimeoutError:
+                        pass
+                else:
+                    reaped = True
         except (ProcessLookupError, BrokenPipeError, ConnectionResetError):
-            pass
+            reaped = process.returncode is not None
         finally:
             if self._stderr_task is not None:
                 try:
@@ -96,11 +132,15 @@ class AgyStreamSession(SaglayiciSahipligi):
                 except (asyncio.TimeoutError, asyncio.CancelledError, OSError):
                     self._stderr_task.cancel()
                 self._stderr_task = None
-            self._active_process = None
-            if self.active_provider is self:
-                self.active_provider = None
-            logger.info("[agy] child stopped pid=%s exit_status=%s",
-                        pid, getattr(process, "returncode", None))
+            if reaped or kill_retry_failed:
+                self._active_process = None
+                if self.active_provider is self:
+                    self.active_provider = None
+            if reaped:
+                logger.info("[agy] child stopped pid=%s exit_status=%s",
+                            pid, getattr(process, "returncode", None))
+            else:
+                logger.warning("[agy] child could not be reaped pid=%s", pid)
 
     async def cancel_active_process(self) -> bool:
         was_live = self.is_live
@@ -119,7 +159,7 @@ class AgyStreamSession(SaglayiciSahipligi):
         if self._kapandi:
             raise RuntimeError("agy session was stopped.")
         if not os.path.isdir(cwd):
-            raise RuntimeError("agy workspace directory does not exist.")
+            raise AgyWorkspaceError("agy workspace directory does not exist.")
         # The process holds ~/.gemini/settings.json state for its life. Model
         # changes require closing and respawning, while retaining the UUID.
         if self._active_process is not None and (
@@ -167,8 +207,23 @@ class AgyStreamSession(SaglayiciSahipligi):
     async def _close_safely(self, *, preserve_resume: bool = True) -> None:
         try:
             await self.close(preserve_resume=preserve_resume)
-        except Exception:
+        except BaseException:
+            # Cleanup must not replace the original turn failure; cancelled cleanup
+            # has nothing useful to add to the error the caller is being told.
             logger.exception("[agy] session cleanup failed conv=%s", self.conversation_id)
+
+    async def _discard_buffered_output(self, process) -> None:
+        """Discard child lines already buffered after a terminal result."""
+        stdout = getattr(process, "stdout", None)
+        if stdout is None:
+            return
+        await asyncio.sleep(0)
+        while getattr(stdout, "_buffer", None):
+            line = await stdout.readline()
+            if not line:
+                break
+            logger.debug("[agy] ignored post-result child output conv=%s preview=%r",
+                         self.conversation_id, line[:160])
 
     def _turn_usage(self, result: dict, elapsed: float) -> dict:
         # The captured second result contains cumulative process usage. Subtract
@@ -185,6 +240,7 @@ class AgyStreamSession(SaglayiciSahipligi):
         # Global serialization covers the complete turn, not the process life.
         # A queued turn rechecks the closed flag before spawning or writing.
         completed = False
+        preserve_live_process = False
         lock_acquired = False
         lock_wait_logged = False
         loop = asyncio.get_running_loop()
@@ -236,19 +292,31 @@ class AgyStreamSession(SaglayiciSahipligi):
                     if event_type == "init":
                         self._remember_id(event.get("conversation_id"))
                     elif event_type == "step_update":
-                        step = event.get("step_update") or {}
+                        step = event.get("step_update")
+                        if not isinstance(step, Mapping):
+                            logger.debug("[agy] ignored non-object child output conv=%s preview=%s",
+                                         self.conversation_id, repr(event)[:160])
+                            continue
                         if (step.get("conversation_id") and self.session_id
                                 and step["conversation_id"] != self.session_id):
                             continue
                         self._remember_id(step.get("conversation_id"))
                         if step.get("step_type") == "agent_response":
-                            if step.get("text_delta"):
-                                yield {"type": "text", "content": step["text_delta"]}
+                            text_delta = step.get("text_delta")
+                            if not isinstance(text_delta, str):
+                                logger.debug("[agy] ignored non-object child output conv=%s preview=%s",
+                                             self.conversation_id, repr(event)[:160])
+                                continue
+                            if text_delta:
+                                yield {"type": "text", "content": text_delta}
                         elif step.get("step_type") == "tool":
                             info = step.get("tool_info") or {}
                             if not info.get("name"):
                                 continue
-                            key = (step.get("step_index"), info["name"])
+                            tool_name = info["name"]
+                            emitted_tool_name = (redact_secrets(tool_name)
+                                                  if isinstance(tool_name, str) else tool_name)
+                            key = (step.get("step_index"), tool_name)
                             if key not in tool_calls:
                                 tool_calls.add(key)
                                 parameters = info.get("parameters") or {}
@@ -256,9 +324,9 @@ class AgyStreamSession(SaglayiciSahipligi):
                                     try:
                                         parameters = json.loads(parameters)
                                     except ValueError:
-                                        parameters = {"summary": parameters}
+                                         parameters = {"summary": parameters}
                                 parameters = _redact_tool_payload(parameters)
-                                yield {"type": "tool_call", "tool": info["name"],
+                                yield {"type": "tool_call", "tool": emitted_tool_name,
                                        "arguments": parameters, "iteration": 1}
                             if key not in tool_results and (
                                 step.get("state") in ("DONE", "ERROR")
@@ -268,11 +336,16 @@ class AgyStreamSession(SaglayiciSahipligi):
                                 output = info.get("error") or info.get("output") or ""
                                 if not isinstance(output, str):
                                     output = json.dumps(output, ensure_ascii=False)
-                                yield {"type": "tool_result", "tool": info["name"],
+                                yield {"type": "tool_result", "tool": emitted_tool_name,
                                        "success": not bool(info.get("error")) and step.get("state") != "ERROR",
                                        "summary": redact_secrets(output)}
                     elif event_type == "result":
-                        result = event.get("result") or {}
+                        result = event.get("result")
+                        if (not isinstance(result, Mapping)
+                                or not isinstance(result.get("status"), str)):
+                            logger.debug("[agy] ignored non-object child output conv=%s preview=%s",
+                                         self.conversation_id, repr(event)[:160])
+                            continue
                         if (result.get("conversation_id") and self.session_id
                                 and result["conversation_id"] != self.session_id):
                             continue
@@ -286,6 +359,7 @@ class AgyStreamSession(SaglayiciSahipligi):
                             raise RuntimeError(str(result.get("error") or result.get("response")
                                                    or f"agy result status: {result.get('status')}"))
                         completed = True
+                        await self._discard_buffered_output(process)
                         break
                     elif event_type == "error":
                         raise RuntimeError(str(event.get("error") or event.get("message")
@@ -299,17 +373,22 @@ class AgyStreamSession(SaglayiciSahipligi):
                 await self._close_safely(preserve_resume=True)
             raise
         except Exception as exc:
-            await self._close_safely(preserve_resume=True)
+            if isinstance(exc, AgyWorkspaceError):
+                preserve_live_process = True
+            else:
+                await self._close_safely(preserve_resume=True)
             message = (f"agy turn timed out after {BaseCLIProvider._AGY_MAX_TOTAL} seconds."
                        if isinstance(exc, asyncio.TimeoutError) else str(exc))
             tail = self._stderr_tail.decode("utf-8", errors="replace").strip()
             yield {"type": "error", "message": redact_secrets(
                 message + (f"\n{tail}" if tail else ""))}
         finally:
-            if not completed and not self._kapandi:
-                await self._close_safely(preserve_resume=True)
             if lock_acquired:
+                # Release before awaited cleanup; this replaced `async with BaseCLIProvider._AGY_LOCK`
+                # so cancelled cleanup cannot strand the shared turn lock.
                 BaseCLIProvider._AGY_LOCK.release()
+            if not preserve_live_process and not completed and not self._kapandi:
+                await self._close_safely(preserve_resume=True)
 
 
 # Keep the public ownership type used by existing stop/lifecycle callers.

@@ -111,6 +111,17 @@ def test_wait_wakes_up_on_enqueue():
     asyncio.run(run_it())
 
 
+def test_reset_wakes_a_waiter_before_removing_its_queue_entry():
+    async def run_it():
+        waiter = asyncio.create_task(wake_queue.wait(801))
+        await asyncio.sleep(0)
+        wake_queue.reset(801)
+        wake_queue.enqueue(801, "after reset")
+        await asyncio.wait_for(waiter, timeout=1.0)
+
+    asyncio.run(run_it())
+
+
 # ── /chat-stream: origin contract ──────────────────────────────────────────
 
 def _db():

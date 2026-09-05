@@ -120,6 +120,16 @@ describe('AUTO-WAKE row', () => {
     expect(container.querySelector('.bg-blue-500\\/10')).toBeNull()
   })
 
+  it('localizes every reason code in a joined system message', () => {
+    const { container } = renderPanel([{
+      ...SISTEM_MESAJI,
+      id: 11,
+      content: 'tasks_done|build · tasks_done_saved|saved',
+    }])
+    expect(container.textContent).not.toContain('tasks_done')
+    expect(container.textContent).not.toContain('tasks_done_saved')
+  })
+
   it('a real user message is still in a bubble', () => {
     const { container } = renderPanel([{ ...SISTEM_MESAJI, id: 10, role: 'user', content: 'selam' }])
     expect(container.querySelector('.bg-blue-500\\/10')).not.toBeNull()

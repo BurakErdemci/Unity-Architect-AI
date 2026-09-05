@@ -41,6 +41,7 @@ from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Set
 
 from agentic.command_gates import (
     APPROVAL_GATES, APPROVAL_RESULTS,
+    GATE_OWNERS,
     QUESTION_GATES, QUESTION_RESULTS,
 )
 # Onay bekleme süresi tek kaynaktan. `agentic` paketi zaten yukarıdaki satırla
@@ -1021,6 +1022,7 @@ class ClaudeSDKSession:
         if tool_name == "AskUserQuestion":
             ev = asyncio.Event()
             QUESTION_GATES[gate_id] = ev   # gate'i emit'ten ÖNCE kaydet (yarış önleme)
+            GATE_OWNERS[gate_id] = self.conversation_id
             self._active_gate_ids.add(gate_id)
             if out_q is not None:
                 await out_q.put({"type": "question_needed", "gate_id": gate_id,
@@ -1047,6 +1049,7 @@ class ClaudeSDKSession:
         # Normal araç → onay kartı (adım modu)
         ev = asyncio.Event()
         APPROVAL_GATES[gate_id] = ev       # gate'i emit'ten ÖNCE kaydet
+        GATE_OWNERS[gate_id] = self.conversation_id
         self._active_gate_ids.add(gate_id)
         if out_q is not None:
             await out_q.put({
@@ -1073,6 +1076,7 @@ class ClaudeSDKSession:
             return None
         finally:
             gates.pop(gate_id, None)
+            GATE_OWNERS.pop(gate_id, None)
 
     # ── İptal (Durdur) ───────────────────────────────────────────────────
     async def cancel_turn(self):
