@@ -3,7 +3,7 @@ import asyncio
 import json
 import logging
 import os
-from collections.abc import Mapping
+from collections.abc import Hashable, Mapping
 from typing import AsyncGenerator, Dict, Optional
 
 from .agy_provider import AgyProvider
@@ -16,6 +16,8 @@ _SESSIONS: Dict[int, "AgyStreamSession"] = {}
 _RESUME_IDS: Dict[tuple, str] = {}
 _USAGE_KEYS = ("input_tokens", "output_tokens", "cache_read_tokens",
                "thinking_tokens", "total_tokens")
+_DRAIN_MAX_LINES = 200
+_DRAIN_MAX_SECONDS = 0.5
 logger = logging.getLogger(__name__)
 
 
@@ -23,17 +25,31 @@ class AgyWorkspaceError(RuntimeError):
     """The requested workspace was invalid before the live child was touched."""
 
 
-def _redact_tool_payload(value):
-    if isinstance(value, Mapping):
-        return {
-            (redact_secrets(key) if isinstance(key, str) else key): _redact_tool_payload(item)
-            for key, item in value.items()
-        }
-    if isinstance(value, list):
-        return [_redact_tool_payload(item) for item in value]
-    if isinstance(value, str):
-        return redact_secrets(value)
-    return value
+# Observed agy tool payloads nest three or four levels; 40 is far above that and
+# far below CPython's 1000-frame limit, so a hostile 2000-level child payload is
+# truncated here instead of raising RecursionError and killing the turn.
+_REDACTION_MAX_DEPTH = 40
+_REDACTION_TRUNCATED = "[redacted: nesting too deep]"
+_REDACTION_FAILED = "[redacted]"
+
+
+def _redact_event(value, _depth: int = 0):
+    """The single egress point: everything stream() yields is redacted here."""
+    try:
+        if _depth > _REDACTION_MAX_DEPTH:
+            return _REDACTION_TRUNCATED
+        if isinstance(value, str):
+            return redact_secrets(value)
+        if isinstance(value, Mapping):
+            return {_redact_event(key, _depth + 1): _redact_event(item, _depth + 1)
+                    for key, item in value.items()}
+        if isinstance(value, list):
+            return [_redact_event(item, _depth + 1) for item in value]
+        return value
+    except Exception:
+        # A redactor that raises would leak by aborting the turn, not by masking.
+        logger.debug("[agy] event redaction fell back to a placeholder", exc_info=True)
+        return _REDACTION_FAILED
 
 
 class AgyStreamSession(SaglayiciSahipligi):
@@ -207,10 +223,27 @@ class AgyStreamSession(SaglayiciSahipligi):
     async def _close_safely(self, *, preserve_resume: bool = True) -> None:
         try:
             await self.close(preserve_resume=preserve_resume)
-        except BaseException:
-            # Cleanup must not replace the original turn failure; cancelled cleanup
-            # has nothing useful to add to the error the caller is being told.
+        except asyncio.CancelledError:
+            # cancelling() is non-zero only when THIS task was cancelled, which is
+            # the caller's cancellation and must reach the caller; a CancelledError
+            # raised inside cleanup itself is just a failed cleanup.
+            task = asyncio.current_task()
+            if task is not None and task.cancelling():
+                logger.info("[agy] session cleanup cancelled with its caller conv=%s",
+                            self.conversation_id)
+                raise
             logger.exception("[agy] session cleanup failed conv=%s", self.conversation_id)
+        except Exception:
+            # Cleanup must not replace the original turn failure.
+            logger.exception("[agy] session cleanup failed conv=%s", self.conversation_id)
+
+    def _child_field_ok(self, name: str, value, kinds) -> bool:
+        """Gate one child-supplied field; log once at debug and let the caller skip."""
+        if isinstance(value, kinds):
+            return True
+        logger.debug("[agy] ignored malformed child %s conv=%s preview=%s",
+                     name, self.conversation_id, repr(value)[:160])
+        return False
 
     async def _discard_buffered_output(self, process) -> None:
         """Discard child lines already buffered after a terminal result."""
@@ -218,17 +251,26 @@ class AgyStreamSession(SaglayiciSahipligi):
         if stdout is None:
             return
         await asyncio.sleep(0)
-        while getattr(stdout, "_buffer", None):
+        # A child that keeps writing would hold the finished turn here forever, so
+        # the drain is best effort: both bounds are far above the handful of lines
+        # a real post-result buffer holds.
+        deadline = asyncio.get_running_loop().time() + _DRAIN_MAX_SECONDS
+        for _ in range(_DRAIN_MAX_LINES):
+            if not getattr(stdout, "_buffer", None):
+                return
             line = await stdout.readline()
             if not line:
-                break
+                return
             logger.debug("[agy] ignored post-result child output conv=%s preview=%r",
                          self.conversation_id, line[:160])
+            if asyncio.get_running_loop().time() >= deadline:
+                break
+        logger.info("[agy] post-result drain bound reached conv=%s", self.conversation_id)
 
-    def _turn_usage(self, result: dict, elapsed: float) -> dict:
+    def _turn_usage(self, usage: Mapping, elapsed: float) -> dict:
         # The captured second result contains cumulative process usage. Subtract
         # the preceding result, resetting the baseline on each process start.
-        totals = {key: (result.get("usage") or {}).get(key) or 0 for key in _USAGE_KEYS}
+        totals = {key: usage.get(key) or 0 for key in _USAGE_KEYS}
         usage = {key: max(0, value - self._usage_totals.get(key, 0))
                  for key, value in totals.items()}
         self._usage_totals = totals
@@ -263,7 +305,7 @@ class AgyStreamSession(SaglayiciSahipligi):
                     logger.info("[agy] turn lock wait exceeded five seconds conv=%s waited=%.1fs",
                                 self.conversation_id, lock_waited)
                 if self._kapandi:
-                    yield {"type": "error", "message": "agy session was stopped."}
+                    yield _redact_event({"type": "error", "message": "agy session was stopped."})
                     return
                 started = loop.time()
                 instructions = await self._start(model, os.path.abspath(cwd or self.cwd))
@@ -308,15 +350,21 @@ class AgyStreamSession(SaglayiciSahipligi):
                                              self.conversation_id, repr(event)[:160])
                                 continue
                             if text_delta:
-                                yield {"type": "text", "content": text_delta}
+                                yield _redact_event({"type": "text", "content": text_delta})
                         elif step.get("step_type") == "tool":
                             info = step.get("tool_info") or {}
+                            if not self._child_field_ok("tool_info", info, Mapping):
+                                continue
                             if not info.get("name"):
                                 continue
                             tool_name = info["name"]
-                            emitted_tool_name = (redact_secrets(tool_name)
-                                                  if isinstance(tool_name, str) else tool_name)
-                            key = (step.get("step_index"), tool_name)
+                            if not self._child_field_ok("tool name", tool_name, str):
+                                continue
+                            step_index = step.get("step_index")
+                            # step_index becomes half of a set key below.
+                            if not self._child_field_ok("step_index", step_index, Hashable):
+                                continue
+                            key = (step_index, tool_name)
                             if key not in tool_calls:
                                 tool_calls.add(key)
                                 parameters = info.get("parameters") or {}
@@ -325,9 +373,8 @@ class AgyStreamSession(SaglayiciSahipligi):
                                         parameters = json.loads(parameters)
                                     except ValueError:
                                          parameters = {"summary": parameters}
-                                parameters = _redact_tool_payload(parameters)
-                                yield {"type": "tool_call", "tool": emitted_tool_name,
-                                       "arguments": parameters, "iteration": 1}
+                                yield _redact_event({"type": "tool_call", "tool": tool_name,
+                                                     "arguments": parameters, "iteration": 1})
                             if key not in tool_results and (
                                 step.get("state") in ("DONE", "ERROR")
                                 or info.get("output") is not None or info.get("error")
@@ -336,9 +383,10 @@ class AgyStreamSession(SaglayiciSahipligi):
                                 output = info.get("error") or info.get("output") or ""
                                 if not isinstance(output, str):
                                     output = json.dumps(output, ensure_ascii=False)
-                                yield {"type": "tool_result", "tool": emitted_tool_name,
-                                       "success": not bool(info.get("error")) and step.get("state") != "ERROR",
-                                       "summary": redact_secrets(output)}
+                                yield _redact_event({
+                                    "type": "tool_result", "tool": tool_name,
+                                    "success": not bool(info.get("error")) and step.get("state") != "ERROR",
+                                    "summary": output})
                     elif event_type == "result":
                         result = event.get("result")
                         if (not isinstance(result, Mapping)
@@ -349,12 +397,20 @@ class AgyStreamSession(SaglayiciSahipligi):
                         if (result.get("conversation_id") and self.session_id
                                 and result["conversation_id"] != self.session_id):
                             continue
+                        # A malformed num_turns/usage drops that field, not the whole
+                        # result: the turn's only terminal event would otherwise be
+                        # dropped and the conversation would hang until the timeout.
                         num_turns = result.get("num_turns", self._num_turns + 1)
+                        if not self._child_field_ok("num_turns", num_turns, int):
+                            num_turns = self._num_turns + 1
                         if num_turns <= self._num_turns:
                             continue
                         self._remember_id(result.get("conversation_id"))
                         self._num_turns = num_turns
-                        usage = self._turn_usage(result, loop.time() - started)
+                        raw_usage = result.get("usage") or {}
+                        if not self._child_field_ok("usage", raw_usage, Mapping):
+                            raw_usage = {}
+                        usage = self._turn_usage(raw_usage, loop.time() - started)
                         if result.get("status") != "SUCCESS":
                             raise RuntimeError(str(result.get("error") or result.get("response")
                                                    or f"agy result status: {result.get('status')}"))
@@ -365,9 +421,10 @@ class AgyStreamSession(SaglayiciSahipligi):
                         raise RuntimeError(str(event.get("error") or event.get("message")
                                                or "agy reported an error."))
                 # The turn timer ends at result, before delivering terminal events.
-            yield usage
-            yield {"type": "response", "content": result.get("response") or ""}
-            yield {"type": "done", "iterations": 1, "session_id": self.session_id}
+            yield _redact_event(usage)
+            yield _redact_event({"type": "response", "content": result.get("response") or ""})
+            yield _redact_event({"type": "done", "iterations": 1,
+                                 "session_id": self.session_id})
         except (asyncio.CancelledError, GeneratorExit):
             if not completed:
                 await self._close_safely(preserve_resume=True)
@@ -380,15 +437,18 @@ class AgyStreamSession(SaglayiciSahipligi):
             message = (f"agy turn timed out after {BaseCLIProvider._AGY_MAX_TOTAL} seconds."
                        if isinstance(exc, asyncio.TimeoutError) else str(exc))
             tail = self._stderr_tail.decode("utf-8", errors="replace").strip()
-            yield {"type": "error", "message": redact_secrets(
-                message + (f"\n{tail}" if tail else ""))}
+            yield _redact_event({"type": "error",
+                                 "message": message + (f"\n{tail}" if tail else "")})
         finally:
-            if lock_acquired:
-                # Release before awaited cleanup; this replaced `async with BaseCLIProvider._AGY_LOCK`
-                # so cancelled cleanup cannot strand the shared turn lock.
-                BaseCLIProvider._AGY_LOCK.release()
-            if not preserve_live_process and not completed and not self._kapandi:
-                await self._close_safely(preserve_resume=True)
+            # Lock ordering: teardown runs inside, the release is the outer finally.
+            # Releasing first let a queued turn spawn into the session this turn was
+            # still closing; skipping the outer finally would strand the lock.
+            try:
+                if not preserve_live_process and not completed and not self._kapandi:
+                    await self._close_safely(preserve_resume=True)
+            finally:
+                if lock_acquired:
+                    BaseCLIProvider._AGY_LOCK.release()
 
 
 # Keep the public ownership type used by existing stop/lifecycle callers.

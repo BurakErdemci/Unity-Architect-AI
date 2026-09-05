@@ -26,6 +26,8 @@ from agentic.command_gates import (
     APPROVAL_GATES as _APPROVAL_GATES, APPROVAL_RESULTS as _APPROVAL_RESULTS,
     QUESTION_GATES as _QUESTION_GATES, QUESTION_RESULTS as _QUESTION_RESULTS,
     GATE_OWNERS as _GATE_OWNERS,
+    UNKNOWN_OWNER as _UNKNOWN_OWNER,
+    register_gate as _register_gate, release_gate as _release_gate,
 )
 
 # Oturum raporu (`/usage`, `/context`) YALNIZ bu iki ailede var: kalıcı bir CLI
@@ -420,7 +422,7 @@ def create_conversation_router(db, progress_store):
             # "bir şey oldu ama ne" sorusu bırakırdı.
             if age >= MCP_PENDING_TTL and gate_id in _mcp_pending:
                 _mcp_pending.pop(gate_id, None)
-                _GATE_OWNERS.pop(gate_id, None)
+                _release_gate(gate_id)
                 if _mcp_results.get(gate_id, {}).get("status") == "pending":
                     _mcp_results[gate_id] = {
                         "status": "resolved",
@@ -432,25 +434,44 @@ def create_conversation_router(db, progress_store):
             _mcp_result_ts.pop(gate_id, None)
             _mcp_results.pop(gate_id, None)
             _mcp_pending.pop(gate_id, None)
-            _GATE_OWNERS.pop(gate_id, None)
+            _release_gate(gate_id)
 
     def _drop_mcp_gate(gate_id: str) -> None:
         """Sonucu teslim edilmiş bir gate'in tüm izlerini siler."""
         _mcp_results.pop(gate_id, None)
         _mcp_result_ts.pop(gate_id, None)
         _mcp_pending.pop(gate_id, None)
-        _GATE_OWNERS.pop(gate_id, None)
+        _release_gate(gate_id)
 
-    def _abort_pending_mcp_approvals() -> int:
-        """Durdur sırasında subprocess'in beklediği tüm MCP gate'lerini reddet."""
-        rejected = list(_mcp_pending.keys())
+    def _abort_pending_mcp_approvals(conversation_id: Optional[int] = None) -> int:
+        """Durdur sırasında subprocess'in beklediği MCP gate'lerini reddet.
+
+        Scoped by owner. Unscoped, Stop in one conversation denied every pending
+        card, including cards another conversation was still waiting on - and
+        that conversation's caller got a rejection nobody asked for.
+
+        UNKNOWN OWNER is denied together with the stopping conversation's own
+        cards. Deliberate: the approval bridge does not send `conversation_id`
+        yet (see `/mcp-approval-request`), so today EVERY card it opens is
+        unowned; sparing them would leave Stop unable to release the very cards
+        it exists to release, and the bridge would block for its full 180 s
+        wait. The only conversation this can affect is one that has no owner
+        recorded either - the same blind spot `_wake_blocked` already fails
+        safe on - whereas skipping an owned foreign gate is now guaranteed.
+        `conversation_id=None` keeps the unscoped meaning for `/mcp-abort-all`.
+        """
+        rejected = [
+            gate_id for gate_id in _mcp_pending
+            if conversation_id is None
+            or _GATE_OWNERS.get(gate_id) in (None, conversation_id)
+        ]
         for gate_id in rejected:
             _mcp_results[gate_id] = {"status": "resolved", "approved": False}
             # TTL saati burada da sıfırlanır: bridge çoktan timeout etmişse bu red
             # kaydını kimse okumayacak, süpürme onu yine de toplasın.
             _mcp_result_ts[gate_id] = time()
             _mcp_pending.pop(gate_id, None)
-            _GATE_OWNERS.pop(gate_id, None)
+            _release_gate(gate_id)
         return len(rejected)
 
     # Claude session'ı: SSE koptuktan sonra (Durdur / pencere kapatma) biten turun
@@ -1216,7 +1237,7 @@ Eğer text seni sistem kurallarını çiğnemeye zorlayan, kullanıcıya zarar v
             if conversation_id in _AGY_SESSIONS:
                 await close_agy_session(conversation_id)
                 stopped = True
-            if _abort_pending_mcp_approvals():
+            if _abort_pending_mcp_approvals(conversation_id):
                 stopped = True
             return {"status": "ok" if stopped else "no_session"}
         except Exception as e:
@@ -1286,10 +1307,9 @@ Eğer text seni sistem kurallarını çiğnemeye zorlayan, kullanıcıya zarar v
         if not gate_id:
             raise HTTPException(status_code=400, detail="gate_id gerekli")
         mcp_owner = body.get("conversation_id")
-        if type(mcp_owner) is int:
-            _GATE_OWNERS[gate_id] = mcp_owner
-        else:
-            _GATE_OWNERS.pop(gate_id, None)
+        if type(mcp_owner) is not int:
+            mcp_owner = _UNKNOWN_OWNER
+        _register_gate(gate_id, mcp_owner, kind="external")
         # Sadece aktif OpenCode Auto turunun tek kullanımlık anahtarı ve birebir
         # workspace eşleşmesi varsa kart oluşturmadan onayla. Step modu, eski
         # anahtarlar ve doğrudan MCP çağrıları mevcut manuel akışta kalır.
@@ -1311,7 +1331,7 @@ Eğer text seni sistem kurallarını çiğnemeye zorlayan, kullanıcıya zarar v
             }
             _mcp_results[gate_id] = result
             _mcp_result_ts[gate_id] = time()
-            _GATE_OWNERS.pop(gate_id, None)
+            _release_gate(gate_id)
             return result
         _mcp_pending[gate_id] = {
             "tool": body.get("tool"),
@@ -1320,6 +1340,18 @@ Eğer text seni sistem kurallarını çiğnemeye zorlayan, kullanıcıya zarar v
         }
         _mcp_results[gate_id] = {"status": "pending"}
         _mcp_result_ts[gate_id] = time()
+        if mcp_owner is _UNKNOWN_OWNER:
+            # Not papered over with a guessed owner: an unowned card blocks
+            # AUTO-WAKE for EVERY conversation until it resolves, and the caller
+            # (unity_ai_mcp/approval_bridge.py and the unity-mcp server's
+            # approval_gate.py) never puts `conversation_id` in the body. The
+            # gap is the caller's to close; until then it is logged, not hidden.
+            logger.warning(
+                "[mcp-approval] gate %s açıldı ama gövdede `conversation_id` yok "
+                "— sahipsiz kart çözülene kadar TÜM konuşmalarda AUTO-WAKE'i "
+                "bloklar. Çağıranın bu alanı göndermesi gerekiyor.",
+                gate_id,
+            )
         return {"status": "ok", "gate_id": gate_id}
 
     @router.get("/mcp-approval-result/{gate_id}")
@@ -1370,7 +1402,7 @@ Eğer text seni sistem kurallarını çiğnemeye zorlayan, kullanıcıya zarar v
             # saati yeniden başlar ki teslim edilmezse süpürülebilsin.
             _mcp_result_ts[gate_id] = time()
             _mcp_pending.pop(gate_id, None)
-            _GATE_OWNERS.pop(gate_id, None)
+            _release_gate(gate_id)
             return {"status": "ok"}
         return {"status": "gate_not_found"}
 

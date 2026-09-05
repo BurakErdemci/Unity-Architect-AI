@@ -43,6 +43,7 @@ from agentic.command_gates import (
     APPROVAL_GATES, APPROVAL_RESULTS,
     GATE_OWNERS,
     QUESTION_GATES, QUESTION_RESULTS,
+    register_gate, release_gate,
 )
 # Onay bekleme süresi tek kaynaktan. `agentic` paketi zaten yukarıdaki satırla
 # yükleniyor (yeni bağımlılık değil); ters yön (agent_runner → providers) ise
@@ -960,6 +961,13 @@ class ClaudeSDKSession:
         # Önce reader'ı durdur (transport kapanırken yarım okuma gürültüsü olmasın),
         # sonra client'ı kapat. Reader'ın KENDİ içinden çağrılırsa kendini iptal etmez.
         self._cancel_grace()
+        # Closing the session ends every card it opened. Without this the gate
+        # and its owner outlived the session: the waiter sat out the full
+        # approval timeout, and the stale owner entry kept blocking AUTO-WAKE
+        # for the conversation it named. wake=True releases the waiter now.
+        for gid in list(self._active_gate_ids):
+            release_gate(gid, wake=True)
+        self._active_gate_ids.clear()
         rt = self._reader_task
         self._reader_task = None
         if rt is not None and rt is not asyncio.current_task():
@@ -1020,9 +1028,8 @@ class ClaudeSDKSession:
 
         # AskUserQuestion → A/B/C seçim kartı
         if tool_name == "AskUserQuestion":
-            ev = asyncio.Event()
-            QUESTION_GATES[gate_id] = ev   # gate'i emit'ten ÖNCE kaydet (yarış önleme)
-            GATE_OWNERS[gate_id] = self.conversation_id
+            # gate'i emit'ten ÖNCE kaydet (yarış önleme)
+            ev = register_gate(gate_id, self.conversation_id, kind="question")
             self._active_gate_ids.add(gate_id)
             if out_q is not None:
                 await out_q.put({"type": "question_needed", "gate_id": gate_id,
@@ -1047,9 +1054,8 @@ class ClaudeSDKSession:
             return PermissionResultAllow(updated_input=input_data)
 
         # Normal araç → onay kartı (adım modu)
-        ev = asyncio.Event()
-        APPROVAL_GATES[gate_id] = ev       # gate'i emit'ten ÖNCE kaydet
-        GATE_OWNERS[gate_id] = self.conversation_id
+        # gate'i emit'ten ÖNCE kaydet
+        ev = register_gate(gate_id, self.conversation_id)
         self._active_gate_ids.add(gate_id)
         if out_q is not None:
             await out_q.put({
@@ -1075,8 +1081,7 @@ class ClaudeSDKSession:
             logger.warning(f"[ClaudeSDKSession:{self.conversation_id}] {label} zaman aşımı gate={gate_id}")
             return None
         finally:
-            gates.pop(gate_id, None)
-            GATE_OWNERS.pop(gate_id, None)
+            release_gate(gate_id)
 
     # ── İptal (Durdur) ───────────────────────────────────────────────────
     async def cancel_turn(self):

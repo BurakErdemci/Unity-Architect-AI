@@ -314,6 +314,69 @@ class TestAgyStreamSession(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events, [{"type": "error", "message": "original turn failure"}])
         self.assertFalse(BaseCLIProvider._AGY_LOCK.locked())
 
+    async def test_result_response_is_redacted_before_it_leaves_the_stream(self):
+        result = copy.deepcopy(TURNS[0][-1])
+        result["result"]["response"] = "child said X-API-Key: response-secret-abcdefghijkl"
+        self.plans = [{"turns": [[TURNS[0][0], result]]}]
+        events = await self.collect()
+        response = next(event for event in events if event["type"] == "response")
+        self.assertNotIn("response-secret", response["content"])
+        self.assertIn("<REDACTED>", response["content"])
+        self.assertEqual(events[-1]["type"], "done")
+
+    async def test_turn_lock_is_held_through_teardown_and_always_released(self):
+        session = agy_session.AgyStreamSession(-13, cwd=".")
+        cleanup_started = asyncio.Event()
+        allow_cleanup = asyncio.Event()
+
+        async def fail_start(*_args):
+            raise RuntimeError("original turn failure")
+
+        async def slow_close(*_args, **_kwargs):
+            cleanup_started.set()
+            await allow_cleanup.wait()
+
+        with patch.object(session, "_start", fail_start), \
+             patch.object(session, "close", slow_close):
+            task = asyncio.create_task(self.collect(session))
+            await asyncio.wait_for(cleanup_started.wait(), timeout=1)
+            queued = asyncio.create_task(self.collect(agy_session.get_session(11)))
+            await asyncio.sleep(0)
+            self.assertTrue(BaseCLIProvider._AGY_LOCK.locked())
+            self.assertEqual(self.spawns, [])
+            allow_cleanup.set()
+            events = await asyncio.wait_for(task, timeout=1)
+            queued_events = await asyncio.wait_for(queued, timeout=1)
+
+        self.assertEqual(events, [{"type": "error", "message": "original turn failure"}])
+        self.assertEqual(queued_events[-1]["type"], "done")
+        self.assertFalse(BaseCLIProvider._AGY_LOCK.locked())
+
+    async def test_caller_cancellation_during_cleanup_propagates(self):
+        session = agy_session.AgyStreamSession(-14, cwd=".")
+        cleanup_started = asyncio.Event()
+        closes = 0
+
+        async def fail_start(*_args):
+            raise RuntimeError("original turn failure")
+
+        async def blocking_close(*_args, **_kwargs):
+            nonlocal closes
+            closes += 1
+            if closes == 1:
+                cleanup_started.set()
+                await asyncio.Event().wait()
+
+        with patch.object(session, "_start", fail_start), \
+             patch.object(session, "close", blocking_close):
+            task = asyncio.create_task(self.collect(session))
+            await asyncio.wait_for(cleanup_started.wait(), timeout=1)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await asyncio.wait_for(task, timeout=1)
+
+        self.assertFalse(BaseCLIProvider._AGY_LOCK.locked())
+
     async def test_closed_queued_session_cannot_spawn(self):
         session = agy_session.get_session(11)
         await BaseCLIProvider._AGY_LOCK.acquire()

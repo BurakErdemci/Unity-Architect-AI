@@ -323,3 +323,89 @@ def test_a_gate_owned_by_ANOTHER_conversation_does_not_block_this_wake():
         GATE_OWNERS.pop(foreign, None)
     assert '"type": "wake"' in govde
     assert wake_queue.pending(2) == 0
+
+
+# ── Gate ownership teardown ──────────────────────────────────────────────────
+# Both tests below guard the same class as the tests above: a gate that outlives
+# the thing that created it keeps blocking AUTO-WAKE, and an unscoped teardown
+# resolves cards that belong to somebody else.
+
+def _routes(db):
+    router = create_conversation_router(db, MagicMock())
+    return {getattr(r, "path", ""): r for r in router.routes}
+
+
+def test_closing_a_claude_session_releases_its_pending_gate():
+    """`close()` used to cancel the reader and leave the card behind.
+
+    The gate and its owner survived the session: the waiter sat out the full
+    approval timeout, and the stale owner entry kept blocking wake for the
+    conversation it named.
+    """
+    from agentic.command_gates import APPROVAL_GATES, GATE_OWNERS
+    from providers.claude_sdk_session import ClaudeSDKSession
+
+    kapi = {}
+
+    async def run_it():
+        session = ClaudeSDKSession(
+            conversation_id=4242, cwd=os.getcwd(),
+            auto_approve=False, approval_timeout=30.0,
+        )
+        session._out_q = asyncio.Queue()
+        bekleyen = asyncio.create_task(
+            session._can_use_tool("Bash", {"command": "echo probe"}, None)
+        )
+        olay = await asyncio.wait_for(session._out_q.get(), timeout=1.0)
+        kapi["id"] = olay["gate_id"]
+        assert GATE_OWNERS[kapi["id"]] == 4242
+        await session.close()
+        # Must return NOW rather than at approval_timeout: close wakes the waiter.
+        karar = await asyncio.wait_for(bekleyen, timeout=1.0)
+        return (kapi["id"] in APPROVAL_GATES, kapi["id"] in GATE_OWNERS,
+                type(karar).__name__)
+
+    try:
+        gate_kaldi, sahip_kaldi, karar_tipi = asyncio.run(run_it())
+    finally:
+        APPROVAL_GATES.pop(kapi.get("id"), None)
+        GATE_OWNERS.pop(kapi.get("id"), None)
+
+    assert not gate_kaldi
+    assert not sahip_kaldi
+    assert karar_tipi == "PermissionResultDeny"
+
+
+def test_stop_denies_only_the_stopping_conversations_mcp_gates():
+    """Stop in one conversation must not resolve another conversation's card."""
+    from agentic.command_gates import GATE_OWNERS
+
+    kapilar = ("stop-own", "stop-foreign", "stop-unowned")
+    routes = _routes(_db())
+    istek = routes["/mcp-approval-request"]
+    durdur = routes["/chat-stop/{conversation_id}"]
+    sonuc_route = routes["/mcp-approval-result/{gate_id}"]
+
+    async def run_it():
+        for gate_id, conv in zip(kapilar, (1, 2, None)):
+            govde = {"gate_id": gate_id, "tool": "bash",
+                     "params": {"command": "echo x"}, "workspace_path": os.getcwd()}
+            if conv is not None:
+                govde["conversation_id"] = conv
+            assert (await istek.endpoint(body=govde, x_session_token="t"))["status"] == "ok"
+        assert (await durdur.endpoint(conversation_id=1, x_session_token="t"))["status"] == "ok"
+        return {gid: await sonuc_route.endpoint(gate_id=gid, x_session_token="t")
+                for gid in kapilar}
+
+    try:
+        sonuc = asyncio.run(run_it())
+    finally:
+        for gid in kapilar:
+            GATE_OWNERS.pop(gid, None)
+
+    assert sonuc["stop-own"] == {"status": "resolved", "approved": False}
+    assert sonuc["stop-foreign"] == {"status": "pending"}
+    # Unknown owner is denied WITH the stopping conversation, on purpose: the
+    # approval bridge sends no `conversation_id` today, so sparing unowned cards
+    # would leave Stop unable to release the ones it exists to release.
+    assert sonuc["stop-unowned"] == {"status": "resolved", "approved": False}

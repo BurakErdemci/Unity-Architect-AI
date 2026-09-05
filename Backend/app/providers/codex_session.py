@@ -32,6 +32,7 @@ from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, List, Optional, Set
 
 from agentic.command_gates import APPROVAL_GATES, APPROVAL_RESULTS, APPROVAL_TIMEOUT_S
+from agentic.command_gates import register_gate, release_gate
 
 logger = logging.getLogger(__name__)
 
@@ -728,8 +729,8 @@ class CodexSession:
 
         out_q = self._out_q
         gate_id = uuid.uuid4().hex
-        ev = asyncio.Event()
-        APPROVAL_GATES[gate_id] = ev           # gate'i emit'ten ÖNCE kaydet
+        # gate'i emit'ten ÖNCE kaydet
+        ev = register_gate(gate_id, self.conversation_id)
         self._active_gate_ids.add(gate_id)
         if out_q is not None:
             await out_q.put({
@@ -749,7 +750,7 @@ class CodexSession:
             logger.warning(f"[CodexSession:{self.conversation_id}] onay zaman aşımı gate={gate_id}")
             return None
         finally:
-            gates.pop(gate_id, None)
+            release_gate(gate_id)
 
     # ── Turun TEK sonlanma olayı ─────────────────────────────────────────
     async def _emit_terminal(self, event: dict) -> bool:
