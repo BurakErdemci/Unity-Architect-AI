@@ -55,3 +55,28 @@ def test_anthropic_extra_body_and_copilot_flags():
         "cli_flags": ["--effort", "max"]}
     # copilot gpt modelinde max listede yok → boş
     assert map_effort("subscription", "copilot-gpt-5.2", "max") == {}
+
+
+def test_gpt6_drops_none_and_minimal_but_gains_xhigh_and_max():
+    api = get_effort_caps("openai", "gpt-6-astra")["levels"]
+    assert "none" not in api and "minimal" not in api
+    assert api == ["auto", "low", "medium", "high", "xhigh", "max"]
+    assert map_effort("openai", "gpt-6-astra", "max") == {
+        "request_params": {"reasoning_effort": "max"}}
+    # `none` API'den kalktı → istense bile parametre gitmez
+    assert map_effort("openai", "gpt-6-astra", "none") == {}
+    cli = get_effort_caps("subscription", "gpt-6-astra")["levels"]
+    assert "minimal" not in cli and "max" in cli and "xhigh" in cli
+    assert map_effort("subscription", "gpt-6-astra", "xhigh") == {
+        "cli_config": {"model_reasoning_effort": "xhigh"}}
+
+
+def test_gemini_37_and_38_have_no_minimal_and_use_thinking_level():
+    for m in ("gemini-3.7-flash", "gemini-3.8-flash"):
+        caps = get_effort_caps("google", m)
+        assert caps["levels"] == ["auto", "low", "medium", "high"], m
+        assert map_effort("google", m, "high") == {"gemini_thinking_level": "high"}, m
+        # minimal listede yok → hiçbir parametre gönderilmez (bütçe de değil)
+        assert map_effort("google", m, "minimal") == {}, m
+    # 3.6 minimal'i KAYBETMEDİ — daralma yalnız yeni ikiliye ait
+    assert "minimal" in get_effort_caps("google", "gemini-3.6-flash")["levels"]

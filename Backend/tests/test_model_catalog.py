@@ -337,3 +337,18 @@ def test_a_google_model_whose_name_is_not_a_string_is_skipped():
     payload = {"models": [{"name": {"models": "gemini"}}, {"name": "models/gemini-3.6-flash"}]}
     with patch("urllib.request.urlopen", return_value=_Cevap(payload)):
         assert model_catalog.list_models("google", "k") == {"gemini-3.6-flash": "gemini-3.6-flash"}
+
+
+def test_new_model_ids_still_derive_an_openrouter_identity():
+    """Yeni kimlikler künye birleştirmesi için ayrı bir takma-ad tablosu istemiyor.
+
+    Bulut listesi tamamen canlı; katalogda elle yazılı satır yok. Tek koşul
+    `openrouter_id_for`in kimliği türetebilmesi — türetemezse model listede
+    kalır ama bağlam penceresi/fiyatı olmaz.
+    """
+    assert model_catalog.openrouter_id_for("google", "gemini-3.8-flash") == "google/gemini-3.8-flash"
+    assert model_catalog.openrouter_id_for("google", "gemini-3.7-flash") == "google/gemini-3.7-flash"
+    assert model_catalog.openrouter_id_for("openai", "gpt-6-astra") == "openai/gpt-6-astra"
+    # Ve hiçbiri sohbet-dışı filtresine takılmıyor
+    for mid in ("gemini-3.8-flash", "gemini-3.7-flash", "gpt-6-astra"):
+        assert model_catalog.is_chat_model(mid), mid

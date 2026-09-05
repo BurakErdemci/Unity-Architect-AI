@@ -20,7 +20,11 @@ class GeminiProvider(AIProvider):
 
         raw_name = model_name.lower() if model_name else ""
         # Google AI Studio / google-genai SDK - Temmuz 2026 (Minimum desteklenen: v2.0)
-        if "3.6-flash" in raw_name:
+        if "3.8-flash" in raw_name:
+            self.model_id = "gemini-3.8-flash"
+        elif "3.7-flash" in raw_name:
+            self.model_id = "gemini-3.7-flash"
+        elif "3.6-flash" in raw_name:
             self.model_id = "gemini-3.6-flash"
         elif "3.5-flash-lite" in raw_name:
             self.model_id = "gemini-3.5-flash-lite"
@@ -41,11 +45,17 @@ class GeminiProvider(AIProvider):
         else:
             self.model_id = model_name if model_name else "gemini-3.6-flash"
 
-    # gemini-3.x (3.6/3.5/3.1/3.0) ve 2.5 düşünme destekler
+    # gemini-3.x (3.8/3.7/3.6/3.5/3.1/3.0) and 2.5 support thinking
     _THINKING_MODELS = ("gemini-3", "gemini-2.5")
+    # Numeric thinking_budget was REMOVED for this family; only the
+    # thinking_level enum (low|medium|high) is accepted, a budget returns 400.
+    _THINKING_LEVEL_ONLY = ("gemini-3.7", "gemini-3.8")
 
     def _supports_thinking(self) -> bool:
         return any(self.model_id.startswith(m) for m in self._THINKING_MODELS)
+
+    def _thinking_level_only(self) -> bool:
+        return any(self.model_id.startswith(m) for m in self._THINKING_LEVEL_ONLY)
 
     def analyze_code(self, prompt: str, max_tokens: int = 4096, images: Optional[List[str]] = None) -> str:
         try:
@@ -91,16 +101,21 @@ class GeminiProvider(AIProvider):
                         parts.append(gtypes.Part(inline_data=gtypes.Blob(mime_type=mime_type, data=base64_str)))
                 contents = [gtypes.Content(role="user", parts=parts)]
 
-            # Düşünme seviyesine göre bütçe belirle
-            budget_map = {"low": 4096, "medium": 16384, "high": 65536}
-            budget = budget_map.get(thinking_level, 16384)
+            if self._thinking_level_only():
+                lvl = thinking_level if thinking_level in ("low", "medium", "high") else "medium"
+                thinking_config = gtypes.ThinkingConfig(thinking_level=lvl)
+            else:
+                # Düşünme seviyesine göre bütçe belirle
+                budget_map = {"low": 4096, "medium": 16384, "high": 65536}
+                thinking_config = gtypes.ThinkingConfig(
+                    thinking_budget=budget_map.get(thinking_level, 16384))
 
             response = self.client.models.generate_content(
                 model=self.model_id,
                 contents=contents,
                 config=gtypes.GenerateContentConfig(
                     max_output_tokens=max_tokens,
-                    thinking_config=gtypes.ThinkingConfig(thinking_budget=budget),
+                    thinking_config=thinking_config,
                 ),
             )
             duration_ms = int((time.time() - start) * 1000)
@@ -142,7 +157,8 @@ class OllamaProvider(AIProvider):
 
 class OpenAICompatibleProvider(AIProvider):
     # OpenAI reasoning modelleri (Mayıs 2026 güncel)
-    _REASONING_MODELS = ("gpt-5.5", "gpt-5.4", "o3", "o4", "o5")
+    # gpt-6: sending temperature/top_p/logprobs makes the request FAIL.
+    _REASONING_MODELS = ("gpt-6", "gpt-5.6", "gpt-5.5", "gpt-5.4", "o3", "o4", "o5")
     # Kimi thinking modelleri
     _KIMI_THINKING_MODELS = ("kimi-k3", "kimi-k2")
     # Kimi model name normalization

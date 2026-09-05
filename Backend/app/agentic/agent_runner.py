@@ -486,6 +486,20 @@ def _no_progress_text(tool_name: "str | None") -> str:
     )
 
 
+def _gemini_fn_response(fc, name: str, response: dict):
+    """Gemini function-response part; carries the call id when present.
+
+    gemini-3.7/3.8 require `call_id` + `name` on every FunctionResponse
+    (breaking change, 2026-08-13). Without an id the field is omitted, so
+    older models and SDK versions without `id` keep working unchanged.
+    """
+    kwargs = {"name": name, "response": response}
+    call_id = getattr(fc, "id", None)
+    if call_id:
+        kwargs["id"] = call_id
+    return gtypes.Part(function_response=gtypes.FunctionResponse(**kwargs))
+
+
 def _done_event(iterations: int, stop_reason: str = "complete", **extra) -> "AgentEvent":
     """Builds the `done` event from one place (the contract above).
 
@@ -1444,10 +1458,7 @@ Kullanıcıyla {'Türkçe' if self.language == 'tr' else 'İngilizce'} konuş.""
                         })
                         # AI'a tool sonucunu bildir (döngü devam etsin diye)
                         function_response_parts.append(
-                            gtypes.Part(function_response=gtypes.FunctionResponse(
-                                name=tool_name,
-                                response=result,
-                            ))
+                            _gemini_fn_response(fc, tool_name, result)
                         )
                         # Re-asking for a call the user keeps refusing is a stall
                         # like any other, so it is recorded rather than skipped.
@@ -1471,10 +1482,7 @@ Kullanıcıyla {'Türkçe' if self.language == 'tr' else 'İngilizce'} konuş.""
                 })
 
                 function_response_parts.append(
-                    gtypes.Part(function_response=gtypes.FunctionResponse(
-                        name=tool_name,
-                        response={"result": result_str},
-                    ))
+                    _gemini_fn_response(fc, tool_name, {"result": result_str})
                 )
                 # Recorded with the RESULT OBJECT — never `result_str`, which is
                 # the truncated copy built for the transcript (see
@@ -1773,6 +1781,20 @@ Sen Unity projesi üzerinde çalışan bir AI asistanısın. Sana verilen araçl
             yield _ev
 
     async def _openai_loop(self, user_message: str) -> AsyncGenerator[AgentEvent, None]:
+        # GPT-6 does tool calling ONLY through the Responses API: Chat
+        # Completions accepts the model but never returns tool_calls, so the
+        # agent loop would silently degrade into a tool-less chat. Explicit
+        # error instead, until this path is ported to the Responses API.
+        if ((self.provider_type or "").lower() == "openai"
+                and (self.model_name or "").lower().startswith("gpt-6")):
+            yield AgentEvent("error", {"message": (
+                f"'{self.model_name}' bu sürümde bulut API anahtarıyla araç kullanamıyor: "
+                "GPT-6 araç çağrısını yalnız Responses API'si üzerinden yapıyor, "
+                "uygulama ise Chat Completions kullanıyor. Codex (abonelik) yolundan "
+                "'Codex (GPT-6 Astra)' seçeneğini kullanın ya da başka bir bulut modeli seçin."
+            )})
+            return
+
         client = openai.AsyncOpenAI(api_key=self.api_key)
         
         # DeepSeek OpenRouter veya custom base URL'ler için:

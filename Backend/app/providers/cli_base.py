@@ -146,6 +146,13 @@ class BaseCLIProvider(AIProvider):
     # 1.1.5'te OLMAYAN modeller (3.5-flash-lite, 3-flash, 3.1-flash-lite, 2.5-*) çıkarıldı.
     _AGY_MODEL_MAP = {
         # Gemini (effort = display-name son-eki (High/Medium/Low))
+        # 3.8 needs agy >=1.1.25; installed 1.1.27 (measured 2026-09-05).
+        "gemini-3.8-flash":              "Gemini 3.8 Flash (High)",
+        "gemini-3.8-flash-medium":       "Gemini 3.8 Flash (Medium)",
+        "gemini-3.8-flash-low":          "Gemini 3.8 Flash (Low)",
+        "gemini-3.7-flash":              "Gemini 3.7 Flash (High)",
+        "gemini-3.7-flash-medium":       "Gemini 3.7 Flash (Medium)",
+        "gemini-3.7-flash-low":          "Gemini 3.7 Flash (Low)",
         "gemini-3.6-flash":              "Gemini 3.6 Flash (High)",
         "gemini-3.6-flash-medium":       "Gemini 3.6 Flash (Medium)",
         "gemini-3.6-flash-low":          "Gemini 3.6 Flash (Low)",

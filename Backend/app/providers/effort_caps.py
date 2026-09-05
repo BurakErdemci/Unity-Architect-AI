@@ -40,6 +40,10 @@ def get_effort_caps(provider_type: str, model_name: str) -> dict:
             return _caps(["auto", "low", "medium", "high", "xhigh", "max"])
         if m.startswith("gpt-"):
             base = ["auto", "minimal", "low", "medium", "high", "xhigh"]
+            if m.startswith("gpt-6"):
+                # GPT-6: `none` removed, `minimal` not listed (docs 2026-09-03).
+                return _caps(["auto", "low", "medium", "high", "xhigh", "max"],
+                             "GPT-6: minimal/none yok; max en derin düşünme.")
             if m.startswith("gpt-5.6"):
                 return _caps(base + ["max"], "max: GPT-5.6 ailesine özel en derin tek-görev düşünme.")
             return _caps(base)
@@ -64,7 +68,13 @@ def get_effort_caps(provider_type: str, model_name: str) -> dict:
 
     if p == "google":
         if "gemini-3" in m:
-            levels = ["auto", "low", "high"] if ("3-pro" in m) else ["auto", "minimal", "low", "medium", "high"]
+            if "3-pro" in m:
+                levels = ["auto", "low", "high"]
+            elif "3.7" in m or "3.8" in m:
+                # thinking_level enum is low|medium|high; no `minimal` in this family.
+                levels = ["auto", "low", "medium", "high"]
+            else:
+                levels = ["auto", "minimal", "low", "medium", "high"]
             return _caps(levels)
         return _caps(["auto", "off", "low", "medium", "high"], "Gemini 2.5: düşünme bütçesi (token) ile.")
 
@@ -76,6 +86,9 @@ def get_effort_caps(provider_type: str, model_name: str) -> dict:
         return _caps(["auto", "low", "medium", "high", "xhigh", "max"])
 
     if p in ("openai",):
+        if m.startswith("gpt-6"):
+            # GPT-6 API: `none` REMOVED; xhigh and max added.
+            return _caps(["auto", "low", "medium", "high", "xhigh", "max"])
         levels = ["auto", "none", "low", "medium", "high"]
         if "5.2" in m or "codex-max" in m:
             levels.append("xhigh")

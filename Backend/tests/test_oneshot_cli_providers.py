@@ -62,6 +62,19 @@ class TestManagerRouting(unittest.TestCase):
         self.assertEqual(opus_5.binary_name, "claude-opus-5")
         # copilot-gpt-* Codex'e DÜŞMEMELİ (prefix önceliği):
         self.assertIsInstance(self._get("copilot-gpt-5.6-sol"), CopilotProvider)
+        # Yeni modeller (2026-09-05) aynı önek kuralıyla yerine gidiyor ve
+        # kimlik CLI'a OLDUĞU GİBİ geçiyor — Codex `-m <id>` ile çağırıyor.
+        astra = self._get("gpt-6-astra")
+        self.assertIsInstance(astra, CodexProvider)
+        self.assertEqual(astra.binary_name, "gpt-6-astra")
+        from providers.agy_provider import AgyProvider
+        for mid, gorunen in (("gemini-3.8-flash", "Gemini 3.8 Flash (High)"),
+                             ("gemini-3.7-flash", "Gemini 3.7 Flash (High)")):
+            agy = self._get(mid)
+            self.assertIsInstance(agy, AgyProvider)
+            # agy modeli --model flag'iyle DEĞİL settings.json'daki görünen adla
+            # seçiliyor; eşleme yoksa sessizce 3.6'ya düşerdi.
+            self.assertEqual(AgyProvider._AGY_MODEL_MAP.get(mid), gorunen)
 
     def test_nvidia_routing(self):
         """NVIDIA NIM → OpenAI-uyumlu provider, doğru base_url ile."""

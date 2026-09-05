@@ -464,6 +464,7 @@ def create_config_router(db):
                 {"id": "claude-opus-4-8",      "name": "Claude 4.8 Opus (CLI)",         "provider": "subscription"},
                 {"id": "claude-sonnet-4-6",    "name": "Claude 4.6 Sonnet (CLI)",       "provider": "subscription"},
                 {"id": "claude-haiku-4-5",     "name": "Claude 4.5 Haiku (CLI)",        "provider": "subscription"},
+                {"id": "gpt-6-astra",         "name": "Codex (GPT-6 Astra)",           "provider": "subscription"},
                 {"id": "gpt-5.6-sol",         "name": "Codex (GPT-5.6 Sol)",           "provider": "subscription"},
                 {"id": "gpt-5.6-terra",       "name": "Codex (GPT-5.6 Terra)",         "provider": "subscription"},
                 {"id": "gpt-5.6-luna",        "name": "Codex (GPT-5.6 Luna)",          "provider": "subscription"},
@@ -472,7 +473,11 @@ def create_config_router(db):
                 {"id": "gpt-5.4-mini",         "name": "Codex (GPT-5.4 Mini)",          "provider": "subscription"},
                 {"id": "kimi-k3",              "name": "Kimi K3 (CLI)",                 "provider": "subscription"},
                 {"id": "kimi-k2.7-code",       "name": "Kimi K2.7 Code (CLI)",          "provider": "subscription"},
-                {"id": "gemini-3.6-flash",             "name": "Gemini 3.6 Flash (Önerilen)", "provider": "subscription"},
+                {"id": "gemini-3.8-flash",             "name": "Gemini 3.8 Flash (Önerilen)", "provider": "subscription"},
+                {"id": "gemini-3.8-flash-medium",      "name": "Gemini 3.8 Flash (Medium)",   "provider": "subscription"},
+                {"id": "gemini-3.7-flash",             "name": "Gemini 3.7 Flash",            "provider": "subscription"},
+                {"id": "gemini-3.7-flash-medium",      "name": "Gemini 3.7 Flash (Medium)",   "provider": "subscription"},
+                {"id": "gemini-3.6-flash",             "name": "Gemini 3.6 Flash",            "provider": "subscription"},
                 {"id": "gemini-3.6-flash-medium",      "name": "Gemini 3.6 Flash (Medium)",   "provider": "subscription"},
                 {"id": "gemini-3.5-flash",             "name": "Gemini 3.5 Flash",            "provider": "subscription"},
                 {"id": "gemini-3.5-flash-medium",      "name": "Gemini 3.5 Flash (Medium)",   "provider": "subscription"},
@@ -609,6 +614,9 @@ def create_config_router(db):
     # Codex modelleri: statik liste. Hesap/plan cevabı tutarsız olabildiği için
     # bunlara kalıcı UI kilidi uygulanmaz; kullanıcı modeli her zaman deneyebilir.
     _CODEX_MODELS = [
+        # Codex 0.153.x does not list GPT-6 in its own picker but accepts it
+        # via `-m` (installed 0.153.4), so it is offered here by hand.
+        {"id": "gpt-6-astra",   "name": "GPT-6 Astra",    "provider": "subscription"},
         {"id": "gpt-5.6-terra", "name": "GPT-5.6 Terra",  "provider": "subscription"},
         {"id": "gpt-5.6-sol",   "name": "GPT-5.6 Sol",    "provider": "subscription"},
         {"id": "gpt-5.6-luna",  "name": "GPT-5.6 Luna",   "provider": "subscription"},
