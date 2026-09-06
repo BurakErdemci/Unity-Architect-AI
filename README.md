@@ -93,7 +93,8 @@ AI tools in the Unity ecosystem usually land at one of two extremes: they either
 | Unaware of the Unity Editor | Adds GameObjects, binds components, reads the console via MCP |
 | Can't run terminal | Secure terminal layer; dangerous commands require approval |
 | Every chat starts from zero | Persistent memory + project analysis keep the context |
-| Setup hassle | `uv`, OmniSharp + .NET SDK, ffmpeg/yt-dlp — all **bundled into the app**, zero extra install |
+| Walks away when a background job finishes | The conversation wakes itself up and reports what completed |
+| Setup hassle | `uv`, OmniSharp + .NET SDK, ffmpeg/yt-dlp, offline speech models — all **bundled into the app**, zero extra install |
 
 ---
 
@@ -101,7 +102,14 @@ AI tools in the Unity ecosystem usually land at one of two extremes: they either
 
 **Many agents, one experience** — 7 CLI agents and 8+ cloud APIs plus local Ollama,
 switchable per message. When a CLI is selected the backend writes that tool's MCP
-config at call time, so nothing has to be set up by hand.
+config at call time, so nothing has to be set up by hand. Antigravity runs as one
+long-lived session per conversation rather than a fresh process per turn.
+
+**The model list is your account's, not ours** — each cloud provider is asked, with
+your key, which models it will actually serve you, and a public catalogue supplies the
+label, context size and price beside each name. A provider you have no key for still
+shows up, marked unconfirmed, because "this model exists" and "your account has it"
+are two different claims.
 
 **Autonomous agentic loop** — task → think → call a tool → evaluate → repeat, capped
 at 15 iterations. Every step streams live over SSE, and Stop cancels at both layers:
@@ -120,7 +128,26 @@ toolchain ships inside the app.
 
 **Project awareness** — every `.cs` file in the workspace is scanned and chunked;
 "Learn Project" extracts classes, inheritance and key methods into an architecture
-map. `/compact` summarises long conversations before they hit the token limit.
+map. `/compact` summarises long conversations before they hit the token limit, and a
+usage/context panel shows where you stand — with an honest "stale" or "estimate"
+badge when the live number is not reachable.
+
+**The conversation resumes itself** — a subagent or background command that finishes
+after you stopped watching used to leave the chat idle until you typed. Now the
+conversation wakes up, picks the turn back up and tells you what finished. It waits
+while an approval card is on screen and stops after three wakes in a row.
+
+**3D models and images open in place** — click an `.fbx`, `.glb`, `.gltf`, `.obj`,
+`.stl`, `.ply` or `.dae` in the file tree and it opens in a preview instead of the
+text editor: orbit the camera, scrub the timeline, play animations at 0.25x–2x. An
+animation-only file gets a mannequin built from its own bones so there is something
+to watch. Textures and sprites open in the same slot, with an actual-size mode that
+keeps pixel art sharp.
+
+**Dictation that never leaves the machine** — a microphone button in the chat box
+writes what you say into the box while you are still speaking; you read it, fix it,
+press Enter. Turkish and English recognition models ship inside the installer, so it
+works offline and no audio is uploaded anywhere.
 
 **C# intelligence, zero install** — an OmniSharp LSP sidecar gives real Roslyn
 analysis in the Monaco editor, with the .NET SDK it needs bundled on all three
@@ -130,8 +157,8 @@ preference — see [Architecture](docs/architecture.md).)
 **Real effort control** — the effort selector actually takes effect on every
 provider; the UI only offers the levels each model supports.
 
-**Video → chat** — drop in a video link or file and bundled ffmpeg + yt-dlp extract
-frames and a transcript into the analysis pipeline.
+**Video → chat** — drop in a video link (YouTube included) or a file and bundled
+ffmpeg + yt-dlp extract frames and a transcript into the analysis pipeline.
 
 **A real IDE around it** — Monaco editor, an xterm.js terminal on a real PTY, diff
 viewer, live thinking block, and a bilingual TR/EN interface.
@@ -179,6 +206,7 @@ in [Building from source](docs/building.md).
 ```
 
 4. **Approve** — when the AI requests a file/terminal operation the stream pauses and a diff/command card opens; approve or reject.
+5. **Look and talk** — click a `.fbx` or a texture in the file tree to preview it in place; press the microphone to dictate instead of typing.
 
 ---
 

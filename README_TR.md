@@ -94,7 +94,8 @@ Unity ekosistemindeki AI araçları genelde iki uçtan birine düşer: ya sadece
 | Unity Editor'den habersiz | MCP ile sahneye GameObject ekler, bileşen bağlar, konsolu okur |
 | Terminal çalıştıramaz | Güvenli terminal katmanı; tehlikeli komutlar onay ister |
 | Her sohbet sıfırdan başlar | Kalıcı hafıza + proje analizi ile bağlamı korur |
-| Kurulum derdi | `uv`, OmniSharp + .NET SDK, ffmpeg/yt-dlp — hepsi **uygulamaya gömülü**, sıfır ek kurulum |
+| Arka plan işi bitince ortada kalır | Sohbet kendi kendine uyanır, neyin bittiğini söyler |
+| Kurulum derdi | `uv`, OmniSharp + .NET SDK, ffmpeg/yt-dlp, çevrimdışı konuşma modelleri — hepsi **uygulamaya gömülü**, sıfır ek kurulum |
 
 ---
 
@@ -102,7 +103,14 @@ Unity ekosistemindeki AI araçları genelde iki uçtan birine düşer: ya sadece
 
 **Çok ajan, tek deneyim** — 7 CLI ajanı, 8+ bulut API'si ve yerel Ollama; mesaj
 başına değiştirilebilir. Bir CLI seçildiğinde backend o aracın MCP yapılandırmasını
-çağrı anında yazıyor, elle kurulum gerekmiyor.
+çağrı anında yazıyor, elle kurulum gerekmiyor. Antigravity her turda yeni süreç
+açmak yerine sohbet başına tek bir uzun ömürlü oturumda çalışıyor.
+
+**Model listesi bizim değil, senin hesabının** — her bulut sağlayıcısına senin
+anahtarınla "bana hangi modelleri veriyorsun" diye soruluyor; adının yanındaki
+etiketi, bağlam boyutunu ve fiyatı da herkese açık bir katalog sağlıyor. Anahtarı
+olmayan sağlayıcı listeden kaybolmuyor, "doğrulanmadı" diye işaretleniyor — çünkü
+"bu model var" ile "senin hesabında var" iki ayrı iddia.
 
 **Otonom agentic döngü** — görev → düşün → araç çağır → değerlendir → tekrarla;
 15 iterasyonda sınırlı. Her adım SSE ile canlı akıyor ve Dur düğmesi iki katmanda
@@ -121,7 +129,26 @@ değerlendiriyor. `uv` araç zinciri uygulamanın içinde geliyor.
 
 **Proje farkındalığı** — workspace'teki bütün `.cs` dosyaları taranıp parçalanıyor;
 "Projeyi Öğren" sınıfları, kalıtım ilişkilerini ve kilit metotları bir mimari
-haritaya çıkarıyor. `/compact` uzun sohbetleri token sınırına çarpmadan özetliyor.
+haritaya çıkarıyor. `/compact` uzun sohbetleri token sınırına çarpmadan özetliyor;
+kullanım/bağlam paneli nerede olduğunu gösteriyor — canlı sayıya ulaşılamıyorsa
+"bayat" ya da "tahmin" rozetiyle, dürüstçe.
+
+**Sohbet kendi kendine devam ediyor** — sen bakmayı bıraktıktan sonra biten bir
+alt ajan ya da arka plan komutu, sen bir şey yazana kadar sohbeti boşta bırakırdı.
+Artık sohbet uyanıyor, turu kaldığı yerden alıyor ve neyin bittiğini söylüyor. Ekranda
+bir onay kartı varken bekliyor; art arda üç uyanıştan sonra duruyor.
+
+**3D modeller ve görseller yerinde açılıyor** — dosya ağacında bir `.fbx`, `.glb`,
+`.gltf`, `.obj`, `.stl`, `.ply` ya da `.dae` dosyasına tıkla; metin editörü yerine
+önizlemede açılıyor: kamerayı çevir, zaman çizgisini kaydır, animasyonu 0.25x–2x
+hızda oynat. Yalnızca animasyon taşıyan bir dosyaya, kendi kemiklerinden bir manken
+kuruluyor ki izleyecek bir şey olsun. Doku ve sprite'lar aynı alanda açılıyor;
+gerçek boyut modu piksel sanatını bulanıklaştırmadan gösteriyor.
+
+**Makineden çıkmayan dikte** — sohbet kutusundaki mikrofon düğmesi, sen konuşurken
+söylediklerini kutuya yazıyor; okuyorsun, düzeltiyorsun, Enter'a basıyorsun. Türkçe
+ve İngilizce tanıma modelleri yükleyicinin içinde geliyor: çevrimdışı çalışıyor ve
+hiçbir ses kaydı hiçbir yere yüklenmiyor.
 
 **C# zekası, kurulum yok** — OmniSharp LSP yan süreci Monaco editöründe gerçek
 Roslyn analizi veriyor; ihtiyaç duyduğu .NET SDK'sı üç platformda da gömülü.
@@ -131,8 +158,8 @@ Roslyn analizi veriyor; ihtiyaç duyduğu .NET SDK'sı üç platformda da gömü
 **Gerçek effort kontrolü** — effort seçimi her sağlayıcıda gerçekten etki ediyor;
 arayüz yalnızca o modelin desteklediği seviyeleri gösteriyor.
 
-**Video → sohbet** — sohbete bir video bağlantısı ya da dosyası bırak; gömülü
-ffmpeg + yt-dlp kareleri ve transkripti çıkarıp analiz hattına veriyor.
+**Video → sohbet** — sohbete bir video bağlantısı (YouTube dahil) ya da dosyası
+bırak; gömülü ffmpeg + yt-dlp kareleri ve transkripti çıkarıp analiz hattına veriyor.
 
 **Etrafında gerçek bir IDE** — Monaco editörü, gerçek PTY üzerinde xterm.js
 terminali, diff görüntüleyici, canlı düşünme bloğu ve iki dilli TR/EN arayüz.
@@ -184,6 +211,7 @@ entegrasyonunu istiyorsan Unity Editor de). Adımlar, ortam değişkenleri ve pa
 ```
 
 4. **Onayla** — AI onay gerektiren bir işlem isteyince akış durur, diff/komut kartı açılır; onayla veya reddet. (Bulut API modellerinde dosya *yazma* kart açmaz — bkz. [Onay kapsamı](docs/security.md#️-approval-scope-what-is-and-isnt-confirmed-an-honesty-note).)
+5. **Bak ve konuş** — dosya ağacında bir `.fbx`'e ya da dokuya tıkla, yerinde önizlensin; yazmak yerine mikrofona basıp söyle.
 
 ---
 
