@@ -9,86 +9,78 @@
   moment they download. (This comment is invisible on GitHub.)
 -->
 
-## Gamachine v3.1.0
+## Gamachine v3.2.0
 
-Offline live dictation, a 3D model preview, and bundled video tools.
+New models, a conversation that resumes itself when background work finishes, and
+a persistent Antigravity session.
 
-> 🍎 **macOS (Apple Silicon):** `Gamachine-3.1.0-arm64.dmg`
-> · 🪟 **Windows:** `Gamachine-Setup-3.1.0.exe`
+> 🍎 **macOS (Apple Silicon):** `Gamachine-3.2.0-arm64.dmg`
+> · 🪟 **Windows:** `Gamachine-Setup-3.2.0.exe`
 
-### 🎙️ Dictation: speak into the chat box, and it never leaves the machine
+### New models: Gemini 3.8 Flash, Gemini 3.7 Flash and GPT-6 Astra
 
-A microphone button in the chat box transcribes live, on-device, in Turkish or English, with no audio ever uploaded.
+Gemini 3.8 Flash is the recommended default now, with 3.7 Flash alongside it,
+and GPT-6 Astra joins the Codex list. The reasoning-effort choices differ per
+model — GPT-6 offers low through max, the new Gemini models low, medium and
+high — and the picker only shows what the model you picked actually supports.
 
-### 🛡️ Hardened before release
+Gemini 3.7 and 3.8 need agy 1.1.25 or newer for their display names. One
+limitation worth knowing before you pick it: GPT-6 cannot be used on the older
+chat-completions agent loop, because its tool calling exists only on the newer
+API. Choosing it there now says so instead of failing halfway through a run.
 
-An external audit found 32 issues in the dictation code; 29 were fixed, each with a regression test.
+### The conversation wakes itself up when background work finishes
 
-### 🧊 3D model files open in a preview instead of the code editor
+A run used to be tied to one open connection. If a subagent or a background
+command finished after that connection closed, nothing resumed the turn — the
+conversation just sat there until you typed something, and the result of the
+work you were waiting for was invisible.
 
-FBX, glTF/GLB, Collada, OBJ, STL and PLY files now open in an orbiting, animatable preview instead of the text editor.
+It now wakes itself. When background work completes, the conversation picks the
+turn back up and tells you what finished. It waits if an approval card or a
+prompt is on screen, so a wake never lands on top of a decision you are in the
+middle of making, and it stops after three wakes in a row so a chain of tasks
+cannot talk to itself indefinitely.
 
-### 🖼️ Images open in the content area too
+### Antigravity CLI keeps one session open instead of restarting every turn
 
-Textures and sprites open as pictures in the same panel the 3D preview uses, with a pixel-sharp actual-size mode.
+The Antigravity path used to start a fresh process for every single turn and
+hand it the whole conversation as a command-line argument. That capped how much
+history could be carried on Windows, made each turn pay a full startup, and left
+the app scraping the CLI's own transcript files to figure out what happened.
 
-### 🎬 Video links work without installing anything first
+It now holds one live session per conversation and sends each turn into it. The
+turn's real token usage comes back from the CLI itself rather than being
+reconstructed, the Windows length limit is gone, and everything that existed to
+work around the restart — the history trimming, the transcript scraping, the
+polling loop that guessed whether the CLI was still alive — is gone with it.
 
-The tools that fetch and read video now ship with the app, YouTube Shorts links no longer fail, and a stalled or blocked download says why.
+### The usage and context panel stops going blank
 
-### 🗂️ The model list comes from your own account
+The panel emptied out whenever the CLI session was busy or unavailable, and the
+context section never showed anything at all. Usage readings are account-level
+and stay true for a while, so the last successful reading is now kept for two
+hours and shown with a "stale" badge and its age when nothing live can be
+reached. Context falls back to an estimate from the stored conversation, clearly
+labelled as an estimate rather than presented as a measurement.
 
-The hand-maintained model list is gone; each provider is now asked what your account can actually reach.
+### Removed: the token and cost readout in the message box
 
-### 📊 A usage and context panel, and a gauge that is always there
+The small "— tok" figure next to the memory ring reported wildly wrong numbers.
+It is removed rather than corrected. The memory ring and the usage button are
+unchanged.
 
-The context gauge is always on screen now, backed by a panel with real token counts and cost, opened without touching the conversation.
+### Under the hood: secrets, approval cards and session cleanup
 
-### ☑️ Questions from the assistant can take more than one answer
+Everything the Antigravity CLI sends back now passes through one redaction step
+on its way to the screen, including the final answer of a successful turn, which
+previously bypassed it — that was the path by which a credential in a model's
+own reply could reach the interface. Key names are masked as well as values, and
+a deeply nested payload is trimmed rather than being allowed to kill the turn.
 
-Multi-select, a free-text answer, and a skip option are all available now, and a fresh question no longer inherits the last one's selection.
-
-### ⏹️ A run that stops early says why
-
-A stalled run now stops on repeated tool calls rather than a fixed step count, and says which tool repeated; the step ceiling is a 300-step last resort.
-
-### ⚠️ Errors say what actually went wrong
-
-Provider outages, rate limits, and tool-support gaps are each named instead of collapsed into one generic error, and long silences report who the app is waiting on.
-
-### 🔧 Gemini models can use tools
-
-A long-standing bug that broke tool calls on Gemini API models is fixed.
-
-### 📜 The chat stays where you left it
-
-Scrolling up no longer gets dragged back to the bottom on new output, except for cards that need your answer.
-
-### 🔗 The content area follows the file
-
-Renaming, moving, or deleting a file now keeps the preview or editor in sync with it instead of pointing at a stale path.
-
-### 🐳 The Docker development container actually runs
-
-Docker mode is fixed after never having worked, and now fails fast with a clear message instead of silently.
-
-### ⚖️ The project is now plain MIT
-
-The Commons Clause condition is removed; the project is MIT-licensed and open source in the OSI sense.
-
-### 🧹 Under the hood
-
-The bundled Unity sprite tool was updated, and a long series of audited fixes on file reading, approval gates, and the Docker path each shipped with a regression test.
-
----
-
-### 📥 Install
-
-Download the file for your platform above. Windows removes the previous version
-automatically. Updates are notify-only: Gamachine tells you a new version exists
-and opens this page — it never installs anything by itself.
-
-### ⚠️ Known limits
-
-- **Intel Macs are not supported.** Only an Apple Silicon build is published.
-- The app is unsigned, so both operating systems will warn you on first launch.
+Approval cards are attributed to the conversation that created them, so a
+pending card in one conversation no longer blocks another one from continuing.
+A card that cannot be attributed still blocks, which is the safe direction.
+Closing a session releases its own pending cards immediately instead of leaving
+them to expire, and Stop only dismisses the cards belonging to the conversation
+being stopped.
